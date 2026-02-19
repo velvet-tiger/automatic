@@ -39,7 +39,7 @@ function App() {
             <div className="w-5 h-5 bg-gradient-to-br from-[#5E6AD2] to-[#8C98F2] rounded flex items-center justify-center text-white text-xs">
               A
             </div>
-            <span>Nexus Workspace</span>
+            <span>Nexus</span>
             <ChevronDown size={14} className="text-[#8A8C93]" />
           </div>
           <div className="flex gap-1 text-[#8A8C93]">
@@ -91,7 +91,7 @@ function App() {
         <header className="h-11 border-b border-[#33353A] flex items-center justify-between px-4 bg-[#222327]">
           <div className="flex items-center gap-2 text-[13px] text-[#8A8C93]">
             <Command size={14} />
-            <span>Nexus Workspace</span>
+            <span>Nexus</span>
             <span className="text-[#33353A]">›</span>
             <span className="text-[#E0E1E6] capitalize">{activeTab.replace('-', ' ')}</span>
           </div>
