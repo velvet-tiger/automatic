@@ -1,4 +1,4 @@
-# Agentic Desktop
+# Nexus
 
 A secure desktop application for managing LLM connections, running local AI agents, and configuring MCP (Model Context Protocol) servers and Skills. Built with Rust, Tauri, React, and Tailwind CSS.
 

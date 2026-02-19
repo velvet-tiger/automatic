@@ -13,13 +13,13 @@ fn is_valid_skill_name(name: &str) -> bool {
 
 #[tauri::command]
 fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
-    let entry = Entry::new("agentic_desktop", provider).map_err(|e| e.to_string())?;
+    let entry = Entry::new("nexus_desktop", provider).map_err(|e| e.to_string())?;
     entry.set_password(key).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn get_api_key(provider: &str) -> Result<String, String> {
-    let entry = Entry::new("agentic_desktop", provider).map_err(|e| e.to_string())?;
+    let entry = Entry::new("nexus_desktop", provider).map_err(|e| e.to_string())?;
     entry.get_password().map_err(|e| e.to_string())
 }
 
