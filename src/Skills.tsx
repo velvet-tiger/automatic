@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Plus, X, Edit2, Code, FileText, Check } from "lucide-react";
 
 export default function Skills() {
   const [skills, setSkills] = useState<string[]>([]);
@@ -17,7 +18,7 @@ export default function Skills() {
   const loadSkills = async () => {
     try {
       const result: string[] = await invoke("get_skills");
-      setSkills(result);
+      setSkills(result.sort());
       setError(null);
     } catch (err: any) {
       setError(`Failed to load skills: ${err}`);
@@ -52,7 +53,8 @@ export default function Skills() {
     }
   };
 
-  const handleDelete = async (name: string) => {
+  const handleDelete = async (name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!confirm(`Are you sure you want to delete the skill "${name}"?`)) return;
     try {
       await invoke("delete_skill", { name });
@@ -77,42 +79,50 @@ export default function Skills() {
   };
 
   return (
-    <div className="flex h-full gap-6">
+    <div className="flex h-full w-full bg-[#222327]">
       {/* Left Sidebar - Skills List */}
-      <div className="w-64 flex flex-col bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-          <h3 className="font-semibold text-gray-800 dark:text-gray-200">Your Skills</h3>
+      <div className="w-64 flex-shrink-0 flex flex-col border-r border-[#33353A] bg-[#1A1A1E]/50">
+        <div className="h-11 px-4 border-b border-[#33353A] flex justify-between items-center bg-[#222327]/30">
+          <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Your Skills</span>
           <button 
             onClick={startCreateNew}
-            className="text-xl text-blue-600 dark:text-blue-400 hover:text-blue-800"
+            className="text-[#8A8C93] hover:text-[#E0E1E6] transition-colors p-1 hover:bg-[#2D2E36] rounded"
             title="Create New Skill"
           >
-            +
+            <Plus size={14} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto">
-          {skills.length === 0 ? (
-            <div className="p-4 text-sm text-gray-500 italic">No skills found.</div>
+        
+        <div className="flex-1 overflow-y-auto py-2">
+          {skills.length === 0 && !isCreating ? (
+            <div className="px-4 py-3 text-[13px] text-[#8A8C93] text-center">No skills found.</div>
           ) : (
-            <ul className="divide-y divide-gray-100 dark:divide-gray-700">
+            <ul className="space-y-0.5 px-2">
+              {isCreating && (
+                <li className="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] bg-[#2D2E36] text-[#E0E1E6]">
+                  <Code size={14} className="text-[#8A8C93]" />
+                  <span className="italic">New Skill...</span>
+                </li>
+              )}
               {skills.map(skill => (
-                <li key={skill} className="flex group">
+                <li key={skill} className="group flex items-center relative">
                   <button
                     onClick={() => loadSkillContent(skill)}
-                    className={`flex-1 text-left px-4 py-3 text-sm transition-colors ${
-                      selectedSkill === skill 
-                        ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-medium" 
-                        : "hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
+                    className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
+                      selectedSkill === skill && !isCreating
+                        ? "bg-[#2D2E36] text-[#E0E1E6]" 
+                        : "text-[#8A8C93] hover:bg-[#2D2E36]/50 hover:text-[#E0E1E6]"
                     }`}
                   >
-                    {skill}
+                    <Code size={14} className={selectedSkill === skill && !isCreating ? "text-[#E0E1E6]" : "text-[#8A8C93]"} />
+                    <span className="flex-1 text-left truncate">{skill}</span>
                   </button>
                   <button
-                    onClick={() => handleDelete(skill)}
-                    className="px-3 text-red-500 opacity-0 group-hover:opacity-100 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                    onClick={(e) => handleDelete(skill, e)}
+                    className="absolute right-2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
                     title="Delete Skill"
                   >
-                    ✕
+                    <X size={12} />
                   </button>
                 </li>
               ))}
@@ -122,38 +132,44 @@ export default function Skills() {
       </div>
 
       {/* Right Area - Editor/Viewer */}
-      <div className="flex-1 flex flex-col bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 bg-[#222327]">
         {error && (
-          <div className="bg-red-100 text-red-700 p-3 text-sm border-b border-red-200">
+          <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between">
             {error}
+            <button onClick={() => setError(null)}><X size={14} /></button>
           </div>
         )}
 
         {(selectedSkill || isCreating) ? (
           <div className="flex-1 flex flex-col h-full">
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800/50">
-              {isCreating ? (
-                <input 
-                  type="text" 
-                  placeholder="skill-name (no spaces/slashes)"
-                  value={newSkillName}
-                  onChange={(e) => {
-                    setNewSkillName(e.target.value);
-                    setSelectedSkill(e.target.value);
-                  }}
-                  className="font-semibold text-lg bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 outline-none"
-                />
-              ) : (
-                <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200">{selectedSkill}</h3>
-              )}
+            {/* Header */}
+            <div className="h-11 px-6 border-b border-[#33353A] flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <FileText size={14} className="text-[#8A8C93]" />
+                {isCreating ? (
+                  <input 
+                    type="text" 
+                    placeholder="Skill-name (no spaces/slashes)"
+                    value={newSkillName}
+                    onChange={(e) => {
+                      setNewSkillName(e.target.value);
+                      setSelectedSkill(e.target.value);
+                    }}
+                    autoFocus
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#E0E1E6] placeholder-[#8A8C93]/50 w-64"
+                  />
+                ) : (
+                  <h3 className="text-[14px] font-medium text-[#E0E1E6]">{selectedSkill}</h3>
+                )}
+              </div>
               
-              <div className="space-x-2">
+              <div className="flex items-center gap-2">
                 {!isEditing ? (
                   <button 
                     onClick={() => setIsEditing(true)}
-                    className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded transition-colors text-sm font-medium"
+                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#2D2E36] text-[#8A8C93] hover:text-[#E0E1E6] rounded text-[12px] font-medium transition-colors"
                   >
-                    Edit
+                    <Edit2 size={12} /> Edit
                   </button>
                 ) : (
                   <>
@@ -163,7 +179,7 @@ export default function Skills() {
                           setIsEditing(false);
                           loadSkillContent(selectedSkill!);
                         }}
-                        className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors text-sm"
+                        className="px-3 py-1.5 hover:bg-[#2D2E36] text-[#8A8C93] hover:text-[#E0E1E6] rounded text-[12px] font-medium transition-colors"
                       >
                         Cancel
                       </button>
@@ -171,33 +187,41 @@ export default function Skills() {
                     <button 
                       onClick={handleSave}
                       disabled={isCreating && !newSkillName.trim()}
-                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors text-sm font-medium disabled:opacity-50"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                     >
-                      Save
+                      <Check size={12} /> Save
                     </button>
                   </>
                 )}
               </div>
             </div>
             
-            <div className="flex-1 p-0 relative">
+            {/* Editor Body */}
+            <div className="flex-1 relative">
               {isEditing ? (
                 <textarea 
                   value={skillContent}
                   onChange={(e) => setSkillContent(e.target.value)}
-                  className="absolute inset-0 w-full h-full p-4 resize-none outline-none font-mono text-sm bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200"
-                  placeholder="Write your skill instructions here..."
+                  className="absolute inset-0 w-full h-full p-6 resize-none outline-none font-mono text-[13px] bg-[#222327] text-[#E0E1E6] leading-relaxed custom-scrollbar placeholder-[#8A8C93]/30"
+                  placeholder="Write your skill instructions here in Markdown..."
+                  spellCheck={false}
                 />
               ) : (
-                <div className="absolute inset-0 overflow-y-auto p-6 font-mono text-sm whitespace-pre-wrap text-gray-800 dark:text-gray-300">
-                  {skillContent || <span className="text-gray-400 italic">This skill is empty. Click edit to add instructions.</span>}
+                <div className="absolute inset-0 overflow-y-auto p-6 font-mono text-[13px] whitespace-pre-wrap text-[#E0E1E6] leading-relaxed custom-scrollbar">
+                  {skillContent || <span className="text-[#8A8C93] italic">This skill is empty. Click edit to add instructions.</span>}
                 </div>
               )}
             </div>
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500 italic">
-            Select a skill from the list or create a new one.
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+             <div className="w-16 h-16 mx-auto mb-6 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#8A8C93]">
+                <Code size={24} strokeWidth={1.5} />
+              </div>
+              <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">No Skill Selected</h2>
+              <p className="text-[14px] text-[#8A8C93] mb-8 leading-relaxed max-w-sm">
+                Select a skill from the sidebar to view or edit its contents, or create a new one to extend agent capabilities.
+              </p>
           </div>
         )}
       </div>

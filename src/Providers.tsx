@@ -12,6 +12,7 @@ export default function Providers() {
       await invoke("save_api_key", { provider, key: apiKey });
       setStatus(`Successfully saved key for ${provider}`);
       setApiKey(""); // clear after save
+      setTimeout(() => setStatus(""), 3000);
     } catch (err: any) {
       setStatus(`Error saving key: ${err}`);
     }
@@ -21,7 +22,8 @@ export default function Providers() {
     try {
       const key: string = await invoke("get_api_key", { provider });
       setApiKey(key);
-      setStatus(`Loaded key for ${provider} (length: ${key.length})`);
+      setStatus(`Loaded key for ${provider}`);
+      setTimeout(() => setStatus(""), 3000);
     } catch (err: any) {
       setStatus(`Error loading key (maybe not set?): ${err}`);
       setApiKey("");
@@ -29,61 +31,77 @@ export default function Providers() {
   };
 
   return (
-    <div className="max-w-md bg-white dark:bg-gray-800 p-6 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-      <h3 className="font-semibold text-lg mb-4 text-gray-800 dark:text-gray-100">LLM Provider Config</h3>
-      
-      <form onSubmit={handleSave} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Provider Name
-          </label>
-          <select 
-            value={provider}
-            onChange={(e) => setProvider(e.target.value)}
-            className="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md p-2 text-gray-900 dark:text-gray-100"
-          >
-            <option value="OpenAI">OpenAI</option>
-            <option value="Anthropic">Anthropic</option>
-            <option value="Gemini">Gemini</option>
-            <option value="Local">Local (Ollama, etc)</option>
-          </select>
-        </div>
+    <div className="w-full">
+      <div className="mb-8">
+        <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">LLM Providers</h2>
+        <p className="text-[14px] text-[#8A8C93] leading-relaxed">
+          Configure API keys for external Language Models. Keys are securely stored in your native OS keychain and never saved in plain text.
+        </p>
+      </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            API Key
-          </label>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-..."
-            className="w-full bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md p-2 text-gray-900 dark:text-gray-100"
-          />
-        </div>
+      <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg overflow-hidden">
+        <div className="p-6 border-b border-[#33353A]">
+          <form onSubmit={handleSave} className="space-y-6">
+            <div>
+              <label className="block text-[13px] font-medium text-[#E0E1E6] mb-2">
+                Provider Name
+              </label>
+              <select 
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+                className="w-full bg-[#222327] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] focus:ring-1 focus:ring-[#5E6AD2] outline-none rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] transition-colors"
+              >
+                <option value="OpenAI">OpenAI</option>
+                <option value="Anthropic">Anthropic</option>
+                <option value="Gemini">Gemini</option>
+                <option value="Local">Local (Ollama, etc)</option>
+              </select>
+            </div>
 
-        <div className="flex gap-2 pt-2">
-          <button 
-            type="submit"
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-md transition-colors"
-          >
-            Save Securely
-          </button>
-          <button 
-            type="button"
-            onClick={handleLoad}
-            className="flex-1 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 py-2 px-4 rounded-md transition-colors"
-          >
-            Load
-          </button>
-        </div>
-      </form>
+            <div>
+              <label className="block text-[13px] font-medium text-[#E0E1E6] mb-2">
+                API Key
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="sk-..."
+                  className="flex-1 bg-[#222327] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] focus:ring-1 focus:ring-[#5E6AD2] outline-none rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] transition-colors font-mono"
+                />
+                <button 
+                  type="button"
+                  onClick={handleLoad}
+                  className="px-4 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] text-[13px] font-medium rounded-md border border-[#3A3B42] transition-colors"
+                >
+                  Load existing
+                </button>
+              </div>
+            </div>
 
-      {status && (
-        <div className="mt-4 p-3 bg-gray-100 dark:bg-gray-700 rounded text-sm text-gray-700 dark:text-gray-300">
-          {status}
+            <div className="flex items-center gap-4 pt-2">
+              <button 
+                type="submit"
+                disabled={!apiKey}
+                className="px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Save securely
+              </button>
+              
+              {status && (
+                <span className="text-[13px] text-[#8A8C93] animate-fade-in">
+                  {status}
+                </span>
+              )}
+            </div>
+          </form>
         </div>
-      )}
+        <div className="bg-[#222327]/50 px-6 py-4 text-[12px] text-[#8A8C93] flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-green-500/80"></span>
+          System keychain access is active and securing your credentials.
+        </div>
+      </div>
     </div>
   );
 }
