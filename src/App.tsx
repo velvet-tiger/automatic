@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Providers from "./Providers";
+import Skills from "./Skills";
 import "./App.css";
 
 function App() {
@@ -63,9 +64,9 @@ function App() {
         <header className="h-14 border-b border-gray-200 dark:border-gray-700 flex items-center px-6">
           <h2 className="font-semibold text-lg capitalize">{activeTab.replace('-', ' ')}</h2>
         </header>
-        <div className="flex-1 overflow-auto p-6">
+        <div className="flex-1 overflow-hidden p-6">
           {activeTab === "agents" && (
-            <div>
+            <div className="h-full overflow-auto">
               <p className="text-gray-600 dark:text-gray-400 mb-4">Manage your locally running agents here.</p>
               <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
                 <div className="flex justify-between items-center mb-4">
@@ -81,24 +82,18 @@ function App() {
             </div>
           )}
           {activeTab === "providers" && (
-            <div>
+            <div className="h-full overflow-auto">
               <p className="text-gray-600 dark:text-gray-400 mb-4">Configure LLM API keys securely. Keys are stored in your OS keychain.</p>
               <Providers />
             </div>
           )}
           {activeTab === "skills" && (
-            <div>
-              <p className="text-gray-600 dark:text-gray-400 mb-4">Edit and track your Agent Skills.</p>
-              <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-                 <h3 className="font-medium text-lg mb-4">Your Skills</h3>
-                 <div className="text-center py-10 text-gray-500 dark:text-gray-400 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg">
-                    No skills loaded yet.
-                 </div>
-              </div>
+            <div className="h-full">
+              <Skills />
             </div>
           )}
           {activeTab === "mcp" && (
-            <div>
+            <div className="h-full overflow-auto">
               <p className="text-gray-600 dark:text-gray-400 mb-4">Manage Model Context Protocol servers.</p>
               <div className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
                  <div className="flex justify-between items-center mb-4">
