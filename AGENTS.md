@@ -2,11 +2,24 @@
 
 Read `.ai/constitution.md` before making any changes. It contains the full architecture, conventions, design system, and command reference.
 
+## Core Concept
+
+Nexus is a **hub, not an executor**. It does not run agents. External applications (Claude Code, OpenCode, custom scripts) connect to Nexus to:
+
+- **Pull** credentials, skills, and MCP server configs
+- **Push** agent registration and status updates
+
+Nexus exposes two service interfaces (planned):
+- **MCP Server** -- for AI-native tools that speak MCP
+- **Local HTTP API** -- for scripts and non-MCP clients
+
+The desktop UI (Tauri) is a visual management layer for editing and monitoring.
+
 ## Quick Orientation
 
 Nexus is a Tauri 2 desktop app (Rust + React/TypeScript). There are two codebases:
 
-- **`src-tauri/src/lib.rs`** - The entire Rust backend. All Tauri commands live here. This is the only Rust source file that matters right now.
+- **`src-tauri/src/lib.rs`** - The entire Rust backend. All Tauri commands live here. This is the only Rust source file.
 - **`src/`** - The React frontend. `App.tsx` is the shell (sidebar + routing). Feature views are separate components (`Skills.tsx`, `Providers.tsx`).
 
 The frontend calls the backend with `invoke("command_name", { params })`. The backend returns `Result<T, String>`.
@@ -19,7 +32,9 @@ The frontend calls the backend with `invoke("command_name", { params })`. The ba
 | LLM API key storage | `Providers.tsx` | `save_api_key`, `get_api_key` | Done |
 | Skills CRUD | `Skills.tsx` | `get_skills`, `read_skill`, `save_skill`, `delete_skill` | Done |
 | MCP config read | - | `get_mcp_servers` | Backend only |
-| Local Agents | Empty state in `App.tsx` | - | Not started |
+| MCP Server interface | - | - | Not started |
+| HTTP API interface | - | - | Not started |
+| Connected Agents view | Empty state in `App.tsx` | - | Not started |
 | Activity Log | Empty state in `App.tsx` | - | Not started |
 | Settings | Empty state in `App.tsx` | - | Not started |
 

@@ -2,40 +2,83 @@
 
 ## Identity
 
-Nexus is a cross-platform desktop application for managing LLM providers, running local AI agents, and editing Skills and MCP server configurations. It is built with Tauri 2 (Rust backend) and React/TypeScript (frontend).
+Nexus is a cross-platform desktop application that serves as a **registry, credential vault, and configuration hub** for AI agent tooling. It does not execute agents itself. Instead, external applications (Claude Code, OpenCode, custom scripts, etc.) connect to Nexus to retrieve credentials, discover skills, read MCP configurations, and optionally report their status.
+
+Nexus exposes its services via two interfaces:
+1. **MCP Server** -- for AI-native tools that already speak MCP (Claude Code, OpenCode).
+2. **Local HTTP API** -- for scripts, CLIs, and non-MCP clients.
+
+The desktop UI (Tauri) provides a visual management layer for editing, browsing, and monitoring everything Nexus serves.
 
 ## Architecture
 
-### Two-Process Model
+### Three-Layer Model
 
-Nexus follows the standard Tauri architecture with two processes:
+```
+┌─────────────────────────────────────────────────┐
+│  Tauri Desktop UI (React/TypeScript)            │  Human interface
+│  - Edit skills, providers, MCP configs          │  for configuration
+│  - Monitor connected agents                     │  and monitoring
+├─────────────────────────────────────────────────┤
+│  Rust Core (src-tauri/src/lib.rs)               │  Shared logic:
+│  - OS keychain access                           │  filesystem, keychain,
+│  - Filesystem operations                        │  validation, data access
+│  - Validation & path safety                     │
+├─────────────────────────────────────────────────┤
+│  Service Layer (planned)                        │  External-facing APIs
+│  - MCP Server (stdio or SSE transport)          │  that other apps
+│  - Local HTTP API (localhost:PORT)              │  connect to
+└─────────────────────────────────────────────────┘
+        ▲               ▲               ▲
+        │               │               │
+   Claude Code      OpenCode      Custom scripts
+   (via MCP)        (via MCP)     (via HTTP)
+```
 
-1. **Rust Backend** (`src-tauri/src/lib.rs`): All privileged operations run here. This includes filesystem access, OS keychain integration, and (future) agent process management. The frontend communicates with the backend exclusively via Tauri `#[tauri::command]` functions, invoked from the frontend with `invoke()`.
+The Rust core is shared between the Tauri UI layer and the service layer. Both call the same internal functions for keychain access, skill reading, etc.
 
-2. **React Frontend** (`src/`): A single-page React application rendered in a Webview. It handles all UI rendering, navigation state, and calls into the Rust backend for any operation that touches the OS.
+### Data Flow
+
+Nexus is **passive by default**. It serves data on request:
+
+**Outbound (Nexus serves to external apps):**
+- Credentials: "Give me the API key for Anthropic"
+- Skills: "List available skills" / "Read skill X"
+- MCP config: "What MCP servers should I connect to?"
+- Project configs: "What's the configuration for project Y?"
+
+**Inbound (external apps report to Nexus):**
+- Agent registration: "I'm agent X, running on project Y"
+- Status updates: "Session started / completed / errored"
+- Activity events: "Tool call executed", "tokens used"
+
+Nexus does NOT:
+- Spawn or manage agent processes
+- Proxy or mediate LLM API calls
+- Execute tools on behalf of agents
 
 ### Key Directories
 
 ```
-src/                  # React/TypeScript frontend
-  App.tsx             # Root layout: sidebar navigation + content area
+src/                  # React/TypeScript frontend (Tauri webview)
+  App.tsx             # Root layout: sidebar navigation + content routing
   App.css             # Global styles, Tailwind import, custom scrollbar
-  Skills.tsx          # Skills list + editor (two-pane view)
+  Skills.tsx          # Skills list + markdown editor (two-pane view)
   Providers.tsx       # LLM API key management form
   main.tsx            # React DOM entry point
 
-src-tauri/            # Rust backend (Tauri)
-  src/lib.rs          # All Tauri commands (the entire backend API surface)
+src-tauri/            # Rust backend
+  src/lib.rs          # All Tauri commands AND shared core logic
   src/main.rs         # Binary entry point (calls nexus_lib::run())
   Cargo.toml          # Rust dependencies
-  tauri.conf.json     # Tauri window config, build config, bundle config
+  tauri.conf.json     # Window config, build config, bundle config
   capabilities/       # Tauri permission capabilities
   icons/              # App icons for all platforms
 ```
 
-### Frontend-Backend Communication
+### Frontend-Backend Communication (Tauri UI)
 
-The frontend calls the backend using `invoke()` from `@tauri-apps/api/core`. Every backend function is a `#[tauri::command]` in `lib.rs`.
+The React frontend calls the Rust backend using `invoke()` from `@tauri-apps/api/core`. Every backend function is a `#[tauri::command]` in `lib.rs`.
 
 Current commands:
 
@@ -51,17 +94,58 @@ Current commands:
 
 All commands must be registered in the `tauri::generate_handler![]` macro in `lib.rs`.
 
+### External Service Interfaces (Planned)
+
+#### MCP Server
+
+Nexus will run an MCP server that AI tools can add to their MCP configuration. The server exposes Nexus capabilities as MCP tools:
+
+| MCP Tool | Description |
+|----------|-------------|
+| `nexus_get_credential` | Retrieve an API key by provider name |
+| `nexus_list_skills` | List all available skill names |
+| `nexus_read_skill` | Read the content of a specific skill |
+| `nexus_list_mcp_servers` | Get MCP server configurations |
+| `nexus_register_agent` | Register an external agent session |
+| `nexus_report_status` | Push a status update from an external agent |
+
+An external tool would configure this in its MCP settings:
+```json
+{
+  "mcpServers": {
+    "nexus": {
+      "command": "nexus",
+      "args": ["mcp-serve"]
+    }
+  }
+}
+```
+
+#### HTTP API
+
+A local HTTP server (e.g. `http://localhost:7400`) for non-MCP clients:
+
+```
+GET  /api/credentials/:provider
+GET  /api/skills
+GET  /api/skills/:name
+GET  /api/mcp-servers
+POST /api/agents/register
+POST /api/agents/:id/status
+```
+
 ## Conventions
 
 ### Rust Backend
 
-- All backend functions must be `#[tauri::command]` and return `Result<T, String>`.
+- All Tauri-facing functions must be `#[tauri::command]` and return `Result<T, String>`.
 - Use `.map_err(|e| e.to_string())` to convert errors for the frontend.
 - Validate all user-provided path components with `is_valid_skill_name()` or equivalent before any filesystem operation. Never allow path traversal.
 - API keys are stored via the `keyring` crate under the service name `nexus_desktop`.
 - Use the `dirs` crate for resolving home directories. Do not hardcode paths.
 - Skills are stored at `~/.claude/skills/<name>/SKILL.md`.
 - MCP config is read from `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac). Cross-platform support is pending.
+- When the MCP server and HTTP API are implemented, they must call the same core functions that the Tauri commands use. Do not duplicate logic.
 
 ### React Frontend
 
@@ -125,15 +209,20 @@ cargo check          # Check Rust compilation (run from src-tauri/)
 - Sidebar navigation with Linear-style dark theme
 - LLM Provider key management (save/load from OS keychain)
 - Skills management (list, create, read, edit, delete from `~/.claude/skills/`)
-- MCP server config reading (read-only)
+- MCP server config reading (read-only, Mac only)
 
-### Not Yet Implemented
-- Local Agent orchestration (spawning, monitoring, killing background agent processes)
+### Next: Service Layer
+- Extract core logic in `lib.rs` into reusable functions (separate from `#[tauri::command]` wrappers)
+- Implement MCP server (stdio transport) exposing credentials, skills, MCP configs
+- Implement local HTTP API on localhost for non-MCP clients
+- Add agent registration and status reporting endpoints
+
+### Later: UI Enhancements
+- Connected Agents view (shows agents that have registered via MCP/HTTP)
+- Activity log (streaming events from connected agents)
 - MCP server configuration editing and creation
-- Activity log / agent output streaming
 - Settings / Preferences page
 - Cross-platform MCP config paths (currently Mac-only)
-- System tray integration for background agents
 
 ## Gotchas
 

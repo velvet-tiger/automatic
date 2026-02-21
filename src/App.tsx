@@ -1,7 +1,8 @@
 import { useState } from "react";
 import Providers from "./Providers";
 import Skills from "./Skills";
-import { Bot, Key, Code, Server, Search, Edit, ChevronDown, PlayCircle, Settings, Command, Activity } from "lucide-react";
+import Projects from "./Projects";
+import { Bot, Key, Code, Server, Search, Edit, ChevronDown, PlayCircle, Settings, Command, Activity, FolderOpen } from "lucide-react";
 import "./App.css";
 
 function App() {
@@ -56,8 +57,18 @@ function App() {
               <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
             <ul className="space-y-0.5">
-              <NavItem id="agents" icon={Bot} label="Local Agents" count="0" />
+              <NavItem id="agents" icon={Bot} label="Connected Agents" count="0" />
               <NavItem id="activity" icon={Activity} label="Activity Log" />
+            </ul>
+          </div>
+
+          <div className="mb-6">
+            <div className="px-3 pb-1.5 text-[11px] font-semibold text-[#8A8C93] tracking-wider flex items-center justify-between group cursor-pointer hover:text-[#E0E1E6]">
+              <span>Workspace</span>
+              <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+            <ul className="space-y-0.5">
+              <NavItem id="projects" icon={FolderOpen} label="Projects" />
             </ul>
           </div>
 
@@ -110,15 +121,12 @@ function App() {
                 <div className="w-16 h-16 mx-auto mb-6 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#8A8C93]">
                   <PlayCircle size={24} strokeWidth={1.5} />
                 </div>
-                <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">No Active Agents</h2>
+                <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">No Connected Agents</h2>
                 <p className="text-[14px] text-[#8A8C93] mb-8 leading-relaxed">
-                  Agents are long-running background processes that autonomously complete complex tasks. 
-                  Start an agent to monitor its activity, coordinate tasks, and view results.
+                  External agents (Claude Code, OpenCode, custom scripts) connect to Nexus 
+                  to pull credentials, skills, and MCP configs. Connected agents will appear here.
                 </p>
                 <div className="flex items-center justify-center gap-3">
-                  <button className="px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors flex items-center gap-2">
-                    Start new agent <span className="opacity-70 text-[10px] border border-white/20 px-1 rounded">A</span>
-                  </button>
                   <button className="px-4 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] text-[13px] font-medium rounded border border-[#3A3B42] transition-colors">
                     Documentation
                   </button>
@@ -131,6 +139,11 @@ function App() {
                 <h3 className="text-sm font-medium mb-4">Activity Log</h3>
                 <div className="text-[13px] text-[#8A8C93]">No recent activity.</div>
              </div>
+          )}
+          {activeTab === "projects" && (
+            <div className="flex-1 h-full">
+              <Projects />
+            </div>
           )}
           {activeTab === "providers" && (
             <div className="flex-1 overflow-auto bg-[#222327] p-8">
