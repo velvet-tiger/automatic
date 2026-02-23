@@ -1,0 +1,7 @@
+[mcp_servers.nexus]
+command = "/Users/xtfer/working/agentic/src-tauri/target/debug/nexus"
+args = ["mcp-serve"]
+
+[mcp_servers.nexus.env]
+NEXUS_PROJECT = "Nexus"
+

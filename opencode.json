@@ -1,0 +1,11 @@
+{
+  "mcp": {
+    "nexus": {
+      "command": [
+        "/Users/xtfer/working/agentic/src-tauri/target/debug/nexus",
+        "mcp-serve"
+      ],
+      "type": "local"
+    }
+  }
+}

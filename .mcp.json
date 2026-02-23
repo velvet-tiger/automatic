@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "nexus": {
+      "args": [
+        "mcp-serve"
+      ],
+      "command": "/Users/xtfer/working/agentic/src-tauri/target/debug/nexus",
+      "env": {
+        "NEXUS_PROJECT": "Nexus"
+      }
+    }
+  }
+}

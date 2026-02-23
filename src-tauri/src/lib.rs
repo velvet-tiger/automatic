@@ -1,110 +1,55 @@
-use keyring::Entry;
-use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
+pub mod agent;
+pub mod core;
+pub mod mcp;
+pub mod sync;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-fn get_skills_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".claude/skills"))
-}
-
-fn get_projects_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".nexus/projects"))
-}
-
-fn is_valid_name(name: &str) -> bool {
-    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
-}
+// ── Tauri Command Wrappers ───────────────────────────────────────────────────
+//
+// Thin wrappers that delegate to core:: functions. All business logic lives in
+// core.rs so it can be shared with the MCP server and other interfaces.
 
 // ── API Keys ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
 fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
-    let entry = Entry::new("nexus_desktop", provider).map_err(|e| e.to_string())?;
-    entry.set_password(key).map_err(|e| e.to_string())
+    core::save_api_key(provider, key)
 }
 
 #[tauri::command]
 fn get_api_key(provider: &str) -> Result<String, String> {
-    let entry = Entry::new("nexus_desktop", provider).map_err(|e| e.to_string())?;
-    entry.get_password().map_err(|e| e.to_string())
+    core::get_api_key(provider)
+}
+
+// ── Agents ───────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn list_agents() -> Vec<agent::AgentInfo> {
+    agent::all().iter().map(|a| agent::AgentInfo::from_agent(*a)).collect()
 }
 
 // ── Skills ───────────────────────────────────────────────────────────────────
 
 #[tauri::command]
 fn get_skills() -> Result<Vec<String>, String> {
-    let skills_dir = get_skills_dir()?;
-
-    if !skills_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut skills = Vec::new();
-    let entries = fs::read_dir(skills_dir).map_err(|e| e.to_string())?;
-
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if is_valid_name(name) {
-                        skills.push(name.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(skills)
+    core::list_skills()
 }
 
 #[tauri::command]
 fn read_skill(name: &str) -> Result<String, String> {
-    if !is_valid_name(name) {
-        return Err("Invalid skill name".into());
-    }
-    let skills_dir = get_skills_dir()?;
-    let skill_path = skills_dir.join(name).join("SKILL.md");
-
-    if skill_path.exists() {
-        fs::read_to_string(skill_path).map_err(|e| e.to_string())
-    } else {
-        Ok("".to_string())
-    }
+    core::read_skill(name)
 }
 
 #[tauri::command]
 fn save_skill(name: &str, content: &str) -> Result<(), String> {
-    if !is_valid_name(name) {
-        return Err("Invalid skill name".into());
-    }
-    let skills_dir = get_skills_dir()?;
-    let skill_dir = skills_dir.join(name);
-
-    if !skill_dir.exists() {
-        fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
-    }
-
-    let skill_path = skill_dir.join("SKILL.md");
-    fs::write(skill_path, content).map_err(|e| e.to_string())
+    core::save_skill(name, content)?;
+    sync_projects_referencing_skill(name);
+    Ok(())
 }
 
 #[tauri::command]
 fn delete_skill(name: &str) -> Result<(), String> {
-    if !is_valid_name(name) {
-        return Err("Invalid skill name".into());
-    }
-    let skills_dir = get_skills_dir()?;
-    let skill_dir = skills_dir.join(name);
-
-    if skill_dir.exists() {
-        fs::remove_dir_all(&skill_dir).map_err(|e| e.to_string())?;
-    }
-
+    core::delete_skill(name)?;
+    prune_skill_from_projects(name);
     Ok(())
 }
 
@@ -112,108 +57,218 @@ fn delete_skill(name: &str) -> Result<(), String> {
 
 #[tauri::command]
 fn get_mcp_servers() -> Result<String, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    let config_path = home.join("Library/Application Support/Claude/claude_desktop_config.json");
+    core::list_mcp_servers()
+}
 
-    if config_path.exists() {
-        fs::read_to_string(config_path).map_err(|e| e.to_string())
-    } else {
-        Ok("{}".to_string())
+#[tauri::command]
+fn list_mcp_server_configs() -> Result<Vec<String>, String> {
+    core::list_mcp_server_configs()
+}
+
+#[tauri::command]
+fn read_mcp_server_config(name: &str) -> Result<String, String> {
+    core::read_mcp_server_config(name)
+}
+
+#[tauri::command]
+fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
+    core::save_mcp_server_config(name, data)?;
+    sync_projects_referencing_mcp_server(name);
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_mcp_server_config(name: &str) -> Result<(), String> {
+    core::delete_mcp_server_config(name)?;
+    prune_mcp_server_from_projects(name);
+    Ok(())
+}
+
+#[tauri::command]
+fn import_mcp_servers() -> Result<String, String> {
+    let imported = core::import_mcp_servers_from_claude()?;
+    if !imported.is_empty() {
+        sync_projects_referencing_mcp_servers(&imported);
     }
+    serde_json::to_string(&imported).map_err(|e| e.to_string())
 }
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct Project {
-    name: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    skills: Vec<String>,
-    #[serde(default)]
-    mcp_servers: Vec<String>,
-    #[serde(default)]
-    providers: Vec<String>,
-    #[serde(default)]
-    created_at: String,
-    #[serde(default)]
-    updated_at: String,
-}
-
 #[tauri::command]
 fn get_projects() -> Result<Vec<String>, String> {
-    let projects_dir = get_projects_dir()?;
-
-    if !projects_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut projects = Vec::new();
-    let entries = fs::read_dir(&projects_dir).map_err(|e| e.to_string())?;
-
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if is_valid_name(stem) {
-                        projects.push(stem.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(projects)
+    core::list_projects()
 }
 
 #[tauri::command]
 fn read_project(name: &str) -> Result<String, String> {
-    if !is_valid_name(name) {
-        return Err("Invalid project name".into());
-    }
-    let projects_dir = get_projects_dir()?;
-    let project_path = projects_dir.join(format!("{}.json", name));
+    core::read_project(name)
+}
 
-    if project_path.exists() {
-        fs::read_to_string(project_path).map_err(|e| e.to_string())
-    } else {
-        Err(format!("Project '{}' not found", name))
-    }
+#[tauri::command]
+fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let updated = sync::autodetect_project_dependencies(&project)?;
+    serde_json::to_string(&updated).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn save_project(name: &str, data: &str) -> Result<(), String> {
-    if !is_valid_name(name) {
-        return Err("Invalid project name".into());
+    core::save_project(name, data)?;
+
+    let project: core::Project =
+        serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    if !project.directory.is_empty() && !project.agents.is_empty() {
+        sync::sync_project_without_autodetect(&project)?;
     }
 
-    // Validate that data is valid JSON
-    serde_json::from_str::<Project>(data).map_err(|e| format!("Invalid project data: {}", e))?;
-
-    let projects_dir = get_projects_dir()?;
-    if !projects_dir.exists() {
-        fs::create_dir_all(&projects_dir).map_err(|e| e.to_string())?;
-    }
-
-    let project_path = projects_dir.join(format!("{}.json", name));
-    fs::write(project_path, data).map_err(|e| e.to_string())
+    Ok(())
 }
 
 #[tauri::command]
 fn delete_project(name: &str) -> Result<(), String> {
-    if !is_valid_name(name) {
-        return Err("Invalid project name".into());
-    }
-    let projects_dir = get_projects_dir()?;
-    let project_path = projects_dir.join(format!("{}.json", name));
+    core::delete_project(name)
+}
 
-    if project_path.exists() {
-        fs::remove_file(&project_path).map_err(|e| e.to_string())?;
+// ── Project Sync ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn sync_project(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let written = sync::sync_project(&project)?;
+    serde_json::to_string(&written).map_err(|e| e.to_string())
+}
+
+fn with_each_project_mut<F>(mut f: F)
+where
+    F: FnMut(&str, &mut core::Project),
+{
+    let project_names = match core::list_projects() {
+        Ok(names) => names,
+        Err(e) => {
+            eprintln!("Failed to list projects for config updates: {}", e);
+            return;
+        }
+    };
+
+    for project_name in project_names {
+        let raw = match core::read_project(&project_name) {
+            Ok(raw) => raw,
+            Err(e) => {
+                eprintln!("Failed to read project '{}': {}", project_name, e);
+                continue;
+            }
+        };
+
+        let mut project: core::Project = match serde_json::from_str(&raw) {
+            Ok(project) => project,
+            Err(e) => {
+                eprintln!("Failed to parse project '{}': {}", project_name, e);
+                continue;
+            }
+        };
+
+        f(&project_name, &mut project);
+    }
+}
+
+fn sync_project_if_configured(project_name: &str, project: &core::Project) {
+    if project.directory.is_empty() || project.agents.is_empty() {
+        return;
     }
 
-    Ok(())
+    if let Err(e) = sync::sync_project_without_autodetect(project) {
+        eprintln!("Failed to sync project '{}' after registry update: {}", project_name, e);
+    }
+}
+
+fn sync_projects_referencing_skill(skill_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        if project.skills.iter().any(|skill| skill == skill_name) {
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
+fn sync_projects_referencing_mcp_server(server_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        if project.mcp_servers.iter().any(|server| server == server_name) {
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
+fn sync_projects_referencing_mcp_servers(server_names: &[String]) {
+    with_each_project_mut(|project_name, project| {
+        if project
+            .mcp_servers
+            .iter()
+            .any(|server| server_names.iter().any(|name| name == server))
+        {
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
+fn prune_skill_from_projects(skill_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        let before = project.skills.len();
+        project.skills.retain(|skill| skill != skill_name);
+
+        if project.skills.len() != before {
+            project.updated_at = chrono::Utc::now().to_rfc3339();
+            match serde_json::to_string(project).map_err(|e| e.to_string()) {
+                Ok(data) => {
+                    if let Err(e) = core::save_project(project_name, &data) {
+                        eprintln!("Failed to update project '{}': {}", project_name, e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to serialize project '{}': {}", project_name, e);
+                }
+            }
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
+fn prune_mcp_server_from_projects(server_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        let before = project.mcp_servers.len();
+        project.mcp_servers.retain(|server| server != server_name);
+
+        if project.mcp_servers.len() != before {
+            project.updated_at = chrono::Utc::now().to_rfc3339();
+            match serde_json::to_string(project).map_err(|e| e.to_string()) {
+                Ok(data) => {
+                    if let Err(e) = core::save_project(project_name, &data) {
+                        eprintln!("Failed to update project '{}': {}", project_name, e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to serialize project '{}': {}", project_name, e);
+                }
+            }
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
+// ── Plugins / Sessions ───────────────────────────────────────────────────────
+
+#[tauri::command]
+fn install_plugin_marketplace() -> Result<String, String> {
+    core::install_plugin_marketplace()
+}
+
+#[tauri::command]
+fn get_sessions() -> Result<String, String> {
+    core::list_sessions()
 }
 
 // ── App Entry ────────────────────────────────────────────────────────────────
@@ -222,18 +277,41 @@ fn delete_project(name: &str) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|_app| {
+            // Ensure plugin marketplace exists on disk; register with Claude
+            // Code if the CLI is available.  Runs on a background thread so
+            // it never blocks the UI.
+            std::thread::spawn(|| {
+                match core::install_plugin_marketplace() {
+                    Ok(msg) => eprintln!("[nexus] plugin startup: {}", msg),
+                    Err(e) => eprintln!("[nexus] plugin startup error: {}", e),
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             save_api_key,
             get_api_key,
+            list_agents,
             get_skills,
             read_skill,
             save_skill,
             delete_skill,
             get_mcp_servers,
+            list_mcp_server_configs,
+            read_mcp_server_config,
+            save_mcp_server_config,
+            delete_mcp_server_config,
+            import_mcp_servers,
             get_projects,
             read_project,
+            autodetect_project_dependencies,
             save_project,
-            delete_project
+            delete_project,
+            sync_project,
+            install_plugin_marketplace,
+            get_sessions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

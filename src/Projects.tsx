@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   Plus,
   X,
@@ -7,35 +8,49 @@ import {
   Check,
   Code,
   Server,
-  Key,
   Trash2,
+  Bot,
+  RefreshCw,
 } from "lucide-react";
 
 interface Project {
   name: string;
   description: string;
+  directory: string;
   skills: string[];
   mcp_servers: string[];
   providers: string[];
+  agents: string[];
   created_at: string;
   updated_at: string;
+}
+
+interface AgentInfo {
+  id: string;
+  label: string;
+  description: string;
 }
 
 function emptyProject(name: string): Project {
   return {
     name,
     description: "",
+    directory: "",
     skills: [],
     mcp_servers: [],
     providers: [],
+    agents: [],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 }
 
 export default function Projects() {
+  const LAST_PROJECT_KEY = "nexus.projects.selected";
   const [projects, setProjects] = useState<string[]>([]);
-  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [selectedName, setSelectedName] = useState<string | null>(() => {
+    return localStorage.getItem(LAST_PROJECT_KEY);
+  });
   const [project, setProject] = useState<Project | null>(null);
   const [dirty, setDirty] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -43,19 +58,36 @@ export default function Projects() {
   const [error, setError] = useState<string | null>(null);
 
   // Available items to pick from
+  const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
   const [availableSkills, setAvailableSkills] = useState<string[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<string[]>([]);
 
   // Inline add state
   const [addingSkill, setAddingSkill] = useState(false);
   const [addingMcp, setAddingMcp] = useState(false);
-  const [addingProvider, setAddingProvider] = useState(false);
+  const [addingAgent, setAddingAgent] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   useEffect(() => {
     loadProjects();
+    loadAvailableAgents();
     loadAvailableSkills();
     loadAvailableMcpServers();
   }, []);
+
+  useEffect(() => {
+    if (projects.length === 0) {
+      return;
+    }
+
+    const preferred = selectedName && projects.includes(selectedName)
+      ? selectedName
+      : projects[0];
+
+    if (preferred && (!project || project.name !== preferred) && !isCreating) {
+      selectProject(preferred);
+    }
+  }, [projects]);
 
   const loadProjects = async () => {
     try {
@@ -64,6 +96,15 @@ export default function Projects() {
       setError(null);
     } catch (err: any) {
       setError(`Failed to load projects: ${err}`);
+    }
+  };
+
+  const loadAvailableAgents = async () => {
+    try {
+      const result: AgentInfo[] = await invoke("list_agents");
+      setAvailableAgents(result);
+    } catch {
+      // Agents list may not be available yet
     }
   };
 
@@ -78,21 +119,31 @@ export default function Projects() {
 
   const loadAvailableMcpServers = async () => {
     try {
-      const raw: string = await invoke("get_mcp_servers");
-      const config = JSON.parse(raw);
-      if (config.mcpServers) {
-        setAvailableMcpServers(Object.keys(config.mcpServers).sort());
-      }
+      const result: string[] = await invoke("list_mcp_server_configs");
+      setAvailableMcpServers(result.sort());
     } catch {
-      // MCP config may not exist
+      // MCP servers may not exist yet
     }
   };
 
   const selectProject = async (name: string) => {
     try {
-      const raw: string = await invoke("read_project", { name });
-      const data: Project = JSON.parse(raw);
+      const raw: string = await invoke("autodetect_project_dependencies", { name });
+      const parsed = JSON.parse(raw);
+      // Normalize: ensure all fields exist with defaults for older projects
+      const data: Project = {
+        name: parsed.name || name,
+        description: parsed.description || "",
+        directory: parsed.directory || "",
+        skills: parsed.skills || [],
+        mcp_servers: parsed.mcp_servers || [],
+        providers: parsed.providers || [],
+        agents: parsed.agents || [],
+        created_at: parsed.created_at || new Date().toISOString(),
+        updated_at: parsed.updated_at || new Date().toISOString(),
+      };
       setSelectedName(name);
+      localStorage.setItem(LAST_PROJECT_KEY, name);
       setProject(data);
       setDirty(false);
       setIsCreating(false);
@@ -133,25 +184,27 @@ export default function Projects() {
     }
   };
 
-  const handleDelete = async (name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm(`Delete project "${name}"?`)) return;
+  const handleRemove = async (name: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!confirm(`Remove project "${name}" from Nexus?\n\n(This only removes the project from this app. Your actual project files will NOT be deleted.)`)) return;
     try {
       await invoke("delete_project", { name });
       if (selectedName === name) {
         setSelectedName(null);
+        localStorage.removeItem(LAST_PROJECT_KEY);
         setProject(null);
         setDirty(false);
       }
       await loadProjects();
       setError(null);
     } catch (err: any) {
-      setError(`Failed to delete project: ${err}`);
+      setError(`Failed to remove project: ${err}`);
     }
   };
 
   const startCreate = () => {
     setSelectedName(null);
+    localStorage.removeItem(LAST_PROJECT_KEY);
     setProject(emptyProject(""));
     setDirty(true);
     setIsCreating(true);
@@ -160,18 +213,57 @@ export default function Projects() {
 
   // ── List helpers ─────────────────────────────────────────────────────────
 
-  const addItem = (key: "skills" | "mcp_servers" | "providers", item: string) => {
+  type ListField = "skills" | "mcp_servers" | "providers" | "agents";
+
+  const addItem = (key: ListField, item: string) => {
     if (!project || !item.trim()) return;
     if (project[key].includes(item.trim())) return;
     updateField(key, [...project[key], item.trim()]);
   };
 
-  const removeItem = (key: "skills" | "mcp_servers" | "providers", idx: number) => {
+  const removeItem = (key: ListField, idx: number) => {
     if (!project) return;
     updateField(key, project[key].filter((_, i) => i !== idx));
   };
 
-  const knownProviders = ["Anthropic", "OpenAI", "Google", "Groq", "Mistral", "OpenRouter"];
+  const handleSync = async () => {
+    const name = isCreating ? newName.trim() : selectedName;
+    if (!name || !project) return;
+
+    // Save first if dirty
+    if (dirty) {
+      await handleSave();
+    }
+
+    try {
+      setSyncStatus("syncing");
+      const result: string = await invoke("sync_project", { name });
+      const files: string[] = JSON.parse(result);
+      setSyncStatus(`Synced ${files.length} config${files.length !== 1 ? "s" : ""}`);
+      
+      // Reload the project in case sync discovered new skills/servers
+      const raw: string = await invoke("read_project", { name });
+      const parsed = JSON.parse(raw);
+      setProject({
+        name: parsed.name || name,
+        description: parsed.description || "",
+        directory: parsed.directory || "",
+        skills: parsed.skills || [],
+        mcp_servers: parsed.mcp_servers || [],
+        providers: parsed.providers || [],
+        agents: parsed.agents || [],
+        created_at: parsed.created_at || new Date().toISOString(),
+        updated_at: parsed.updated_at || new Date().toISOString(),
+      });
+      await loadAvailableSkills();
+      await loadAvailableMcpServers();
+      
+      setTimeout(() => setSyncStatus(null), 4000);
+    } catch (err: any) {
+      setSyncStatus(`Sync failed: ${err}`);
+      setTimeout(() => setSyncStatus(null), 5000);
+    }
+  };
 
   return (
     <div className="flex h-full w-full bg-[#222327]">
@@ -224,9 +316,9 @@ export default function Projects() {
                     <span className="flex-1 text-left truncate">{name}</span>
                   </button>
                   <button
-                    onClick={(e) => handleDelete(name, e)}
+                    onClick={(e) => handleRemove(name, e)}
                     className="absolute right-2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
-                    title="Delete Project"
+                    title="Remove Project from Nexus"
                   >
                     <X size={12} />
                   </button>
@@ -271,6 +363,28 @@ export default function Projects() {
               </div>
 
               <div className="flex items-center gap-2">
+                {syncStatus && (
+                  <span className={`text-[12px] ${syncStatus.startsWith("Sync failed") ? "text-[#FF6B6B]" : syncStatus === "syncing" ? "text-[#8A8C93]" : "text-[#4ADE80]"}`}>
+                    {syncStatus === "syncing" ? "Syncing..." : syncStatus}
+                  </span>
+                )}
+                {!isCreating && selectedName && (
+                  <button
+                    onClick={() => handleRemove(selectedName)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#FF6B6B]/10 text-[#8A8C93] hover:text-[#FF6B6B] rounded text-[12px] font-medium border border-[#3A3B42] hover:border-[#FF6B6B]/30 transition-colors mr-1"
+                    title="Remove project from Nexus"
+                  >
+                    <Trash2 size={12} /> Remove
+                  </button>
+                )}
+                {!dirty && project.directory && project.agents.length > 0 && (
+                  <button
+                    onClick={handleSync}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] rounded text-[12px] font-medium border border-[#3A3B42] transition-colors"
+                  >
+                    <RefreshCw size={12} /> Sync Configs
+                  </button>
+                )}
                 {dirty && (
                   <button
                     onClick={handleSave}
@@ -298,6 +412,106 @@ export default function Projects() {
                     rows={3}
                     className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none resize-none transition-colors"
                   />
+                </section>
+
+                {/* Directory */}
+                <section>
+                  <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                    <span className="flex items-center gap-1.5">
+                      <FolderOpen size={12} /> Project Directory
+                    </span>
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={project.directory}
+                      onChange={(e) => updateField("directory", e.target.value)}
+                      placeholder="/path/to/your/project"
+                      className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono transition-colors"
+                    />
+                    <button
+                      onClick={async () => {
+                        const selected = await open({
+                          directory: true,
+                          multiple: false,
+                          title: "Select project directory",
+                        });
+                        if (selected) {
+                          updateField("directory", selected as string);
+                        }
+                      }}
+                      className="px-3 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors whitespace-nowrap"
+                    >
+                      Browse
+                    </button>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-[#8A8C93]">
+                    Agent configs will be written to this directory when you sync.
+                  </p>
+                </section>
+
+                {/* Agent Tools */}
+                <section>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
+                      <Bot size={12} /> Agent Tools
+                    </label>
+                    <button
+                      onClick={() => setAddingAgent(!addingAgent)}
+                      className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                    >
+                      <Plus size={13} />
+                    </button>
+                  </div>
+                  {addingAgent && (
+                    <div className="mb-2">
+                      {availableAgents.filter((a) => !project.agents.includes(a.id)).length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
+                          {availableAgents
+                            .filter((a) => !project.agents.includes(a.id))
+                            .map((a) => (
+                              <button
+                                key={a.id}
+                                onClick={() => { addItem("agents", a.id); setAddingAgent(false); }}
+                                className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors flex items-center gap-1.5"
+                              >
+                                <span>{a.label}</span>
+                                <span className="text-[10px] text-[#8A8C93]">{a.description}</span>
+                              </button>
+                            ))}
+                        </div>
+                      ) : (
+                        <p className="text-[12px] text-[#8A8C93] italic">All agents added.</p>
+                      )}
+                    </div>
+                  )}
+                  {project.agents.length === 0 ? (
+                    <p className="text-[13px] text-[#8A8C93]/60 italic">No agent tools selected. Add tools to enable config sync.</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {project.agents.map((agentId, i) => {
+                        const agent = availableAgents.find((a) => a.id === agentId);
+                        return (
+                          <li
+                            key={agentId}
+                            className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
+                          >
+                            <span className="flex items-center gap-2">
+                              <Bot size={12} className="text-[#8A8C93]" />
+                              {agent?.label || agentId}
+                              <span className="text-[11px] text-[#8A8C93]">{agent?.description}</span>
+                            </span>
+                            <button
+                              onClick={() => removeItem("agents", i)}
+                              className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </section>
 
                 {/* Skills */}
@@ -417,65 +631,6 @@ export default function Projects() {
                     </ul>
                   )}
                 </section>
-
-                {/* Providers */}
-                <section>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
-                      <Key size={12} /> LLM Providers
-                    </label>
-                    <button
-                      onClick={() => setAddingProvider(!addingProvider)}
-                      className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
-                    >
-                      <Plus size={13} />
-                    </button>
-                  </div>
-                  {addingProvider && (
-                    <div className="mb-2">
-                      {knownProviders.filter((p) => !project.providers.includes(p)).length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
-                          {knownProviders
-                            .filter((p) => !project.providers.includes(p))
-                            .map((p) => (
-                              <button
-                                key={p}
-                                onClick={() => { addItem("providers", p); setAddingProvider(false); }}
-                                className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors"
-                              >
-                                {p}
-                              </button>
-                            ))}
-                        </div>
-                      ) : (
-                        <p className="text-[12px] text-[#8A8C93] italic">All providers added.</p>
-                      )}
-                    </div>
-                  )}
-                  {project.providers.length === 0 ? (
-                    <p className="text-[13px] text-[#8A8C93]/60 italic">No providers selected.</p>
-                  ) : (
-                    <ul className="space-y-1">
-                      {project.providers.map((p, i) => (
-                        <li
-                          key={p}
-                          className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
-                        >
-                          <span className="flex items-center gap-2">
-                            <Key size={12} className="text-[#8A8C93]" />
-                            {p}
-                          </span>
-                          <button
-                            onClick={() => removeItem("providers", i)}
-                            className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
               </div>
             </div>
           </div>
@@ -489,7 +644,7 @@ export default function Projects() {
               No Project Selected
             </h2>
             <p className="text-[14px] text-[#8A8C93] mb-8 leading-relaxed max-w-sm">
-              Projects group skills, MCP servers, and providers into reusable
+              Projects group skills and MCP servers into reusable
               configurations. Select one from the sidebar or create a new
               project.
             </p>
