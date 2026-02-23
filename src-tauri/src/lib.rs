@@ -27,6 +27,49 @@ fn list_agents() -> Vec<agent::AgentInfo> {
     agent::all().iter().map(|a| agent::AgentInfo::from_agent(*a)).collect()
 }
 
+/// Returns each agent with the list of projects that reference it.
+#[tauri::command]
+fn list_agents_with_projects() -> Result<String, String> {
+    let agents = agent::all();
+    let project_names = core::list_projects().unwrap_or_default();
+
+    // Read all projects once
+    let projects: Vec<core::Project> = project_names
+        .iter()
+        .filter_map(|name| {
+            core::read_project(name)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<core::Project>(&raw).ok())
+        })
+        .collect();
+
+    let result: Vec<serde_json::Value> = agents
+        .iter()
+        .map(|a| {
+            let agent_projects: Vec<serde_json::Value> = projects
+                .iter()
+                .filter(|p| p.agents.iter().any(|id| id == a.id()))
+                .map(|p| {
+                    serde_json::json!({
+                        "name": p.name,
+                        "directory": p.directory,
+                    })
+                })
+                .collect();
+
+            serde_json::json!({
+                "id": a.id(),
+                "label": a.label(),
+                "description": a.config_description(),
+                "project_file": a.project_file_name(),
+                "projects": agent_projects,
+            })
+        })
+        .collect();
+
+    serde_json::to_string(&result).map_err(|e| e.to_string())
+}
+
 // ── Skills ───────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -187,7 +230,7 @@ fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
     let updated = sync::autodetect_project_dependencies(&project)?;
-    serde_json::to_string(&updated).map_err(|e| e.to_string())
+    serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -197,8 +240,10 @@ fn save_project(name: &str, data: &str) -> Result<(), String> {
     let project: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
 
+    // Sync uses the same path as the explicit sync_project command (including
+    // autodetect) so that save and sync are functionally identical.
     if !project.directory.is_empty() && !project.agents.is_empty() {
-        sync::sync_project_without_autodetect(&project)?;
+        sync::sync_project(&project)?;
     }
 
     Ok(())
@@ -217,7 +262,7 @@ fn sync_project(name: &str) -> Result<String, String> {
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
     let written = sync::sync_project(&project)?;
-    serde_json::to_string(&written).map_err(|e| e.to_string())
+    serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
 }
 
 fn with_each_project_mut<F>(mut f: F)
@@ -298,7 +343,7 @@ fn prune_skill_from_projects(skill_name: &str) {
 
         if project.skills.len() != before {
             project.updated_at = chrono::Utc::now().to_rfc3339();
-            match serde_json::to_string(project).map_err(|e| e.to_string()) {
+            match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
                 Ok(data) => {
                     if let Err(e) = core::save_project(project_name, &data) {
                         eprintln!("Failed to update project '{}': {}", project_name, e);
@@ -320,7 +365,7 @@ fn prune_mcp_server_from_projects(server_name: &str) {
 
         if project.mcp_servers.len() != before {
             project.updated_at = chrono::Utc::now().to_rfc3339();
-            match serde_json::to_string(project).map_err(|e| e.to_string()) {
+            match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
                 Ok(data) => {
                     if let Err(e) = core::save_project(project_name, &data) {
                         eprintln!("Failed to update project '{}': {}", project_name, e);
@@ -370,6 +415,7 @@ pub fn run() {
             save_api_key,
             get_api_key,
             list_agents,
+            list_agents_with_projects,
             get_skills,
             read_skill,
             save_skill,

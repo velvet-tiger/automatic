@@ -3,14 +3,15 @@ import Skills from "./Skills";
 import Projects from "./Projects";
 import McpServers from "./McpServers";
 import Templates from "./Templates";
-import { Code, Server, ChevronDown, Settings, FolderOpen, LayoutTemplate } from "lucide-react";
+import Agents from "./Agents";
+import { Code, Server, ChevronDown, Settings, FolderOpen, LayoutTemplate, Bot } from "lucide-react";
 import "./App.css";
 
 function App() {
   const [activeTab, setActiveTab] = useState(() => {
     const saved = localStorage.getItem("nexus.activeTab");
-    // Reset to projects if saved tab was removed (agents/activity)
-    if (saved === "agents" || saved === "activity") return "projects";
+    // Reset to projects if saved tab was removed (activity)
+    if (saved === "activity") return "projects";
     return saved || "projects";
   });
 
@@ -63,6 +64,7 @@ function App() {
             </div>
             <ul className="space-y-0.5">
               <NavItem id="projects" icon={FolderOpen} label="Projects" />
+              <NavItem id="agents" icon={Bot} label="Agents" />
             </ul>
           </div>
 
@@ -102,6 +104,11 @@ function App() {
           {activeTab === "projects" && (
             <div className="flex-1 h-full">
               <Projects />
+            </div>
+          )}
+          {activeTab === "agents" && (
+            <div className="flex-1 h-full">
+              <Agents />
             </div>
           )}
           {activeTab === "skills" && (

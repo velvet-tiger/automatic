@@ -129,7 +129,7 @@ impl NexusMcpServer {
 
     #[tool(
         name = "nexus_sync_project",
-        description = "Sync a project's MCP server configs to its directory for all configured agent tools (Claude Code, Codex, OpenCode). The project must have a directory path and at least one agent tool configured."
+        description = "Sync a project's MCP server configs to its directory for all configured agent tools. The project must have a directory path and at least one agent tool configured."
     )]
     async fn sync_project(
         &self,

@@ -78,7 +78,7 @@ src-tauri/            # Rust backend
 |------|----------|-----------|
 | API keys | OS keychain | `keyring` crate, service name `nexus_desktop` |
 | Skills | `~/.claude/skills/<name>/SKILL.md` | Filesystem |
-| Projects | `~/.nexus/projects/<name>.json` | Filesystem (JSON) |
+| Projects | `<project-dir>/.nexus/project.json` (full config, pretty-printed); `~/.nexus/projects/<name>.json` (registry entry pointing to directory) | Filesystem (JSON) |
 | MCP config | `~/Library/Application Support/Claude/claude_desktop_config.json` | Read-only, Mac only |
 
 ### Frontend-Backend Communication (Tauri UI)

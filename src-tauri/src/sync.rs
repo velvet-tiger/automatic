@@ -38,6 +38,11 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
         return Err(format!("Directory '{}' does not exist", project.directory));
     }
 
+    // Ensure the project config is written to the project directory
+    if let Ok(proj_str) = serde_json::to_string_pretty(project) {
+        let _ = crate::core::save_project(&project.name, &proj_str);
+    }
+
     // Read MCP server configs from the Nexus registry
     let mcp_config = load_mcp_server_configs()?;
 
@@ -73,15 +78,15 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
     let mut cleaned_project_files = HashSet::new();
     for agent_id in &project.agents {
         match agent::from_id(agent_id) {
-            Some(a) => {
-                let skill_files = a.sync_skills(&dir, &skill_contents, &project.skills)?;
+            Some(agent_instance) => {
+                let skill_files = agent_instance.sync_skills(&dir, &skill_contents, &project.skills)?;
                 written_files.extend(skill_files);
 
-                let path = a.write_mcp_config(&dir, &selected_servers)?;
+                let path = agent_instance.write_mcp_config(&dir, &selected_servers)?;
                 written_files.push(path);
 
                 // Strip legacy managed sections from project files (once per filename)
-                let pf = a.project_file_name();
+                let pf = agent_instance.project_file_name();
                 if !cleaned_project_files.contains(pf) {
                     cleaned_project_files.insert(pf.to_string());
                     if let Ok(path) = clean_project_file(&dir, pf) {
@@ -170,7 +175,7 @@ pub fn autodetect_project_dependencies(project: &Project) -> Result<Project, Str
     }
 
     if modified {
-        if let Ok(proj_str) = serde_json::to_string(&updated_project) {
+        if let Ok(proj_str) = serde_json::to_string_pretty(&updated_project) {
             let _ = crate::core::save_project(&updated_project.name, &proj_str);
         }
     }

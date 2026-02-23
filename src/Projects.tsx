@@ -266,24 +266,73 @@ export default function Projects() {
     setDirty(true);
   };
 
+  // Reload project state from disk and refresh all dependent UI
+  const reloadProject = async (name: string) => {
+    try {
+      const raw: string = await invoke("read_project", { name });
+      const parsed = JSON.parse(raw);
+      const data: Project = {
+        name: parsed.name || name,
+        description: parsed.description || "",
+        directory: parsed.directory || "",
+        skills: parsed.skills || [],
+        mcp_servers: parsed.mcp_servers || [],
+        providers: parsed.providers || [],
+        agents: parsed.agents || [],
+        created_at: parsed.created_at || new Date().toISOString(),
+        updated_at: parsed.updated_at || new Date().toISOString(),
+      };
+      setProject(data);
+      setDirty(false);
+
+      await loadAvailableSkills();
+      await loadAvailableMcpServers();
+
+      if (data.directory && data.agents.length > 0) {
+        await loadProjectFiles(name);
+      } else {
+        setProjectFiles([]);
+        setActiveProjectFile(null);
+        setProjectFileContent("");
+        setProjectFileEditing(false);
+        setProjectFileDirty(false);
+      }
+    } catch (err: any) {
+      setError(`Failed to reload project: ${err}`);
+    }
+  };
+
   const handleSave = async () => {
     if (!project) return;
     const name = isCreating ? newName.trim() : selectedName;
     if (!name) return;
     try {
+      setSyncStatus("syncing");
       const toSave = { ...project, name, updated_at: new Date().toISOString() };
+      // save_project writes the project config AND syncs all agent configs
+      // (skills, MCP servers) in one atomic backend call.
       await invoke("save_project", {
         name,
-        data: JSON.stringify(toSave),
+        data: JSON.stringify(toSave, null, 2),
       });
-      setDirty(false);
       setSelectedName(name);
+      localStorage.setItem(LAST_PROJECT_KEY, name);
       if (isCreating) {
         setIsCreating(false);
         await loadProjects();
       }
       setError(null);
+
+      setSyncStatus(toSave.directory && toSave.agents.length > 0
+        ? "Saved & synced"
+        : "Saved");
+
+      // Reload UI state from disk (picks up autodetected changes)
+      await reloadProject(name);
+
+      setTimeout(() => setSyncStatus(null), 4000);
     } catch (err: any) {
+      setSyncStatus(null);
       setError(`Failed to save project: ${err}`);
     }
   };
@@ -334,39 +383,24 @@ export default function Projects() {
     const name = isCreating ? newName.trim() : selectedName;
     if (!name || !project) return;
 
-    // Save first if dirty
+    // Save first if dirty — handleSave already includes sync
     if (dirty) {
       await handleSave();
+      return;
     }
 
+    // Clean state: just re-sync from what's on disk
     try {
       setSyncStatus("syncing");
       const result: string = await invoke("sync_project", { name });
       const files: string[] = JSON.parse(result);
       setSyncStatus(`Synced ${files.length} config${files.length !== 1 ? "s" : ""}`);
-      
-      // Reload the project in case sync discovered new skills/servers
-      const raw: string = await invoke("read_project", { name });
-      const parsed = JSON.parse(raw);
-      setProject({
-        name: parsed.name || name,
-        description: parsed.description || "",
-        directory: parsed.directory || "",
-        skills: parsed.skills || [],
-        mcp_servers: parsed.mcp_servers || [],
-        providers: parsed.providers || [],
-        agents: parsed.agents || [],
-        created_at: parsed.created_at || new Date().toISOString(),
-        updated_at: parsed.updated_at || new Date().toISOString(),
-      });
-      await loadAvailableSkills();
-      await loadAvailableMcpServers();
-      
-      setTimeout(() => setSyncStatus(null), 4000);
     } catch (err: any) {
       setSyncStatus(`Sync failed: ${err}`);
-      setTimeout(() => setSyncStatus(null), 5000);
     }
+
+    await reloadProject(name);
+    setTimeout(() => setSyncStatus(null), 4000);
   };
 
   return (

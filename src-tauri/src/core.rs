@@ -716,6 +716,16 @@ pub fn install_plugin_marketplace() -> Result<String, String> {
 }
 
 // ── Projects ─────────────────────────────────────────────────────────────────
+//
+// Project configs are stored in the project directory at `.nexus/project.json`.
+// A lightweight registry entry at `~/.nexus/projects/{name}.json` maps project
+// names to their directories so we can enumerate them.  When a project has no
+// directory set yet, the full config lives in the registry file as a fallback.
+
+/// Returns the path to the full project config inside the project directory.
+fn project_config_path(directory: &str) -> PathBuf {
+    PathBuf::from(directory).join(".nexus").join("project.json")
+}
 
 pub fn list_projects() -> Result<Vec<String>, String> {
     let projects_dir = get_projects_dir()?;
@@ -748,28 +758,41 @@ pub fn read_project(name: &str) -> Result<String, String> {
         return Err("Invalid project name".into());
     }
     let projects_dir = get_projects_dir()?;
-    let project_path = projects_dir.join(format!("{}.json", name));
+    let registry_path = projects_dir.join(format!("{}.json", name));
 
-    if project_path.exists() {
-        let raw = fs::read_to_string(&project_path).map_err(|e| e.to_string())?;
-        let project = match serde_json::from_str::<Project>(&raw) {
-            Ok(p) => p,
-            Err(_) => Project {
-                name: name.to_string(),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                updated_at: chrono::Utc::now().to_rfc3339(),
-                ..Default::default()
-            },
-        };
-
-        let fixed = serde_json::to_string(&project).map_err(|e| e.to_string())?;
-        if raw != fixed {
-            let _ = fs::write(&project_path, &fixed);
-        }
-        Ok(fixed)
-    } else {
-        Err(format!("Project '{}' not found", name))
+    if !registry_path.exists() {
+        return Err(format!("Project '{}' not found", name));
     }
+
+    let raw = fs::read_to_string(&registry_path).map_err(|e| e.to_string())?;
+    let registry_project = match serde_json::from_str::<Project>(&raw) {
+        Ok(p) => p,
+        Err(_) => Project {
+            name: name.to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            ..Default::default()
+        },
+    };
+
+    // If directory is set, try to read full config from the project directory
+    if !registry_project.directory.is_empty() {
+        let config_path = project_config_path(&registry_project.directory);
+        if config_path.exists() {
+            let project_raw = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+            let full_project = match serde_json::from_str::<Project>(&project_raw) {
+                Ok(p) => p,
+                Err(_) => registry_project, // fall back to registry data
+            };
+            let formatted =
+                serde_json::to_string_pretty(&full_project).map_err(|e| e.to_string())?;
+            return Ok(formatted);
+        }
+    }
+
+    // No project-directory config found — use registry data (legacy or no-directory case)
+    let formatted = serde_json::to_string_pretty(&registry_project).map_err(|e| e.to_string())?;
+    Ok(formatted)
 }
 
 pub fn save_project(name: &str, data: &str) -> Result<(), String> {
@@ -777,16 +800,39 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
         return Err("Invalid project name".into());
     }
 
-    // Validate that data is valid JSON matching the Project structure
-    serde_json::from_str::<Project>(data).map_err(|e| format!("Invalid project data: {}", e))?;
+    let project: Project =
+        serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
+    let pretty = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
 
     let projects_dir = get_projects_dir()?;
     if !projects_dir.exists() {
         fs::create_dir_all(&projects_dir).map_err(|e| e.to_string())?;
     }
 
-    let project_path = projects_dir.join(format!("{}.json", name));
-    fs::write(project_path, data).map_err(|e| e.to_string())
+    let registry_path = projects_dir.join(format!("{}.json", name));
+
+    if !project.directory.is_empty() {
+        // Write full config to project directory
+        let nexus_dir = PathBuf::from(&project.directory).join(".nexus");
+        if !nexus_dir.exists() {
+            fs::create_dir_all(&nexus_dir).map_err(|e| e.to_string())?;
+        }
+        let config_path = nexus_dir.join("project.json");
+        fs::write(&config_path, &pretty).map_err(|e| e.to_string())?;
+
+        // Write lightweight registry entry
+        let ref_data = serde_json::json!({
+            "name": project.name,
+            "directory": project.directory,
+        });
+        let ref_pretty = serde_json::to_string_pretty(&ref_data).map_err(|e| e.to_string())?;
+        fs::write(&registry_path, &ref_pretty).map_err(|e| e.to_string())?;
+    } else {
+        // No directory yet — write full config to registry
+        fs::write(&registry_path, &pretty).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 pub fn delete_project(name: &str) -> Result<(), String> {
@@ -794,10 +840,27 @@ pub fn delete_project(name: &str) -> Result<(), String> {
         return Err("Invalid project name".into());
     }
     let projects_dir = get_projects_dir()?;
-    let project_path = projects_dir.join(format!("{}.json", name));
+    let registry_path = projects_dir.join(format!("{}.json", name));
 
-    if project_path.exists() {
-        fs::remove_file(&project_path).map_err(|e| e.to_string())?;
+    // Try to read the project to clean up the project-directory config
+    if registry_path.exists() {
+        if let Ok(raw) = fs::read_to_string(&registry_path) {
+            if let Ok(project) = serde_json::from_str::<Project>(&raw) {
+                if !project.directory.is_empty() {
+                    let config_path = project_config_path(&project.directory);
+                    if config_path.exists() {
+                        let _ = fs::remove_file(&config_path);
+                    }
+                    // Remove .nexus dir if it's now empty
+                    let nexus_dir = PathBuf::from(&project.directory).join(".nexus");
+                    if nexus_dir.exists() {
+                        let _ = fs::remove_dir(&nexus_dir); // only succeeds if empty
+                    }
+                }
+            }
+        }
+
+        fs::remove_file(&registry_path).map_err(|e| e.to_string())?;
     }
 
     Ok(())

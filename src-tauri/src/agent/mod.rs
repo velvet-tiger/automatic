@@ -11,8 +11,18 @@
 //! Everything else (sync, autodetect, the frontend agent list) picks it up
 //! automatically.
 
+mod antigravity;
 mod claude_code;
+mod cline;
 mod codex_cli;
+mod cursor;
+mod droid;
+mod gemini_cli;
+mod github_copilot;
+mod goose;
+mod junie;
+mod kilo_code;
+mod kiro;
 mod opencode;
 
 use serde::Serialize;
@@ -21,8 +31,18 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub use antigravity::Antigravity;
 pub use claude_code::ClaudeCode;
+pub use cline::Cline;
 pub use codex_cli::CodexCli;
+pub use cursor::Cursor;
+pub use droid::Droid;
+pub use gemini_cli::GeminiCli;
+pub use github_copilot::GitHubCopilot;
+pub use goose::Goose;
+pub use junie::Junie;
+pub use kilo_code::KiloCode;
+pub use kiro::Kiro;
 pub use opencode::OpenCode;
 
 // ── Trait ────────────────────────────────────────────────────────────────────
@@ -103,7 +123,21 @@ impl AgentInfo {
 ///
 /// To add a new agent, append it here.
 pub fn all() -> Vec<&'static dyn Agent> {
-    vec![&ClaudeCode, &CodexCli, &OpenCode]
+    vec![
+        &ClaudeCode,
+        &Cursor,
+        &GitHubCopilot,
+        &KiloCode,
+        &Junie,
+        &Cline,
+        &Kiro,
+        &GeminiCli,
+        &Antigravity,
+        &Droid,
+        &Goose,
+        &CodexCli,
+        &OpenCode,
+    ]
 }
 
 /// Look up an agent by its string id (e.g. from `Project.agents`).

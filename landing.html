@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus | The Central Hub for AI Agents</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#6366f1',
+                        dark: '#0f172a',
+                        darker: '#020617',
+                        card: '#1e293b'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', '-apple-system', 'system-ui', 'sans-serif'],
+                        mono: ['Fira Code', 'ui-monospace', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+        
+        body {
+            background-color: #020617;
+            color: #f8fafc;
+        }
+        
+        .gradient-text {
+            background: linear-gradient(135deg, #818cf8 0%, #c084fc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .glow {
+            position: absolute;
+            width: 300px;
+            height: 300px;
+            background: rgba(99, 102, 241, 0.15);
+            filter: blur(100px);
+            border-radius: 50%;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        /* Custom scrollbar for the app preview */
+        .app-scroll::-webkit-scrollbar {
+            width: 8px;
+        }
+        .app-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .app-scroll::-webkit-scrollbar-thumb {
+            background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+        }
+    </style>
+</head>
+<body class="antialiased font-sans relative overflow-x-hidden">
+    
+    <!-- Background Glows -->
+    <div class="glow top-0 left-1/4"></div>
+    <div class="glow bottom-1/4 right-1/4" style="background: rgba(192, 132, 252, 0.1);"></div>
+
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 bg-darker/80 backdrop-blur-md border-b border-white/10">
+        <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white shadow-lg">N</div>
+                <span class="font-bold text-xl tracking-tight">Nexus</span>
+            </div>
+            <div class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-300">
+                <a href="#features" class="hover:text-white transition-colors">Features</a>
+                <a href="#how-it-works" class="hover:text-white transition-colors">How it Works</a>
+                <a href="#developers" class="hover:text-white transition-colors">For Developers</a>
+            </div>
+            <div>
+                <a href="#download" class="bg-primary hover:bg-indigo-400 text-white px-5 py-2 rounded-md text-sm font-semibold transition-all shadow-[0_0_15px_rgba(99,102,241,0.4)]">Download App</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="pt-32 pb-20 px-6 relative z-10">
+        <div class="max-w-5xl mx-auto text-center mt-12">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs font-medium text-indigo-300 mb-8">
+                <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+                Tauri 2.0 Desktop Release Now Available
+            </div>
+            <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight mb-6">
+                Manage your <br />
+                <span class="gradient-text">AI Agent Configs</span>
+            </h1>
+            <p class="text-lg md:text-xl text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+                Nexus is a hub, not an executor. Connect Claude Code, Cursor, and custom agents to seamlessly sync credentials, skills, and MCP server configurations across all your projects.
+            </p>
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+                <a href="#" class="w-full sm:w-auto px-8 py-3.5 rounded-lg bg-white text-darker font-bold hover:bg-slate-200 transition-colors flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    Download for macOS
+                </a>
+                <a href="#how-it-works" class="w-full sm:w-auto px-8 py-3.5 rounded-lg bg-white/5 border border-white/10 text-white font-medium hover:bg-white/10 transition-colors flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                    View Architecture
+                </a>
+            </div>
+            
+            <!-- App UI Preview Mockup -->
+            <div class="mt-20 relative mx-auto max-w-[1000px] rounded-[10px] overflow-hidden shadow-[0_30px_80px_-15px_rgba(0,0,0,0.8)] border border-[#3e3e42] bg-[#212124] text-left flex flex-col h-[700px] ring-1 ring-white/10 select-none">
+                
+                <!-- MacOS Title Bar -->
+                <div class="h-[38px] bg-[#2d2d30] flex items-center justify-between px-4 border-b border-[#18181a] relative z-20">
+                    <div class="flex gap-2 absolute left-4">
+                        <div class="w-3 h-3 rounded-full bg-[#ff5f56] border border-[#e0443e]"></div>
+                        <div class="w-3 h-3 rounded-full bg-[#ffbd2e] border border-[#dea123]"></div>
+                        <div class="w-3 h-3 rounded-full bg-[#27c93f] border border-[#1aab29]"></div>
+                    </div>
+                    <div class="w-full text-center text-[13px] font-medium text-[#9d9d9f]">nexus</div>
+                </div>
+                
+                <!-- App Body -->
+                <div class="flex flex-1 overflow-hidden text-[#d4d4d4]">
+                    <!-- Sidebar -->
+                    <div class="w-[240px] bg-[#1c1c1e] border-r border-[#303030] p-3 flex flex-col gap-6 overflow-y-auto app-scroll">
+                        <!-- App Title -->
+                        <div class="flex items-center gap-2.5 px-2 mt-1">
+                            <div class="w-6 h-6 rounded-[4px] bg-[#6366f1] text-white flex items-center justify-center text-[11px] font-bold tracking-tight">N</div>
+                            <span class="font-semibold text-[14px] text-white">Nexus</span>
+                        </div>
+                        
+                        <!-- Nav Groups -->
+                        <div>
+                            <div class="text-[11px] font-semibold text-[#8e8e93] px-2 mb-1.5">Workspace</div>
+                            <div class="flex items-center gap-2 px-2 py-1 bg-[#323234] rounded-md text-white">
+                                <svg class="w-4 h-4 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                                <span class="text-[13px] font-medium">Projects</span>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <div class="text-[11px] font-semibold text-[#8e8e93] px-2 mb-1.5">Configuration</div>
+                            <div class="flex flex-col gap-0.5">
+                                <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2c2c2e] rounded-md cursor-pointer text-[#a1a1aa]">
+                                    <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                                    <span class="text-[13px]">Skills & Prompts</span>
+                                </div>
+                                <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2c2c2e] rounded-md cursor-pointer text-[#a1a1aa]">
+                                    <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"></path></svg>
+                                    <span class="text-[13px]">Templates</span>
+                                </div>
+                                <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2c2c2e] rounded-md cursor-pointer text-[#a1a1aa]">
+                                    <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>
+                                    <span class="text-[13px]">MCP Servers</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <div class="text-[11px] font-semibold text-[#8e8e93] px-2 mb-1.5">Settings</div>
+                            <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2c2c2e] rounded-md cursor-pointer text-[#a1a1aa]">
+                                <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                                <span class="text-[13px]">Preferences</span>
+                            </div>
+                        </div>
+                    </div>
+        
+                    <!-- Middle Column (Project List) -->
+                    <div class="w-[260px] bg-[#1c1c1e] border-r border-[#303030] flex flex-col">
+                        <div class="px-5 py-4 border-b border-[#303030] flex justify-between items-center">
+                            <span class="text-[12px] font-semibold text-[#8e8e93]">PROJECTS</span>
+                            <button class="text-[#8e8e93] hover:text-white"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>
+                        </div>
+                        <div class="flex-1 overflow-y-auto py-2 app-scroll">
+                            <div class="flex items-center gap-3 px-5 py-2 hover:bg-[#2c2c2e] cursor-pointer text-[#d4d4d4]">
+                                <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                                <span class="text-[13px] truncate">Acme Web Store</span>
+                            </div>
+                            <div class="flex items-center gap-3 px-5 py-2 bg-[#323234] cursor-pointer text-white">
+                                <svg class="w-[18px] h-[18px] opacity-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                                <span class="text-[13px] font-medium truncate">Agent Swarm</span>
+                            </div>
+                            <div class="flex items-center gap-3 px-5 py-2 hover:bg-[#2c2c2e] cursor-pointer text-[#d4d4d4]">
+                                <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                                <span class="text-[13px] truncate">React Dashboard</span>
+                            </div>
+                            <div class="flex items-center gap-3 px-5 py-2 hover:bg-[#2c2c2e] cursor-pointer text-[#d4d4d4]">
+                                <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                                <span class="text-[13px] truncate">Mobile App API</span>
+                            </div>
+                            <div class="flex items-center gap-3 px-5 py-2 hover:bg-[#2c2c2e] cursor-pointer text-[#d4d4d4]">
+                                <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                                <span class="text-[13px] truncate">Data Pipeline</span>
+                            </div>
+                        </div>
+                    </div>
+        
+                    <!-- Main Content Area -->
+                    <div class="flex-1 bg-[#212124] flex flex-col overflow-hidden">
+                        <!-- Header -->
+                        <div class="px-8 py-5 border-b border-[#303030] flex justify-between items-center">
+                            <div class="flex items-center gap-3">
+                                <svg class="w-5 h-5 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                                <h1 class="text-[16px] font-semibold text-white">Agent Swarm</h1>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <button class="px-3 py-1.5 rounded-[6px] border border-[#404040] text-[12px] font-medium text-[#d4d4d4] hover:bg-[#2c2c2e] transition-colors flex items-center gap-1.5">
+                                    <svg class="w-3.5 h-3.5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                    Remove
+                                </button>
+                                <button class="px-3 py-1.5 rounded-[6px] bg-[#323234] border border-[#404040] text-[12px] font-medium text-white hover:bg-[#3e3e40] transition-colors flex items-center gap-1.5">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                    Sync Configs
+                                </button>
+                            </div>
+                        </div>
+        
+                        <!-- Content Scrollable -->
+                        <div class="flex-1 overflow-y-auto px-8 py-8 app-scroll">
+                            <div class="max-w-[600px] space-y-9">
+                                
+                                <!-- Description -->
+                                <div class="space-y-2.5">
+                                    <label class="text-[11px] font-semibold text-[#8e8e93] tracking-widest uppercase">Description</label>
+                                    <textarea class="w-full bg-[#18181a] border border-[#303030] rounded-[6px] p-3.5 text-[13px] text-[#d4d4d4] h-[80px] focus:outline-none focus:border-[#6366f1]/50 resize-none transition-colors" placeholder="What is this project for?">Distributed AI agents for automated data analysis and reporting.</textarea>
+                                </div>
+            
+                                <!-- Project Directory -->
+                                <div class="space-y-2.5">
+                                    <div class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                                        <label class="text-[11px] font-semibold text-[#8e8e93] tracking-widest uppercase">Project Directory</label>
+                                    </div>
+                                    <div class="flex gap-2.5">
+                                        <input type="text" class="flex-1 bg-[#18181a] border border-[#303030] rounded-[6px] px-3.5 py-2.5 text-[13px] font-mono text-[#d4d4d4] focus:outline-none focus:border-[#6366f1]/50 transition-colors" value="/Users/dev/workspace/agent-swarm" />
+                                        <button class="px-5 py-2.5 rounded-[6px] bg-[#2c2c2e] border border-[#404040] text-[13px] font-medium hover:bg-[#3a3a3c] transition-colors text-white">Browse</button>
+                                    </div>
+                                    <p class="text-[12px] text-[#8e8e93]">Agent configs will be written to this directory when you sync.</p>
+                                </div>
+            
+                                <!-- Agent Tools -->
+                                <div class="space-y-3">
+                                    <div class="flex justify-between items-center">
+                                        <div class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                                            <label class="text-[11px] font-semibold text-[#8e8e93] tracking-widest uppercase">Agent Tools</label>
+                                        </div>
+                                        <button class="text-[#8e8e93] hover:text-white"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>
+                                    </div>
+                                    <div class="space-y-2">
+                                        <div class="bg-[#18181a] border border-[#303030] rounded-[6px] px-4 py-3 flex items-center gap-3">
+                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
+                                            <span class="text-[13px] text-white">Claude Code</span>
+                                            <span class="text-[#8e8e93] font-mono text-[12px]">.mcp.json</span>
+                                        </div>
+                                        <div class="bg-[#18181a] border border-[#303030] rounded-[6px] px-4 py-3 flex items-center gap-3">
+                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
+                                            <span class="text-[13px] text-white">Codex CLI</span>
+                                            <span class="text-[#8e8e93] font-mono text-[12px]">.codex/config.toml</span>
+                                        </div>
+                                    </div>
+                                </div>
+            
+                                <!-- Skills -->
+                                <div class="space-y-3">
+                                    <div class="flex justify-between items-center">
+                                        <div class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                                            <label class="text-[11px] font-semibold text-[#8e8e93] tracking-widest uppercase">Skills</label>
+                                        </div>
+                                        <button class="text-[#8e8e93] hover:text-white"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>
+                                    </div>
+                                    <div class="space-y-2">
+                                        <div class="bg-[#18181a] border border-[#303030] rounded-[6px] px-4 py-3 flex items-center gap-3">
+                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                                            <span class="text-[13px] text-[#d4d4d4]">swarm-orchestration</span>
+                                        </div>
+                                        <div class="bg-[#18181a] border border-[#303030] rounded-[6px] px-4 py-3 flex items-center gap-3">
+                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                                            <span class="text-[13px] text-[#d4d4d4]">api-generator</span>
+                                        </div>
+                                    </div>
+                                </div>
+            
+                                <!-- MCP Servers -->
+                                <div class="space-y-3">
+                                    <div class="flex justify-between items-center">
+                                        <div class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>
+                                            <label class="text-[11px] font-semibold text-[#8e8e93] tracking-widest uppercase">MCP Servers</label>
+                                        </div>
+                                        <button class="text-[#8e8e93] hover:text-white"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>
+                                    </div>
+                                    <div class="text-[13px] text-[#8e8e93] pb-6">
+                                        No MCP servers attached.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- End App Mockup -->
+
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="py-24 px-6 relative z-10 bg-white/[0.02] border-y border-white/5 mt-12">
+        <div class="max-w-7xl mx-auto">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl font-bold mb-4">Everything your agents need to work.</h2>
+                <p class="text-slate-400 max-w-xl mx-auto">Manage the context surrounding your coding agents. Built with a lightning-fast Rust core and a modern React interface.</p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-6">
+                <!-- Feature 1 -->
+                <div class="bg-card/50 border border-white/10 p-8 rounded-2xl hover:bg-card transition-colors">
+                    <div class="w-12 h-12 bg-indigo-500/20 text-indigo-400 rounded-lg flex items-center justify-center mb-6">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Model Context Protocol</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                        Exposes a unified MCP Server interface using stdio transport. Your agents connect to Nexus to instantly access your entire configured ecosystem.
+                    </p>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="bg-card/50 border border-white/10 p-8 rounded-2xl hover:bg-card transition-colors">
+                    <div class="w-12 h-12 bg-purple-500/20 text-purple-400 rounded-lg flex items-center justify-center mb-6">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Skill Management</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                        Create, read, update, and delete Claude Skills with a beautiful UI. Synchronize project-specific skills automatically to the right directories.
+                    </p>
+                </div>
+
+                <!-- Feature 3 -->
+                <div class="bg-card/50 border border-white/10 p-8 rounded-2xl hover:bg-card transition-colors">
+                    <div class="w-12 h-12 bg-green-500/20 text-green-400 rounded-lg flex items-center justify-center mb-6">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Secure Credentials</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                        Manage your LLM API providers securely. Nexus safely handles your keys locally so your automated scripts don't have to keep asking.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Technical Architecture / How it Works -->
+    <section id="how-it-works" class="py-24 px-6 relative z-10">
+        <div class="max-w-7xl mx-auto flex flex-col lg:flex-row items-center gap-16">
+            <div class="lg:w-1/2">
+                <h2 class="text-3xl font-bold mb-6">Built for the Agentic Era</h2>
+                <p class="text-slate-400 mb-6 text-lg">
+                    Nexus doesn't run your agents; it empowers them. It acts as the ultimate sidecar for tools like Claude Code and Cursor.
+                </p>
+                <ul class="space-y-4 mb-8">
+                    <li class="flex items-start gap-3">
+                        <svg class="w-6 h-6 text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        <span class="text-slate-300"><strong>Centralized Secrets Management:</strong> Store your API keys in one secure location locally, without needing to copy-paste them into every new project's `.env` file.</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <svg class="w-6 h-6 text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        <span class="text-slate-300"><strong>Seamless Project Sync:</strong> Push required skills, instructions, and server connections automatically to agent-specific directories when you switch contexts.</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <svg class="w-6 h-6 text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        <span class="text-slate-300"><strong>Universal Compatibility:</strong> Exposes a standard MCP Server interface, making it universally plug-and-play with any agent that supports the Model Context Protocol (like Claude Code or Cursor).</span>
+                    </li>
+                </ul>
+            </div>
+            
+            <div class="lg:w-1/2 w-full">
+                <!-- Code Window -->
+                <div class="bg-card rounded-xl border border-white/10 overflow-hidden shadow-2xl">
+                    <div class="bg-darker/50 px-4 py-3 border-b border-white/10 flex items-center justify-between">
+                        <div class="flex gap-2">
+                            <div class="w-3 h-3 rounded-full bg-slate-600"></div>
+                            <div class="w-3 h-3 rounded-full bg-slate-600"></div>
+                            <div class="w-3 h-3 rounded-full bg-slate-600"></div>
+                        </div>
+                        <div class="text-xs text-slate-500 font-mono">Terminal</div>
+                    </div>
+                    <div class="p-6 font-mono text-sm overflow-x-auto">
+                        <div class="text-slate-400 mb-2">$ claude connect-mcp "nexus-app mcp-serve"</div>
+                        <div class="text-green-400 mb-4">✓ Connected to Nexus MCP Server</div>
+                        
+                        <div class="text-slate-400 mb-2">$ claude call-tool list_skills</div>
+                        <div class="text-indigo-300 mb-4">
+                            [<br>
+                            &nbsp;&nbsp;{ "name": "skill-builder", "status": "active" },<br>
+                            &nbsp;&nbsp;{ "name": "rust-analyzer", "status": "active" }<br>
+                            ]
+                        </div>
+
+                        <div class="text-slate-400 mb-2">$ claude setup-project</div>
+                        <div class="text-slate-300">
+                            → Syncing configurations from Nexus...<br>
+                            <span class="text-green-400">✓ Injected API keys</span><br>
+                            <span class="text-green-400">✓ Loaded local skills</span><br>
+                            <span class="text-blue-400 mt-2 block">Agent is ready.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section id="download" class="py-24 px-6 relative z-10">
+        <div class="max-w-4xl mx-auto bg-gradient-to-br from-indigo-900/40 to-purple-900/40 border border-indigo-500/30 rounded-3xl p-12 text-center backdrop-blur-sm">
+            <h2 class="text-3xl md:text-4xl font-bold mb-4">Ready to centralize your agents?</h2>
+            <p class="text-slate-300 mb-8 max-w-xl mx-auto">
+                Stop manually copying `.env` files and `SKILL.md` configurations between projects. Let Nexus handle the context.
+            </p>
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+                <a href="#" class="px-8 py-3 rounded-lg bg-primary hover:bg-indigo-400 text-white font-bold transition-all shadow-[0_0_20px_rgba(99,102,241,0.5)]">
+                    Download App (macOS)
+                </a>
+                <a href="#" class="px-8 py-3 rounded-lg bg-transparent border border-white/20 hover:bg-white/5 text-white font-medium transition-colors">
+                    View Documentation
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-white/10 bg-darker/50 pt-12 pb-8 px-6 relative z-10">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
+            <div class="flex items-center gap-2 text-slate-400">
+                <div class="w-6 h-6 rounded bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white text-xs">N</div>
+                <span class="font-medium">Nexus</span> &copy; 2026
+            </div>
+            <div class="flex gap-6 text-sm text-slate-500">
+                <a href="#" class="hover:text-white transition-colors">GitHub</a>
+                <a href="#" class="hover:text-white transition-colors">Documentation</a>
+                <a href="#" class="hover:text-white transition-colors">Privacy</a>
+            </div>
+        </div>
+    </footer>
+
+</body>
+</html>
