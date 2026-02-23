@@ -23,6 +23,10 @@ impl Agent for OpenCode {
         ".opencode.json"
     }
 
+    fn project_file_name(&self) -> &'static str {
+        "AGENTS.md"
+    }
+
     // ── Detection ───────────────────────────────────────────────────────
 
     fn detect_in(&self, dir: &Path) -> bool {

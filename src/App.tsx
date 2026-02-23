@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import Skills from "./Skills";
 import Projects from "./Projects";
 import McpServers from "./McpServers";
-import { Code, Server, ChevronDown, Settings, FolderOpen } from "lucide-react";
+import Templates from "./Templates";
+import { Code, Server, ChevronDown, Settings, FolderOpen, LayoutTemplate } from "lucide-react";
 import "./App.css";
 
 function App() {
@@ -72,6 +73,7 @@ function App() {
             </div>
             <ul className="space-y-0.5">
               <NavItem id="skills" icon={Code} label="Skills & Prompts" />
+              <NavItem id="templates" icon={LayoutTemplate} label="Templates" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
             </ul>
           </div>
@@ -105,6 +107,11 @@ function App() {
           {activeTab === "skills" && (
             <div className="flex-1 h-full">
               <Skills />
+            </div>
+          )}
+          {activeTab === "templates" && (
+            <div className="flex-1 h-full">
+              <Templates />
             </div>
           )}
           {activeTab === "mcp" && (

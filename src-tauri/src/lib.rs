@@ -53,6 +53,82 @@ fn delete_skill(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── Templates ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn get_templates() -> Result<Vec<String>, String> {
+    core::list_templates()
+}
+
+#[tauri::command]
+fn read_template(name: &str) -> Result<String, String> {
+    core::read_template(name)
+}
+
+#[tauri::command]
+fn save_template(name: &str, content: &str) -> Result<(), String> {
+    core::save_template(name, content)
+}
+
+#[tauri::command]
+fn delete_template(name: &str) -> Result<(), String> {
+    core::delete_template(name)
+}
+
+// ── Project Files ────────────────────────────────────────────────────────────
+
+/// Returns JSON array of unique project file info objects for the project's agents.
+/// Each entry: { filename, agents: ["Claude Code", ...] }
+#[tauri::command]
+fn get_project_file_info(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    let mut files: Vec<serde_json::Value> = Vec::new();
+    let mut seen_filenames: Vec<String> = Vec::new();
+
+    for agent_id in &project.agents {
+        if let Some(a) = agent::from_id(agent_id) {
+            let filename = a.project_file_name().to_string();
+            if !seen_filenames.contains(&filename) {
+                seen_filenames.push(filename.clone());
+                files.push(serde_json::json!({
+                    "filename": filename,
+                    "agents": [a.label()]
+                }));
+            } else {
+                // Append agent label to existing entry
+                for file in &mut files {
+                    if file["filename"].as_str() == Some(&filename) {
+                        if let Some(agents) = file["agents"].as_array_mut() {
+                            agents.push(serde_json::json!(a.label()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    serde_json::to_string(&files).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn read_project_file(name: &str, filename: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    core::read_project_file(&project.directory, filename)
+}
+
+#[tauri::command]
+fn save_project_file(name: &str, filename: &str, content: &str) -> Result<(), String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    core::save_project_file(&project.directory, filename, content)
+}
+
 // ── MCP Servers ──────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -298,6 +374,13 @@ pub fn run() {
             read_skill,
             save_skill,
             delete_skill,
+            get_templates,
+            read_template,
+            save_template,
+            delete_template,
+            get_project_file_info,
+            read_project_file,
+            save_project_file,
             get_mcp_servers,
             list_mcp_server_configs,
             read_mcp_server_config,

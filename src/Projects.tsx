@@ -11,6 +11,9 @@ import {
   Trash2,
   Bot,
   RefreshCw,
+  FileText,
+  LayoutTemplate,
+  Edit2,
 } from "lucide-react";
 
 interface Project {
@@ -29,6 +32,11 @@ interface AgentInfo {
   id: string;
   label: string;
   description: string;
+}
+
+interface ProjectFileInfo {
+  filename: string;
+  agents: string[];
 }
 
 function emptyProject(name: string): Project {
@@ -68,11 +76,22 @@ export default function Projects() {
   const [addingAgent, setAddingAgent] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
+  // Project file state
+  const [projectFiles, setProjectFiles] = useState<ProjectFileInfo[]>([]);
+  const [activeProjectFile, setActiveProjectFile] = useState<string | null>(null);
+  const [projectFileContent, setProjectFileContent] = useState("");
+  const [projectFileEditing, setProjectFileEditing] = useState(false);
+  const [projectFileDirty, setProjectFileDirty] = useState(false);
+  const [projectFileSaving, setProjectFileSaving] = useState(false);
+  const [availableTemplates, setAvailableTemplates] = useState<string[]>([]);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+
   useEffect(() => {
     loadProjects();
     loadAvailableAgents();
     loadAvailableSkills();
     loadAvailableMcpServers();
+    loadAvailableTemplates();
   }, []);
 
   useEffect(() => {
@@ -126,6 +145,81 @@ export default function Projects() {
     }
   };
 
+  const loadAvailableTemplates = async () => {
+    try {
+      const result: string[] = await invoke("get_templates");
+      setAvailableTemplates(result.sort());
+    } catch {
+      // Templates may not exist yet
+    }
+  };
+
+  const loadProjectFiles = async (name: string) => {
+    try {
+      const raw: string = await invoke("get_project_file_info", { name });
+      const files: ProjectFileInfo[] = JSON.parse(raw);
+      setProjectFiles(files);
+      // Auto-select first file if none selected or previous one isn't available
+      if (files.length > 0) {
+        const currentValid = activeProjectFile && files.some(f => f.filename === activeProjectFile);
+        const filename = currentValid ? activeProjectFile! : files[0].filename;
+        setActiveProjectFile(filename);
+        await loadProjectFileContent(name, filename);
+      } else {
+        setActiveProjectFile(null);
+        setProjectFileContent("");
+        setProjectFileEditing(false);
+        setProjectFileDirty(false);
+      }
+    } catch {
+      setProjectFiles([]);
+      setActiveProjectFile(null);
+      setProjectFileContent("");
+    }
+  };
+
+  const loadProjectFileContent = async (projectName: string, filename: string) => {
+    try {
+      const content: string = await invoke("read_project_file", { name: projectName, filename });
+      setProjectFileContent(content);
+      setProjectFileEditing(false);
+      setProjectFileDirty(false);
+    } catch {
+      setProjectFileContent("");
+      setProjectFileEditing(false);
+      setProjectFileDirty(false);
+    }
+  };
+
+  const handleSaveProjectFile = async () => {
+    if (!selectedName || !activeProjectFile) return;
+    setProjectFileSaving(true);
+    try {
+      await invoke("save_project_file", {
+        name: selectedName,
+        filename: activeProjectFile,
+        content: projectFileContent,
+      });
+      setProjectFileDirty(false);
+    } catch (err: any) {
+      setError(`Failed to save project file: ${err}`);
+    } finally {
+      setProjectFileSaving(false);
+    }
+  };
+
+  const handleApplyTemplate = async (templateName: string) => {
+    try {
+      const content: string = await invoke("read_template", { name: templateName });
+      setProjectFileContent(content);
+      setProjectFileDirty(true);
+      setProjectFileEditing(true);
+      setShowTemplatePicker(false);
+    } catch (err: any) {
+      setError(`Failed to load template: ${err}`);
+    }
+  };
+
   const selectProject = async (name: string) => {
     try {
       const raw: string = await invoke("autodetect_project_dependencies", { name });
@@ -148,6 +242,16 @@ export default function Projects() {
       setDirty(false);
       setIsCreating(false);
       setError(null);
+      // Load project files for this project
+      if (data.directory && data.agents.length > 0) {
+        await loadProjectFiles(name);
+      } else {
+        setProjectFiles([]);
+        setActiveProjectFile(null);
+        setProjectFileContent("");
+        setProjectFileEditing(false);
+        setProjectFileDirty(false);
+      }
     } catch (err: any) {
       setError(`Failed to read project: ${err}`);
     }
@@ -631,6 +735,144 @@ export default function Projects() {
                     </ul>
                   )}
                 </section>
+
+                {/* Project File */}
+                {project.directory && project.agents.length > 0 && (
+                  <section>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
+                        <FileText size={12} /> Project File
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setShowTemplatePicker(!showTemplatePicker)}
+                          className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                          title="Start from template"
+                        >
+                          <LayoutTemplate size={13} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Template picker */}
+                    {showTemplatePicker && (
+                      <div className="mb-3">
+                        {availableTemplates.length > 0 ? (
+                          <div className="p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
+                            <p className="text-[11px] text-[#8A8C93] mb-1.5">Apply a template (replaces current content):</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {availableTemplates.map((t) => (
+                                <button
+                                  key={t}
+                                  onClick={() => handleApplyTemplate(t)}
+                                  className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors flex items-center gap-1.5"
+                                >
+                                  <LayoutTemplate size={11} />
+                                  {t}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[12px] text-[#8A8C93] italic">No templates available. Create one in the Templates tab.</p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* File tabs (if multiple) */}
+                    {projectFiles.length > 1 && (
+                      <div className="flex gap-1 mb-2">
+                        {projectFiles.map((f) => (
+                          <button
+                            key={f.filename}
+                            onClick={async () => {
+                              if (projectFileDirty && !confirm("Discard unsaved changes?")) return;
+                              setActiveProjectFile(f.filename);
+                              if (selectedName) await loadProjectFileContent(selectedName, f.filename);
+                            }}
+                            className={`px-2.5 py-1 text-[12px] rounded transition-colors ${
+                              activeProjectFile === f.filename
+                                ? "bg-[#2D2E36] text-[#E0E1E6] border border-[#44474F]"
+                                : "text-[#8A8C93] hover:bg-[#2D2E36]/50 hover:text-[#E0E1E6] border border-transparent"
+                            }`}
+                          >
+                            {f.filename}
+                            <span className="ml-1 text-[10px] text-[#8A8C93]">({f.agents.join(", ")})</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Single file label */}
+                    {projectFiles.length === 1 && (
+                      <div className="mb-2 text-[12px] text-[#8A8C93]">
+                        {projectFiles[0].filename} <span className="text-[10px]">({projectFiles[0].agents.join(", ")})</span>
+                      </div>
+                    )}
+
+                    {projectFiles.length > 0 && activeProjectFile ? (
+                      <div className="border border-[#33353A] rounded-md overflow-hidden">
+                        {/* Editor toolbar */}
+                        <div className="flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] border-b border-[#33353A]">
+                          <span className="text-[11px] text-[#8A8C93]">
+                            {projectFileEditing ? "Editing" : "Preview"}{projectFileDirty ? " (unsaved)" : ""}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            {!projectFileEditing ? (
+                              <button
+                                onClick={() => setProjectFileEditing(true)}
+                                className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] hover:bg-[#2D2E36] rounded transition-colors"
+                              >
+                                <Edit2 size={10} /> Edit
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setProjectFileEditing(false);
+                                    if (projectFileDirty && selectedName && activeProjectFile) {
+                                      loadProjectFileContent(selectedName, activeProjectFile);
+                                    }
+                                  }}
+                                  className="px-2 py-0.5 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] hover:bg-[#2D2E36] rounded transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={handleSaveProjectFile}
+                                  disabled={!projectFileDirty || projectFileSaving}
+                                  className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  <Check size={10} /> {projectFileSaving ? "Saving..." : "Save"}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Content area */}
+                        {projectFileEditing ? (
+                          <textarea
+                            value={projectFileContent}
+                            onChange={(e) => {
+                              setProjectFileContent(e.target.value);
+                              setProjectFileDirty(true);
+                            }}
+                            className="w-full min-h-[200px] max-h-[400px] p-4 resize-y outline-none font-mono text-[12px] bg-[#222327] text-[#E0E1E6] leading-relaxed custom-scrollbar placeholder-[#8A8C93]/30"
+                            placeholder="Write your project instructions here..."
+                            spellCheck={false}
+                          />
+                        ) : (
+                          <div className="min-h-[80px] max-h-[300px] overflow-y-auto p-4 font-mono text-[12px] whitespace-pre-wrap text-[#E0E1E6] leading-relaxed custom-scrollbar bg-[#222327]">
+                            {projectFileContent || <span className="text-[#8A8C93] italic">No project file yet. Click Edit to create one, or use a template.</span>}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[13px] text-[#8A8C93]/60 italic">Configure a directory and agent tools to manage the project file.</p>
+                    )}
+                  </section>
+                )}
               </div>
             </div>
           </div>

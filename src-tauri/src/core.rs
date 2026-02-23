@@ -125,6 +125,136 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── Templates ────────────────────────────────────────────────────────────────
+
+pub fn get_templates_dir() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    Ok(home.join(".nexus/templates"))
+}
+
+pub fn list_templates() -> Result<Vec<String>, String> {
+    let dir = get_templates_dir()?;
+
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut templates = Vec::new();
+    let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
+
+    for entry in entries {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if is_valid_name(stem) {
+                        templates.push(stem.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(templates)
+}
+
+pub fn read_template(name: &str) -> Result<String, String> {
+    if !is_valid_name(name) {
+        return Err("Invalid template name".into());
+    }
+    let dir = get_templates_dir()?;
+    let path = dir.join(format!("{}.md", name));
+
+    if path.exists() {
+        fs::read_to_string(path).map_err(|e| e.to_string())
+    } else {
+        Err(format!("Template '{}' not found", name))
+    }
+}
+
+pub fn save_template(name: &str, content: &str) -> Result<(), String> {
+    if !is_valid_name(name) {
+        return Err("Invalid template name".into());
+    }
+
+    let dir = get_templates_dir()?;
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+
+    let path = dir.join(format!("{}.md", name));
+    fs::write(path, content).map_err(|e| e.to_string())
+}
+
+pub fn delete_template(name: &str) -> Result<(), String> {
+    if !is_valid_name(name) {
+        return Err("Invalid template name".into());
+    }
+    let dir = get_templates_dir()?;
+    let path = dir.join(format!("{}.md", name));
+
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+// ── Project Files ────────────────────────────────────────────────────────────
+
+/// Read a project file from the project's directory, stripping any
+/// Nexus-managed sections (skills markers).  Returns the user-authored
+/// content only.
+pub fn read_project_file(directory: &str, filename: &str) -> Result<String, String> {
+    if directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    let path = PathBuf::from(directory).join(filename);
+    if !path.exists() {
+        return Ok(String::new());
+    }
+
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    Ok(strip_managed_section(&content))
+}
+
+/// Write a project file to the project's directory.  Writes exactly what the
+/// user provides — the sync process will re-merge any managed sections (skills)
+/// on the next sync run.
+pub fn save_project_file(directory: &str, filename: &str, content: &str) -> Result<(), String> {
+    if directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    let dir = PathBuf::from(directory);
+    if !dir.exists() {
+        return Err(format!("Directory '{}' does not exist", directory));
+    }
+
+    let path = dir.join(filename);
+    fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+/// Strip the `<!-- nexus:skills:start -->...<!-- nexus:skills:end -->` section.
+fn strip_managed_section(content: &str) -> String {
+    let start_marker = "<!-- nexus:skills:start -->";
+    let end_marker = "<!-- nexus:skills:end -->";
+
+    if let (Some(start), Some(end)) = (content.find(start_marker), content.find(end_marker)) {
+        let before = &content[..start];
+        let after = &content[end + end_marker.len()..];
+        let result = format!("{}{}", before.trim_end(), after.trim_start());
+        if result.trim().is_empty() {
+            String::new()
+        } else {
+            result
+        }
+    } else {
+        content.to_string()
+    }
+}
+
 // ── MCP Servers ──────────────────────────────────────────────────────────────
 
 pub fn get_mcp_servers_dir() -> Result<PathBuf, String> {

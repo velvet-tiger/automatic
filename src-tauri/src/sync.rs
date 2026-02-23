@@ -1,4 +1,5 @@
 use serde_json::{json, Map, Value};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -69,6 +70,7 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
     let mut written_files = Vec::new();
 
     // Resolve each agent string id to a trait object and delegate
+    let mut cleaned_project_files = HashSet::new();
     for agent_id in &project.agents {
         match agent::from_id(agent_id) {
             Some(a) => {
@@ -77,6 +79,17 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
 
                 let path = a.write_mcp_config(&dir, &selected_servers)?;
                 written_files.push(path);
+
+                // Strip legacy managed sections from project files (once per filename)
+                let pf = a.project_file_name();
+                if !cleaned_project_files.contains(pf) {
+                    cleaned_project_files.insert(pf.to_string());
+                    if let Ok(path) = clean_project_file(&dir, pf) {
+                        if let Some(p) = path {
+                            written_files.push(p);
+                        }
+                    }
+                }
             }
             None => {
                 eprintln!("Unknown agent '{}', skipping", agent_id);
@@ -206,6 +219,39 @@ fn find_nexus_binary() -> String {
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
         .unwrap_or_else(|| "nexus".to_string())
+}
+
+/// Strip any legacy `<!-- nexus:skills:start -->…<!-- nexus:skills:end -->`
+/// managed section from a project file.  Returns the path if the file was
+/// modified, or None if no cleanup was needed.
+fn clean_project_file(dir: &PathBuf, filename: &str) -> Result<Option<String>, String> {
+    let path = dir.join(filename);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+
+    let start_marker = "<!-- nexus:skills:start -->";
+    let end_marker = "<!-- nexus:skills:end -->";
+
+    if let (Some(start), Some(end)) = (content.find(start_marker), content.find(end_marker)) {
+        let before = &content[..start];
+        let after = &content[end + end_marker.len()..];
+        let cleaned = format!(
+            "{}{}",
+            before.trim_end(),
+            if after.trim().is_empty() {
+                "\n".to_string()
+            } else {
+                format!("\n\n{}", after.trim_start())
+            }
+        );
+        fs::write(&path, cleaned).map_err(|e| e.to_string())?;
+        Ok(Some(path.display().to_string()))
+    } else {
+        Ok(None)
+    }
 }
 
 fn add_unique(items: &mut Vec<String>, value: &str) -> bool {

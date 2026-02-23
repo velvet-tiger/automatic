@@ -43,6 +43,10 @@ pub trait Agent: Send + Sync {
     /// Short description of the config file this agent uses.
     fn config_description(&self) -> &'static str;
 
+    /// The filename used for the main project instructions file
+    /// (e.g. `"CLAUDE.md"` for Claude Code, `"AGENTS.md"` for Codex).
+    fn project_file_name(&self) -> &'static str;
+
     // ── Detection ───────────────────────────────────────────────────────
 
     /// Returns `true` if this agent appears to be in use in `dir`.
@@ -55,11 +59,7 @@ pub trait Agent: Send + Sync {
 
     /// Write MCP server configs to the project directory in this agent's
     /// native format.  Returns the path of the file written.
-    fn write_mcp_config(
-        &self,
-        dir: &Path,
-        servers: &Map<String, Value>,
-    ) -> Result<String, String>;
+    fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String>;
 
     /// Copy selected skills into the project directory at the right
     /// location for this agent.  Returns the list of files written.
@@ -153,88 +153,13 @@ pub(crate) fn sync_individual_skills(
 
     for (name, content) in skills {
         let skill_dir = base_dir.join(name);
-        fs::create_dir_all(&skill_dir)
-            .map_err(|e| format!("Failed to create skill dir: {}", e))?;
+        fs::create_dir_all(&skill_dir).map_err(|e| format!("Failed to create skill dir: {}", e))?;
         let skill_path = skill_dir.join("SKILL.md");
         fs::write(&skill_path, content)
             .map_err(|e| format!("Failed to write skill '{}': {}", name, e))?;
         written.push(skill_path.display().to_string());
     }
     Ok(())
-}
-
-/// Build a markdown section containing all skills, wrapped in Nexus markers.
-pub(crate) fn build_skills_markdown(skills: &[(String, String)]) -> String {
-    let mut md = String::new();
-    md.push_str("<!-- nexus:skills:start -->\n");
-    md.push_str("<!-- This section is managed by Nexus. Do not edit manually. -->\n\n");
-
-    for (name, content) in skills {
-        md.push_str(&format!("## Skill: {}\n\n", name));
-        md.push_str(content.trim());
-        md.push_str("\n\n---\n\n");
-    }
-
-    md.push_str("<!-- nexus:skills:end -->\n");
-    md
-}
-
-/// Merge a Nexus skills section into a file, replacing any existing section.
-pub(crate) fn merge_skills_into_file(path: &Path, skills_section: &str) -> Result<(), String> {
-    let existing = fs::read_to_string(path).unwrap_or_default();
-
-    let start_marker = "<!-- nexus:skills:start -->";
-    let end_marker = "<!-- nexus:skills:end -->";
-
-    let final_content = if let (Some(start), Some(end)) =
-        (existing.find(start_marker), existing.find(end_marker))
-    {
-        let before = &existing[..start];
-        let after = &existing[end + end_marker.len()..];
-        format!(
-            "{}{}{}",
-            before.trim_end(),
-            format!("\n\n{}\n", skills_section),
-            after.trim_start()
-        )
-    } else if existing.is_empty() {
-        skills_section.to_string()
-    } else {
-        format!("{}\n\n{}", existing.trim_end(), skills_section)
-    };
-
-    fs::write(path, final_content)
-        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
-}
-
-/// Remove the Nexus-managed skills section from a markdown file.
-pub(crate) fn remove_skills_section_from_file(path: &Path) -> Result<(), String> {
-    if !path.exists() {
-        return Ok(());
-    }
-
-    let existing = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-
-    let start_marker = "<!-- nexus:skills:start -->";
-    let end_marker = "<!-- nexus:skills:end -->";
-
-    let final_content = if let (Some(start), Some(end)) =
-        (existing.find(start_marker), existing.find(end_marker))
-    {
-        let before = &existing[..start];
-        let after = &existing[end + end_marker.len()..];
-        format!(
-            "{}{}",
-            before.trim_end(),
-            if after.trim().is_empty() { "" } else { "\n\n" }
-        ) + after.trim_start()
-    } else {
-        existing
-    };
-
-    fs::write(path, final_content)
-        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
 }
 
 /// Read a JSON config file containing MCP server definitions, extract them,

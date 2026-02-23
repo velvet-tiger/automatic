@@ -23,6 +23,10 @@ impl Agent for ClaudeCode {
         ".mcp.json"
     }
 
+    fn project_file_name(&self) -> &'static str {
+        "CLAUDE.md"
+    }
+
     // ── Detection ───────────────────────────────────────────────────────
 
     fn detect_in(&self, dir: &Path) -> bool {

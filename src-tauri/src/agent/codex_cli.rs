@@ -2,12 +2,10 @@ use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{
-    build_skills_markdown, merge_skills_into_file, remove_skills_section_from_file, Agent,
-};
+use super::{sync_individual_skills, Agent};
 
-/// Codex CLI agent — writes `.codex/config.toml` and syncs skills into
-/// `AGENTS.md` as a managed markdown section.
+/// Codex CLI agent — writes `.codex/config.toml` and stores skills under
+/// `<project>/.agents/skills/<name>/SKILL.md`.
 pub struct CodexCli;
 
 impl Agent for CodexCli {
@@ -25,15 +23,18 @@ impl Agent for CodexCli {
         ".codex/config.toml"
     }
 
+    fn project_file_name(&self) -> &'static str {
+        "AGENTS.md"
+    }
+
     // ── Detection ───────────────────────────────────────────────────────
 
     fn detect_in(&self, dir: &Path) -> bool {
         dir.join(".codex").join("config.toml").exists()
     }
 
-    fn skill_dirs(&self, _dir: &Path) -> Vec<PathBuf> {
-        // Codex uses AGENTS.md, not a skills directory
-        vec![]
+    fn skill_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".agents").join("skills")]
     }
 
     // ── Config writing ──────────────────────────────────────────────────
@@ -128,22 +129,11 @@ impl Agent for CodexCli {
         &self,
         dir: &Path,
         skill_contents: &[(String, String)],
-        _selected_names: &[String],
+        selected_names: &[String],
     ) -> Result<Vec<String>, String> {
         let mut written = Vec::new();
-        let agents_path = dir.join("AGENTS.md");
-
-        if skill_contents.is_empty() {
-            remove_skills_section_from_file(&agents_path)?;
-            if agents_path.exists() {
-                written.push(agents_path.display().to_string());
-            }
-        } else {
-            let section = build_skills_markdown(skill_contents);
-            merge_skills_into_file(&agents_path, &section)?;
-            written.push(agents_path.display().to_string());
-        }
-
+        let skills_dir = dir.join(".agents").join("skills");
+        sync_individual_skills(&skills_dir, skill_contents, selected_names, &mut written)?;
         Ok(written)
     }
 
