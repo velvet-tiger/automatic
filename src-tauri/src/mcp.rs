@@ -18,7 +18,7 @@ pub struct GetCredentialParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ReadSkillParams {
-    /// The skill name (directory name under ~/.claude/skills/)
+    /// The skill name (directory name under ~/.agents/skills/ or ~/.claude/skills/)
     pub name: String,
 }
 

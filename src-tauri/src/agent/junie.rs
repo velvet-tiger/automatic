@@ -35,7 +35,10 @@ impl Agent for Junie {
     }
 
     fn skill_dirs(&self, dir: &Path) -> Vec<PathBuf> {
-        vec![dir.join(".agents").join("skills")]
+        vec![
+            dir.join(".junie").join("skills"),
+            dir.join(".agents").join("skills"),
+        ]
     }
 
     // ── Config writing ──────────────────────────────────────────────────
@@ -82,10 +85,17 @@ impl Agent for Junie {
         dir: &Path,
         skill_contents: &[(String, String)],
         selected_names: &[String],
+        local_skill_names: &[String],
     ) -> Result<Vec<String>, String> {
         let mut written = Vec::new();
         let skills_dir = dir.join(".agents").join("skills");
-        sync_individual_skills(&skills_dir, skill_contents, selected_names, &mut written)?;
+        sync_individual_skills(
+            &skills_dir,
+            skill_contents,
+            selected_names,
+            local_skill_names,
+            &mut written,
+        )?;
         Ok(written)
     }
 

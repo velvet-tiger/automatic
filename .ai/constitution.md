@@ -77,7 +77,7 @@ src-tauri/            # Rust backend
 | Data | Location | Mechanism |
 |------|----------|-----------|
 | API keys | OS keychain | `keyring` crate, service name `nexus_desktop` |
-| Skills | `~/.claude/skills/<name>/SKILL.md` | Filesystem |
+| Skills | `~/.agents/skills/<name>/SKILL.md` (primary, agentskills.io standard) + `~/.claude/skills/<name>/SKILL.md` (Claude Code) | Filesystem |
 | Projects | `<project-dir>/.nexus/project.json` (full config, pretty-printed); `~/.nexus/projects/<name>.json` (registry entry pointing to directory) | Filesystem (JSON) |
 | MCP config | `~/Library/Application Support/Claude/claude_desktop_config.json` | Read-only, Mac only |
 
@@ -91,10 +91,12 @@ Current commands:
 |---------|--------|---------|---------|
 | `save_api_key` | `provider, key` | `Result<()>` | Store API key in OS keychain |
 | `get_api_key` | `provider` | `Result<String>` | Retrieve API key from OS keychain |
-| `get_skills` | none | `Result<Vec<String>>` | List skill directory names from `~/.claude/skills/` |
-| `read_skill` | `name` | `Result<String>` | Read `SKILL.md` content from a skill directory |
-| `save_skill` | `name, content` | `Result<()>` | Write `SKILL.md`, creating directory if needed |
-| `delete_skill` | `name` | `Result<()>` | Remove entire skill directory |
+| `get_skills` | none | `Result<Vec<SkillEntry>>` | List skills from `~/.agents/skills/` and `~/.claude/skills/` with location flags |
+| `read_skill` | `name` | `Result<String>` | Read `SKILL.md` content (checks `~/.agents/skills/` first, then `~/.claude/skills/`) |
+| `save_skill` | `name, content` | `Result<()>` | Write `SKILL.md` to `~/.agents/skills/` (the standard location) |
+| `delete_skill` | `name` | `Result<()>` | Remove skill from both global locations |
+| `sync_skill` | `name` | `Result<()>` | Copy a skill across both global directories |
+| `sync_all_skills` | none | `Result<Vec<String>>` | Sync all unsynced skills across both global directories |
 | `get_mcp_servers` | none | `Result<String>` | Read `claude_desktop_config.json` (Mac path) |
 | `get_projects` | none | `Result<Vec<String>>` | List project names from `~/.nexus/projects/` |
 | `read_project` | `name` | `Result<String>` | Read project JSON |
@@ -145,7 +147,7 @@ An external tool configures this in its MCP settings:
 - Validate all user-provided path components with `is_valid_name()` before any filesystem operation. Never allow path traversal.
 - API keys are stored via the `keyring` crate under the service name `nexus_desktop`.
 - Use the `dirs` crate for resolving home directories. Do not hardcode paths.
-- Skills are stored at `~/.claude/skills/<name>/SKILL.md`.
+- Skills are stored at `~/.agents/skills/<name>/SKILL.md` (primary, agentskills.io standard) and also scanned from `~/.claude/skills/<name>/SKILL.md` (Claude Code). New skills are saved to `~/.agents/skills/` by default.
 - MCP config is read from `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac). Cross-platform support is pending.
 - MCP tools use `rmcp` macros: `#[tool]` for tool functions, `#[tool_router]` on the impl block, `#[tool_handler]` on the `ServerHandler` impl.
 - MCP tool parameters use `Parameters<T>` wrapper from `rmcp::handler::server::wrapper`.

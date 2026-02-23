@@ -5,7 +5,14 @@ use std::path::PathBuf;
 
 // ── Path Helpers ─────────────────────────────────────────────────────────────
 
-pub fn get_skills_dir() -> Result<PathBuf, String> {
+/// Primary skills directory — the agentskills.io standard location.
+pub fn get_agents_skills_dir() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    Ok(home.join(".agents/skills"))
+}
+
+/// Secondary skills directory — Claude Code's location.
+pub fn get_claude_skills_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
     Ok(home.join(".claude/skills"))
 }
@@ -21,6 +28,16 @@ pub fn is_valid_name(name: &str) -> bool {
 
 // ── Data Structures ──────────────────────────────────────────────────────────
 
+/// A skill entry with its name and which global directories it exists in.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkillEntry {
+    pub name: String,
+    /// Exists in `~/.agents/skills/` (agentskills.io standard)
+    pub in_agents: bool,
+    /// Exists in `~/.claude/skills/` (Claude Code)
+    pub in_claude: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Project {
     pub name: String,
@@ -30,6 +47,10 @@ pub struct Project {
     pub directory: String,
     #[serde(default)]
     pub skills: Vec<String>,
+    /// Skills that exist only in the project directory, not in the global
+    /// registry.  Discovered during autodetection but never auto-imported.
+    #[serde(default)]
+    pub local_skills: Vec<String>,
     #[serde(default)]
     pub mcp_servers: Vec<String>,
     #[serde(default)]
@@ -56,52 +77,89 @@ pub fn get_api_key(provider: &str) -> Result<String, String> {
 
 // ── Skills ───────────────────────────────────────────────────────────────────
 
-pub fn list_skills() -> Result<Vec<String>, String> {
-    let skills_dir = get_skills_dir()?;
+/// Scan a single skills directory and return the set of valid skill names.
+fn scan_skills_dir(dir: &PathBuf) -> Result<std::collections::HashSet<String>, String> {
+    let mut names = std::collections::HashSet::new();
 
-    if !skills_dir.exists() {
-        return Ok(Vec::new());
+    if !dir.exists() {
+        return Ok(names);
     }
 
-    let mut skills = Vec::new();
-    let entries = fs::read_dir(skills_dir).map_err(|e| e.to_string())?;
-
+    let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
     for entry in entries {
         if let Ok(entry) = entry {
             let path = entry.path();
             if path.is_dir() {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if is_valid_name(name) {
-                        skills.push(name.to_string());
+                    if is_valid_name(name) && path.join("SKILL.md").exists() {
+                        names.insert(name.to_string());
                     }
                 }
             }
         }
     }
 
-    Ok(skills)
+    Ok(names)
 }
 
+/// List skills from both `~/.agents/skills/` and `~/.claude/skills/`,
+/// returning entries that indicate which locations each skill exists in.
+pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
+    let agents_dir = get_agents_skills_dir()?;
+    let claude_dir = get_claude_skills_dir()?;
+
+    let agents_names = scan_skills_dir(&agents_dir)?;
+    let claude_names = scan_skills_dir(&claude_dir)?;
+
+    // Union of all names
+    let mut all_names: Vec<String> = agents_names.union(&claude_names).cloned().collect();
+    all_names.sort();
+
+    let entries = all_names
+        .into_iter()
+        .map(|name| SkillEntry {
+            in_agents: agents_names.contains(&name),
+            in_claude: claude_names.contains(&name),
+            name,
+        })
+        .collect();
+
+    Ok(entries)
+}
+
+/// Convenience: list just the skill names (union of both directories).
+/// Used by sync and autodetect where only names are needed.
+pub fn list_skill_names() -> Result<Vec<String>, String> {
+    Ok(list_skills()?.into_iter().map(|e| e.name).collect())
+}
+
+/// Read a skill's SKILL.md content.  Checks `~/.agents/skills/` first
+/// (the canonical location), then falls back to `~/.claude/skills/`.
 pub fn read_skill(name: &str) -> Result<String, String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
-    let skills_dir = get_skills_dir()?;
-    let skill_path = skills_dir.join(name).join("SKILL.md");
 
-    if skill_path.exists() {
-        fs::read_to_string(skill_path).map_err(|e| e.to_string())
-    } else {
-        Ok("".to_string())
+    let agents_path = get_agents_skills_dir()?.join(name).join("SKILL.md");
+    if agents_path.exists() {
+        return fs::read_to_string(agents_path).map_err(|e| e.to_string());
     }
+
+    let claude_path = get_claude_skills_dir()?.join(name).join("SKILL.md");
+    if claude_path.exists() {
+        return fs::read_to_string(claude_path).map_err(|e| e.to_string());
+    }
+
+    Ok("".to_string())
 }
 
+/// Save a skill to `~/.agents/skills/` (the agentskills.io standard location).
 pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
-    let skills_dir = get_skills_dir()?;
-    let skill_dir = skills_dir.join(name);
+    let agents_dir = get_agents_skills_dir()?;
+    let skill_dir = agents_dir.join(name);
 
     if !skill_dir.exists() {
         fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
@@ -111,18 +169,79 @@ pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
     fs::write(skill_path, content).map_err(|e| e.to_string())
 }
 
+/// Delete a skill from both global locations.
 pub fn delete_skill(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
-    let skills_dir = get_skills_dir()?;
-    let skill_dir = skills_dir.join(name);
 
-    if skill_dir.exists() {
-        fs::remove_dir_all(&skill_dir).map_err(|e| e.to_string())?;
+    // Remove from ~/.agents/skills/
+    let agents_dir = get_agents_skills_dir()?.join(name);
+    if agents_dir.exists() {
+        fs::remove_dir_all(&agents_dir).map_err(|e| e.to_string())?;
+    }
+
+    // Remove from ~/.claude/skills/
+    let claude_dir = get_claude_skills_dir()?.join(name);
+    if claude_dir.exists() {
+        fs::remove_dir_all(&claude_dir).map_err(|e| e.to_string())?;
     }
 
     Ok(())
+}
+
+/// Sync a single skill across both global directories.  Copies from
+/// whichever location has it to the other.  If both exist, the
+/// `~/.agents/skills/` version is canonical and overwrites claude.
+pub fn sync_skill(name: &str) -> Result<(), String> {
+    if !is_valid_name(name) {
+        return Err("Invalid skill name".into());
+    }
+
+    let agents_dir = get_agents_skills_dir()?;
+    let claude_dir = get_claude_skills_dir()?;
+
+    let agents_path = agents_dir.join(name).join("SKILL.md");
+    let claude_path = claude_dir.join(name).join("SKILL.md");
+
+    let agents_exists = agents_path.exists();
+    let claude_exists = claude_path.exists();
+
+    if !agents_exists && !claude_exists {
+        return Err(format!("Skill '{}' not found in any location", name));
+    }
+
+    if agents_exists {
+        // agents → claude  (agents is canonical)
+        let content = fs::read_to_string(&agents_path).map_err(|e| e.to_string())?;
+        let target_dir = claude_dir.join(name);
+        fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+        fs::write(&claude_path, content).map_err(|e| e.to_string())?;
+    } else {
+        // claude → agents
+        let content = fs::read_to_string(&claude_path).map_err(|e| e.to_string())?;
+        let target_dir = agents_dir.join(name);
+        fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+        fs::write(&agents_path, content).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// Sync all skills across both global directories.
+/// Returns the list of skill names that were synced.
+pub fn sync_all_skills() -> Result<Vec<String>, String> {
+    let entries = list_skills()?;
+    let mut synced = Vec::new();
+
+    for entry in entries {
+        if !entry.in_agents || !entry.in_claude {
+            sync_skill(&entry.name)?;
+            synced.push(entry.name);
+        }
+    }
+
+    Ok(synced)
 }
 
 // ── Templates ────────────────────────────────────────────────────────────────

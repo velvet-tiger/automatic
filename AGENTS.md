@@ -98,10 +98,13 @@ Creates production-ready Claude Code Skills with proper YAML frontmatter, progre
 
 ```bash
 # 1. Create skill directory (MUST be at top level, NOT in subdirectories!)
-mkdir -p ~/.claude/skills/my-first-skill
+#    Standard location (works with Codex, Claude Code via Nexus sync):
+mkdir -p ~/.agents/skills/my-first-skill
+#    Or Claude Code native location:
+#    mkdir -p ~/.claude/skills/my-first-skill
 
 # 2. Create SKILL.md with proper format
-cat > ~/.claude/skills/my-first-skill/SKILL.md << 'EOF'
+cat > ~/.agents/skills/my-first-skill/SKILL.md << 'EOF'
 ---
 name: "My First Skill"
 description: "Brief description of what this skill does and when Claude should use it. Maximum 1024 characters."
@@ -117,7 +120,7 @@ description: "Brief description of what this skill does and when Claude should u
 EOF
 
 # 3. Verify skill is detected
-# Restart Claude Code or refresh Claude.ai
+# Use Nexus "Sync All" to copy to ~/.claude/skills/ for Claude Code
 ```
 
 ---
@@ -236,22 +239,36 @@ Claude Code does NOT support nested subdirectories or namespaces!
 
 #### Skills Locations
 
-**Personal Skills** (available across all projects):
+Nexus scans two global skill directories and keeps them in sync:
+
+**Standard Skills** (agentskills.io standard, primary):
+```
+~/.agents/skills/
+└── [your-skills]/
+```
+- **Path**: `~/.agents/skills/` or `$HOME/.agents/skills/`
+- **Scope**: Available across all projects and agents (Codex, Claude Code via sync)
+- **Version Control**: NOT committed to git (outside repo)
+- **Use Case**: Personal productivity tools, custom workflows
+- **Note**: This is where Nexus saves new skills by default
+
+**Claude Code Skills** (Claude Code native location):
 ```
 ~/.claude/skills/
 └── [your-skills]/
 ```
 - **Path**: `~/.claude/skills/` or `$HOME/.claude/skills/`
-- **Scope**: Available in all projects for this user
+- **Scope**: Available to Claude Code only
 - **Version Control**: NOT committed to git (outside repo)
-- **Use Case**: Personal productivity tools, custom workflows
+- **Use Case**: Claude Code reads skills from here natively
+- **Note**: Nexus scans this location and can sync skills to/from `~/.agents/skills/`
 
 **Project Skills** (team-shared, version controlled):
 ```
-<project-root>/.claude/skills/
+<project-root>/.agents/skills/    # agentskills.io standard (Codex)
+<project-root>/.claude/skills/    # Claude Code native
 └── [team-skills]/
 ```
-- **Path**: `.claude/skills/` in project root
 - **Scope**: Available only in this project
 - **Version Control**: SHOULD be committed to git
 - **Use Case**: Team workflows, project-specific tools, shared knowledge
@@ -605,7 +622,7 @@ Before publishing a skill, verify:
 
 **File Structure**:
 - [ ] SKILL.md exists in skill directory
-- [ ] Directory is DIRECTLY in `~/.claude/skills/[skill-name]/` or `.claude/skills/[skill-name]/`
+- [ ] Directory is DIRECTLY in `~/.agents/skills/[skill-name]/` or `~/.claude/skills/[skill-name]/` or `.agents/skills/[skill-name]/`
 - [ ] Uses clear, descriptive directory name
 - [ ] **NO nested subdirectories** (Claude Code requires top-level structure)
 

@@ -73,7 +73,7 @@ fn list_agents_with_projects() -> Result<String, String> {
 // ── Skills ───────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-fn get_skills() -> Result<Vec<String>, String> {
+fn get_skills() -> Result<Vec<core::SkillEntry>, String> {
     core::list_skills()
 }
 
@@ -94,6 +94,20 @@ fn delete_skill(name: &str) -> Result<(), String> {
     core::delete_skill(name)?;
     prune_skill_from_projects(name);
     Ok(())
+}
+
+/// Sync a single skill across both global directories (~/.agents/skills/ and
+/// ~/.claude/skills/).
+#[tauri::command]
+fn sync_skill(name: &str) -> Result<(), String> {
+    core::sync_skill(name)
+}
+
+/// Sync all skills across both global directories.  Returns the list of
+/// skill names that were synced.
+#[tauri::command]
+fn sync_all_skills() -> Result<Vec<String>, String> {
+    core::sync_all_skills()
 }
 
 // ── Templates ────────────────────────────────────────────────────────────────
@@ -380,6 +394,31 @@ fn prune_mcp_server_from_projects(server_name: &str) {
     });
 }
 
+// ── Local Skills ─────────────────────────────────────────────────────────
+
+/// Import a local skill into the global registry and promote it to a normal
+/// project skill.  Returns the updated project JSON.
+#[tauri::command]
+fn import_local_skill(name: &str, skill_name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let updated = sync::import_local_skill(&project, skill_name)?;
+    sync_project_if_configured(name, &updated);
+    serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())
+}
+
+/// Copy all local skills to every agent's skill directory in the project.
+/// Returns the list of files written.
+#[tauri::command]
+fn sync_local_skills(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let written = sync::sync_local_skills_across_agents(&project)?;
+    serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
+}
+
 // ── Plugins / Sessions ───────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -420,6 +459,8 @@ pub fn run() {
             read_skill,
             save_skill,
             delete_skill,
+            sync_skill,
+            sync_all_skills,
             get_templates,
             read_template,
             save_template,
@@ -439,6 +480,8 @@ pub fn run() {
             save_project,
             delete_project,
             sync_project,
+            import_local_skill,
+            sync_local_skills,
             install_plugin_marketplace,
             get_sessions,
         ])

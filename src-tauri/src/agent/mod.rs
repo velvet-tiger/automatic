@@ -83,11 +83,16 @@ pub trait Agent: Send + Sync {
 
     /// Copy selected skills into the project directory at the right
     /// location for this agent.  Returns the list of files written.
+    ///
+    /// `local_skill_names` lists skills that exist only in this project
+    /// directory (not in the global registry).  These must be preserved
+    /// during the cleanup phase rather than deleted.
     fn sync_skills(
         &self,
         dir: &Path,
         skill_contents: &[(String, String)],
         selected_names: &[String],
+        local_skill_names: &[String],
     ) -> Result<Vec<String>, String>;
 
     // ── Discovery ───────────────────────────────────────────────────────
@@ -151,15 +156,20 @@ pub fn from_id(id: &str) -> Option<&'static dyn Agent> {
 // that each agent file stays focused on its own format logic.
 
 /// Sync individual skill files under `<base_dir>/<name>/SKILL.md` by:
-/// 1) removing directories not in the selected skill list
+/// 1) removing directories not in the selected skill list (preserving local skills)
 /// 2) writing the currently selected skills
+///
+/// `preserve_names` lists skill directory names that should never be removed
+/// (e.g. local skills that only exist in this project directory).
 pub(crate) fn sync_individual_skills(
     base_dir: &Path,
     skills: &[(String, String)],
     selected_skill_names: &[String],
+    preserve_names: &[String],
     written: &mut Vec<String>,
 ) -> Result<(), String> {
     let selected: HashSet<&str> = selected_skill_names.iter().map(|s| s.as_str()).collect();
+    let preserved: HashSet<&str> = preserve_names.iter().map(|s| s.as_str()).collect();
 
     if base_dir.exists() {
         for entry in fs::read_dir(base_dir)
@@ -172,7 +182,10 @@ pub(crate) fn sync_individual_skills(
             }
 
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if crate::core::is_valid_name(name) && !selected.contains(name) {
+                if crate::core::is_valid_name(name)
+                    && !selected.contains(name)
+                    && !preserved.contains(name)
+                {
                     fs::remove_dir_all(&path).map_err(|e| {
                         format!("Failed to remove skill dir '{}': {}", path.display(), e)
                     })?;

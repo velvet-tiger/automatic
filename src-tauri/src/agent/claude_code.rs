@@ -77,10 +77,17 @@ impl Agent for ClaudeCode {
         dir: &Path,
         skill_contents: &[(String, String)],
         selected_names: &[String],
+        local_skill_names: &[String],
     ) -> Result<Vec<String>, String> {
         let mut written = Vec::new();
         let skills_dir = dir.join(".claude").join("skills");
-        sync_individual_skills(&skills_dir, skill_contents, selected_names, &mut written)?;
+        sync_individual_skills(
+            &skills_dir,
+            skill_contents,
+            selected_names,
+            local_skill_names,
+            &mut written,
+        )?;
         Ok(written)
     }
 

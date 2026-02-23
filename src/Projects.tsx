@@ -14,6 +14,8 @@ import {
   FileText,
   LayoutTemplate,
   Edit2,
+  Upload,
+  ArrowRightLeft,
 } from "lucide-react";
 
 interface Project {
@@ -21,6 +23,7 @@ interface Project {
   description: string;
   directory: string;
   skills: string[];
+  local_skills: string[];
   mcp_servers: string[];
   providers: string[];
   agents: string[];
@@ -45,6 +48,7 @@ function emptyProject(name: string): Project {
     description: "",
     directory: "",
     skills: [],
+    local_skills: [],
     mcp_servers: [],
     providers: [],
     agents: [],
@@ -230,6 +234,7 @@ export default function Projects() {
         description: parsed.description || "",
         directory: parsed.directory || "",
         skills: parsed.skills || [],
+        local_skills: parsed.local_skills || [],
         mcp_servers: parsed.mcp_servers || [],
         providers: parsed.providers || [],
         agents: parsed.agents || [],
@@ -276,6 +281,7 @@ export default function Projects() {
         description: parsed.description || "",
         directory: parsed.directory || "",
         skills: parsed.skills || [],
+        local_skills: parsed.local_skills || [],
         mcp_servers: parsed.mcp_servers || [],
         providers: parsed.providers || [],
         agents: parsed.agents || [],
@@ -710,6 +716,100 @@ export default function Projects() {
                     </ul>
                   )}
                 </section>
+
+                {/* Local Skills */}
+                {project.local_skills.length > 0 && (
+                  <section>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
+                        <Code size={12} /> Local Skills
+                      </label>
+                      {project.local_skills.length > 1 && selectedName && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              setSyncStatus("syncing");
+                              await invoke("sync_local_skills", { name: selectedName });
+                              setSyncStatus("Local skills synced across agents");
+                              setTimeout(() => setSyncStatus(null), 4000);
+                            } catch (err: any) {
+                              setSyncStatus(`Sync failed: ${err}`);
+                              setTimeout(() => setSyncStatus(null), 4000);
+                            }
+                          }}
+                          className="flex items-center gap-1 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] px-1.5 py-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                          title="Copy all local skills to every agent's skill directory"
+                        >
+                          <ArrowRightLeft size={11} /> Sync Across Agents
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-[#8A8C93] mb-2">
+                      These skills exist only in this project directory, not in the global registry.
+                    </p>
+                    <ul className="space-y-1">
+                      {project.local_skills.map((s) => (
+                        <li
+                          key={s}
+                          className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
+                        >
+                          <span className="flex items-center gap-2">
+                            <Code size={12} className="text-[#8A8C93]" />
+                            {s}
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#8A8C93] border border-[#3A3B42]">
+                              local
+                            </span>
+                          </span>
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                            <button
+                              onClick={async () => {
+                                if (!selectedName) return;
+                                try {
+                                  setSyncStatus("syncing");
+                                  await invoke("sync_local_skills", { name: selectedName });
+                                  setSyncStatus(`Synced "${s}" across agents`);
+                                  setTimeout(() => setSyncStatus(null), 4000);
+                                } catch (err: any) {
+                                  setSyncStatus(`Sync failed: ${err}`);
+                                  setTimeout(() => setSyncStatus(null), 4000);
+                                }
+                              }}
+                              className="text-[#8A8C93] hover:text-[#E0E1E6] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                              title="Sync to all agents in this project"
+                            >
+                              <ArrowRightLeft size={12} />
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (!selectedName) return;
+                                try {
+                                  setSyncStatus("syncing");
+                                  const result: string = await invoke("import_local_skill", { name: selectedName, skillName: s });
+                                  const updated = JSON.parse(result);
+                                  setProject({
+                                    ...project,
+                                    skills: updated.skills || project.skills,
+                                    local_skills: updated.local_skills || [],
+                                  });
+                                  await loadAvailableSkills();
+                                  setSyncStatus(`Imported "${s}" to global registry`);
+                                  setTimeout(() => setSyncStatus(null), 4000);
+                                } catch (err: any) {
+                                  setSyncStatus(`Import failed: ${err}`);
+                                  setTimeout(() => setSyncStatus(null), 4000);
+                                }
+                              }}
+                              className="text-[#8A8C93] hover:text-[#4ADE80] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                              title="Import to global skill registry"
+                            >
+                              <Upload size={12} />
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
 
                 {/* MCP Servers */}
                 <section>
