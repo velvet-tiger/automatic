@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -49,6 +49,10 @@ interface ProjectFileInfo {
   exists: boolean;
 }
 
+const SIDEBAR_MIN = 160;
+const SIDEBAR_MAX = 400;
+const SIDEBAR_DEFAULT = 192; // w-48 equivalent
+
 function emptyProject(name: string): Project {
   return {
     name,
@@ -71,6 +75,38 @@ export default function Projects() {
   const [selectedName, setSelectedName] = useState<string | null>(() => {
     return localStorage.getItem(LAST_PROJECT_KEY);
   });
+
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
+  const isSidebarDragging = useRef(false);
+
+  const onSidebarMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isSidebarDragging.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isSidebarDragging.current) return;
+      // 180px is the global sidebar width in App.tsx
+      const newWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, e.clientX - 180));
+      setSidebarWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      if (isSidebarDragging.current) {
+        isSidebarDragging.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      }
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
 
   // Drag-and-drop reorder state (pointer-events based)
   const [dragIdx, setDragIdx] = useState<number | null>(null);
@@ -549,7 +585,10 @@ export default function Projects() {
   return (
     <div className="flex h-full w-full bg-[#222327]">
       {/* Left sidebar - project list */}
-      <div className="w-48 flex-shrink-0 flex flex-col border-r border-[#33353A] bg-[#1A1A1E]/50">
+      <div
+        className="flex-shrink-0 flex flex-col border-r border-[#33353A] bg-[#1A1A1E]/50 relative"
+        style={{ width: sidebarWidth }}
+      >
         <div className="h-11 px-4 border-b border-[#33353A] flex justify-between items-center bg-[#222327]/30">
           <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
             Projects
@@ -627,6 +666,11 @@ export default function Projects() {
             </ul>
           )}
         </div>
+        {/* Resize handle */}
+        <div
+          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-[#5E6AD2]/40 active:bg-[#5E6AD2]/60 transition-colors z-10"
+          onMouseDown={onSidebarMouseDown}
+        />
       </div>
 
       {/* Right area - project detail */}
