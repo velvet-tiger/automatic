@@ -8,7 +8,7 @@ import ProjectTemplates from "./ProjectTemplates";
 import McpServers from "./McpServers";
 import Templates from "./Templates";
 import Agents from "./Agents";
-import { Code, Server, ChevronDown, Settings, FolderOpen, LayoutTemplate, Bot, Store, Layers } from "lucide-react";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store } from "lucide-react";
 import "./App.css";
 
 function App() {
@@ -107,22 +107,13 @@ function App() {
             <ul className="space-y-0.5">
               <NavItem id="agents" icon={Bot} label="Agents" />
               <NavItem id="skills" icon={Code} label="Skills & Prompts" />
-              <NavItem id="skill-store" icon={Store} label="Skill Store" />
               <NavItem id="project-templates" icon={Layers} label="Proj Templates" />
               <NavItem id="templates" icon={LayoutTemplate} label="File Templates" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
             </ul>
           </div>
 
-          <div className="mb-6">
-            <div className="px-3 pb-1.5 text-[11px] font-semibold text-[#8A8C93] tracking-wider flex items-center justify-between group cursor-pointer hover:text-[#E0E1E6]">
-              <span>Settings</span>
-              <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <ul className="space-y-0.5">
-              <NavItem id="settings" icon={Settings} label="Preferences" />
-            </ul>
-          </div>
+
         </nav>
 
         {/* User account at bottom of sidebar */}
@@ -146,8 +137,17 @@ function App() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Top Header */}
-        <header className="h-11 border-b border-[#33353A] flex items-center px-4 bg-[#222327]">
+        <header className="h-11 border-b border-[#33353A] flex items-center justify-between px-4 bg-[#222327]">
           <span className="text-[13px] text-[#E0E1E6] capitalize">{activeTab.replace(/-/g, ' ')}</span>
+          {activeTab === "skills" && (
+            <button
+              onClick={() => setActiveTab("skill-store")}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] text-white shadow-sm transition-colors"
+            >
+              <Store size={13} />
+              Skill Store
+            </button>
+          )}
         </header>
 
         {/* Content Area */}
