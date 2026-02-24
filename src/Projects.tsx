@@ -1292,20 +1292,24 @@ export default function Projects() {
                         onClick={() => setProjectTab("agents")}
                         className="group bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10"
                       >
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors">
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between">
+                              <div className="text-3xl font-semibold text-[#E0E1E6] leading-none mb-1">
+                                {project.agents.length}
+                              </div>
+                              <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                            </div>
+                            <div className="text-[13px] text-[#8A8C93] mb-1">Agent Tools</div>
+                            <div className="text-[11px] text-[#8A8C93]/60 truncate">
+                              {project.agents.length === 0
+                                ? "No agents configured"
+                                : project.agents.slice(0, 2).map(a => availableAgents.find(ag => ag.id === a)?.label || a).join(", ") + (project.agents.length > 2 ? ` +${project.agents.length - 2}` : "")}
+                            </div>
+                          </div>
+                          <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors shrink-0">
                             <Bot size={18} className="text-[#5E6AD2]" />
                           </div>
-                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </div>
-                        <div className="text-3xl font-semibold text-[#E0E1E6] mb-1">
-                          {project.agents.length}
-                        </div>
-                        <div className="text-[13px] text-[#8A8C93] mb-1">Agent Tools</div>
-                        <div className="text-[11px] text-[#8A8C93]/60">
-                          {project.agents.length === 0 
-                            ? "No agents configured"
-                            : project.agents.slice(0, 2).map(a => availableAgents.find(ag => ag.id === a)?.label || a).join(", ") + (project.agents.length > 2 ? ` +${project.agents.length - 2}` : "")}
                         </div>
                       </button>
 
@@ -1314,20 +1318,24 @@ export default function Projects() {
                         onClick={() => setProjectTab("skills")}
                         className="group bg-[#1A1A1E] border border-[#33353A] hover:border-[#4ADE80]/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-[#4ADE80]/10"
                       >
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/20 transition-colors">
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between">
+                              <div className="text-3xl font-semibold text-[#E0E1E6] leading-none mb-1">
+                                {project.skills.length + project.local_skills.length}
+                              </div>
+                              <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                            </div>
+                            <div className="text-[13px] text-[#8A8C93] mb-1">Skills</div>
+                            <div className="text-[11px] text-[#8A8C93]/60 truncate">
+                              {project.skills.length === 0 && project.local_skills.length === 0
+                                ? "No skills attached"
+                                : `${project.skills.length} global, ${project.local_skills.length} local`}
+                            </div>
+                          </div>
+                          <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/20 transition-colors shrink-0">
                             <Code size={18} className="text-[#4ADE80]" />
                           </div>
-                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </div>
-                        <div className="text-3xl font-semibold text-[#E0E1E6] mb-1">
-                          {project.skills.length + project.local_skills.length}
-                        </div>
-                        <div className="text-[13px] text-[#8A8C93] mb-1">Skills</div>
-                        <div className="text-[11px] text-[#8A8C93]/60">
-                          {project.skills.length === 0 && project.local_skills.length === 0
-                            ? "No skills attached"
-                            : `${project.skills.length} global, ${project.local_skills.length} local`}
                         </div>
                       </button>
 
@@ -1336,20 +1344,24 @@ export default function Projects() {
                         onClick={() => setProjectTab("mcp_servers")}
                         className="group bg-[#1A1A1E] border border-[#33353A] hover:border-[#F59E0B]/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-[#F59E0B]/10"
                       >
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="p-2 bg-[#F59E0B]/10 rounded-lg group-hover:bg-[#F59E0B]/20 transition-colors">
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between">
+                              <div className="text-3xl font-semibold text-[#E0E1E6] leading-none mb-1">
+                                {project.mcp_servers.length}
+                              </div>
+                              <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                            </div>
+                            <div className="text-[13px] text-[#8A8C93] mb-1">MCP Servers</div>
+                            <div className="text-[11px] text-[#8A8C93]/60 truncate">
+                              {project.mcp_servers.length === 0
+                                ? "No servers configured"
+                                : project.mcp_servers.slice(0, 2).join(", ") + (project.mcp_servers.length > 2 ? ` +${project.mcp_servers.length - 2}` : "")}
+                            </div>
+                          </div>
+                          <div className="p-2 bg-[#F59E0B]/10 rounded-lg group-hover:bg-[#F59E0B]/20 transition-colors shrink-0">
                             <Server size={18} className="text-[#F59E0B]" />
                           </div>
-                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </div>
-                        <div className="text-3xl font-semibold text-[#E0E1E6] mb-1">
-                          {project.mcp_servers.length}
-                        </div>
-                        <div className="text-[13px] text-[#8A8C93] mb-1">MCP Servers</div>
-                        <div className="text-[11px] text-[#8A8C93]/60">
-                          {project.mcp_servers.length === 0
-                            ? "No servers configured"
-                            : project.mcp_servers.slice(0, 2).join(", ") + (project.mcp_servers.length > 2 ? ` +${project.mcp_servers.length - 2}` : "")}
                         </div>
                       </button>
                     </div>
