@@ -127,6 +127,8 @@ function App() {
                 elements: {
                   avatarBox: "w-7 h-7",
                   userButtonPopoverCard: "bg-[#1A1A1E] border border-[#33353A]",
+                  userButtonBox: "flex-row-reverse",
+                  userButtonOuterIdentifier: "text-left",
                 },
               }}
               showName
