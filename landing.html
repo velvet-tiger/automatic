@@ -125,183 +125,263 @@
                 
                 <!-- App Body -->
                 <div class="flex flex-1 overflow-hidden text-[#d4d4d4]">
-                    <!-- Sidebar -->
-                    <div class="w-[240px] bg-[#1c1c1e] border-r border-[#303030] p-3 flex flex-col gap-6 overflow-y-auto app-scroll">
-                        <!-- App Title -->
-                        <div class="flex items-center gap-2.5 px-2 mt-1">
-                            <div class="w-6 h-6 rounded-[4px] bg-[#6366f1] text-white flex items-center justify-center text-[11px] font-bold tracking-tight">N</div>
-                            <span class="font-semibold text-[14px] text-white">Nexus</span>
+<!-- Sidebar -->
+<div class="w-[240px] bg-[#1c1c1e] border-r border-[#303030] p-4 flex flex-col gap-6 overflow-y-auto app-scroll">
+    <!-- App Title -->
+    <div class="flex items-center gap-2.5 px-2 mt-1">
+        <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2L13.5 9.5L21 11L13.5 12.5L12 20L10.5 12.5L3 11L10.5 9.5L12 2Z" />
+        </svg>
+        <span class="font-bold text-[15px] text-white">Nexus</span>
+    </div>
+    
+    <!-- Nav Groups -->
+    <div>
+        <div class="text-[11px] font-semibold text-[#8e8e93] px-2 mb-2">Workspace</div>
+        <div class="flex items-center gap-2.5 px-3 py-2 bg-[#2c2c2e] rounded-lg text-white">
+            <svg class="w-4 h-4 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+            <span class="text-[13px] font-medium">Projects</span>
+        </div>
+    </div>
+    
+    <div>
+        <div class="text-[11px] font-semibold text-[#8e8e93] px-2 mb-2">Configuration</div>
+        <div class="flex flex-col gap-0.5">
+            <div class="flex items-center gap-2.5 px-3 py-2 hover:bg-[#2c2c2e] rounded-lg cursor-pointer text-[#a1a1aa]">
+                <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                <span class="text-[13px]">Agents</span>
+            </div>
+            <div class="flex items-center gap-2.5 px-3 py-2 hover:bg-[#2c2c2e] rounded-lg cursor-pointer text-[#a1a1aa]">
+                <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                <span class="text-[13px]">Skills & Prompts</span>
+            </div>
+            <div class="flex items-center gap-2.5 px-3 py-2 hover:bg-[#2c2c2e] rounded-lg cursor-pointer text-[#a1a1aa]">
+                <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"></path></svg>
+                <span class="text-[13px]">Templates</span>
+            </div>
+            <div class="flex items-center gap-2.5 px-3 py-2 hover:bg-[#2c2c2e] rounded-lg cursor-pointer text-[#a1a1aa]">
+                <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>
+                <span class="text-[13px]">MCP Servers</span>
+            </div>
+        </div>
+    </div>
+    
+    <div>
+        <div class="text-[11px] font-semibold text-[#8e8e93] px-2 mb-2">Settings</div>
+        <div class="flex items-center gap-2.5 px-3 py-2 hover:bg-[#2c2c2e] rounded-lg cursor-pointer text-[#a1a1aa]">
+            <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+            <span class="text-[13px]">Preferences</span>
+        </div>
+    </div>
+</div>
+<!-- Middle Column (Project List) -->
+<div class="w-[260px] bg-[#1c1c1e] border-r border-[#303030] flex flex-col">
+    <div class="px-5 h-[52px] border-b border-[#303030] flex items-center">
+        <span class="text-[13px] text-[#d4d4d4]">Projects</span>
+    </div>
+    <div class="px-5 py-4 flex justify-between items-center">
+        <span class="text-[11px] font-semibold text-[#8e8e93] tracking-widest uppercase">Projects</span>
+        <button class="text-[#8e8e93] hover:text-white"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-2 app-scroll">
+        <div class="flex items-center gap-3 px-3 py-2 bg-[#2c2c2e] rounded-lg cursor-pointer text-white mb-0.5">
+            <svg class="w-[18px] h-[18px] opacity-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+            <span class="text-[13px] font-medium truncate">aura</span>
+        </div>
+        <div class="flex items-center gap-3 px-3 py-2 hover:bg-[#2c2c2e] rounded-lg cursor-pointer text-[#a1a1aa] mb-0.5">
+            <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+            <span class="text-[13px] truncate">aura-skills</span>
+        </div>
+        <div class="flex items-center gap-3 px-3 py-2 hover:bg-[#2c2c2e] rounded-lg cursor-pointer text-[#a1a1aa] mb-0.5">
+            <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+            <span class="text-[13px] truncate">aura-docs</span>
+        </div>
+        <div class="flex items-center gap-3 px-3 py-2 hover:bg-[#2c2c2e] rounded-lg cursor-pointer text-[#a1a1aa] mb-0.5">
+            <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+            <span class="text-[13px] truncate">Nexus</span>
+        </div>
+        <div class="flex items-center gap-3 px-3 py-2 hover:bg-[#2c2c2e] rounded-lg cursor-pointer text-[#a1a1aa] mb-0.5">
+            <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+            <span class="text-[13px] truncate">Nexus test</span>
+        </div>
+        <div class="flex items-center gap-3 px-3 py-2 hover:bg-[#2c2c2e] rounded-lg cursor-pointer text-[#a1a1aa] mb-0.5">
+            <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+            <span class="text-[13px] truncate">runbeam-workspace</span>
+        </div>
+        <div class="flex items-center gap-3 px-3 py-2 hover:bg-[#2c2c2e] rounded-lg cursor-pointer text-[#a1a1aa] mb-0.5">
+            <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+            <span class="text-[13px] truncate">vendor-book</span>
+        </div>
+    </div>
+</div>
+<!-- Main Content Area -->
+<div class="flex-1 bg-[#212124] flex flex-col overflow-hidden">
+    <!-- Header -->
+    <div class="px-8 h-[52px] flex justify-between items-center border-b border-[#303030]">
+        <div class="flex items-center gap-3">
+            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+            <h1 class="text-[14px] font-semibold text-white">aura</h1>
+        </div>
+        <div class="flex items-center gap-3">
+            <button class="px-3 py-1.5 rounded-md border border-[#404040] text-[12px] font-medium text-[#d4d4d4] hover:bg-[#2c2c2e] transition-colors flex items-center gap-1.5 bg-[#212124]">
+                <svg class="w-3.5 h-3.5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                Remove
+            </button>
+            <button class="px-3 py-1.5 rounded-md border border-[#404040] text-[12px] font-medium text-white hover:bg-[#2c2c2e] transition-colors flex items-center gap-1.5 bg-[#212124]">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                Sync Configs
+            </button>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="px-8 flex items-center gap-6 border-b border-[#303030] pt-2">
+        <div class="text-[13px] font-medium text-white pb-3 border-b-2 border-indigo-500 cursor-pointer">Summary</div>
+        <div class="text-[13px] font-medium text-[#8e8e93] hover:text-[#d4d4d4] pb-3 border-b-2 border-transparent cursor-pointer">Details</div>
+        <div class="text-[13px] font-medium text-[#8e8e93] hover:text-[#d4d4d4] pb-3 border-b-2 border-transparent cursor-pointer">Agents</div>
+        <div class="text-[13px] font-medium text-[#8e8e93] hover:text-[#d4d4d4] pb-3 border-b-2 border-transparent cursor-pointer">Skills</div>
+        <div class="text-[13px] font-medium text-[#8e8e93] hover:text-[#d4d4d4] pb-3 border-b-2 border-transparent cursor-pointer">MCP Servers</div>
+        <div class="text-[13px] font-medium text-[#8e8e93] hover:text-[#d4d4d4] pb-3 border-b-2 border-transparent cursor-pointer">Project File</div>
+    </div>
+
+    <!-- Content Scrollable -->
+    <div class="flex-1 overflow-y-auto px-8 py-6 app-scroll">
+        <div class="max-w-[800px] flex flex-col gap-6">
+            
+            <!-- Cards Row -->
+            <div class="grid grid-cols-3 gap-4">
+                <div class="bg-[#18181a] border border-[#303030] rounded-xl p-5">
+                    <div class="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center mb-4">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                    </div>
+                    <div class="text-3xl font-bold text-white mb-1">4</div>
+                    <div class="text-[13px] font-medium text-[#8e8e93] mb-1">Agent Tools</div>
+                    <div class="text-[12px] text-[#5e5e63]">Claude Code, Codex CLI +2</div>
+                </div>
+                
+                <div class="bg-[#18181a] border border-[#303030] rounded-xl p-5">
+                    <div class="w-8 h-8 rounded-lg bg-green-500/10 text-green-400 flex items-center justify-center mb-4">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                    </div>
+                    <div class="text-3xl font-bold text-white mb-1">3</div>
+                    <div class="text-[13px] font-medium text-[#8e8e93] mb-1">Skills</div>
+                    <div class="text-[12px] text-[#5e5e63]">3 global, 0 local</div>
+                </div>
+
+                <div class="bg-[#18181a] border border-[#303030] rounded-xl p-5">
+                    <div class="w-8 h-8 rounded-lg bg-orange-500/10 text-orange-400 flex items-center justify-center mb-4">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>
+                    </div>
+                    <div class="text-3xl font-bold text-white mb-1">1</div>
+                    <div class="text-[13px] font-medium text-[#8e8e93] mb-1">MCP Servers</div>
+                    <div class="text-[12px] text-[#5e5e63]">laravel-boost</div>
+                </div>
+            </div>
+
+            <!-- Project Status -->
+            <div class="bg-[#18181a] border border-[#303030] rounded-xl p-6 relative mt-2">
+                <div class="absolute top-6 right-6 w-5 h-5 rounded-full border border-green-500 flex items-center justify-center">
+                    <svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>
+                </div>
+                <h3 class="text-[15px] font-semibold text-white mb-1">Project Status</h3>
+                <p class="text-[13px] text-[#8e8e93] mb-6">Configuration and sync status</p>
+                
+                <div class="space-y-4 mb-8">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                            <span class="text-[13px] text-[#d4d4d4]">Project Directory</span>
                         </div>
-                        
-                        <!-- Nav Groups -->
-                        <div>
-                            <div class="text-[11px] font-semibold text-[#8e8e93] px-2 mb-1.5">Workspace</div>
-                            <div class="flex items-center gap-2 px-2 py-1 bg-[#323234] rounded-md text-white">
-                                <svg class="w-4 h-4 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-                                <span class="text-[13px] font-medium">Projects</span>
+                        <div class="flex items-center gap-1.5 text-green-500">
+                            <div class="w-4 h-4 rounded-full border border-green-500 flex items-center justify-center">
+                                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>
                             </div>
-                        </div>
-                        
-                        <div>
-                            <div class="text-[11px] font-semibold text-[#8e8e93] px-2 mb-1.5">Configuration</div>
-                            <div class="flex flex-col gap-0.5">
-                                <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2c2c2e] rounded-md cursor-pointer text-[#a1a1aa]">
-                                    <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
-                                    <span class="text-[13px]">Skills & Prompts</span>
-                                </div>
-                                <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2c2c2e] rounded-md cursor-pointer text-[#a1a1aa]">
-                                    <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"></path></svg>
-                                    <span class="text-[13px]">Templates</span>
-                                </div>
-                                <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2c2c2e] rounded-md cursor-pointer text-[#a1a1aa]">
-                                    <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>
-                                    <span class="text-[13px]">MCP Servers</span>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div>
-                            <div class="text-[11px] font-semibold text-[#8e8e93] px-2 mb-1.5">Settings</div>
-                            <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2c2c2e] rounded-md cursor-pointer text-[#a1a1aa]">
-                                <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                                <span class="text-[13px]">Preferences</span>
-                            </div>
+                            <span class="text-[12px] font-medium">Configured</span>
                         </div>
                     </div>
-        
-                    <!-- Middle Column (Project List) -->
-                    <div class="w-[260px] bg-[#1c1c1e] border-r border-[#303030] flex flex-col">
-                        <div class="px-5 py-4 border-b border-[#303030] flex justify-between items-center">
-                            <span class="text-[12px] font-semibold text-[#8e8e93]">PROJECTS</span>
-                            <button class="text-[#8e8e93] hover:text-white"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>
+                    
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                            <span class="text-[13px] text-[#d4d4d4]">Agent Tools</span>
                         </div>
-                        <div class="flex-1 overflow-y-auto py-2 app-scroll">
-                            <div class="flex items-center gap-3 px-5 py-2 hover:bg-[#2c2c2e] cursor-pointer text-[#d4d4d4]">
-                                <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-                                <span class="text-[13px] truncate">Acme Web Store</span>
+                        <div class="flex items-center gap-1.5 text-green-500">
+                            <div class="w-4 h-4 rounded-full border border-green-500 flex items-center justify-center">
+                                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>
                             </div>
-                            <div class="flex items-center gap-3 px-5 py-2 bg-[#323234] cursor-pointer text-white">
-                                <svg class="w-[18px] h-[18px] opacity-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-                                <span class="text-[13px] font-medium truncate">Agent Swarm</span>
-                            </div>
-                            <div class="flex items-center gap-3 px-5 py-2 hover:bg-[#2c2c2e] cursor-pointer text-[#d4d4d4]">
-                                <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-                                <span class="text-[13px] truncate">React Dashboard</span>
-                            </div>
-                            <div class="flex items-center gap-3 px-5 py-2 hover:bg-[#2c2c2e] cursor-pointer text-[#d4d4d4]">
-                                <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-                                <span class="text-[13px] truncate">Mobile App API</span>
-                            </div>
-                            <div class="flex items-center gap-3 px-5 py-2 hover:bg-[#2c2c2e] cursor-pointer text-[#d4d4d4]">
-                                <svg class="w-[18px] h-[18px] opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-                                <span class="text-[13px] truncate">Data Pipeline</span>
-                            </div>
+                            <span class="text-[12px] font-medium">4 configured</span>
                         </div>
                     </div>
-        
-                    <!-- Main Content Area -->
-                    <div class="flex-1 bg-[#212124] flex flex-col overflow-hidden">
-                        <!-- Header -->
-                        <div class="px-8 py-5 border-b border-[#303030] flex justify-between items-center">
-                            <div class="flex items-center gap-3">
-                                <svg class="w-5 h-5 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-                                <h1 class="text-[16px] font-semibold text-white">Agent Swarm</h1>
-                            </div>
-                            <div class="flex items-center gap-3">
-                                <button class="px-3 py-1.5 rounded-[6px] border border-[#404040] text-[12px] font-medium text-[#d4d4d4] hover:bg-[#2c2c2e] transition-colors flex items-center gap-1.5">
-                                    <svg class="w-3.5 h-3.5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                    Remove
-                                </button>
-                                <button class="px-3 py-1.5 rounded-[6px] bg-[#323234] border border-[#404040] text-[12px] font-medium text-white hover:bg-[#3e3e40] transition-colors flex items-center gap-1.5">
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                                    Sync Configs
-                                </button>
-                            </div>
+
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            <span class="text-[13px] text-[#d4d4d4]">Configuration Sync</span>
                         </div>
-        
-                        <!-- Content Scrollable -->
-                        <div class="flex-1 overflow-y-auto px-8 py-8 app-scroll">
-                            <div class="max-w-[600px] space-y-9">
-                                
-                                <!-- Description -->
-                                <div class="space-y-2.5">
-                                    <label class="text-[11px] font-semibold text-[#8e8e93] tracking-widest uppercase">Description</label>
-                                    <textarea class="w-full bg-[#18181a] border border-[#303030] rounded-[6px] p-3.5 text-[13px] text-[#d4d4d4] h-[80px] focus:outline-none focus:border-[#6366f1]/50 resize-none transition-colors" placeholder="What is this project for?">Distributed AI agents for automated data analysis and reporting.</textarea>
-                                </div>
-            
-                                <!-- Project Directory -->
-                                <div class="space-y-2.5">
-                                    <div class="flex items-center gap-2">
-                                        <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
-                                        <label class="text-[11px] font-semibold text-[#8e8e93] tracking-widest uppercase">Project Directory</label>
-                                    </div>
-                                    <div class="flex gap-2.5">
-                                        <input type="text" class="flex-1 bg-[#18181a] border border-[#303030] rounded-[6px] px-3.5 py-2.5 text-[13px] font-mono text-[#d4d4d4] focus:outline-none focus:border-[#6366f1]/50 transition-colors" value="/Users/dev/workspace/agent-swarm" />
-                                        <button class="px-5 py-2.5 rounded-[6px] bg-[#2c2c2e] border border-[#404040] text-[13px] font-medium hover:bg-[#3a3a3c] transition-colors text-white">Browse</button>
-                                    </div>
-                                    <p class="text-[12px] text-[#8e8e93]">Agent configs will be written to this directory when you sync.</p>
-                                </div>
-            
-                                <!-- Agent Tools -->
-                                <div class="space-y-3">
-                                    <div class="flex justify-between items-center">
-                                        <div class="flex items-center gap-2">
-                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
-                                            <label class="text-[11px] font-semibold text-[#8e8e93] tracking-widest uppercase">Agent Tools</label>
-                                        </div>
-                                        <button class="text-[#8e8e93] hover:text-white"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>
-                                    </div>
-                                    <div class="space-y-2">
-                                        <div class="bg-[#18181a] border border-[#303030] rounded-[6px] px-4 py-3 flex items-center gap-3">
-                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
-                                            <span class="text-[13px] text-white">Claude Code</span>
-                                            <span class="text-[#8e8e93] font-mono text-[12px]">.mcp.json</span>
-                                        </div>
-                                        <div class="bg-[#18181a] border border-[#303030] rounded-[6px] px-4 py-3 flex items-center gap-3">
-                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
-                                            <span class="text-[13px] text-white">Codex CLI</span>
-                                            <span class="text-[#8e8e93] font-mono text-[12px]">.codex/config.toml</span>
-                                        </div>
-                                    </div>
-                                </div>
-            
-                                <!-- Skills -->
-                                <div class="space-y-3">
-                                    <div class="flex justify-between items-center">
-                                        <div class="flex items-center gap-2">
-                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
-                                            <label class="text-[11px] font-semibold text-[#8e8e93] tracking-widest uppercase">Skills</label>
-                                        </div>
-                                        <button class="text-[#8e8e93] hover:text-white"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>
-                                    </div>
-                                    <div class="space-y-2">
-                                        <div class="bg-[#18181a] border border-[#303030] rounded-[6px] px-4 py-3 flex items-center gap-3">
-                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
-                                            <span class="text-[13px] text-[#d4d4d4]">swarm-orchestration</span>
-                                        </div>
-                                        <div class="bg-[#18181a] border border-[#303030] rounded-[6px] px-4 py-3 flex items-center gap-3">
-                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
-                                            <span class="text-[13px] text-[#d4d4d4]">api-generator</span>
-                                        </div>
-                                    </div>
-                                </div>
-            
-                                <!-- MCP Servers -->
-                                <div class="space-y-3">
-                                    <div class="flex justify-between items-center">
-                                        <div class="flex items-center gap-2">
-                                            <svg class="w-4 h-4 text-[#8e8e93]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg>
-                                            <label class="text-[11px] font-semibold text-[#8e8e93] tracking-widest uppercase">MCP Servers</label>
-                                        </div>
-                                        <button class="text-[#8e8e93] hover:text-white"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg></button>
-                                    </div>
-                                    <div class="text-[13px] text-[#8e8e93] pb-6">
-                                        No MCP servers attached.
-                                    </div>
-                                </div>
+                        <div class="flex items-center gap-1.5 text-green-500">
+                            <div class="w-4 h-4 rounded-full border border-green-500 flex items-center justify-center">
+                                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>
                             </div>
+                            <span class="text-[12px] font-medium">Ready</span>
                         </div>
                     </div>
+                </div>
+
+                <div class="space-y-2 border-t border-[#303030] pt-6 mt-6">
+                    <div class="text-[12px] text-[#8e8e93] mb-1">Location</div>
+                    <div class="w-full bg-[#212124] border border-[#303030] rounded-md px-3.5 py-2.5 text-[12px] font-mono text-[#d4d4d4] overflow-x-auto">/Users/xtfer/working/aurabx/_active/aura</div>
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="mt-2">
+                <h3 class="text-[11px] font-bold text-[#8e8e93] tracking-widest uppercase mb-3">Quick Actions</h3>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="bg-[#18181a] border border-[#303030] rounded-xl p-4 flex items-center gap-3.5 hover:border-[#404040] cursor-pointer transition-colors">
+                        <div class="w-9 h-9 rounded bg-[#212124] border border-[#303030] text-blue-400 flex items-center justify-center shrink-0 shadow-sm">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        </div>
+                        <div>
+                            <div class="text-[13px] font-medium text-white mb-0.5">Project Files</div>
+                            <div class="text-[11px] text-[#8e8e93]">Manage agent instructions</div>
+                        </div>
+                    </div>
+
+                    <div class="bg-[#18181a] border border-[#303030] rounded-xl p-4 flex items-center gap-3.5 hover:border-[#404040] cursor-pointer transition-colors">
+                        <div class="w-9 h-9 rounded bg-[#212124] border border-[#303030] text-green-400 flex items-center justify-center shrink-0 shadow-sm">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        </div>
+                        <div>
+                            <div class="text-[13px] font-medium text-white mb-0.5">Sync Configs</div>
+                            <div class="text-[11px] text-[#8e8e93]">Update agent configurations</div>
+                        </div>
+                    </div>
+
+                    <div class="bg-[#18181a] border border-[#303030] rounded-xl p-4 flex items-center gap-3.5 hover:border-[#404040] cursor-pointer transition-colors">
+                        <div class="w-9 h-9 rounded bg-[#212124] border border-[#303030] text-orange-400 flex items-center justify-center shrink-0 shadow-sm">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>
+                        </div>
+                        <div>
+                            <div class="text-[13px] font-medium text-white mb-0.5">Manage Skills</div>
+                            <div class="text-[11px] text-[#8e8e93]">Add or remove capabilities</div>
+                        </div>
+                    </div>
+
+                    <div class="bg-[#18181a] border border-[#303030] rounded-xl p-4 flex items-center gap-3.5 hover:border-[#404040] cursor-pointer transition-colors">
+                        <div class="w-9 h-9 rounded bg-[#212124] border border-[#303030] text-purple-400 flex items-center justify-center shrink-0 shadow-sm">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        </div>
+                        <div>
+                            <div class="text-[13px] font-medium text-white mb-0.5">MCP Servers</div>
+                            <div class="text-[11px] text-[#8e8e93]">Configure integrations</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
                 </div>
             </div>
             <!-- End App Mockup -->

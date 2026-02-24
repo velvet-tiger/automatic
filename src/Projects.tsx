@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -16,6 +16,12 @@ import {
   Edit2,
   Upload,
   ArrowRightLeft,
+  GripVertical,
+  Package,
+  Zap,
+  CheckCircle2,
+  AlertCircle,
+  ArrowRight,
 } from "lucide-react";
 
 interface Project {
@@ -40,6 +46,7 @@ interface AgentInfo {
 interface ProjectFileInfo {
   filename: string;
   agents: string[];
+  exists: boolean;
 }
 
 function emptyProject(name: string): Project {
@@ -59,15 +66,25 @@ function emptyProject(name: string): Project {
 
 export default function Projects() {
   const LAST_PROJECT_KEY = "nexus.projects.selected";
+  const PROJECT_ORDER_KEY = "nexus.projects.order";
   const [projects, setProjects] = useState<string[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(() => {
     return localStorage.getItem(LAST_PROJECT_KEY);
   });
+
+  // Drag-and-drop reorder state (pointer-events based)
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
+  const dragIdxRef = useRef<number | null>(null);
+  const dropIdxRef = useRef<number | null>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [dirty, setDirty] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameName, setRenameName] = useState("");
 
   // Available items to pick from
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
@@ -89,6 +106,10 @@ export default function Projects() {
   const [projectFileSaving, setProjectFileSaving] = useState(false);
   const [availableTemplates, setAvailableTemplates] = useState<string[]>([]);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+
+  // Tab navigation within a project
+  type ProjectTab = "summary" | "details" | "agents" | "skills" | "mcp_servers" | "project_file";
+  const [projectTab, setProjectTab] = useState<ProjectTab>("summary");
 
   useEffect(() => {
     loadProjects();
@@ -112,10 +133,88 @@ export default function Projects() {
     }
   }, [projects]);
 
+  const applyStoredOrder = (names: string[]): string[] => {
+    try {
+      const stored = localStorage.getItem(PROJECT_ORDER_KEY);
+      if (!stored) return names.sort();
+      const order: string[] = JSON.parse(stored);
+      // Projects in stored order first, then any new ones alphabetically at the end
+      const ordered: string[] = [];
+      for (const n of order) {
+        if (names.includes(n)) ordered.push(n);
+      }
+      const remaining = names.filter((n) => !ordered.includes(n)).sort();
+      return [...ordered, ...remaining];
+    } catch {
+      return names.sort();
+    }
+  };
+
+  const saveProjectOrder = (ordered: string[]) => {
+    localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(ordered));
+  };
+
+  // Compute which list index the pointer is over, skipping the "New Project" item
+  const getDropIndex = (clientY: number): number | null => {
+    if (!listRef.current) return null;
+    const children = Array.from(listRef.current.children) as HTMLElement[];
+    // If creating, the first child is the "New Project" placeholder — skip it
+    const offset = isCreating ? 1 : 0;
+    const items = children.slice(offset);
+    for (let i = 0; i < items.length; i++) {
+      const rect = items[i].getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      if (clientY < midY) return i;
+    }
+    return items.length;
+  };
+
+  const handleGripDown = (idx: number, e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragIdxRef.current = idx;
+    dropIdxRef.current = idx;
+    setDragIdx(idx);
+    setDropIdx(idx);
+
+    const onMove = (ev: PointerEvent) => {
+      const target = getDropIndex(ev.clientY);
+      dropIdxRef.current = target;
+      setDropIdx(target);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+
+      const fromIdx = dragIdxRef.current;
+      const toIdx = dropIdxRef.current;
+      dragIdxRef.current = null;
+      dropIdxRef.current = null;
+      setDragIdx(null);
+      setDropIdx(null);
+
+      if (fromIdx === null || toIdx === null || fromIdx === toIdx) return;
+
+      setProjects((prev) => {
+        const reordered = [...prev];
+        const [removed] = reordered.splice(fromIdx, 1);
+        const insertAt = toIdx > fromIdx ? toIdx - 1 : toIdx;
+        reordered.splice(insertAt, 0, removed);
+        saveProjectOrder(reordered);
+        return reordered;
+      });
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
   const loadProjects = async () => {
     try {
       const result: string[] = await invoke("get_projects");
-      setProjects(result.sort());
+      const ordered = applyStoredOrder(result);
+      setProjects(ordered);
       setError(null);
     } catch (err: any) {
       setError(`Failed to load projects: ${err}`);
@@ -133,8 +232,8 @@ export default function Projects() {
 
   const loadAvailableSkills = async () => {
     try {
-      const result: string[] = await invoke("get_skills");
-      setAvailableSkills(result.sort());
+      const result: { name: string; in_agents: boolean; in_claude: boolean }[] = await invoke("get_skills");
+      setAvailableSkills(result.map((e) => e.name).sort());
     } catch {
       // Skills may not exist yet
     }
@@ -370,6 +469,44 @@ export default function Projects() {
     setNewName("");
   };
 
+  const startRename = () => {
+    if (!selectedName || isCreating) return;
+    setRenameName(selectedName);
+    setIsRenaming(true);
+  };
+
+  const handleRename = async () => {
+    const trimmed = renameName.trim();
+    if (!selectedName || !trimmed || trimmed === selectedName) {
+      setIsRenaming(false);
+      return;
+    }
+    try {
+      await invoke("rename_project", { oldName: selectedName, newName: trimmed });
+      // Update localStorage order
+      const stored = localStorage.getItem(PROJECT_ORDER_KEY);
+      if (stored) {
+        try {
+          const order: string[] = JSON.parse(stored);
+          const idx = order.indexOf(selectedName);
+          if (idx !== -1) {
+            order[idx] = trimmed;
+            localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(order));
+          }
+        } catch { /* ignore */ }
+      }
+      setSelectedName(trimmed);
+      localStorage.setItem(LAST_PROJECT_KEY, trimmed);
+      setIsRenaming(false);
+      setError(null);
+      await loadProjects();
+      await selectProject(trimmed);
+    } catch (err: any) {
+      setError(`Failed to rename project: ${err}`);
+      setIsRenaming(false);
+    }
+  };
+
   // ── List helpers ─────────────────────────────────────────────────────────
 
   type ListField = "skills" | "mcp_servers" | "providers" | "agents";
@@ -412,7 +549,7 @@ export default function Projects() {
   return (
     <div className="flex h-full w-full bg-[#222327]">
       {/* Left sidebar - project list */}
-      <div className="w-64 flex-shrink-0 flex flex-col border-r border-[#33353A] bg-[#1A1A1E]/50">
+      <div className="w-48 flex-shrink-0 flex flex-col border-r border-[#33353A] bg-[#1A1A1E]/50">
         <div className="h-11 px-4 border-b border-[#33353A] flex justify-between items-center bg-[#222327]/30">
           <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
             Projects
@@ -432,40 +569,59 @@ export default function Projects() {
               No projects yet.
             </div>
           ) : (
-            <ul className="space-y-0.5 px-2">
+            <ul className="space-y-0.5 px-2" ref={listRef}>
               {isCreating && (
                 <li className="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] bg-[#2D2E36] text-[#E0E1E6]">
                   <FolderOpen size={14} className="text-[#8A8C93]" />
                   <span className="italic">New Project...</span>
                 </li>
               )}
-              {projects.map((name) => (
-                <li key={name} className="group flex items-center relative">
-                  <button
-                    onClick={() => selectProject(name)}
-                    className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
-                      selectedName === name && !isCreating
-                        ? "bg-[#2D2E36] text-[#E0E1E6]"
-                        : "text-[#8A8C93] hover:bg-[#2D2E36]/50 hover:text-[#E0E1E6]"
-                    }`}
-                  >
-                    <FolderOpen
-                      size={14}
-                      className={
+              {projects.map((name, idx) => (
+                <li
+                  key={name}
+                  className="relative"
+                >
+                  {/* Drop indicator line — above this item */}
+                  {dragIdx !== null && dropIdx === idx && dropIdx !== dragIdx && dropIdx !== dragIdx + 1 && (
+                    <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-[#5E6AD2] rounded-full z-10" />
+                  )}
+                  <div className={`group flex items-center relative ${dragIdx === idx ? "opacity-30" : ""}`}>
+                    <div
+                      className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
+                      onPointerDown={(e) => handleGripDown(idx, e)}
+                    >
+                      <GripVertical size={10} className="text-[#8A8C93]/60" />
+                    </div>
+                    <button
+                      onClick={() => { if (dragIdx === null) selectProject(name); }}
+                      className={`w-full flex items-center gap-2.5 pl-4 pr-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
                         selectedName === name && !isCreating
-                          ? "text-[#E0E1E6]"
-                          : "text-[#8A8C93]"
-                      }
-                    />
-                    <span className="flex-1 text-left truncate">{name}</span>
-                  </button>
-                  <button
-                    onClick={(e) => handleRemove(name, e)}
-                    className="absolute right-2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
-                    title="Remove Project from Nexus"
-                  >
-                    <X size={12} />
-                  </button>
+                          ? "bg-[#2D2E36] text-[#E0E1E6]"
+                          : "text-[#8A8C93] hover:bg-[#2D2E36]/50 hover:text-[#E0E1E6]"
+                      }`}
+                    >
+                      <FolderOpen
+                        size={14}
+                        className={
+                          selectedName === name && !isCreating
+                            ? "text-[#E0E1E6]"
+                            : "text-[#8A8C93]"
+                        }
+                      />
+                      <span className="flex-1 text-left truncate">{name}</span>
+                    </button>
+                    <button
+                      onClick={(e) => handleRemove(name, e)}
+                      className="absolute right-2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
+                      title="Remove Project from Nexus"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                  {/* Drop indicator line — after last item */}
+                  {dragIdx !== null && dropIdx === projects.length && idx === projects.length - 1 && dropIdx !== dragIdx && (
+                    <div className="absolute -bottom-[1px] left-2 right-2 h-[2px] bg-[#5E6AD2] rounded-full z-10" />
+                  )}
                 </li>
               ))}
             </ul>
@@ -499,8 +655,25 @@ export default function Projects() {
                     autoFocus
                     className="bg-transparent border-none outline-none text-[14px] font-medium text-[#E0E1E6] placeholder-[#8A8C93]/50 w-64"
                   />
+                ) : isRenaming ? (
+                  <input
+                    type="text"
+                    value={renameName}
+                    onChange={(e) => setRenameName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleRename();
+                      if (e.key === "Escape") setIsRenaming(false);
+                    }}
+                    onBlur={handleRename}
+                    autoFocus
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#E0E1E6] placeholder-[#8A8C93]/50 w-64"
+                  />
                 ) : (
-                  <h3 className="text-[14px] font-medium text-[#E0E1E6]">
+                  <h3
+                    className="text-[14px] font-medium text-[#E0E1E6] cursor-text"
+                    onDoubleClick={startRename}
+                    title="Double-click to rename"
+                  >
                     {selectedName}
                   </h3>
                 )}
@@ -541,474 +714,900 @@ export default function Projects() {
               </div>
             </div>
 
-            {/* Body */}
+            {/* Tab bar */}
+            <div className="flex items-center gap-0 px-6 border-b border-[#33353A] bg-[#222327]">
+              {([
+                { id: "summary" as ProjectTab, label: "Summary" },
+                { id: "details" as ProjectTab, label: "Details" },
+                { id: "agents" as ProjectTab, label: "Agents" },
+                { id: "skills" as ProjectTab, label: "Skills" },
+                { id: "mcp_servers" as ProjectTab, label: "MCP Servers" },
+                { id: "project_file" as ProjectTab, label: "Project File" },
+              ]).map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setProjectTab(tab.id)}
+                  className={`px-3 py-2 text-[13px] font-medium transition-colors relative ${
+                    projectTab === tab.id
+                      ? "text-[#E0E1E6]"
+                      : "text-[#8A8C93] hover:text-[#E0E1E6]"
+                  }`}
+                >
+                  {tab.label}
+                  {projectTab === tab.id && (
+                    <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#5E6AD2] rounded-t" />
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab content */}
+
+            {/* ── Project File tab (full-bleed layout) ──────────── */}
+            {projectTab === "project_file" && (
+              <>
+                {project.directory && project.agents.length > 0 ? (
+                  <div className="flex-1 flex min-h-0">
+                    {/* File sidebar */}
+                    {projectFiles.length > 0 && (
+                      <div className="w-52 flex-shrink-0 border-r border-[#33353A] bg-[#1A1A1E]/50 flex flex-col">
+                        <div className="h-9 px-3 border-b border-[#33353A] flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Files</span>
+                          <button
+                            onClick={() => setShowTemplatePicker(!showTemplatePicker)}
+                            className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                            title="Start from template"
+                          >
+                            <LayoutTemplate size={12} />
+                          </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto py-1.5 custom-scrollbar">
+                          <ul className="space-y-0.5 px-1.5">
+                            {projectFiles.map((f) => (
+                              <li key={f.filename}>
+                                <button
+                                  onClick={async () => {
+                                    if (projectFileDirty && !confirm("Discard unsaved changes?")) return;
+                                    setActiveProjectFile(f.filename);
+                                    if (selectedName) await loadProjectFileContent(selectedName, f.filename);
+                                  }}
+                                  className={`w-full text-left px-2.5 py-1.5 rounded-md text-[13px] font-medium transition-colors flex items-center gap-2 ${
+                                    activeProjectFile === f.filename
+                                      ? "bg-[#2D2E36] text-[#E0E1E6]"
+                                      : "text-[#8A8C93] hover:bg-[#2D2E36]/50 hover:text-[#E0E1E6]"
+                                  }`}
+                                >
+                                  <FileText size={13} className={activeProjectFile === f.filename ? "text-[#E0E1E6]" : f.exists ? "text-[#8A8C93]" : "text-[#8A8C93]/40"} />
+                                  <div className="min-w-0">
+                                    <div className={`truncate ${!f.exists ? "opacity-50" : ""}`}>{f.filename}</div>
+                                    <div className="text-[10px] text-[#8A8C93] truncate">{f.agents.join(", ")}</div>
+                                  </div>
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        {/* Template picker (dropdown in sidebar) */}
+                        {showTemplatePicker && availableTemplates.length > 0 && (
+                          <div className="border-t border-[#33353A] p-2">
+                            <p className="text-[10px] text-[#8A8C93] mb-1.5">Apply template:</p>
+                            <div className="space-y-0.5">
+                              {availableTemplates.map((t) => (
+                                <button
+                                  key={t}
+                                  onClick={() => handleApplyTemplate(t)}
+                                  className="w-full text-left px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors flex items-center gap-1.5"
+                                >
+                                  <LayoutTemplate size={10} />
+                                  {t}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Editor area (fills remaining space) */}
+                    {projectFiles.length > 0 && activeProjectFile ? (() => {
+                      const activeFile = projectFiles.find(f => f.filename === activeProjectFile);
+                      const fileExists = activeFile?.exists ?? false;
+
+                      if (!fileExists && !projectFileEditing) {
+                        // File doesn't exist yet — show create prompt
+                        return (
+                          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                            <div className="w-12 h-12 mx-auto mb-4 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#8A8C93]">
+                              <FileText size={20} strokeWidth={1.5} />
+                            </div>
+                            <h3 className="text-[14px] font-medium text-[#E0E1E6] mb-1">
+                              {activeProjectFile}
+                            </h3>
+                            <p className="text-[13px] text-[#8A8C93] mb-5 max-w-xs">
+                              This file doesn't exist yet. Create it to provide project instructions for {activeFile?.agents.join(" & ")}.
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  setProjectFileContent("");
+                                  setProjectFileEditing(true);
+                                  setProjectFileDirty(true);
+                                }}
+                                className="px-3 py-1.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5"
+                              >
+                                <Plus size={12} /> Create File
+                              </button>
+                              {availableTemplates.length > 0 && (
+                                <button
+                                  onClick={() => setShowTemplatePicker(!showTemplatePicker)}
+                                  className="px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors flex items-center gap-1.5"
+                                >
+                                  <LayoutTemplate size={12} /> From Template
+                                </button>
+                              )}
+                            </div>
+                            {showTemplatePicker && availableTemplates.length > 0 && (
+                              <div className="mt-3 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
+                                <div className="flex flex-wrap gap-1.5">
+                                  {availableTemplates.map((t) => (
+                                    <button
+                                      key={t}
+                                      onClick={() => handleApplyTemplate(t)}
+                                      className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors flex items-center gap-1.5"
+                                    >
+                                      <LayoutTemplate size={10} />
+                                      {t}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      // File exists or we're editing a new file
+                      return (
+                        <div className="flex-1 flex flex-col min-w-0">
+                          {/* Editor toolbar */}
+                          <div className="flex items-center justify-between px-4 h-9 bg-[#1A1A1E] border-b border-[#33353A] flex-shrink-0">
+                            <span className="text-[11px] text-[#8A8C93]">
+                              {activeProjectFile}{!fileExists ? " (new)" : ""}{projectFileEditing ? " — Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              {!projectFileEditing ? (
+                                <button
+                                  onClick={() => setProjectFileEditing(true)}
+                                  className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] hover:bg-[#2D2E36] rounded transition-colors"
+                                >
+                                  <Edit2 size={10} /> Edit
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      setProjectFileEditing(false);
+                                      if (projectFileDirty && selectedName && activeProjectFile) {
+                                        if (fileExists) {
+                                          loadProjectFileContent(selectedName, activeProjectFile);
+                                        } else {
+                                          setProjectFileContent("");
+                                          setProjectFileDirty(false);
+                                        }
+                                      }
+                                    }}
+                                    className="px-2 py-0.5 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] hover:bg-[#2D2E36] rounded transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    onClick={handleSaveProjectFile}
+                                    disabled={!projectFileDirty || projectFileSaving}
+                                    className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <Check size={10} /> {projectFileSaving ? "Saving..." : "Save"}
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Content area — fills all remaining height */}
+                          {projectFileEditing ? (
+                            <textarea
+                              value={projectFileContent}
+                              onChange={(e) => {
+                                setProjectFileContent(e.target.value);
+                                setProjectFileDirty(true);
+                              }}
+                              className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-[#222327] text-[#E0E1E6] leading-relaxed custom-scrollbar placeholder-[#8A8C93]/30"
+                              placeholder="Write your project instructions here..."
+                              spellCheck={false}
+                            />
+                          ) : (
+                            <div className="flex-1 overflow-y-auto p-4 font-mono text-[12px] whitespace-pre-wrap text-[#E0E1E6] leading-relaxed custom-scrollbar bg-[#222327]">
+                              {projectFileContent || <span className="text-[#8A8C93] italic">Empty file.</span>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })() : (
+                      <div className="flex-1 flex items-center justify-center">
+                        <p className="text-[13px] text-[#8A8C93]/60 italic">No project files configured. Add agent tools on the Agents tab first.</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center">
+                    <p className="text-[13px] text-[#8A8C93]/60 italic">
+                      Set a project directory and add agent tools on the Details and Agents tabs to manage project files.
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Other tabs (padded container) */}
+            {projectTab !== "project_file" && (
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div className="max-w-2xl space-y-8">
-                {/* Description */}
-                <section>
-                  <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
-                    Description
-                  </label>
-                  <textarea
-                    value={project.description}
-                    onChange={(e) => updateField("description", e.target.value)}
-                    placeholder="What is this project for?"
-                    rows={3}
-                    className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none resize-none transition-colors"
-                  />
-                </section>
 
-                {/* Directory */}
-                <section>
-                  <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
-                    <span className="flex items-center gap-1.5">
-                      <FolderOpen size={12} /> Project Directory
-                    </span>
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={project.directory}
-                      onChange={(e) => updateField("directory", e.target.value)}
-                      placeholder="/path/to/your/project"
-                      className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono transition-colors"
-                    />
-                    <button
-                      onClick={async () => {
-                        const selected = await open({
-                          directory: true,
-                          multiple: false,
-                          title: "Select project directory",
-                        });
-                        if (selected) {
-                          updateField("directory", selected as string);
-                        }
-                      }}
-                      className="px-3 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors whitespace-nowrap"
-                    >
-                      Browse
-                    </button>
-                  </div>
-                  <p className="mt-1.5 text-[11px] text-[#8A8C93]">
-                    Agent configs will be written to this directory when you sync.
-                  </p>
-                </section>
-
-                {/* Agent Tools */}
-                <section>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
-                      <Bot size={12} /> Agent Tools
-                    </label>
-                    <button
-                      onClick={() => setAddingAgent(!addingAgent)}
-                      className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
-                    >
-                      <Plus size={13} />
-                    </button>
-                  </div>
-                  {addingAgent && (
-                    <div className="mb-2">
-                      {availableAgents.filter((a) => !project.agents.includes(a.id)).length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
-                          {availableAgents
-                            .filter((a) => !project.agents.includes(a.id))
-                            .map((a) => (
-                              <button
-                                key={a.id}
-                                onClick={() => { addItem("agents", a.id); setAddingAgent(false); }}
-                                className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors flex items-center gap-1.5"
-                              >
-                                <span>{a.label}</span>
-                                <span className="text-[10px] text-[#8A8C93]">{a.description}</span>
-                              </button>
-                            ))}
+                {/* ── Summary tab ──────────────────────────────────────── */}
+                {projectTab === "summary" && (
+                  <>
+                    {/* Quick Stats */}
+                    <div className="grid grid-cols-3 gap-4">
+                      {/* Agents Card */}
+                      <button
+                        onClick={() => setProjectTab("agents")}
+                        className="group bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10"
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors">
+                            <Bot size={18} className="text-[#5E6AD2]" />
+                          </div>
+                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity" />
                         </div>
-                      ) : (
-                        <p className="text-[12px] text-[#8A8C93] italic">All agents added.</p>
-                      )}
-                    </div>
-                  )}
-                  {project.agents.length === 0 ? (
-                    <p className="text-[13px] text-[#8A8C93]/60 italic">No agent tools selected. Add tools to enable config sync.</p>
-                  ) : (
-                    <ul className="space-y-1">
-                      {project.agents.map((agentId, i) => {
-                        const agent = availableAgents.find((a) => a.id === agentId);
-                        return (
-                          <li
-                            key={agentId}
-                            className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
-                          >
-                            <span className="flex items-center gap-2">
-                              <Bot size={12} className="text-[#8A8C93]" />
-                              {agent?.label || agentId}
-                              <span className="text-[11px] text-[#8A8C93]">{agent?.description}</span>
-                            </span>
-                            <button
-                              onClick={() => removeItem("agents", i)}
-                              className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </section>
-
-                {/* Skills */}
-                <section>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
-                      <Code size={12} /> Skills
-                    </label>
-                    <button
-                      onClick={() => setAddingSkill(!addingSkill)}
-                      className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
-                    >
-                      <Plus size={13} />
-                    </button>
-                  </div>
-                  {addingSkill && (
-                    <div className="mb-2">
-                      {availableSkills.filter((s) => !project.skills.includes(s)).length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
-                          {availableSkills
-                            .filter((s) => !project.skills.includes(s))
-                            .map((s) => (
-                              <button
-                                key={s}
-                                onClick={() => { addItem("skills", s); setAddingSkill(false); }}
-                                className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors"
-                              >
-                                {s}
-                              </button>
-                            ))}
+                        <div className="text-3xl font-semibold text-[#E0E1E6] mb-1">
+                          {project.agents.length}
                         </div>
-                      ) : (
-                        <p className="text-[12px] text-[#8A8C93] italic">No more skills available.</p>
-                      )}
+                        <div className="text-[13px] text-[#8A8C93] mb-1">Agent Tools</div>
+                        <div className="text-[11px] text-[#8A8C93]/60">
+                          {project.agents.length === 0 
+                            ? "No agents configured"
+                            : project.agents.slice(0, 2).map(a => availableAgents.find(ag => ag.id === a)?.label || a).join(", ") + (project.agents.length > 2 ? ` +${project.agents.length - 2}` : "")}
+                        </div>
+                      </button>
+
+                      {/* Skills Card */}
+                      <button
+                        onClick={() => setProjectTab("skills")}
+                        className="group bg-[#1A1A1E] border border-[#33353A] hover:border-[#4ADE80]/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-[#4ADE80]/10"
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/20 transition-colors">
+                            <Code size={18} className="text-[#4ADE80]" />
+                          </div>
+                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                        <div className="text-3xl font-semibold text-[#E0E1E6] mb-1">
+                          {project.skills.length + project.local_skills.length}
+                        </div>
+                        <div className="text-[13px] text-[#8A8C93] mb-1">Skills</div>
+                        <div className="text-[11px] text-[#8A8C93]/60">
+                          {project.skills.length === 0 && project.local_skills.length === 0
+                            ? "No skills attached"
+                            : `${project.skills.length} global, ${project.local_skills.length} local`}
+                        </div>
+                      </button>
+
+                      {/* MCP Servers Card */}
+                      <button
+                        onClick={() => setProjectTab("mcp_servers")}
+                        className="group bg-[#1A1A1E] border border-[#33353A] hover:border-[#F59E0B]/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-[#F59E0B]/10"
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="p-2 bg-[#F59E0B]/10 rounded-lg group-hover:bg-[#F59E0B]/20 transition-colors">
+                            <Server size={18} className="text-[#F59E0B]" />
+                          </div>
+                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                        <div className="text-3xl font-semibold text-[#E0E1E6] mb-1">
+                          {project.mcp_servers.length}
+                        </div>
+                        <div className="text-[13px] text-[#8A8C93] mb-1">MCP Servers</div>
+                        <div className="text-[11px] text-[#8A8C93]/60">
+                          {project.mcp_servers.length === 0
+                            ? "No servers configured"
+                            : project.mcp_servers.slice(0, 2).join(", ") + (project.mcp_servers.length > 2 ? ` +${project.mcp_servers.length - 2}` : "")}
+                        </div>
+                      </button>
                     </div>
-                  )}
-                  {project.skills.length === 0 ? (
-                    <p className="text-[13px] text-[#8A8C93]/60 italic">No skills attached.</p>
-                  ) : (
-                    <ul className="space-y-1">
-                      {project.skills.map((s, i) => (
-                        <li
-                          key={s}
-                          className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
+
+                    {/* Project Status */}
+                    <section className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5">
+                      <div className="flex items-start justify-between mb-4">
+                        <div>
+                          <h3 className="text-[13px] font-semibold text-[#E0E1E6] mb-1">Project Status</h3>
+                          <p className="text-[11px] text-[#8A8C93]">Configuration and sync status</p>
+                        </div>
+                        {project.directory && project.agents.length > 0 ? (
+                          <CheckCircle2 size={18} className="text-[#4ADE80]" />
+                        ) : (
+                          <AlertCircle size={18} className="text-[#F59E0B]" />
+                        )}
+                      </div>
+
+                      <div className="space-y-3">
+                        {/* Directory Status */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <FolderOpen size={13} className="text-[#8A8C93]" />
+                            <span className="text-[12px] text-[#E0E1E6]">Project Directory</span>
+                          </div>
+                          {project.directory ? (
+                            <div className="flex items-center gap-1.5">
+                              <CheckCircle2 size={12} className="text-[#4ADE80]" />
+                              <span className="text-[11px] text-[#4ADE80]">Configured</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <AlertCircle size={12} className="text-[#F59E0B]" />
+                              <button
+                                onClick={() => setProjectTab("details")}
+                                className="text-[11px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
+                              >
+                                Set directory
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Agents Status */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Bot size={13} className="text-[#8A8C93]" />
+                            <span className="text-[12px] text-[#E0E1E6]">Agent Tools</span>
+                          </div>
+                          {project.agents.length > 0 ? (
+                            <div className="flex items-center gap-1.5">
+                              <CheckCircle2 size={12} className="text-[#4ADE80]" />
+                              <span className="text-[11px] text-[#4ADE80]">{project.agents.length} configured</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <AlertCircle size={12} className="text-[#F59E0B]" />
+                              <button
+                                onClick={() => setProjectTab("agents")}
+                                className="text-[11px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
+                              >
+                                Add agents
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Sync Status */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <RefreshCw size={13} className="text-[#8A8C93]" />
+                            <span className="text-[12px] text-[#E0E1E6]">Configuration Sync</span>
+                          </div>
+                          {project.directory && project.agents.length > 0 ? (
+                            <div className="flex items-center gap-1.5">
+                              <CheckCircle2 size={12} className="text-[#4ADE80]" />
+                              <span className="text-[11px] text-[#4ADE80]">Ready</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <AlertCircle size={12} className="text-[#8A8C93]" />
+                              <span className="text-[11px] text-[#8A8C93]">Not available</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Directory Path */}
+                      {project.directory && (
+                        <div className="mt-4 pt-4 border-t border-[#33353A]">
+                          <div className="text-[10px] text-[#8A8C93] mb-1">Location</div>
+                          <div className="text-[11px] font-mono text-[#E0E1E6] break-all bg-[#222327] px-2 py-1.5 rounded border border-[#33353A]">
+                            {project.directory}
+                          </div>
+                        </div>
+                      )}
+                    </section>
+
+                    {/* Quick Actions */}
+                    <section>
+                      <h3 className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-3">Quick Actions</h3>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          onClick={() => setProjectTab("project_file")}
+                          className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10 text-left"
                         >
-                          <span className="flex items-center gap-2">
-                            <Code size={12} className="text-[#8A8C93]" />
-                            {s}
-                          </span>
-                          <button
-                            onClick={() => removeItem("skills", i)}
-                            className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
+                          <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors">
+                            <FileText size={16} className="text-[#5E6AD2]" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Project Files</div>
+                            <div className="text-[11px] text-[#8A8C93]">Manage agent instructions</div>
+                          </div>
+                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                        </button>
 
-                {/* Local Skills */}
-                {project.local_skills.length > 0 && (
+                        {!dirty && project.directory && project.agents.length > 0 && (
+                          <button
+                            onClick={handleSync}
+                            className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#4ADE80]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#4ADE80]/10 text-left"
+                          >
+                            <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/20 transition-colors">
+                              <RefreshCw size={16} className="text-[#4ADE80]" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Sync Configs</div>
+                              <div className="text-[11px] text-[#8A8C93]">Update agent configurations</div>
+                            </div>
+                            <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => setProjectTab("skills")}
+                          className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#F59E0B]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#F59E0B]/10 text-left"
+                        >
+                          <div className="p-2 bg-[#F59E0B]/10 rounded-lg group-hover:bg-[#F59E0B]/20 transition-colors">
+                            <Package size={16} className="text-[#F59E0B]" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Manage Skills</div>
+                            <div className="text-[11px] text-[#8A8C93]">Add or remove capabilities</div>
+                          </div>
+                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                        </button>
+
+                        <button
+                          onClick={() => setProjectTab("mcp_servers")}
+                          className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#8B5CF6]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#8B5CF6]/10 text-left"
+                        >
+                          <div className="p-2 bg-[#8B5CF6]/10 rounded-lg group-hover:bg-[#8B5CF6]/20 transition-colors">
+                            <Zap size={16} className="text-[#8B5CF6]" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">MCP Servers</div>
+                            <div className="text-[11px] text-[#8A8C93]">Configure integrations</div>
+                          </div>
+                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                        </button>
+                      </div>
+                    </section>
+
+                    {/* Description */}
+                    {project.description && (
+                      <section className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5">
+                        <h3 className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">Description</h3>
+                        <p className="text-[13px] text-[#E0E1E6] leading-relaxed whitespace-pre-wrap">
+                          {project.description}
+                        </p>
+                      </section>
+                    )}
+
+                    {/* Getting Started (if project is new/incomplete) */}
+                    {(!project.directory || project.agents.length === 0) && (
+                      <section className="bg-gradient-to-br from-[#5E6AD2]/10 to-[#5E6AD2]/5 border border-[#5E6AD2]/20 rounded-lg p-5">
+                        <div className="flex items-start gap-3">
+                          <div className="p-2 bg-[#5E6AD2]/20 rounded-lg flex-shrink-0">
+                            <Package size={18} className="text-[#5E6AD2]" />
+                          </div>
+                          <div>
+                            <h3 className="text-[13px] font-semibold text-[#E0E1E6] mb-2">Complete Setup</h3>
+                            <p className="text-[12px] text-[#8A8C93] mb-3 leading-relaxed">
+                              To start using this project, complete these steps:
+                            </p>
+                            <ol className="space-y-2 text-[12px] text-[#E0E1E6]">
+                              {!project.directory && (
+                                <li className="flex items-start gap-2">
+                                  <div className="w-5 h-5 rounded-full border border-[#5E6AD2] flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <span className="text-[10px] text-[#5E6AD2]">1</span>
+                                  </div>
+                                  <div>
+                                    <button
+                                      onClick={() => setProjectTab("details")}
+                                      className="text-[#5E6AD2] hover:text-[#6B78E3] transition-colors font-medium"
+                                    >
+                                      Set project directory
+                                    </button>
+                                    <div className="text-[11px] text-[#8A8C93] mt-0.5">
+                                      Choose where agent configs will be synced
+                                    </div>
+                                  </div>
+                                </li>
+                              )}
+                              {project.agents.length === 0 && (
+                                <li className="flex items-start gap-2">
+                                  <div className="w-5 h-5 rounded-full border border-[#5E6AD2] flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <span className="text-[10px] text-[#5E6AD2]">{!project.directory ? "2" : "1"}</span>
+                                  </div>
+                                  <div>
+                                    <button
+                                      onClick={() => setProjectTab("agents")}
+                                      className="text-[#5E6AD2] hover:text-[#6B78E3] transition-colors font-medium"
+                                    >
+                                      Add agent tools
+                                    </button>
+                                    <div className="text-[11px] text-[#8A8C93] mt-0.5">
+                                      Select which agents will use this project
+                                    </div>
+                                  </div>
+                                </li>
+                              )}
+                              <li className="flex items-start gap-2">
+                                <div className="w-5 h-5 rounded-full border border-[#8A8C93]/50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                  <span className="text-[10px] text-[#8A8C93]">•</span>
+                                </div>
+                                <div>
+                                  <button
+                                    onClick={() => setProjectTab("skills")}
+                                    className="text-[#E0E1E6] hover:text-[#5E6AD2] transition-colors"
+                                  >
+                                    Add skills (optional)
+                                  </button>
+                                  <div className="text-[11px] text-[#8A8C93] mt-0.5">
+                                    Give agents specialized capabilities
+                                  </div>
+                                </div>
+                              </li>
+                            </ol>
+                          </div>
+                        </div>
+                      </section>
+                    )}
+                  </>
+                )}
+
+                {/* ── Details tab ──────────────────────────────────────── */}
+                {projectTab === "details" && (
+                  <>
+                    {/* Description */}
+                    <section>
+                      <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                        Description
+                      </label>
+                      <textarea
+                        value={project.description}
+                        onChange={(e) => updateField("description", e.target.value)}
+                        placeholder="What is this project for?"
+                        rows={3}
+                        className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none resize-none transition-colors"
+                      />
+                    </section>
+
+                    {/* Directory */}
+                    <section>
+                      <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                        <span className="flex items-center gap-1.5">
+                          <FolderOpen size={12} /> Project Directory
+                        </span>
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={project.directory}
+                          onChange={(e) => updateField("directory", e.target.value)}
+                          placeholder="/path/to/your/project"
+                          className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono transition-colors"
+                        />
+                        <button
+                          onClick={async () => {
+                            const selected = await open({
+                              directory: true,
+                              multiple: false,
+                              title: "Select project directory",
+                            });
+                            if (selected) {
+                              updateField("directory", selected as string);
+                            }
+                          }}
+                          className="px-3 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors whitespace-nowrap"
+                        >
+                          Browse
+                        </button>
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-[#8A8C93]">
+                        Agent configs will be written to this directory when you sync.
+                      </p>
+                    </section>
+                  </>
+                )}
+
+                {/* ── Agents tab ───────────────────────────────────────── */}
+                {projectTab === "agents" && (
                   <section>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
-                        <Code size={12} /> Local Skills
+                        <Bot size={12} /> Agent Tools
                       </label>
-                      {project.local_skills.length > 1 && selectedName && (
-                        <button
-                          onClick={async () => {
-                            try {
-                              setSyncStatus("syncing");
-                              await invoke("sync_local_skills", { name: selectedName });
-                              setSyncStatus("Local skills synced across agents");
-                              setTimeout(() => setSyncStatus(null), 4000);
-                            } catch (err: any) {
-                              setSyncStatus(`Sync failed: ${err}`);
-                              setTimeout(() => setSyncStatus(null), 4000);
-                            }
-                          }}
-                          className="flex items-center gap-1 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] px-1.5 py-0.5 hover:bg-[#2D2E36] rounded transition-colors"
-                          title="Copy all local skills to every agent's skill directory"
-                        >
-                          <ArrowRightLeft size={11} /> Sync Across Agents
-                        </button>
-                      )}
+                      <button
+                        onClick={() => setAddingAgent(!addingAgent)}
+                        className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                      >
+                        <Plus size={13} />
+                      </button>
                     </div>
-                    <p className="text-[11px] text-[#8A8C93] mb-2">
-                      These skills exist only in this project directory, not in the global registry.
-                    </p>
-                    <ul className="space-y-1">
-                      {project.local_skills.map((s) => (
-                        <li
-                          key={s}
-                          className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
+                    {addingAgent && (
+                      <div className="mb-2">
+                        {availableAgents.filter((a) => !project.agents.includes(a.id)).length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
+                            {availableAgents
+                              .filter((a) => !project.agents.includes(a.id))
+                              .map((a) => (
+                                <button
+                                  key={a.id}
+                                  onClick={() => { addItem("agents", a.id); setAddingAgent(false); }}
+                                  className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors flex items-center gap-1.5"
+                                >
+                                  <span>{a.label}</span>
+                                  <span className="text-[10px] text-[#8A8C93]">{a.description}</span>
+                                </button>
+                              ))}
+                          </div>
+                        ) : (
+                          <p className="text-[12px] text-[#8A8C93] italic">All agents added.</p>
+                        )}
+                      </div>
+                    )}
+                    {project.agents.length === 0 ? (
+                      <p className="text-[13px] text-[#8A8C93]/60 italic">No agent tools selected. Add tools to enable config sync.</p>
+                    ) : (
+                      <ul className="space-y-1">
+                        {project.agents.map((agentId, i) => {
+                          const agent = availableAgents.find((a) => a.id === agentId);
+                          return (
+                            <li
+                              key={agentId}
+                              className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
+                            >
+                              <span className="flex items-center gap-2">
+                                <Bot size={12} className="text-[#8A8C93]" />
+                                {agent?.label || agentId}
+                                <span className="text-[11px] text-[#8A8C93]">{agent?.description}</span>
+                              </span>
+                              <button
+                                onClick={() => removeItem("agents", i)}
+                                className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </section>
+                )}
+
+                {/* ── Skills tab ───────────────────────────────────────── */}
+                {projectTab === "skills" && (
+                  <>
+                    {/* Global Skills */}
+                    <section>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
+                          <Code size={12} /> Skills
+                        </label>
+                        <button
+                          onClick={() => setAddingSkill(!addingSkill)}
+                          className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
                         >
-                          <span className="flex items-center gap-2">
-                            <Code size={12} className="text-[#8A8C93]" />
-                            {s}
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#8A8C93] border border-[#3A3B42]">
-                              local
-                            </span>
-                          </span>
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                          <Plus size={13} />
+                        </button>
+                      </div>
+                      {addingSkill && (
+                        <div className="mb-2">
+                          {availableSkills.filter((s) => !project.skills.includes(s)).length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
+                              {availableSkills
+                                .filter((s) => !project.skills.includes(s))
+                                .map((s) => (
+                                  <button
+                                    key={s}
+                                    onClick={() => { addItem("skills", s); setAddingSkill(false); }}
+                                    className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors"
+                                  >
+                                    {s}
+                                  </button>
+                                ))}
+                            </div>
+                          ) : (
+                            <p className="text-[12px] text-[#8A8C93] italic">No more skills available.</p>
+                          )}
+                        </div>
+                      )}
+                      {project.skills.length === 0 ? (
+                        <p className="text-[13px] text-[#8A8C93]/60 italic">No skills attached.</p>
+                      ) : (
+                        <ul className="space-y-1">
+                          {project.skills.map((s, i) => (
+                            <li
+                              key={s}
+                              className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
+                            >
+                              <span className="flex items-center gap-2">
+                                <Code size={12} className="text-[#8A8C93]" />
+                                {s}
+                              </span>
+                              <button
+                                onClick={() => removeItem("skills", i)}
+                                className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+
+                    {/* Local Skills */}
+                    {project.local_skills.length > 0 && (
+                      <section>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
+                            <Code size={12} /> Local Skills
+                          </label>
+                          {project.local_skills.length > 1 && selectedName && (
                             <button
                               onClick={async () => {
-                                if (!selectedName) return;
                                 try {
                                   setSyncStatus("syncing");
                                   await invoke("sync_local_skills", { name: selectedName });
-                                  setSyncStatus(`Synced "${s}" across agents`);
+                                  setSyncStatus("Local skills synced across agents");
                                   setTimeout(() => setSyncStatus(null), 4000);
                                 } catch (err: any) {
                                   setSyncStatus(`Sync failed: ${err}`);
                                   setTimeout(() => setSyncStatus(null), 4000);
                                 }
                               }}
-                              className="text-[#8A8C93] hover:text-[#E0E1E6] p-1 hover:bg-[#2D2E36] rounded transition-colors"
-                              title="Sync to all agents in this project"
+                              className="flex items-center gap-1 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] px-1.5 py-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                              title="Copy all local skills to every agent's skill directory"
                             >
-                              <ArrowRightLeft size={12} />
+                              <ArrowRightLeft size={11} /> Sync Across Agents
                             </button>
-                            <button
-                              onClick={async () => {
-                                if (!selectedName) return;
-                                try {
-                                  setSyncStatus("syncing");
-                                  const result: string = await invoke("import_local_skill", { name: selectedName, skillName: s });
-                                  const updated = JSON.parse(result);
-                                  setProject({
-                                    ...project,
-                                    skills: updated.skills || project.skills,
-                                    local_skills: updated.local_skills || [],
-                                  });
-                                  await loadAvailableSkills();
-                                  setSyncStatus(`Imported "${s}" to global registry`);
-                                  setTimeout(() => setSyncStatus(null), 4000);
-                                } catch (err: any) {
-                                  setSyncStatus(`Import failed: ${err}`);
-                                  setTimeout(() => setSyncStatus(null), 4000);
-                                }
-                              }}
-                              className="text-[#8A8C93] hover:text-[#4ADE80] p-1 hover:bg-[#2D2E36] rounded transition-colors"
-                              title="Import to global skill registry"
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#8A8C93] mb-2">
+                          These skills exist only in this project directory, not in the global registry.
+                        </p>
+                        <ul className="space-y-1">
+                          {project.local_skills.map((s) => (
+                            <li
+                              key={s}
+                              className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
                             >
-                              <Upload size={12} />
-                            </button>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
+                              <span className="flex items-center gap-2">
+                                <Code size={12} className="text-[#8A8C93]" />
+                                {s}
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#8A8C93] border border-[#3A3B42]">
+                                  local
+                                </span>
+                              </span>
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                <button
+                                  onClick={async () => {
+                                    if (!selectedName) return;
+                                    try {
+                                      setSyncStatus("syncing");
+                                      await invoke("sync_local_skills", { name: selectedName });
+                                      setSyncStatus(`Synced "${s}" across agents`);
+                                      setTimeout(() => setSyncStatus(null), 4000);
+                                    } catch (err: any) {
+                                      setSyncStatus(`Sync failed: ${err}`);
+                                      setTimeout(() => setSyncStatus(null), 4000);
+                                    }
+                                  }}
+                                  className="text-[#8A8C93] hover:text-[#E0E1E6] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                                  title="Sync to all agents in this project"
+                                >
+                                  <ArrowRightLeft size={12} />
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    if (!selectedName) return;
+                                    try {
+                                      setSyncStatus("syncing");
+                                      const result: string = await invoke("import_local_skill", { name: selectedName, skillName: s });
+                                      const updated = JSON.parse(result);
+                                      setProject({
+                                        ...project,
+                                        skills: updated.skills || project.skills,
+                                        local_skills: updated.local_skills || [],
+                                      });
+                                      await loadAvailableSkills();
+                                      setSyncStatus(`Imported "${s}" to global registry`);
+                                      setTimeout(() => setSyncStatus(null), 4000);
+                                    } catch (err: any) {
+                                      setSyncStatus(`Import failed: ${err}`);
+                                      setTimeout(() => setSyncStatus(null), 4000);
+                                    }
+                                  }}
+                                  className="text-[#8A8C93] hover:text-[#4ADE80] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                                  title="Import to global skill registry"
+                                >
+                                  <Upload size={12} />
+                                </button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                  </>
                 )}
 
-                {/* MCP Servers */}
-                <section>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
-                      <Server size={12} /> MCP Servers
-                    </label>
-                    <button
-                      onClick={() => setAddingMcp(!addingMcp)}
-                      className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
-                    >
-                      <Plus size={13} />
-                    </button>
-                  </div>
-                  {addingMcp && (
-                    <div className="mb-2">
-                      {availableMcpServers.filter((s) => !project.mcp_servers.includes(s)).length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
-                          {availableMcpServers
-                            .filter((s) => !project.mcp_servers.includes(s))
-                            .map((s) => (
-                              <button
-                                key={s}
-                                onClick={() => { addItem("mcp_servers", s); setAddingMcp(false); }}
-                                className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors"
-                              >
-                                {s}
-                              </button>
-                            ))}
-                        </div>
-                      ) : (
-                        <p className="text-[12px] text-[#8A8C93] italic">No MCP servers found in config.</p>
-                      )}
-                    </div>
-                  )}
-                  {project.mcp_servers.length === 0 ? (
-                    <p className="text-[13px] text-[#8A8C93]/60 italic">No MCP servers attached.</p>
-                  ) : (
-                    <ul className="space-y-1">
-                      {project.mcp_servers.map((s, i) => (
-                        <li
-                          key={s}
-                          className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
-                        >
-                          <span className="flex items-center gap-2">
-                            <Server size={12} className="text-[#8A8C93]" />
-                            {s}
-                          </span>
-                          <button
-                            onClick={() => removeItem("mcp_servers", i)}
-                            className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
-
-                {/* Project File */}
-                {project.directory && project.agents.length > 0 && (
+                {/* ── MCP Servers tab ──────────────────────────────────── */}
+                {projectTab === "mcp_servers" && (
                   <section>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
-                        <FileText size={12} /> Project File
+                        <Server size={12} /> MCP Servers
                       </label>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => setShowTemplatePicker(!showTemplatePicker)}
-                          className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
-                          title="Start from template"
-                        >
-                          <LayoutTemplate size={13} />
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => setAddingMcp(!addingMcp)}
+                        className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                      >
+                        <Plus size={13} />
+                      </button>
                     </div>
-
-                    {/* Template picker */}
-                    {showTemplatePicker && (
-                      <div className="mb-3">
-                        {availableTemplates.length > 0 ? (
-                          <div className="p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
-                            <p className="text-[11px] text-[#8A8C93] mb-1.5">Apply a template (replaces current content):</p>
-                            <div className="flex flex-wrap gap-1.5">
-                              {availableTemplates.map((t) => (
+                    {addingMcp && (
+                      <div className="mb-2">
+                        {availableMcpServers.filter((s) => !project.mcp_servers.includes(s)).length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
+                            {availableMcpServers
+                              .filter((s) => !project.mcp_servers.includes(s))
+                              .map((s) => (
                                 <button
-                                  key={t}
-                                  onClick={() => handleApplyTemplate(t)}
-                                  className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors flex items-center gap-1.5"
+                                  key={s}
+                                  onClick={() => { addItem("mcp_servers", s); setAddingMcp(false); }}
+                                  className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors"
                                 >
-                                  <LayoutTemplate size={11} />
-                                  {t}
+                                  {s}
                                 </button>
                               ))}
-                            </div>
                           </div>
                         ) : (
-                          <p className="text-[12px] text-[#8A8C93] italic">No templates available. Create one in the Templates tab.</p>
+                          <p className="text-[12px] text-[#8A8C93] italic">No MCP servers found in config.</p>
                         )}
                       </div>
                     )}
-
-                    {/* File tabs (if multiple) */}
-                    {projectFiles.length > 1 && (
-                      <div className="flex gap-1 mb-2">
-                        {projectFiles.map((f) => (
-                          <button
-                            key={f.filename}
-                            onClick={async () => {
-                              if (projectFileDirty && !confirm("Discard unsaved changes?")) return;
-                              setActiveProjectFile(f.filename);
-                              if (selectedName) await loadProjectFileContent(selectedName, f.filename);
-                            }}
-                            className={`px-2.5 py-1 text-[12px] rounded transition-colors ${
-                              activeProjectFile === f.filename
-                                ? "bg-[#2D2E36] text-[#E0E1E6] border border-[#44474F]"
-                                : "text-[#8A8C93] hover:bg-[#2D2E36]/50 hover:text-[#E0E1E6] border border-transparent"
-                            }`}
-                          >
-                            {f.filename}
-                            <span className="ml-1 text-[10px] text-[#8A8C93]">({f.agents.join(", ")})</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Single file label */}
-                    {projectFiles.length === 1 && (
-                      <div className="mb-2 text-[12px] text-[#8A8C93]">
-                        {projectFiles[0].filename} <span className="text-[10px]">({projectFiles[0].agents.join(", ")})</span>
-                      </div>
-                    )}
-
-                    {projectFiles.length > 0 && activeProjectFile ? (
-                      <div className="border border-[#33353A] rounded-md overflow-hidden">
-                        {/* Editor toolbar */}
-                        <div className="flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] border-b border-[#33353A]">
-                          <span className="text-[11px] text-[#8A8C93]">
-                            {projectFileEditing ? "Editing" : "Preview"}{projectFileDirty ? " (unsaved)" : ""}
-                          </span>
-                          <div className="flex items-center gap-1.5">
-                            {!projectFileEditing ? (
-                              <button
-                                onClick={() => setProjectFileEditing(true)}
-                                className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] hover:bg-[#2D2E36] rounded transition-colors"
-                              >
-                                <Edit2 size={10} /> Edit
-                              </button>
-                            ) : (
-                              <>
-                                <button
-                                  onClick={() => {
-                                    setProjectFileEditing(false);
-                                    if (projectFileDirty && selectedName && activeProjectFile) {
-                                      loadProjectFileContent(selectedName, activeProjectFile);
-                                    }
-                                  }}
-                                  className="px-2 py-0.5 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] hover:bg-[#2D2E36] rounded transition-colors"
-                                >
-                                  Cancel
-                                </button>
-                                <button
-                                  onClick={handleSaveProjectFile}
-                                  disabled={!projectFileDirty || projectFileSaving}
-                                  className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  <Check size={10} /> {projectFileSaving ? "Saving..." : "Save"}
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Content area */}
-                        {projectFileEditing ? (
-                          <textarea
-                            value={projectFileContent}
-                            onChange={(e) => {
-                              setProjectFileContent(e.target.value);
-                              setProjectFileDirty(true);
-                            }}
-                            className="w-full min-h-[200px] max-h-[400px] p-4 resize-y outline-none font-mono text-[12px] bg-[#222327] text-[#E0E1E6] leading-relaxed custom-scrollbar placeholder-[#8A8C93]/30"
-                            placeholder="Write your project instructions here..."
-                            spellCheck={false}
-                          />
-                        ) : (
-                          <div className="min-h-[80px] max-h-[300px] overflow-y-auto p-4 font-mono text-[12px] whitespace-pre-wrap text-[#E0E1E6] leading-relaxed custom-scrollbar bg-[#222327]">
-                            {projectFileContent || <span className="text-[#8A8C93] italic">No project file yet. Click Edit to create one, or use a template.</span>}
-                          </div>
-                        )}
-                      </div>
+                    {project.mcp_servers.length === 0 ? (
+                      <p className="text-[13px] text-[#8A8C93]/60 italic">No MCP servers attached.</p>
                     ) : (
-                      <p className="text-[13px] text-[#8A8C93]/60 italic">Configure a directory and agent tools to manage the project file.</p>
+                      <ul className="space-y-1">
+                        {project.mcp_servers.map((s, i) => (
+                          <li
+                            key={s}
+                            className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
+                          >
+                            <span className="flex items-center gap-2">
+                              <Server size={12} className="text-[#8A8C93]" />
+                              {s}
+                            </span>
+                            <button
+                              onClick={() => removeItem("mcp_servers", i)}
+                              className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
                     )}
                   </section>
                 )}
+
               </div>
             </div>
+            )}
           </div>
         ) : (
           /* Empty state */

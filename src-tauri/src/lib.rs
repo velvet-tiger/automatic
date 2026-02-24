@@ -142,17 +142,22 @@ fn get_project_file_info(name: &str) -> Result<String, String> {
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
 
+    let project_dir = std::path::Path::new(&project.directory);
+
     let mut files: Vec<serde_json::Value> = Vec::new();
     let mut seen_filenames: Vec<String> = Vec::new();
 
     for agent_id in &project.agents {
         if let Some(a) = agent::from_id(agent_id) {
             let filename = a.project_file_name().to_string();
+            let exists = project_dir.join(&filename).exists();
+
             if !seen_filenames.contains(&filename) {
                 seen_filenames.push(filename.clone());
                 files.push(serde_json::json!({
                     "filename": filename,
-                    "agents": [a.label()]
+                    "agents": [a.label()],
+                    "exists": exists
                 }));
             } else {
                 // Append agent label to existing entry
@@ -261,6 +266,11 @@ fn save_project(name: &str, data: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tauri::command]
+fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
+    core::rename_project(old_name, new_name)
 }
 
 #[tauri::command]
@@ -478,6 +488,7 @@ pub fn run() {
             read_project,
             autodetect_project_dependencies,
             save_project,
+            rename_project,
             delete_project,
             sync_project,
             import_local_skill,

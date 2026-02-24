@@ -44,7 +44,7 @@ function App() {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#222327] text-[#e0e1e6] selection:bg-[#5E6AD2]/30">
       {/* Sidebar */}
-      <aside className="w-[240px] flex-shrink-0 bg-[#1A1A1E] border-r border-[#33353A] flex flex-col">
+      <aside className="w-[180px] flex-shrink-0 bg-[#1A1A1E] border-r border-[#33353A] flex flex-col">
         {/* Workspace Header */}
         <div className="h-12 px-4 flex items-center border-b border-[#33353A]/50">
           <div className="flex items-center gap-2 text-sm font-semibold">
@@ -76,7 +76,6 @@ function App() {
             </div>
             <ul className="space-y-0.5">
               <NavItem id="projects" icon={FolderOpen} label="Projects" />
-              <NavItem id="agents" icon={Bot} label="Agents" />
             </ul>
           </div>
 
@@ -86,6 +85,7 @@ function App() {
               <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
             <ul className="space-y-0.5">
+              <NavItem id="agents" icon={Bot} label="Agents" />
               <NavItem id="skills" icon={Code} label="Skills & Prompts" />
               <NavItem id="templates" icon={LayoutTemplate} label="Templates" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
