@@ -994,7 +994,7 @@ export default function Projects() {
             {/* Other tabs (padded container) */}
             {projectTab !== "project_file" && (
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-              <div className="max-w-2xl space-y-8">
+              <div className="space-y-8">
 
                 {/* ── Summary tab ──────────────────────────────────────── */}
                 {projectTab === "summary" && (
