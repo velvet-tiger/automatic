@@ -429,6 +429,39 @@ fn sync_local_skills(name: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
 }
 
+// ── Skills Store ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn search_remote_skills(query: String) -> Result<Vec<core::RemoteSkillResult>, String> {
+    core::search_remote_skills(&query).await
+}
+
+#[tauri::command]
+async fn fetch_remote_skill_content(source: String, name: String) -> Result<String, String> {
+    core::fetch_remote_skill_content(&source, &name).await
+}
+
+/// Import a skill from skills.sh: save content + record its remote origin.
+#[tauri::command]
+async fn import_remote_skill(
+    name: String,
+    content: String,
+    source: String,
+    id: String,
+) -> Result<(), String> {
+    core::save_skill(&name, &content)?;
+    core::record_skill_source(&name, &source, &id)?;
+    sync_projects_referencing_skill(&name);
+    Ok(())
+}
+
+/// Return all entries from ~/.nexus/skills.json as a JSON object.
+#[tauri::command]
+fn get_skill_sources() -> Result<String, String> {
+    let registry = core::read_skill_sources()?;
+    serde_json::to_string(&registry).map_err(|e| e.to_string())
+}
+
 // ── Plugins / Sessions ───────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -498,6 +531,10 @@ pub fn run() {
             sync_local_skills,
             install_plugin_marketplace,
             get_sessions,
+            search_remote_skills,
+            fetch_remote_skill_content,
+            import_remote_skill,
+            get_skill_sources,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

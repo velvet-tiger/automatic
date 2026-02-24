@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { SignIn, SignedIn, SignedOut, UserButton } from "@clerk/clerk-react";
 import Skills from "./Skills";
+import SkillStore from "./SkillStore";
 import Projects from "./Projects";
 import McpServers from "./McpServers";
 import Templates from "./Templates";
 import Agents from "./Agents";
-import { Code, Server, ChevronDown, Settings, FolderOpen, LayoutTemplate, Bot } from "lucide-react";
+import { Code, Server, ChevronDown, Settings, FolderOpen, LayoutTemplate, Bot, Store } from "lucide-react";
 import "./App.css";
 
 function App() {
@@ -103,6 +104,7 @@ function App() {
             <ul className="space-y-0.5">
               <NavItem id="agents" icon={Bot} label="Agents" />
               <NavItem id="skills" icon={Code} label="Skills & Prompts" />
+              <NavItem id="skill-store" icon={Store} label="Skill Store" />
               <NavItem id="templates" icon={LayoutTemplate} label="Templates" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
             </ul>
@@ -141,7 +143,7 @@ function App() {
       <main className="flex-1 flex flex-col min-w-0">
         {/* Top Header */}
         <header className="h-11 border-b border-[#33353A] flex items-center px-4 bg-[#222327]">
-          <span className="text-[13px] text-[#E0E1E6] capitalize">{activeTab.replace('-', ' ')}</span>
+          <span className="text-[13px] text-[#E0E1E6] capitalize">{activeTab.replace(/-/g, ' ')}</span>
         </header>
 
         {/* Content Area */}
@@ -159,6 +161,11 @@ function App() {
           {activeTab === "skills" && (
             <div className="flex-1 h-full">
               <Skills />
+            </div>
+          )}
+          {activeTab === "skill-store" && (
+            <div className="flex-1 h-full">
+              <SkillStore />
             </div>
           )}
           {activeTab === "templates" && (

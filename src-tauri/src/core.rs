@@ -28,6 +28,16 @@ pub fn is_valid_name(name: &str) -> bool {
 
 // ── Data Structures ──────────────────────────────────────────────────────────
 
+/// Remote origin of a skill imported from skills.sh.
+/// Stored in ~/.nexus/skills.json keyed by skill name.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkillSource {
+    /// GitHub owner/repo, e.g. "vercel-labs/skills"
+    pub source: String,
+    /// Full skills.sh id, e.g. "vercel-labs/skills/find-skills"
+    pub id: String,
+}
+
 /// A skill entry with its name and which global directories it exists in.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SkillEntry {
@@ -36,6 +46,9 @@ pub struct SkillEntry {
     pub in_agents: bool,
     /// Exists in `~/.claude/skills/` (Claude Code)
     pub in_claude: bool,
+    /// Remote origin from ~/.nexus/skills.json, if this was imported from skills.sh
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<SkillSource>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -103,13 +116,17 @@ fn scan_skills_dir(dir: &PathBuf) -> Result<std::collections::HashSet<String>, S
 }
 
 /// List skills from both `~/.agents/skills/` and `~/.claude/skills/`,
-/// returning entries that indicate which locations each skill exists in.
+/// returning entries that indicate which locations each skill exists in,
+/// with remote origin info joined from ~/.nexus/skills.json.
 pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
     let agents_dir = get_agents_skills_dir()?;
     let claude_dir = get_claude_skills_dir()?;
 
     let agents_names = scan_skills_dir(&agents_dir)?;
     let claude_names = scan_skills_dir(&claude_dir)?;
+
+    // Best-effort registry load — don't fail list_skills if the file is missing/corrupt
+    let registry = read_skill_sources().unwrap_or_default();
 
     // Union of all names
     let mut all_names: Vec<String> = agents_names.union(&claude_names).cloned().collect();
@@ -120,6 +137,7 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
         .map(|name| SkillEntry {
             in_agents: agents_names.contains(&name),
             in_claude: claude_names.contains(&name),
+            source: registry.get(&name).cloned(),
             name,
         })
         .collect();
@@ -169,7 +187,7 @@ pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
     fs::write(skill_path, content).map_err(|e| e.to_string())
 }
 
-/// Delete a skill from both global locations.
+/// Delete a skill from both global locations and remove its registry entry.
 pub fn delete_skill(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
@@ -186,6 +204,9 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
     if claude_dir.exists() {
         fs::remove_dir_all(&claude_dir).map_err(|e| e.to_string())?;
     }
+
+    // Best-effort: remove from registry (ignore errors)
+    let _ = remove_skill_source(name);
 
     Ok(())
 }
@@ -242,6 +263,185 @@ pub fn sync_all_skills() -> Result<Vec<String>, String> {
     }
 
     Ok(synced)
+}
+
+// ── Skills Store (skills.sh) ─────────────────────────────────────────────────
+
+/// A skill result from the skills.sh search API.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RemoteSkillResult {
+    /// Full slug: "owner/repo/skill-name" — used to build the skills.sh URL.
+    pub id: String,
+    /// The skill name (e.g. "vercel-react-best-practices").
+    pub name: String,
+    /// Number of times installed across the ecosystem.
+    pub installs: u64,
+    /// The GitHub source in "owner/repo" format.
+    pub source: String,
+}
+
+/// Search skills.sh for skills matching `query`.
+/// Calls `https://skills.sh/api/search?q=<query>&limit=20`.
+pub async fn search_remote_skills(query: &str) -> Result<Vec<RemoteSkillResult>, String> {
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let url = format!(
+        "https://skills.sh/api/search?q={}&limit=20",
+        urlencoding::encode(query)
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp = client
+        .get(&url)
+        .header("User-Agent", "nexus-desktop/1.0")
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("skills.sh returned status {}", resp.status()));
+    }
+
+    #[derive(Deserialize)]
+    struct ApiResponse {
+        skills: Vec<ApiSkill>,
+    }
+
+    #[derive(Deserialize)]
+    struct ApiSkill {
+        id: String,
+        name: String,
+        installs: u64,
+        source: String,
+    }
+
+    let body: ApiResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    Ok(body
+        .skills
+        .into_iter()
+        .map(|s| RemoteSkillResult {
+            id: s.id,
+            name: s.name,
+            installs: s.installs,
+            source: s.source,
+        })
+        .collect())
+}
+
+/// Fetch the SKILL.md content for a remote skill by constructing the GitHub
+/// raw content URL from the skill's `source` ("owner/repo") and `name`.
+///
+/// Tries the canonical path `skills/<name>/SKILL.md` first, then falls back
+/// to a root-level `SKILL.md` (for single-skill repos).
+pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    // Try the standard nested path first
+    let candidates = [
+        format!(
+            "https://raw.githubusercontent.com/{}/main/skills/{}/SKILL.md",
+            source, name
+        ),
+        format!(
+            "https://raw.githubusercontent.com/{}/main/{}/SKILL.md",
+            source, name
+        ),
+        format!(
+            "https://raw.githubusercontent.com/{}/main/SKILL.md",
+            source
+        ),
+    ];
+
+    for url in &candidates {
+        let resp = client
+            .get(url)
+            .header("User-Agent", "nexus-desktop/1.0")
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        if resp.status().is_success() {
+            return resp
+                .text()
+                .await
+                .map_err(|e| format!("Failed to read response: {}", e));
+        }
+    }
+
+    Err(format!("Could not fetch SKILL.md for '{}'", name))
+}
+
+// ── Skills Registry (~/.nexus/skills.json) ───────────────────────────────────
+//
+// Tracks the remote origin of skills imported from skills.sh.
+// Local skills (not imported) simply have no entry in this file.
+//
+// Format:
+//   {
+//     "skill-name": { "source": "owner/repo", "id": "owner/repo/skill-name" },
+//     ...
+//   }
+
+fn get_skills_registry_path() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    Ok(home.join(".nexus/skills.json"))
+}
+
+/// Read the full registry.  Returns an empty map if the file doesn't exist.
+pub fn read_skill_sources() -> Result<std::collections::HashMap<String, SkillSource>, String> {
+    let path = get_skills_registry_path()?;
+    if !path.exists() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| format!("Invalid skills.json: {}", e))
+}
+
+/// Write the full registry atomically.
+fn write_skill_sources(
+    registry: &std::collections::HashMap<String, SkillSource>,
+) -> Result<(), String> {
+    let path = get_skills_registry_path()?;
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    let json = serde_json::to_string_pretty(registry).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+/// Record that a skill was imported from a remote source.
+pub fn record_skill_source(name: &str, source: &str, id: &str) -> Result<(), String> {
+    let mut registry = read_skill_sources()?;
+    registry.insert(
+        name.to_string(),
+        SkillSource {
+            source: source.to_string(),
+            id: id.to_string(),
+        },
+    );
+    write_skill_sources(&registry)
+}
+
+/// Remove the remote origin record for a skill (called on delete).
+pub fn remove_skill_source(name: &str) -> Result<(), String> {
+    let mut registry = read_skill_sources()?;
+    registry.remove(name);
+    write_skill_sources(&registry)
 }
 
 // ── Templates ────────────────────────────────────────────────────────────────
