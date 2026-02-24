@@ -59,6 +59,33 @@
             background-color: rgba(255, 255, 255, 0.1);
             border-radius: 20px;
         }
+
+        /* Skill store card hover */
+        .skill-card {
+            transition: border-color 0.15s, background-color 0.15s;
+        }
+        .skill-card:hover {
+            border-color: #404040;
+            background-color: #1f1f22;
+        }
+
+        /* Template card hover */
+        .template-card {
+            transition: border-color 0.15s, background-color 0.15s;
+        }
+        .template-card:hover {
+            border-color: #404040;
+            background-color: #1f1f22;
+        }
+
+        /* Fade-in animation for sections */
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(24px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-up {
+            animation: fadeUp 0.6s ease both;
+        }
     </style>
 </head>
 <body class="antialiased font-sans relative overflow-x-hidden">
@@ -78,8 +105,9 @@
             </div>
             <div class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-300">
                 <a href="#features" class="hover:text-white transition-colors">Features</a>
+                <a href="#skill-store" class="hover:text-white transition-colors">Skill Store</a>
+                <a href="#templates" class="hover:text-white transition-colors">Templates</a>
                 <a href="#how-it-works" class="hover:text-white transition-colors">How it Works</a>
-                <a href="#developers" class="hover:text-white transition-colors">For Developers</a>
             </div>
             <div>
                 <a href="#download" class="bg-primary hover:bg-indigo-400 text-white px-5 py-2 rounded-md text-sm font-semibold transition-all shadow-[0_0_15px_rgba(99,102,241,0.4)]">Download App</a>
@@ -403,7 +431,7 @@
                 <p class="text-slate-400 max-w-xl mx-auto">Manage the context surrounding your coding agents. Built with a lightning-fast Rust core and a modern React interface.</p>
             </div>
 
-            <div class="grid md:grid-cols-3 gap-6">
+            <div class="grid md:grid-cols-3 gap-6 mb-6">
                 <!-- Feature 1 -->
                 <div class="bg-card/50 border border-white/10 p-8 rounded-2xl hover:bg-card transition-colors">
                     <div class="w-12 h-12 bg-indigo-500/20 text-indigo-400 rounded-lg flex items-center justify-center mb-6">
@@ -429,12 +457,466 @@
                 <!-- Feature 3 -->
                 <div class="bg-card/50 border border-white/10 p-8 rounded-2xl hover:bg-card transition-colors">
                     <div class="w-12 h-12 bg-green-500/20 text-green-400 rounded-lg flex items-center justify-center mb-6">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                     </div>
-                    <h3 class="text-xl font-bold mb-3">Team Configuration Management</h3>
+                    <h3 class="text-xl font-bold mb-3">Team Configuration Management <span class="text-sm font-normal text-indigo-400">(Coming Soon)</span></h3>
                     <p class="text-slate-400 text-sm leading-relaxed">
-                        Share your configured MCP servers, skills, and prompts with your entire team. Automatic keeps everyone's local agents in sync. <span class="text-indigo-400 font-semibold">(Coming Soon)</span>
+                        Share your configured MCP servers, skills, and project templates with your entire team. Automatic keeps everyone's local agent environments in sync from a single source of truth.
                     </p>
+                </div>
+            </div>
+
+            <div class="grid md:grid-cols-2 gap-6">
+                <!-- Feature 4: Skill Store -->
+                <div class="bg-card/50 border border-white/10 p-8 rounded-2xl hover:bg-card transition-colors">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-12 h-12 bg-yellow-500/20 text-yellow-400 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9l1-5h16l1 5M3 9h18M3 9v11a1 1 0 001 1h16a1 1 0 001-1V9M9 21V9m6 12V9"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-bold">Skill Store</h3>
+                            <p class="text-xs text-yellow-400 font-medium mt-0.5">Powered by skills.sh</p>
+                        </div>
+                    </div>
+                    <p class="text-slate-400 text-sm leading-relaxed mb-4">
+                        Browse and install community skills from <span class="text-white font-medium">skills.sh</span> directly inside the app. Search by category, preview before installing, and one-click deploy to your global skill library.
+                    </p>
+                    <ul class="space-y-2 text-sm text-slate-400">
+                        <li class="flex items-center gap-2"><svg class="w-4 h-4 text-yellow-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Search the skills.sh registry by name or tag</li>
+                        <li class="flex items-center gap-2"><svg class="w-4 h-4 text-yellow-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Preview skill content before installing</li>
+                        <li class="flex items-center gap-2"><svg class="w-4 h-4 text-yellow-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>One-click install to <code class="text-slate-300 bg-white/5 px-1 rounded">~/.agents/skills/</code></li>
+                        <li class="flex items-center gap-2"><svg class="w-4 h-4 text-yellow-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Keep installed skills up to date</li>
+                    </ul>
+                </div>
+
+                <!-- Feature 5: Configuration Templates -->
+                <div class="bg-card/50 border border-white/10 p-8 rounded-2xl hover:bg-card transition-colors">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-12 h-12 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-bold">Configuration Templates</h3>
+                            <p class="text-xs text-sky-400 font-medium mt-0.5">Consistent configs across projects</p>
+                        </div>
+                    </div>
+                    <p class="text-slate-400 text-sm leading-relaxed mb-4">
+                        Define reusable project templates that bundle skills, MCP servers, and agent instructions. Apply a template to any project to instantly standardize its configuration.
+                    </p>
+                    <ul class="space-y-2 text-sm text-slate-400">
+                        <li class="flex items-center gap-2"><svg class="w-4 h-4 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Bundle skills + MCP servers into a named template</li>
+                        <li class="flex items-center gap-2"><svg class="w-4 h-4 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Apply to multiple projects with one click</li>
+                        <li class="flex items-center gap-2"><svg class="w-4 h-4 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Override per-project while preserving the base</li>
+                        <li class="flex items-center gap-2"><svg class="w-4 h-4 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Share templates with your team</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Skill Store Section -->
+    <section id="skill-store" class="py-24 px-6 relative z-10">
+        <div class="max-w-7xl mx-auto flex flex-col lg:flex-row items-start gap-16">
+
+            <!-- Left: copy -->
+            <div class="lg:w-[35%] lg:sticky lg:top-28">
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/20 text-xs font-semibold text-yellow-400 mb-6 tracking-wide uppercase">Skill Store</div>
+                <h2 class="text-3xl font-bold mb-5">Search &amp; install skills from <span class="text-yellow-400">skills.sh</span></h2>
+                <p class="text-slate-400 mb-6 text-lg leading-relaxed">
+                    The skills.sh registry hosts community-built agent skills for every use case. Automatic connects directly so you never have to leave the app to find, preview, and install them.
+                </p>
+                <ul class="space-y-4 mb-8">
+                    <li class="flex items-start gap-3">
+                        <div class="w-6 h-6 bg-yellow-500/20 text-yellow-400 rounded flex items-center justify-center shrink-0 mt-0.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0"/></svg>
+                        </div>
+                        <span class="text-slate-300 text-sm"><strong class="text-white">Live search</strong> — type to search the skills.sh registry in real time, filtered by name or tag.</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <div class="w-6 h-6 bg-yellow-500/20 text-yellow-400 rounded flex items-center justify-center shrink-0 mt-0.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        </div>
+                        <span class="text-slate-300 text-sm"><strong class="text-white">Preview before install</strong> — read the full SKILL.md content in a split pane before committing.</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <div class="w-6 h-6 bg-yellow-500/20 text-yellow-400 rounded flex items-center justify-center shrink-0 mt-0.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                        </div>
+                        <span class="text-slate-300 text-sm"><strong class="text-white">One-click install</strong> — writes to <code class="text-slate-200 bg-white/5 px-1 rounded text-xs">~/.agents/skills/</code> and auto-syncs to all configured agent tools.</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <div class="w-6 h-6 bg-yellow-500/20 text-yellow-400 rounded flex items-center justify-center shrink-0 mt-0.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        </div>
+                        <span class="text-slate-300 text-sm"><strong class="text-white">Keep up to date</strong> — Automatic tracks installed versions and notifies you when upstream updates are available.</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Right: app mockup showing Skill Store view -->
+            <div class="lg:w-[65%] w-full">
+                <div class="rounded-[10px] overflow-hidden shadow-[0_20px_60px_-10px_rgba(0,0,0,0.7)] border border-[#3e3e42] bg-[#1c1c1e] text-left flex flex-col ring-1 ring-white/10 select-none" style="height:580px">
+                    <!-- MacOS Title Bar -->
+                    <div class="h-[38px] bg-[#252528] flex items-center px-4 border-b border-[#18181a] relative z-20 shrink-0">
+                        <div class="flex gap-2">
+                            <div class="w-3 h-3 rounded-full bg-[#ff5f56] border border-[#e0443e]"></div>
+                            <div class="w-3 h-3 rounded-full bg-[#ffbd2e] border border-[#dea123]"></div>
+                            <div class="w-3 h-3 rounded-full bg-[#27c93f] border border-[#1aab29]"></div>
+                        </div>
+                        <div class="flex-1 text-center text-[13px] font-medium text-[#9d9d9f]">Automatic</div>
+                    </div>
+
+                    <!-- Content -->
+                    <div class="flex flex-1 overflow-hidden text-[#d4d4d4]">
+
+                        <!-- Skill Store Main -->
+                        <div class="flex flex-1 overflow-hidden">
+                            <!-- Search + List pane -->
+                            <div class="w-[240px] border-r border-[#2a2a2e] flex flex-col bg-[#1c1c1e] shrink-0">
+                                <!-- Header -->
+                                <div class="px-4 h-[44px] flex items-center shrink-0">
+                                    <span class="text-[13px] font-semibold text-[#d4d4d4]">Skill Store</span>
+                                </div>
+                                <!-- Search -->
+                                <div class="px-3 pb-2 shrink-0">
+                                    <div class="bg-[#212124] border border-[#303030] rounded-md px-2.5 py-1.5 flex items-center gap-2">
+                                        <svg class="w-3 h-3 text-[#6b6b72] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0"/></svg>
+                                        <span class="text-[12px] text-[#5a5a60]">React</span>
+                                    </div>
+                                </div>
+                                <!-- Results list -->
+                                <div class="flex-1 overflow-y-auto app-scroll">
+                                    <!-- Selected row -->
+                                    <div class="px-4 py-2.5 bg-[#2c2c2e] border-l-2 border-indigo-500 cursor-pointer">
+                                        <div class="text-[12px] font-semibold text-white truncate">vercel-react-best-practices</div>
+                                        <div class="flex items-center justify-between mt-0.5">
+                                            <span class="text-[10px] text-[#6b6b72] truncate">vercel-labs/agent-skills</span>
+                                            <span class="text-[10px] text-indigo-400 font-medium ml-2 shrink-0">163.8k</span>
+                                        </div>
+                                    </div>
+                                    <div class="px-4 py-2.5 hover:bg-[#242426] cursor-pointer border-l-2 border-transparent">
+                                        <div class="text-[12px] font-medium text-[#c4c4c4] truncate">vercel-react-native-skills</div>
+                                        <div class="flex items-center justify-between mt-0.5">
+                                            <span class="text-[10px] text-[#6b6b72] truncate">vercel-labs/agent-skills</span>
+                                            <span class="text-[10px] text-indigo-400 font-medium ml-2 shrink-0">39.2k</span>
+                                        </div>
+                                    </div>
+                                    <div class="px-4 py-2.5 hover:bg-[#242426] cursor-pointer border-l-2 border-transparent">
+                                        <div class="text-[12px] font-medium text-[#c4c4c4] truncate">react:components</div>
+                                        <div class="flex items-center justify-between mt-0.5">
+                                            <span class="text-[10px] text-[#6b6b72] truncate">google-labs-code/stitch</span>
+                                            <span class="text-[10px] text-indigo-400 font-medium ml-2 shrink-0">8.7k</span>
+                                        </div>
+                                    </div>
+                                    <div class="px-4 py-2.5 hover:bg-[#242426] cursor-pointer border-l-2 border-transparent">
+                                        <div class="text-[12px] font-medium text-[#c4c4c4] truncate">react-native-best-practices</div>
+                                        <div class="flex items-center justify-between mt-0.5">
+                                            <span class="text-[10px] text-[#6b6b72] truncate">callstackincubator/agent</span>
+                                            <span class="text-[10px] text-indigo-400 font-medium ml-2 shrink-0">6.1k</span>
+                                        </div>
+                                    </div>
+                                    <div class="px-4 py-2.5 hover:bg-[#242426] cursor-pointer border-l-2 border-transparent">
+                                        <div class="text-[12px] font-medium text-[#c4c4c4] truncate">react-doctor</div>
+                                        <div class="flex items-center justify-between mt-0.5">
+                                            <span class="text-[10px] text-[#6b6b72] truncate">millionco/react-doctor</span>
+                                            <span class="text-[10px] text-indigo-400 font-medium ml-2 shrink-0">4.8k</span>
+                                        </div>
+                                    </div>
+                                    <div class="px-4 py-2.5 hover:bg-[#242426] cursor-pointer border-l-2 border-transparent">
+                                        <div class="text-[12px] font-medium text-[#c4c4c4] truncate">react-native-architecture</div>
+                                        <div class="flex items-center justify-between mt-0.5">
+                                            <span class="text-[10px] text-[#6b6b72] truncate">wshobson/agents</span>
+                                            <span class="text-[10px] text-indigo-400 font-medium ml-2 shrink-0">3.1k</span>
+                                        </div>
+                                    </div>
+                                    <div class="px-4 py-2.5 hover:bg-[#242426] cursor-pointer border-l-2 border-transparent">
+                                        <div class="text-[12px] font-medium text-[#c4c4c4] truncate">react-native-design</div>
+                                        <div class="flex items-center justify-between mt-0.5">
+                                            <span class="text-[10px] text-[#6b6b72] truncate">wshobson/agents</span>
+                                            <span class="text-[10px] text-indigo-400 font-medium ml-2 shrink-0">3k</span>
+                                        </div>
+                                    </div>
+                                    <div class="px-4 py-2.5 hover:bg-[#242426] cursor-pointer border-l-2 border-transparent">
+                                        <div class="text-[12px] font-medium text-[#c4c4c4] truncate">react-state-management</div>
+                                        <div class="flex items-center justify-between mt-0.5">
+                                            <span class="text-[10px] text-[#6b6b72] truncate">wshobson/agents</span>
+                                            <span class="text-[10px] text-indigo-400 font-medium ml-2 shrink-0">2.8k</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Detail pane: main + right sidebar -->
+                            <div class="flex flex-1 overflow-hidden">
+                                <!-- Main content -->
+                                <div class="flex-1 overflow-y-auto app-scroll px-6 py-4 border-r border-[#2a2a2e]">
+                                    <!-- Breadcrumb -->
+                                    <div class="flex items-center gap-1 text-[11px] text-[#6b6b72] mb-3">
+                                        <span class="hover:text-[#a1a1aa] cursor-pointer">skills</span>
+                                        <span>/</span>
+                                        <span class="hover:text-[#a1a1aa] cursor-pointer">vercel-labs/agent-skills</span>
+                                        <span>/</span>
+                                        <span class="text-[#d4d4d4]">vercel-react-best-practices</span>
+                                    </div>
+                                    <!-- Title -->
+                                    <h2 class="text-[18px] font-bold text-white mb-3 font-mono">vercel-react-best-practices</h2>
+                                    <!-- Install command -->
+                                    <div class="flex items-center gap-2 mb-4">
+                                        <div class="flex-1 bg-[#18181a] border border-[#2a2a2e] rounded-md px-3 py-2 font-mono text-[11px] text-[#8e8e93] truncate">$ npx skills add vercel-labs/agent-skills --skill vercel-react-best-practices</div>
+                                        <button class="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-indigo-600 rounded-md text-[11px] font-semibold text-white">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                                            Import
+                                        </button>
+                                    </div>
+                                    <!-- Description -->
+                                    <p class="text-[12px] text-[#8e8e93] leading-relaxed mb-5">React and Next.js performance optimization guidelines from Vercel Engineering. Applies to tasks involving component architecture, data fetching patterns, bundle optimization, and rendering strategies.</p>
+                                    <!-- Body content -->
+                                    <div class="space-y-3">
+                                        <h3 class="text-[13px] font-bold text-white">Vercel React Best Practices</h3>
+                                        <div>
+                                            <h4 class="text-[12px] font-semibold text-[#d4d4d4] mb-1">Overview</h4>
+                                            <p class="text-[11px] text-[#8e8e93] leading-relaxed">Performance optimization guide for React and Next.js applications, covering component patterns, server components, data fetching, and bundle optimization strategies from Vercel Engineering.</p>
+                                        </div>
+                                        <div>
+                                            <h4 class="text-[12px] font-semibold text-[#d4d4d4] mb-1">Skill Format</h4>
+                                            <p class="text-[11px] text-[#8e8e93] leading-relaxed mb-1.5">Each reference file follows a hybrid format for fast lookup and deep understanding:</p>
+                                            <ul class="space-y-1 text-[11px] text-[#8e8e93]">
+                                                <li class="flex items-start gap-1.5"><span class="text-[#6b6b72] shrink-0 mt-0.5">*</span><span><span class="text-[#d4d4d4] font-medium">Quick Pattern</span>: Incorrect/Correct code snippets for immediate pattern matching</span></li>
+                                                <li class="flex items-start gap-1.5"><span class="text-[#6b6b72] shrink-0 mt-0.5">*</span><span><span class="text-[#d4d4d4] font-medium">Quick Command</span>: Shell commands for process/measurement skills</span></li>
+                                                <li class="flex items-start gap-1.5"><span class="text-[#6b6b72] shrink-0 mt-0.5">*</span><span><span class="text-[#d4d4d4] font-medium">Quick Config</span>: Configuration snippets for setup-focused skills</span></li>
+                                            </ul>
+                                        </div>
+                                        <div>
+                                            <h4 class="text-[12px] font-semibold text-[#d4d4d4] mb-1">When to Apply</h4>
+                                            <p class="text-[11px] text-[#8e8e93] leading-relaxed mb-1.5">Reference these guidelines when:</p>
+                                            <ul class="space-y-1 text-[11px] text-[#8e8e93]">
+                                                <li class="flex items-start gap-1.5"><span class="text-[#6b6b72] shrink-0 mt-0.5">*</span>Building or refactoring React components</li>
+                                                <li class="flex items-start gap-1.5"><span class="text-[#6b6b72] shrink-0 mt-0.5">*</span>Implementing data fetching in Next.js</li>
+                                                <li class="flex items-start gap-1.5"><span class="text-[#6b6b72] shrink-0 mt-0.5">*</span>Optimizing bundle size or load performance</li>
+                                                <li class="flex items-start gap-1.5"><span class="text-[#6b6b72] shrink-0 mt-0.5">*</span>Reducing unnecessary re-renders</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- Right stats sidebar -->
+                                <div class="w-[120px] shrink-0 px-4 py-4 space-y-5">
+                                    <div>
+                                        <div class="text-[9px] font-semibold text-[#5a5a60] tracking-widest uppercase mb-1">Weekly Installs</div>
+                                        <div class="text-[20px] font-bold text-white">6.1k</div>
+                                    </div>
+                                    <div>
+                                        <div class="text-[9px] font-semibold text-[#5a5a60] tracking-widest uppercase mb-1.5">Repository</div>
+                                        <a class="flex items-center gap-1 text-[11px] text-indigo-400 leading-snug">
+                                            <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                                            vercel-labs/…
+                                        </a>
+                                    </div>
+                                    <div>
+                                        <div class="text-[9px] font-semibold text-[#5a5a60] tracking-widest uppercase mb-1.5">Skills.sh</div>
+                                        <a class="flex items-center gap-1 text-[11px] text-indigo-400">
+                                            <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                                            View page
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Configuration Templates Section -->
+    <section id="templates" class="py-24 px-6 relative z-10 bg-white/[0.02] border-y border-white/5">
+        <div class="max-w-7xl mx-auto flex flex-col lg:flex-row-reverse items-start gap-16">
+
+            <!-- Left: copy (rendered on right due to row-reverse) -->
+            <div class="lg:w-[45%] lg:sticky lg:top-28">
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-500/10 border border-sky-500/20 text-xs font-semibold text-sky-400 mb-6 tracking-wide uppercase">Configuration Templates</div>
+                <h2 class="text-3xl font-bold mb-5">Manage configuration across projects <span class="text-sky-400">with templates</span></h2>
+                <p class="text-slate-400 mb-6 text-lg leading-relaxed">
+                    Stop copy-pasting MCP server configs and skill lists between every new project. Define a template once and apply it everywhere — with per-project overrides when you need them.
+                </p>
+                <ul class="space-y-4 mb-8">
+                    <li class="flex items-start gap-3">
+                        <div class="w-6 h-6 bg-sky-500/20 text-sky-400 rounded flex items-center justify-center shrink-0 mt-0.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg>
+                        </div>
+                        <span class="text-slate-300 text-sm"><strong class="text-white">Bundled templates</strong> — group skills, MCP servers, and instructions under a single reusable name like <em>"Laravel API"</em> or <em>"React App"</em>.</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <div class="w-6 h-6 bg-sky-500/20 text-sky-400 rounded flex items-center justify-center shrink-0 mt-0.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"/></svg>
+                        </div>
+                        <span class="text-slate-300 text-sm"><strong class="text-white">Apply to any project</strong> — assign a template and the project inherits its full configuration, synced automatically.</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <div class="w-6 h-6 bg-sky-500/20 text-sky-400 rounded flex items-center justify-center shrink-0 mt-0.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+                        </div>
+                        <span class="text-slate-300 text-sm"><strong class="text-white">Per-project overrides</strong> — a project can extend a template and add or override specific settings without breaking the base.</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <div class="w-6 h-6 bg-sky-500/20 text-sky-400 rounded flex items-center justify-center shrink-0 mt-0.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        </div>
+                        <span class="text-slate-300 text-sm"><strong class="text-white">Team sharing</strong> — export and share templates with teammates so everyone's agent environments start from the same baseline.</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Right: app mockup showing Templates view -->
+            <div class="lg:w-[55%] w-full">
+                <div class="rounded-[10px] overflow-hidden shadow-[0_20px_60px_-10px_rgba(0,0,0,0.7)] border border-[#3e3e42] bg-[#212124] text-left flex flex-col ring-1 ring-white/10 select-none" style="height:540px">
+                    <!-- MacOS Title Bar -->
+                    <div class="h-[38px] bg-[#2d2d30] flex items-center justify-between px-4 border-b border-[#18181a] relative z-20 shrink-0">
+                        <div class="flex gap-2 absolute left-4">
+                            <div class="w-3 h-3 rounded-full bg-[#ff5f56] border border-[#e0443e]"></div>
+                            <div class="w-3 h-3 rounded-full bg-[#ffbd2e] border border-[#dea123]"></div>
+                            <div class="w-3 h-3 rounded-full bg-[#27c93f] border border-[#1aab29]"></div>
+                        </div>
+                        <div class="w-full text-center text-[13px] font-medium text-[#9d9d9f]">Automatic — Templates</div>
+                    </div>
+
+                    <!-- Content -->
+                    <div class="flex flex-1 overflow-hidden text-[#d4d4d4]">
+                        <!-- Sidebar -->
+                        <div class="w-[152px] bg-[#1c1c1e] border-r border-[#303030] px-2 pt-4 flex flex-col gap-0.5 shrink-0">
+                            <div class="flex items-center gap-2.5 px-3 py-2 rounded-md text-[#a1a1aa] text-[13px] font-medium">
+                                <svg class="w-4 h-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                                Projects
+                            </div>
+                            <div class="flex items-center gap-2.5 px-3 py-2 rounded-md text-[#a1a1aa] text-[13px] font-medium">
+                                <svg class="w-4 h-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                                Skills
+                            </div>
+                            <div class="flex items-center gap-2.5 px-3 py-2 rounded-md text-[#a1a1aa] text-[13px] font-medium">
+                                <svg class="w-4 h-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 9l1-5h16l1 5M3 9h18M3 9v11a1 1 0 001 1h16a1 1 0 001-1V9M9 21V9m6 12V9"/></svg>
+                                Skill store
+                            </div>
+                            <div class="flex items-center gap-2.5 px-3 py-2 rounded-md bg-[#2c2c2e] text-white text-[13px] font-medium">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg>
+                                Templates
+                            </div>
+                            <div class="flex items-center gap-2.5 px-3 py-2 rounded-md text-[#a1a1aa] text-[13px] font-medium">
+                                <svg class="w-4 h-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
+                                MCP Servers
+                            </div>
+                        </div>
+
+                        <!-- Templates Main -->
+                        <div class="flex flex-1 overflow-hidden">
+                            <!-- Template list pane -->
+                            <div class="w-[200px] border-r border-[#303030] flex flex-col bg-[#1c1c1e] shrink-0">
+                                <div class="px-4 h-[48px] border-b border-[#303030] flex items-center justify-between shrink-0">
+                                    <span class="text-[13px] font-semibold text-[#d4d4d4]">Templates</span>
+                                    <button class="text-[#8e8e93] hover:text-white">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                                    </button>
+                                </div>
+                                <div class="flex-1 overflow-y-auto app-scroll px-2 py-2 space-y-0.5">
+                                    <!-- Active template -->
+                                    <div class="flex items-center gap-3 px-3 py-3 bg-[#2c2c2e] rounded-lg cursor-pointer border border-[#3a3a3e]">
+                                        <div class="w-8 h-8 rounded-lg bg-indigo-500/25 text-indigo-400 flex items-center justify-center shrink-0">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                                        </div>
+                                        <div class="flex-1 min-w-0">
+                                            <div class="text-[13px] font-medium text-white truncate">Laravel API</div>
+                                            <div class="text-[11px] text-[#8e8e93]">3 skills · 2 servers</div>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center gap-3 px-3 py-3 rounded-lg cursor-pointer hover:bg-[#252527]">
+                                        <div class="w-8 h-8 rounded-lg bg-purple-500/25 text-purple-400 flex items-center justify-center shrink-0">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                                        </div>
+                                        <div class="flex-1 min-w-0">
+                                            <div class="text-[13px] font-medium text-[#d4d4d4] truncate">React App</div>
+                                            <div class="text-[11px] text-[#8e8e93]">2 skills · 1 server</div>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center gap-3 px-3 py-3 rounded-lg cursor-pointer hover:bg-[#252527]">
+                                        <div class="w-8 h-8 rounded-lg bg-orange-500/25 text-orange-400 flex items-center justify-center shrink-0">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg>
+                                        </div>
+                                        <div class="flex-1 min-w-0">
+                                            <div class="text-[13px] font-medium text-[#d4d4d4] truncate">Data Pipeline</div>
+                                            <div class="text-[11px] text-[#8e8e93]">1 skill · 3 servers</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Template Detail pane -->
+                            <div class="flex-1 flex flex-col bg-[#212124] overflow-hidden">
+                                <div class="px-5 h-[52px] border-b border-[#303030] flex items-center justify-between shrink-0">
+                                    <span class="text-[15px] font-semibold text-white">Laravel API</span>
+                                    <div class="flex items-center gap-2">
+                                        <button class="px-3 py-1.5 rounded-md border border-[#3a3a3e] text-[12px] font-medium text-[#d4d4d4] bg-[#2a2a2e]">Edit</button>
+                                        <button class="px-3 py-1.5 rounded-md bg-indigo-600 text-[12px] font-medium text-white">Apply to project…</button>
+                                    </div>
+                                </div>
+                                <div class="flex-1 overflow-y-auto app-scroll px-5 py-5 space-y-5">
+                                    <!-- Skills group -->
+                                    <div>
+                                        <div class="text-[11px] font-semibold text-[#6b6b72] tracking-widest uppercase mb-2.5">Skills</div>
+                                        <div class="space-y-2">
+                                            <div class="flex items-center gap-3 px-3 py-2.5 bg-[#18181a] rounded-lg border border-[#2a2a2e]">
+                                                <div class="w-7 h-7 rounded-md bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                                                </div>
+                                                <span class="text-[13px] text-[#d4d4d4] flex-1">laravel-specialist</span>
+                                                <span class="text-[11px] text-[#6b6b72]">skills.sh</span>
+                                            </div>
+                                            <div class="flex items-center gap-3 px-3 py-2.5 bg-[#18181a] rounded-lg border border-[#2a2a2e]">
+                                                <div class="w-7 h-7 rounded-md bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                                                </div>
+                                                <span class="text-[13px] text-[#d4d4d4] flex-1">livewire-development</span>
+                                                <span class="text-[11px] text-[#6b6b72]">skills.sh</span>
+                                            </div>
+                                            <div class="flex items-center gap-3 px-3 py-2.5 bg-[#18181a] rounded-lg border border-[#2a2a2e]">
+                                                <div class="w-7 h-7 rounded-md bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                                                </div>
+                                                <span class="text-[13px] text-[#d4d4d4] flex-1">tailwindcss-development</span>
+                                                <span class="text-[11px] text-[#6b6b72]">skills.sh</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <!-- MCP Servers group -->
+                                    <div>
+                                        <div class="text-[11px] font-semibold text-[#6b6b72] tracking-widest uppercase mb-2.5">MCP Servers</div>
+                                        <div class="space-y-2">
+                                            <div class="flex items-center gap-3 px-3 py-2.5 bg-[#18181a] rounded-lg border border-[#2a2a2e]">
+                                                <div class="w-7 h-7 rounded-md bg-[#1e2a20] text-green-500 flex items-center justify-center shrink-0">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M20 12H4"/></svg>
+                                                </div>
+                                                <span class="text-[13px] text-[#d4d4d4] flex-1">linear</span>
+                                                <span class="text-[11px] text-green-500 font-medium">active</span>
+                                            </div>
+                                            <div class="flex items-center gap-3 px-3 py-2.5 bg-[#18181a] rounded-lg border border-[#2a2a2e]">
+                                                <div class="w-7 h-7 rounded-md bg-[#2a1e14] text-orange-400 flex items-center justify-center shrink-0">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                                </div>
+                                                <span class="text-[13px] text-[#d4d4d4] flex-1">sentry</span>
+                                                <span class="text-[11px] text-green-500 font-medium">active</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <!-- Applied to -->
+                                    <div>
+                                        <div class="text-[11px] font-semibold text-[#6b6b72] tracking-widest uppercase mb-2.5">Applied to</div>
+                                        <div class="flex flex-wrap gap-2">
+                                            <span class="px-2.5 py-1 rounded-md bg-[#1c1c1e] border border-[#303030] text-[12px] text-[#d4d4d4]">nova-engine</span>
+                                            <span class="px-2.5 py-1 rounded-md bg-[#1c1c1e] border border-[#303030] text-[12px] text-[#d4d4d4]">starlight-api</span>
+                                            <span class="px-2.5 py-1 rounded-md bg-[#1c1c1e] border border-[#303030] text-[12px] text-[#d4d4d4]">quantum-ui</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -480,8 +962,8 @@
                         <div class="text-indigo-300 mb-4">
                             {<br>
                             &nbsp;&nbsp;"mcpServers": {<br>
-                            &nbsp;&nbsp;&nbsp;&nbsp;"nexus": {<br>
-                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"command": "nexus-app",<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;"automatic": {<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"command": "automatic",<br>
                             &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"args": ["mcp-serve"]<br>
                             &nbsp;&nbsp;&nbsp;&nbsp;}<br>
                             &nbsp;&nbsp;}<br>
@@ -490,7 +972,7 @@
 
                         <div class="text-slate-400 mb-2">$ claude</div>
                         <div class="text-slate-300">
-                            <span class="text-green-400">✓ MCP server "nexus" connected</span><br>
+                            <span class="text-green-400">✓ MCP server "automatic" connected</span><br>
                             <span class="text-green-400">✓ Skills synced to ~/.claude/skills/</span><br>
                             <span class="text-green-400">✓ Project MCP servers configured</span><br>
                             <span class="text-blue-400 mt-2 block">Agent is ready.</span>
