@@ -13,6 +13,7 @@ import {
   Github,
   Search,
 } from "lucide-react";
+import { ICONS } from "./icons";
 
 interface SkillSource {
   source: string; // "owner/repo"
@@ -267,7 +268,6 @@ export default function Skills() {
 
   const handleDelete = async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(`Delete the skill "${name}"?`)) return;
     try {
       await invoke("delete_skill", { name });
       if (selectedSkill === name) { setSelectedSkill(null); setSkillContent(""); setIsEditing(false); }
@@ -411,7 +411,7 @@ export default function Skills() {
             <ul className="space-y-px px-2">
               {isCreating && (
                 <li className="flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] bg-[#2D2E36] text-[#E0E1E6]">
-                  <Code size={13} className="text-[#8A8C93] shrink-0" />
+                  <Code size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
                   <span className="italic text-[#8A8C93]">New Skill…</span>
                 </li>
               )}
@@ -510,7 +510,7 @@ export default function Skills() {
             {/* Header */}
             <div className="h-11 px-5 border-b border-[#33353A] flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
-                <FileText size={13} className="text-[#8A8C93] shrink-0" />
+                <FileText size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
                 {isCreating ? (
                   <input
                     type="text"
@@ -597,8 +597,8 @@ export default function Skills() {
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-14 h-14 mx-auto mb-5 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#8A8C93]">
-              <Code size={22} strokeWidth={1.5} />
+            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#4ADE80]/10 border border-[#4ADE80]/20 flex items-center justify-center">
+              <Code size={22} className={ICONS.skill.iconColor} strokeWidth={1.5} />
             </div>
             <h2 className="text-[15px] font-medium text-[#E0E1E6] mb-2">No skill selected</h2>
             <p className="text-[13px] text-[#8A8C93] leading-relaxed max-w-xs">

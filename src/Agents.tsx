@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Bot, FolderOpen } from "lucide-react";
+import { ICONS } from "./icons";
 
 interface AgentProject {
   name: string;
@@ -70,34 +71,36 @@ export default function Agents() {
               No agents registered.
             </div>
           ) : (
-            <ul className="space-y-0.5 px-2">
-              {agents.map((agent) => (
-                <li key={agent.id}>
-                  <button
-                    onClick={() => selectAgent(agent.id)}
-                    className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
-                      selectedId === agent.id
-                        ? "bg-[#2D2E36] text-[#E0E1E6]"
-                        : "text-[#8A8C93] hover:bg-[#2D2E36]/50 hover:text-[#E0E1E6]"
-                    }`}
-                  >
-                    <Bot
-                      size={14}
-                      className={
-                        selectedId === agent.id
-                          ? "text-[#E0E1E6]"
-                          : "text-[#8A8C93]"
-                      }
-                    />
-                    <span className="flex-1 text-left truncate">{agent.label}</span>
-                    {agent.projects.length > 0 && (
-                      <span className="text-[11px] bg-[#2D2E36] text-[#8A8C93] px-1.5 rounded-sm">
-                        {agent.projects.length}
-                      </span>
-                    )}
-                  </button>
-                </li>
-              ))}
+            <ul className="space-y-1 px-2">
+              {agents.map((agent) => {
+                const isActive = selectedId === agent.id;
+                return (
+                  <li key={agent.id}>
+                    <button
+                      onClick={() => selectAgent(agent.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                        isActive
+                          ? "bg-[#2D2E36] text-[#E0E1E6]"
+                          : "text-[#8A8C93] hover:bg-[#2D2E36]/60 hover:text-[#E0E1E6]"
+                      }`}
+                    >
+                      <div className={ICONS.agent.iconBox}>
+                        <Bot size={15} className={ICONS.agent.iconColor} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-[13px] font-medium truncate ${isActive ? "text-[#E0E1E6]" : "text-[#C8CAD0]"}`}>
+                          {agent.label}
+                        </div>
+                        {agent.projects.length > 0 && (
+                          <div className="text-[11px] text-[#8A8C93] mt-0.5">
+                            {agent.projects.length} project{agent.projects.length !== 1 ? "s" : ""}
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -118,7 +121,7 @@ export default function Agents() {
           <div className="flex-1 flex flex-col h-full">
             {/* Header */}
             <div className="h-11 px-6 border-b border-[#33353A] flex items-center gap-3">
-              <Bot size={14} className="text-[#8A8C93]" />
+              <Bot size={14} className={ICONS.agent.iconColor} />
               <h3 className="text-[14px] font-medium text-[#E0E1E6]">
                 {selected.label}
               </h3>
@@ -147,26 +150,28 @@ export default function Agents() {
                 {/* Projects */}
                 <section>
                   <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5 mb-3">
-                    <FolderOpen size={12} /> Projects Using This Agent
+                    <FolderOpen size={12} className={ICONS.project.iconColor} /> Projects Using This Agent
                   </label>
                   {selected.projects.length === 0 ? (
                     <p className="text-[13px] text-[#8A8C93]/60 italic">
                       No projects are using {selected.label} yet. Add it to a project in the Projects tab.
                     </p>
                   ) : (
-                    <ul className="space-y-1">
+                    <ul className="space-y-2">
                       {selected.projects.map((p) => (
                         <li
                           key={p.name}
-                          className="flex items-center gap-3 px-3 py-2.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
+                          className="flex items-center gap-3 px-3 py-3 bg-[#1A1A1E] rounded-lg border border-[#33353A]"
                         >
-                          <FolderOpen size={12} className="text-[#8A8C93] flex-shrink-0" />
+                          <div className={ICONS.project.iconBox}>
+                            <FolderOpen size={15} className={ICONS.project.iconColor} />
+                          </div>
                           <div className="flex-1 min-w-0">
-                            <span className="font-medium">{p.name}</span>
+                            <div className="text-[13px] font-medium text-[#E0E1E6]">{p.name}</div>
                             {p.directory && (
-                              <span className="ml-2 text-[11px] text-[#8A8C93] font-mono truncate">
+                              <div className="text-[11px] text-[#8A8C93] font-mono truncate mt-0.5">
                                 {p.directory}
-                              </span>
+                              </div>
                             )}
                           </div>
                         </li>
@@ -180,14 +185,14 @@ export default function Agents() {
         ) : (
           /* Empty state */
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#8A8C93]">
-              <Bot size={24} strokeWidth={1.5} />
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-[#5E6AD2]/10 border border-[#5E6AD2]/20 flex items-center justify-center">
+              <Bot size={24} className={ICONS.agent.iconColor} strokeWidth={1.5} />
             </div>
             <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">
               Agents
             </h2>
             <p className="text-[14px] text-[#8A8C93] mb-4 leading-relaxed max-w-sm">
-              Agents are the coding tools that Nexus syncs configurations to.
+              Agents are the coding tools that Automatic syncs configurations to.
               Select one from the sidebar to see which projects use it.
             </p>
           </div>

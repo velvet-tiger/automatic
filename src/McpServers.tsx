@@ -13,6 +13,7 @@ import {
   ToggleLeft,
   ToggleRight,
 } from "lucide-react";
+import { ICONS } from "./icons";
 
 type TransportType = "stdio" | "http" | "sse";
 
@@ -240,7 +241,6 @@ export default function McpServers() {
 
   const handleDelete = async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(`Delete MCP server "${name}"?`)) return;
     try {
       await invoke("delete_mcp_server_config", { name });
       if (selectedName === name) {
@@ -385,40 +385,44 @@ export default function McpServers() {
               </button>
             </div>
           ) : (
-            <ul className="space-y-0.5 px-2">
+            <ul className="space-y-1 px-2">
               {isCreating && (
-                <li className="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] bg-[#2D2E36] text-[#E0E1E6]">
-                  <Server size={14} className="text-[#8A8C93]" />
-                  <span className="italic">New Server...</span>
+                <li className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-[#2D2E36]">
+                  <div className={ICONS.mcp.iconBox}>
+                    <Server size={15} className={ICONS.mcp.iconColor} />
+                  </div>
+                  <span className="text-[13px] text-[#E0E1E6] italic">New Server...</span>
                 </li>
               )}
-              {servers.map((name) => (
-                <li key={name} className="group flex items-center relative">
-                  <button
-                    onClick={() => selectServer(name)}
-                    className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
-                      selectedName === name && !isCreating
-                        ? "bg-[#2D2E36] text-[#E0E1E6]"
-                        : "text-[#8A8C93] hover:bg-[#2D2E36]/50 hover:text-[#E0E1E6]"
-                    }`}
-                  >
-                    <Server
-                      size={14}
-                      className={
-                        selectedName === name && !isCreating ? "text-[#E0E1E6]" : "text-[#8A8C93]"
-                      }
-                    />
-                    <span className="flex-1 text-left truncate">{name}</span>
-                  </button>
-                  <button
-                    onClick={(e) => handleDelete(name, e)}
-                    className="absolute right-2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
-                    title="Delete Server"
-                  >
-                    <X size={12} />
-                  </button>
-                </li>
-              ))}
+              {servers.map((name) => {
+                const isActive = selectedName === name && !isCreating;
+                return (
+                  <li key={name} className="group relative">
+                    <button
+                      onClick={() => selectServer(name)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                        isActive
+                          ? "bg-[#2D2E36] text-[#E0E1E6]"
+                          : "text-[#8A8C93] hover:bg-[#2D2E36]/60 hover:text-[#E0E1E6]"
+                      }`}
+                    >
+                      <div className={ICONS.mcp.iconBox}>
+                        <Server size={15} className={ICONS.mcp.iconColor} />
+                      </div>
+                      <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-[#E0E1E6]" : "text-[#C8CAD0]"}`}>
+                        {name}
+                      </span>
+                    </button>
+                    <button
+                      onClick={(e) => handleDelete(name, e)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
+                      title="Delete Server"
+                    >
+                      <X size={12} />
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -440,7 +444,7 @@ export default function McpServers() {
             {/* Header */}
             <div className="h-11 px-6 border-b border-[#33353A] flex justify-between items-center">
               <div className="flex items-center gap-3">
-                <Server size={14} className="text-[#8A8C93]" />
+                <Server size={14} className={ICONS.mcp.iconColor} />
                 {isCreating ? (
                   <input
                     type="text"
@@ -797,8 +801,8 @@ export default function McpServers() {
         ) : (
           /* Empty state */
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#8A8C93]">
-              <Server size={24} strokeWidth={1.5} />
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-[#F59E0B]/10 border border-[#F59E0B]/20 flex items-center justify-center">
+              <Server size={24} className={ICONS.mcp.iconColor} strokeWidth={1.5} />
             </div>
             <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">MCP Servers</h2>
             <p className="text-[14px] text-[#8A8C93] mb-8 leading-relaxed max-w-sm">

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Plus, X, Edit2, FileText, Check, LayoutTemplate } from "lucide-react";
+import { ICONS } from "./icons";
 
 export default function Templates() {
   const [templates, setTemplates] = useState<string[]>([]);
@@ -58,7 +59,6 @@ export default function Templates() {
 
   const handleDelete = async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(`Are you sure you want to delete the template "${name}"?`)) return;
     try {
       await invoke("delete_template", { name });
       if (selectedTemplate === name) {
@@ -100,35 +100,44 @@ export default function Templates() {
           {templates.length === 0 && !isCreating ? (
             <div className="px-4 py-3 text-[13px] text-[#8A8C93] text-center">No templates yet.</div>
           ) : (
-            <ul className="space-y-0.5 px-2">
+            <ul className="space-y-1 px-2">
               {isCreating && (
-                <li className="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] bg-[#2D2E36] text-[#E0E1E6]">
-                  <LayoutTemplate size={14} className="text-[#8A8C93]" />
-                  <span className="italic">New Template...</span>
+                <li className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-[#2D2E36]">
+                  <div className={ICONS.fileTemplate.iconBox}>
+                    <LayoutTemplate size={15} className={ICONS.fileTemplate.iconColor} />
+                  </div>
+                  <span className="text-[13px] text-[#E0E1E6] italic">New Template...</span>
                 </li>
               )}
-              {templates.map(name => (
-                <li key={name} className="group flex items-center relative">
-                  <button
-                    onClick={() => loadTemplateContent(name)}
-                    className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
-                      selectedTemplate === name && !isCreating
-                        ? "bg-[#2D2E36] text-[#E0E1E6]"
-                        : "text-[#8A8C93] hover:bg-[#2D2E36]/50 hover:text-[#E0E1E6]"
-                    }`}
-                  >
-                    <LayoutTemplate size={14} className={selectedTemplate === name && !isCreating ? "text-[#E0E1E6]" : "text-[#8A8C93]"} />
-                    <span className="flex-1 text-left truncate">{name}</span>
-                  </button>
-                  <button
-                    onClick={(e) => handleDelete(name, e)}
-                    className="absolute right-2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
-                    title="Delete Template"
-                  >
-                    <X size={12} />
-                  </button>
-                </li>
-              ))}
+              {templates.map(name => {
+                const isActive = selectedTemplate === name && !isCreating;
+                return (
+                  <li key={name} className="group relative">
+                    <button
+                      onClick={() => loadTemplateContent(name)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                        isActive
+                          ? "bg-[#2D2E36] text-[#E0E1E6]"
+                          : "text-[#8A8C93] hover:bg-[#2D2E36]/60 hover:text-[#E0E1E6]"
+                      }`}
+                    >
+                      <div className={ICONS.fileTemplate.iconBox}>
+                        <LayoutTemplate size={15} className={ICONS.fileTemplate.iconColor} />
+                      </div>
+                      <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-[#E0E1E6]" : "text-[#C8CAD0]"}`}>
+                        {name}
+                      </span>
+                    </button>
+                    <button
+                      onClick={(e) => handleDelete(name, e)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
+                      title="Delete Template"
+                    >
+                      <X size={12} />
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -148,7 +157,7 @@ export default function Templates() {
             {/* Header */}
             <div className="h-11 px-6 border-b border-[#33353A] flex justify-between items-center">
               <div className="flex items-center gap-3">
-                <FileText size={14} className="text-[#8A8C93]" />
+                <FileText size={14} className={ICONS.fileTemplate.iconColor} />
                 {isCreating ? (
                   <input
                     type="text"
@@ -215,8 +224,8 @@ export default function Templates() {
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#8A8C93]">
-              <LayoutTemplate size={24} strokeWidth={1.5} />
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-[#8B5CF6]/10 border border-[#8B5CF6]/20 flex items-center justify-center">
+              <LayoutTemplate size={24} className={ICONS.fileTemplate.iconColor} strokeWidth={1.5} />
             </div>
             <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">No Template Selected</h2>
             <p className="text-[14px] text-[#8A8C93] mb-8 leading-relaxed max-w-sm">

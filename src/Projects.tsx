@@ -18,7 +18,6 @@ import {
   ArrowRightLeft,
   GripVertical,
   Package,
-  Zap,
   CheckCircle2,
   AlertCircle,
   ArrowRight,
@@ -63,6 +62,15 @@ interface ProjectFileInfo {
   filename: string;
   agents: string[];
   exists: boolean;
+}
+
+interface ProjectTemplate {
+  name: string;
+  description: string;
+  skills: string[];
+  mcp_servers: string[];
+  providers: string[];
+  agents: string[];
 }
 
 const SIDEBAR_MIN = 160;
@@ -154,6 +162,10 @@ export default function Projects() {
   const [driftReport, setDriftReport] = useState<DriftReport | null>(null);
   const driftCheckInFlight = useRef(false);
 
+  // Project template state
+  const [availableProjectTemplates, setAvailableProjectTemplates] = useState<ProjectTemplate[]>([]);
+  const [showProjectTemplatePicker, setShowProjectTemplatePicker] = useState(false);
+
   // Project file state
   const [projectFiles, setProjectFiles] = useState<ProjectFileInfo[]>([]);
   const [activeProjectFile, setActiveProjectFile] = useState<string | null>(null);
@@ -174,6 +186,7 @@ export default function Projects() {
     loadAvailableSkills();
     loadAvailableMcpServers();
     loadAvailableTemplates();
+    loadAvailableProjectTemplates();
   }, []);
 
   useEffect(() => {
@@ -343,6 +356,40 @@ export default function Projects() {
     } catch {
       // Templates may not exist yet
     }
+  };
+
+  const loadAvailableProjectTemplates = async () => {
+    try {
+      const names: string[] = await invoke("get_project_templates");
+      const loaded: ProjectTemplate[] = await Promise.all(
+        names.map(async (name) => {
+          const raw: string = await invoke("read_project_template", { name });
+          return JSON.parse(raw) as ProjectTemplate;
+        })
+      );
+      setAvailableProjectTemplates(loaded);
+    } catch {
+      // Project templates may not exist yet
+    }
+  };
+
+  const applyProjectTemplate = (tmpl: ProjectTemplate) => {
+    if (!project) return;
+    // Merge: add template values, preserving anything already on the project
+    const mergedAgents = [...new Set([...project.agents, ...tmpl.agents])];
+    const mergedSkills = [...new Set([...project.skills, ...tmpl.skills])];
+    const mergedMcpServers = [...new Set([...project.mcp_servers, ...tmpl.mcp_servers])];
+    const mergedProviders = [...new Set([...project.providers, ...tmpl.providers])];
+    setProject({
+      ...project,
+      description: project.description || tmpl.description,
+      agents: mergedAgents,
+      skills: mergedSkills,
+      mcp_servers: mergedMcpServers,
+      providers: mergedProviders,
+    });
+    setDirty(true);
+    setShowProjectTemplatePicker(false);
   };
 
   const loadProjectFiles = async (name: string) => {
@@ -540,7 +587,7 @@ export default function Projects() {
 
   const handleRemove = async (name: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (!confirm(`Remove project "${name}" from Nexus?\n\n(This only removes the project from this app. Your actual project files will NOT be deleted.)`)) return;
+    if (!confirm(`Remove project "${name}" from Automatic?\n\n(This only removes the project from this app. Your actual project files will NOT be deleted.)`)) return;
     try {
       await invoke("delete_project", { name });
       if (selectedName === name) {
@@ -713,7 +760,7 @@ export default function Projects() {
                     <button
                       onClick={(e) => handleRemove(name, e)}
                       className="absolute right-2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
-                      title="Remove Project from Nexus"
+                      title="Remove Project from Automatic"
                     >
                       <X size={12} />
                     </button>
@@ -794,7 +841,7 @@ export default function Projects() {
                   <button
                     onClick={() => handleRemove(selectedName)}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#FF6B6B]/10 text-[#8A8C93] hover:text-[#FF6B6B] rounded text-[12px] font-medium border border-[#3A3B42] hover:border-[#FF6B6B]/30 transition-colors mr-1"
-                    title="Remove project from Nexus"
+                    title="Remove project from Automatic"
                   >
                     <Trash2 size={12} /> Remove
                   </button>
@@ -846,7 +893,7 @@ export default function Projects() {
                 <div className="flex items-center justify-between px-6 py-2 text-[#F59E0B]">
                   <div className="flex items-center gap-2 text-[12px]">
                     <AlertCircle size={13} />
-                    <span>Configuration has drifted — agent config files no longer match Nexus settings.</span>
+                    <span>Configuration has drifted — agent config files no longer match Automatic settings.</span>
                   </div>
                   <button
                     onClick={handleSync}
@@ -884,9 +931,58 @@ export default function Projects() {
                     </div>
                     <h2 className="text-[16px] font-semibold text-[#E0E1E6] mb-1">Where is this project?</h2>
                     <p className="text-[13px] text-[#8A8C93] leading-relaxed">
-                      Choose the project directory so Nexus can detect what's already configured and sync agent files.
+                      Choose the project directory so Automatic can detect what's already configured and sync agent files.
                     </p>
                   </div>
+
+                  {/* Project Template picker */}
+                  {availableProjectTemplates.length > 0 && (
+                    <div className="mb-5">
+                      <button
+                        onClick={() => setShowProjectTemplatePicker(!showProjectTemplatePicker)}
+                        className="w-full flex items-center justify-between px-3 py-2 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] rounded-md text-[13px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                      >
+                        <span className="flex items-center gap-2">
+                          <LayoutTemplate size={13} />
+                          Start from a project template (optional)
+                        </span>
+                        <span className="text-[11px]">{showProjectTemplatePicker ? "▲" : "▼"}</span>
+                      </button>
+                      {showProjectTemplatePicker && (
+                        <div className="mt-1.5 p-2 bg-[#1A1A1E] border border-[#33353A] rounded-md space-y-1">
+                          {availableProjectTemplates.map((tmpl) => (
+                            <button
+                              key={tmpl.name}
+                              onClick={() => applyProjectTemplate(tmpl)}
+                              className="w-full text-left px-3 py-2 hover:bg-[#2D2E36] rounded-md transition-colors"
+                            >
+                              <div className="text-[13px] font-medium text-[#E0E1E6]">{tmpl.name}</div>
+                              {tmpl.description && (
+                                <div className="text-[11px] text-[#8A8C93] mt-0.5 truncate">{tmpl.description}</div>
+                              )}
+                              <div className="flex items-center gap-3 mt-1">
+                                {tmpl.agents.length > 0 && (
+                                  <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                    <Bot size={10} /> {tmpl.agents.length} agent{tmpl.agents.length !== 1 ? "s" : ""}
+                                  </span>
+                                )}
+                                {tmpl.skills.length > 0 && (
+                                  <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                    <Code size={10} /> {tmpl.skills.length} skill{tmpl.skills.length !== 1 ? "s" : ""}
+                                  </span>
+                                )}
+                                {tmpl.mcp_servers.length > 0 && (
+                                  <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                    <Server size={10} /> {tmpl.mcp_servers.length} MCP server{tmpl.mcp_servers.length !== 1 ? "s" : ""}
+                                  </span>
+                                )}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="space-y-3">
                     <div className="flex gap-2">
@@ -1353,13 +1449,72 @@ export default function Projects() {
                     </section>
 
                     {/* Quick Actions */}
-                    <section>
-                      <h3 className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-3">Quick Actions</h3>
-                      <div className="grid grid-cols-2 gap-3">
-                        <button
-                          onClick={() => setProjectTab("project_file")}
-                          className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10 text-left"
-                        >
+                     <section>
+                       <h3 className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-3">Quick Actions</h3>
+
+                       {/* Apply Project Template */}
+                       {availableProjectTemplates.length > 0 && (
+                         <div className="mb-3">
+                           <button
+                             onClick={() => setShowProjectTemplatePicker(!showProjectTemplatePicker)}
+                             className="w-full group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10 text-left"
+                           >
+                             <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors">
+                               <LayoutTemplate size={16} className="text-[#5E6AD2]" />
+                             </div>
+                             <div className="flex-1 min-w-0">
+                               <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Apply Project Template</div>
+                               <div className="text-[11px] text-[#8A8C93]">Merge agents, skills & servers from a template</div>
+                             </div>
+                             <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                           </button>
+                           {showProjectTemplatePicker && (
+                             <div className="mt-1.5 p-2 bg-[#1A1A1E] border border-[#33353A] rounded-lg space-y-1">
+                               {availableProjectTemplates.map((tmpl) => (
+                                 <button
+                                   key={tmpl.name}
+                                   onClick={() => applyProjectTemplate(tmpl)}
+                                   className="w-full text-left px-3 py-2 hover:bg-[#2D2E36] rounded-md transition-colors"
+                                 >
+                                   <div className="text-[13px] font-medium text-[#E0E1E6]">{tmpl.name}</div>
+                                   {tmpl.description && (
+                                     <div className="text-[11px] text-[#8A8C93] mt-0.5 truncate">{tmpl.description}</div>
+                                   )}
+                                   <div className="flex items-center gap-3 mt-1">
+                                     {tmpl.agents.length > 0 && (
+                                       <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                         <Bot size={10} /> {tmpl.agents.length} agent{tmpl.agents.length !== 1 ? "s" : ""}
+                                       </span>
+                                     )}
+                                     {tmpl.skills.length > 0 && (
+                                       <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                         <Code size={10} /> {tmpl.skills.length} skill{tmpl.skills.length !== 1 ? "s" : ""}
+                                       </span>
+                                     )}
+                                     {tmpl.mcp_servers.length > 0 && (
+                                       <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                         <Server size={10} /> {tmpl.mcp_servers.length} MCP server{tmpl.mcp_servers.length !== 1 ? "s" : ""}
+                                       </span>
+                                     )}
+                                   </div>
+                                 </button>
+                               ))}
+                               <button
+                                 onClick={() => setShowProjectTemplatePicker(false)}
+                                 className="mt-1 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors px-3 py-1"
+                               >
+                                 Cancel
+                               </button>
+                             </div>
+                           )}
+                         </div>
+                       )}
+
+                       <div className="grid grid-cols-2 gap-3">
+                         <button
+                           onClick={() => setProjectTab("project_file")}
+                           className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10 text-left"
+                         >
                           <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors">
                             <FileText size={16} className="text-[#5E6AD2]" />
                           </div>
@@ -1431,7 +1586,7 @@ export default function Projects() {
                           className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#F59E0B]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#F59E0B]/10 text-left"
                         >
                           <div className="p-2 bg-[#F59E0B]/10 rounded-lg group-hover:bg-[#F59E0B]/20 transition-colors">
-                            <Zap size={16} className="text-[#F59E0B]" />
+                            <Server size={16} className="text-[#F59E0B]" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">MCP Servers</div>
