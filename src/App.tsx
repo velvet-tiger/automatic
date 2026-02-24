@@ -1,20 +1,22 @@
 import { useEffect, useState } from "react";
 import { SignIn, SignedIn, SignedOut, UserButton } from "@clerk/clerk-react";
+import Dashboard from "./Dashboard";
 import Skills from "./Skills";
 import SkillStore from "./SkillStore";
 import Projects from "./Projects";
+import ProjectTemplates from "./ProjectTemplates";
 import McpServers from "./McpServers";
 import Templates from "./Templates";
 import Agents from "./Agents";
-import { Code, Server, ChevronDown, Settings, FolderOpen, LayoutTemplate, Bot, Store } from "lucide-react";
+import { Code, Server, ChevronDown, Settings, FolderOpen, LayoutTemplate, Bot, Store, Layers } from "lucide-react";
 import "./App.css";
 
 function App() {
   const [activeTab, setActiveTab] = useState(() => {
     const saved = localStorage.getItem("nexus.activeTab");
     // Reset to projects if saved tab was removed (activity)
-    if (saved === "activity") return "projects";
-    return saved || "projects";
+    if (saved === "activity") return "dashboard";
+    return saved || "dashboard";
   });
 
   useEffect(() => {
@@ -92,6 +94,7 @@ function App() {
               <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
             <ul className="space-y-0.5">
+              <NavItem id="dashboard" icon={LayoutTemplate} label="Dashboard" />
               <NavItem id="projects" icon={FolderOpen} label="Projects" />
             </ul>
           </div>
@@ -105,7 +108,8 @@ function App() {
               <NavItem id="agents" icon={Bot} label="Agents" />
               <NavItem id="skills" icon={Code} label="Skills & Prompts" />
               <NavItem id="skill-store" icon={Store} label="Skill Store" />
-              <NavItem id="templates" icon={LayoutTemplate} label="Templates" />
+              <NavItem id="project-templates" icon={Layers} label="Proj Templates" />
+              <NavItem id="templates" icon={LayoutTemplate} label="File Templates" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
             </ul>
           </div>
@@ -148,9 +152,19 @@ function App() {
 
         {/* Content Area */}
         <div className="flex-1 overflow-hidden flex flex-col">
+          {activeTab === "dashboard" && (
+            <div className="flex-1 h-full">
+              <Dashboard onNavigate={setActiveTab} />
+            </div>
+          )}
           {activeTab === "projects" && (
             <div className="flex-1 h-full">
               <Projects />
+            </div>
+          )}
+          {activeTab === "project-templates" && (
+            <div className="flex-1 h-full">
+              <ProjectTemplates />
             </div>
           )}
           {activeTab === "agents" && (
