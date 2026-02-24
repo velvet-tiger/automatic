@@ -1396,7 +1396,7 @@ export default function Projects() {
                           <Code size={12} /> Skills
                         </label>
                         <button
-                          onClick={() => setAddingSkill(!addingSkill)}
+                          onClick={() => { if (!addingSkill) loadAvailableSkills(); setAddingSkill(!addingSkill); }}
                           className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
                         >
                           <Plus size={13} />
