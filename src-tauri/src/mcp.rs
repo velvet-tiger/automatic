@@ -23,6 +23,18 @@ pub struct ReadSkillParams {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ReadProjectParams {
+    /// The project name as registered in Automatic
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct SearchSkillsParams {
+    /// Search query (skill name, topic, or keyword)
+    pub query: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SyncProjectParams {
     /// The project name to sync configs for
     pub name: String,
@@ -46,7 +58,7 @@ impl NexusMcpServer {
     // ── Read-only tools ──────────────────────────────────────────────────
 
     #[tool(
-        name = "nexus_get_credential",
+        name = "automatic_get_credential",
         description = "Retrieve an API key for a given LLM provider stored in Nexus"
     )]
     async fn get_credential(
@@ -63,7 +75,7 @@ impl NexusMcpServer {
     }
 
     #[tool(
-        name = "nexus_list_skills",
+        name = "automatic_list_skills",
         description = "List all available skill names from the Nexus skill registry"
     )]
     async fn list_skills(&self) -> Result<CallToolResult, McpError> {
@@ -81,7 +93,7 @@ impl NexusMcpServer {
     }
 
     #[tool(
-        name = "nexus_read_skill",
+        name = "automatic_read_skill",
         description = "Read the content of a specific skill from the Nexus skill registry"
     )]
     async fn read_skill(
@@ -98,7 +110,7 @@ impl NexusMcpServer {
     }
 
     #[tool(
-        name = "nexus_list_mcp_servers",
+        name = "automatic_list_mcp_servers",
         description = "List all MCP server configurations registered in the Nexus server registry"
     )]
     async fn list_mcp_servers(&self) -> Result<CallToolResult, McpError> {
@@ -125,10 +137,86 @@ impl NexusMcpServer {
         }
     }
 
+    // ── Project tools ────────────────────────────────────────────────────
+
+    #[tool(
+        name = "automatic_list_projects",
+        description = "List all project names registered in Automatic"
+    )]
+    async fn list_projects(&self) -> Result<CallToolResult, McpError> {
+        match crate::core::list_projects() {
+            Ok(projects) => {
+                let json = serde_json::to_string_pretty(&projects)
+                    .unwrap_or_else(|_| "[]".to_string());
+                Ok(CallToolResult::success(vec![Content::text(json)]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to list projects: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_read_project",
+        description = "Read the full configuration for a project (skills, MCP servers, agents, directory, description)"
+    )]
+    async fn read_project(
+        &self,
+        params: Parameters<ReadProjectParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::core::read_project(&params.0.name) {
+            Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to read project '{}': {}",
+                params.0.name, e
+            ))])),
+        }
+    }
+
+    // ── Sessions tool ────────────────────────────────────────────────────
+
+    #[tool(
+        name = "automatic_list_sessions",
+        description = "List active Claude Code sessions tracked by the Nexus hooks (session id, working directory, model, started_at)"
+    )]
+    async fn list_sessions(&self) -> Result<CallToolResult, McpError> {
+        match crate::core::list_sessions() {
+            Ok(json) => Ok(CallToolResult::success(vec![Content::text(json)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to list sessions: {}",
+                e
+            ))])),
+        }
+    }
+
+    // ── Skills Store tool ────────────────────────────────────────────────
+
+    #[tool(
+        name = "automatic_search_skills",
+        description = "Search the skills.sh registry for community skills matching a query. Returns skill names, install counts, and source repos."
+    )]
+    async fn search_skills(
+        &self,
+        params: Parameters<SearchSkillsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::core::search_remote_skills(&params.0.query).await {
+            Ok(results) => {
+                let json = serde_json::to_string_pretty(&results)
+                    .unwrap_or_else(|_| "[]".to_string());
+                Ok(CallToolResult::success(vec![Content::text(json)]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to search skills: {}",
+                e
+            ))])),
+        }
+    }
+
     // ── Config sync tool ─────────────────────────────────────────────────
 
     #[tool(
-        name = "nexus_sync_project",
+        name = "automatic_sync_project",
         description = "Sync a project's MCP server configs to its directory for all configured agent tools. The project must have a directory path and at least one agent tool configured."
     )]
     async fn sync_project(
@@ -181,8 +269,9 @@ impl ServerHandler for NexusMcpServer {
         ServerInfo {
             instructions: Some(
                 "Nexus is a skill registry and MCP config hub. \
-                 Use these tools to retrieve API keys, discover skills, list MCP \
-                 server configs, and sync project configurations."
+                 Use these tools to retrieve API keys, discover and search skills, list MCP \
+                 server configs, inspect projects, track active sessions, and sync project \
+                 configurations."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
