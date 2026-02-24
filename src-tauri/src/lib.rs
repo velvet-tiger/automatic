@@ -453,6 +453,9 @@ pub fn run() {
             // Code if the CLI is available.  Runs on a background thread so
             // it never blocks the UI.
             std::thread::spawn(|| {
+                if let Err(e) = core::install_default_templates() {
+                    eprintln!("[nexus] template install error: {}", e);
+                }
                 match core::install_plugin_marketplace() {
                     Ok(msg) => eprintln!("[nexus] plugin startup: {}", msg),
                     Err(e) => eprintln!("[nexus] plugin startup error: {}", e),

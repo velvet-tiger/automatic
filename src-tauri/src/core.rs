@@ -319,6 +319,38 @@ pub fn delete_template(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Built-in templates shipped with the app.  Each entry is (name, content).
+/// These are written to `~/.nexus/templates/` on first run (or when missing),
+/// but never overwrite a file that already exists — user edits are preserved.
+const DEFAULT_TEMPLATES: &[(&str, &str)] = &[
+    (
+        "Agent Project Brief",
+        include_str!("../templates/Agent Project Brief.md"),
+    ),
+    (
+        "Session Context",
+        include_str!("../templates/Session Context.md"),
+    ),
+];
+
+/// Write any missing default templates to `~/.nexus/templates/`.
+/// Existing files are left untouched, so user edits are always preserved.
+pub fn install_default_templates() -> Result<(), String> {
+    let dir = get_templates_dir()?;
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+
+    for (name, content) in DEFAULT_TEMPLATES {
+        let path = dir.join(format!("{}.md", name));
+        if !path.exists() {
+            fs::write(&path, content).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
 // ── Project Files ────────────────────────────────────────────────────────────
 
 /// Read a project file from the project's directory, stripping any
