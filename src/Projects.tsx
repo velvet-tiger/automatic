@@ -1262,10 +1262,10 @@ export default function Projects() {
                         {!dirty && project.directory && project.agents.length > 0 && (
                           <button
                             onClick={handleSync}
-                            className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#4ADE80]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#4ADE80]/10 text-left"
+                            className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#33353A] rounded-lg p-4 transition-all text-left"
                           >
-                            <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/20 transition-colors">
-                              <RefreshCw size={16} className="text-[#4ADE80]" />
+                            <div className="p-2 bg-[#33353A]/50 rounded-lg group-hover:bg-[#33353A] transition-colors">
+                              <RefreshCw size={16} className="text-[#8A8C93]" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Sync Configs</div>
@@ -1277,10 +1277,10 @@ export default function Projects() {
 
                         <button
                           onClick={() => setProjectTab("skills")}
-                          className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#F59E0B]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#F59E0B]/10 text-left"
+                          className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#4ADE80]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#4ADE80]/10 text-left"
                         >
-                          <div className="p-2 bg-[#F59E0B]/10 rounded-lg group-hover:bg-[#F59E0B]/20 transition-colors">
-                            <Package size={16} className="text-[#F59E0B]" />
+                          <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/20 transition-colors">
+                            <Package size={16} className="text-[#4ADE80]" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Manage Skills</div>
@@ -1291,10 +1291,10 @@ export default function Projects() {
 
                         <button
                           onClick={() => setProjectTab("mcp_servers")}
-                          className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#8B5CF6]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#8B5CF6]/10 text-left"
+                          className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#F59E0B]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#F59E0B]/10 text-left"
                         >
-                          <div className="p-2 bg-[#8B5CF6]/10 rounded-lg group-hover:bg-[#8B5CF6]/20 transition-colors">
-                            <Zap size={16} className="text-[#8B5CF6]" />
+                          <div className="p-2 bg-[#F59E0B]/10 rounded-lg group-hover:bg-[#F59E0B]/20 transition-colors">
+                            <Zap size={16} className="text-[#F59E0B]" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">MCP Servers</div>
