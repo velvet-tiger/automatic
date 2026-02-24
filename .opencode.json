@@ -1,8 +1,12 @@
 {
   "mcp": {
+    "Clerk": {
+      "type": "remote",
+      "url": "https://mcp.clerk.com/mcp"
+    },
     "nexus": {
       "command": [
-        "/Users/xtfer/working/agentic/src-tauri/target/debug/nexus",
+        "/Users/xtfer/working/velvet-tiger/nexus/nexus-app/src-tauri/target/debug/nexus",
         "mcp-serve"
       ],
       "environment": {

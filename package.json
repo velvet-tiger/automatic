@@ -10,9 +10,11 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@clerk/clerk-react": "^5.61.1",
+    "@clerk/themes": "^2.4.55",
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-opener": "^2",
     "lucide-react": "^0.575.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

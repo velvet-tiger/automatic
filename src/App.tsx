@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SignIn, SignedIn, SignedOut, UserButton } from "@clerk/clerk-react";
 import Skills from "./Skills";
 import Projects from "./Projects";
 import McpServers from "./McpServers";
@@ -42,7 +43,22 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#222327] text-[#e0e1e6] selection:bg-[#5E6AD2]/30">
+    <div className="relative flex h-screen w-screen overflow-hidden bg-[#222327] text-[#e0e1e6] selection:bg-[#5E6AD2]/30">
+      {/* Sign-in overlay when not authenticated */}
+      <SignedOut>
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#222327]/80 backdrop-blur-sm">
+          <SignIn
+            routing="hash"
+            appearance={{
+              elements: {
+                rootBox: "mx-auto",
+                card: "bg-[#1A1A1E] border border-[#33353A] shadow-2xl",
+              },
+            }}
+          />
+        </div>
+      </SignedOut>
+
       {/* Sidebar */}
       <aside className="w-[180px] flex-shrink-0 bg-[#1A1A1E] border-r border-[#33353A] flex flex-col">
         {/* Workspace Header */}
@@ -102,6 +118,21 @@ function App() {
             </ul>
           </div>
         </nav>
+
+        {/* User account at bottom of sidebar */}
+        <SignedIn>
+          <div className="border-t border-[#33353A] px-3 py-3 flex items-center gap-2.5">
+            <UserButton
+              appearance={{
+                elements: {
+                  avatarBox: "w-7 h-7",
+                  userButtonPopoverCard: "bg-[#1A1A1E] border border-[#33353A]",
+                },
+              }}
+              showName
+            />
+          </div>
+        </SignedIn>
       </aside>
 
       {/* Main Content */}
