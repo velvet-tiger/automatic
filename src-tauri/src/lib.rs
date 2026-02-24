@@ -289,6 +289,18 @@ fn sync_project(name: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
 }
 
+/// Check whether the on-disk agent configs have drifted from what Nexus would
+/// generate.  Returns a JSON-serialised [`sync::DriftReport`] describing which
+/// agents and files are out of sync.  This is a read-only operation.
+#[tauri::command]
+fn check_project_drift(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let report = sync::check_project_drift(&project)?;
+    serde_json::to_string(&report).map_err(|e| e.to_string())
+}
+
 fn with_each_project_mut<F>(mut f: F)
 where
     F: FnMut(&str, &mut core::Project),
@@ -527,6 +539,7 @@ pub fn run() {
             rename_project,
             delete_project,
             sync_project,
+            check_project_drift,
             import_local_skill,
             sync_local_skills,
             install_plugin_marketplace,

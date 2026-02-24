@@ -10,7 +10,7 @@
         "mcp-serve"
       ],
       "environment": {
-        "NEXUS_PROJECT": "Nexus"
+        "NEXUS_PROJECT": "nexus"
       },
       "type": "local"
     }

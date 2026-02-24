@@ -7,5 +7,5 @@ command = "/Users/xtfer/working/velvet-tiger/nexus/nexus-app/src-tauri/target/de
 args = ["mcp-serve"]
 
 [mcp_servers.nexus.env]
-NEXUS_PROJECT = "Nexus"
+NEXUS_PROJECT = "nexus"
 

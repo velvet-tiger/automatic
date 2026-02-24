@@ -43,6 +43,22 @@ interface AgentInfo {
   description: string;
 }
 
+interface DriftedFile {
+  path: string;
+  reason: "missing" | "modified" | "stale" | "unreadable";
+}
+
+interface AgentDrift {
+  agent_id: string;
+  agent_label: string;
+  files: DriftedFile[];
+}
+
+interface DriftReport {
+  drifted: boolean;
+  agents: AgentDrift[];
+}
+
 interface ProjectFileInfo {
   filename: string;
   agents: string[];
@@ -133,6 +149,11 @@ export default function Projects() {
   const [addingAgent, setAddingAgent] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
+  // Drift detection state
+  // null = unknown/not yet checked, DriftReport = result of last check
+  const [driftReport, setDriftReport] = useState<DriftReport | null>(null);
+  const driftCheckInFlight = useRef(false);
+
   // Project file state
   const [projectFiles, setProjectFiles] = useState<ProjectFileInfo[]>([]);
   const [activeProjectFile, setActiveProjectFile] = useState<string | null>(null);
@@ -168,6 +189,37 @@ export default function Projects() {
       selectProject(preferred);
     }
   }, [projects]);
+
+  // Reset drift state whenever the active project changes
+  useEffect(() => {
+    setDriftReport(null);
+  }, [selectedName]);
+
+  // Periodically check for configuration drift while a project tab is active
+  useEffect(() => {
+    const name = selectedName;
+    if (!name || !project || !project.directory || project.agents.length === 0 || dirty || isCreating) {
+      return;
+    }
+
+    const runCheck = async () => {
+      if (driftCheckInFlight.current) return;
+      driftCheckInFlight.current = true;
+      try {
+        const raw: string = await invoke("check_project_drift", { name });
+        setDriftReport(JSON.parse(raw) as DriftReport);
+      } catch {
+        // Silently ignore drift-check errors (e.g. directory gone)
+      } finally {
+        driftCheckInFlight.current = false;
+      }
+    };
+
+    // Run immediately on mount / project change, then every 15 seconds
+    runCheck();
+    const interval = setInterval(runCheck, 15_000);
+    return () => clearInterval(interval);
+  }, [selectedName, project?.directory, project?.agents.length, dirty, isCreating]);
 
   const applyStoredOrder = (names: string[]): string[] => {
     try {
@@ -472,6 +524,9 @@ export default function Projects() {
       setSyncStatus(toSave.directory && toSave.agents.length > 0
         ? "Saved & synced"
         : "Saved");
+      if (toSave.directory && toSave.agents.length > 0) {
+        setDriftReport({ drifted: false, agents: [] });
+      }
 
       // Reload UI state from disk (picks up autodetected changes)
       await reloadProject(name);
@@ -579,6 +634,7 @@ export default function Projects() {
       const result: string = await invoke("sync_project", { name });
       const files: string[] = JSON.parse(result);
       setSyncStatus(`Synced ${files.length} config${files.length !== 1 ? "s" : ""}`);
+      setDriftReport({ drifted: false, agents: [] });
     } catch (err: any) {
       setSyncStatus(`Sync failed: ${err}`);
     }
@@ -743,13 +799,34 @@ export default function Projects() {
                     <Trash2 size={12} /> Remove
                   </button>
                 )}
+                {/* Sync / in-sync indicator — shown when project has directory + agents configured */}
                 {!dirty && project.directory && project.agents.length > 0 && (
-                  <button
-                    onClick={handleSync}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] rounded text-[12px] font-medium border border-[#3A3B42] transition-colors"
-                  >
-                    <RefreshCw size={12} /> Sync Configs
-                  </button>
+                  driftReport?.drifted ? (
+                    <button
+                      onClick={handleSync}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F59E0B]/10 hover:bg-[#F59E0B]/20 text-[#F59E0B] rounded text-[12px] font-medium border border-[#F59E0B]/40 hover:border-[#F59E0B]/60 transition-colors"
+                      title="Configuration has drifted — click to sync"
+                    >
+                      <RefreshCw size={12} /> Sync Configs
+                    </button>
+                  ) : driftReport && !driftReport.drifted ? (
+                    <button
+                      disabled
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] text-[#4ADE80] rounded text-[12px] font-medium border border-[#4ADE80]/20 opacity-70 cursor-default"
+                      title="Configuration is up to date"
+                    >
+                      <Check size={12} /> In Sync
+                    </button>
+                  ) : (
+                    /* driftReport === null: not yet checked */
+                    <button
+                      onClick={handleSync}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#8A8C93] rounded text-[12px] font-medium border border-[#3A3B42] transition-colors"
+                      title="Sync agent configurations"
+                    >
+                      <RefreshCw size={12} /> Sync Configs
+                    </button>
+                  )
                 )}
                 {dirty && (
                   <button
@@ -762,6 +839,40 @@ export default function Projects() {
                 )}
               </div>
             </div>
+
+            {/* ── Drift warning banner ─────────────────────────────── */}
+            {driftReport?.drifted && !dirty && !isCreating && project.directory && project.agents.length > 0 && (
+              <div className="border-b border-[#F59E0B]/25 bg-[#F59E0B]/10">
+                <div className="flex items-center justify-between px-6 py-2 text-[#F59E0B]">
+                  <div className="flex items-center gap-2 text-[12px]">
+                    <AlertCircle size={13} />
+                    <span>Configuration has drifted — agent config files no longer match Nexus settings.</span>
+                  </div>
+                  <button
+                    onClick={handleSync}
+                    className="text-[12px] font-medium text-[#F59E0B] hover:text-[#FBB60D] underline decoration-[#F59E0B]/40 hover:decoration-[#FBB60D] transition-colors ml-4 flex-shrink-0"
+                  >
+                    Sync now
+                  </button>
+                </div>
+                {/* Detail: which agents/files have drifted */}
+                <div className="px-6 pb-3 space-y-1.5">
+                  {driftReport.agents.map((agentDrift) => (
+                    <div key={agentDrift.agent_id}>
+                      <div className="text-[11px] font-semibold text-[#F59E0B]/80 mb-0.5">{agentDrift.agent_label}</div>
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                        {agentDrift.files.map((f, i) => (
+                          <span key={i} className="text-[11px] font-mono text-[#F59E0B]/60">
+                            {f.path}
+                            <span className="text-[#F59E0B]/40 ml-1 font-sans">({f.reason})</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* ── New project setup screen ─────────────────────────── */}
             {isCreating && (
@@ -1260,19 +1371,45 @@ export default function Projects() {
                         </button>
 
                         {!dirty && project.directory && project.agents.length > 0 && (
-                          <button
-                            onClick={handleSync}
-                            className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#33353A] rounded-lg p-4 transition-all text-left"
-                          >
-                            <div className="p-2 bg-[#33353A]/50 rounded-lg group-hover:bg-[#33353A] transition-colors">
-                              <RefreshCw size={16} className="text-[#8A8C93]" />
+                          driftReport?.drifted ? (
+                            <button
+                              onClick={handleSync}
+                              className="group flex items-center gap-3 bg-[#F59E0B]/5 border border-[#F59E0B]/40 hover:border-[#F59E0B]/70 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#F59E0B]/10 text-left"
+                            >
+                              <div className="p-2 bg-[#F59E0B]/15 rounded-lg group-hover:bg-[#F59E0B]/25 transition-colors">
+                                <RefreshCw size={16} className="text-[#F59E0B]" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[13px] font-medium text-[#F59E0B] mb-0.5">Sync Configs</div>
+                                <div className="text-[11px] text-[#F59E0B]/70">Configuration has drifted</div>
+                              </div>
+                              <ArrowRight size={14} className="text-[#F59E0B]/60 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                            </button>
+                          ) : driftReport && !driftReport.drifted ? (
+                            <div className="flex items-center gap-3 bg-[#1A1A1E] border border-[#4ADE80]/20 rounded-lg p-4">
+                              <div className="p-2 bg-[#4ADE80]/10 rounded-lg">
+                                <CheckCircle2 size={16} className="text-[#4ADE80]" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[13px] font-medium text-[#4ADE80] mb-0.5">In Sync</div>
+                                <div className="text-[11px] text-[#8A8C93]">All configs up to date</div>
+                              </div>
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Sync Configs</div>
-                              <div className="text-[11px] text-[#8A8C93]">Update agent configurations</div>
-                            </div>
-                            <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                          </button>
+                          ) : (
+                            <button
+                              onClick={handleSync}
+                              className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#33353A] rounded-lg p-4 transition-all text-left"
+                            >
+                              <div className="p-2 bg-[#33353A]/50 rounded-lg group-hover:bg-[#33353A] transition-colors">
+                                <RefreshCw size={16} className="text-[#8A8C93]" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Sync Configs</div>
+                                <div className="text-[11px] text-[#8A8C93]">Update agent configurations</div>
+                              </div>
+                              <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                            </button>
+                          )
                         )}
 
                         <button

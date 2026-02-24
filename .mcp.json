@@ -10,7 +10,7 @@
       ],
       "command": "/Users/xtfer/working/velvet-tiger/nexus/nexus-app/src-tauri/target/debug/nexus",
       "env": {
-        "NEXUS_PROJECT": "Nexus"
+        "NEXUS_PROJECT": "nexus"
       }
     }
   }
