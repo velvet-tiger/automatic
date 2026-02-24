@@ -270,7 +270,17 @@ fn save_project(name: &str, data: &str) -> Result<(), String> {
 
 #[tauri::command]
 fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
-    core::rename_project(old_name, new_name)
+    core::rename_project(old_name, new_name)?;
+
+    // Re-sync agent configs so NEXUS_PROJECT reflects the new name.
+    let raw = core::read_project(new_name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    if !project.directory.is_empty() && !project.agents.is_empty() {
+        sync::sync_project(&project)?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
