@@ -47,7 +47,7 @@ impl NexusMcpServer {
 
     #[tool(
         name = "nexus_get_credential",
-        description = "Retrieve an API key for a given LLM provider from the Nexus credential vault"
+        description = "Retrieve an API key for a given LLM provider stored in Nexus"
     )]
     async fn get_credential(
         &self,
@@ -180,7 +180,7 @@ impl ServerHandler for NexusMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Nexus is a credential vault, skill registry, and MCP config hub. \
+                "Nexus is a skill registry and MCP config hub. \
                  Use these tools to retrieve API keys, discover skills, list MCP \
                  server configs, and sync project configurations."
                     .into(),

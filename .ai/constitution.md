@@ -2,7 +2,7 @@
 
 ## Identity
 
-Automatic is a cross-platform desktop application that serves as a **registry, credential vault, and configuration hub** for AI agent tooling. It does not execute agents itself. Instead, external applications (Claude Code, OpenCode, custom scripts, etc.) connect to Automatic to retrieve credentials, discover skills, read MCP configurations, and sync project configs.
+Automatic is a cross-platform desktop application that serves as a **registry and configuration hub** for AI agent tooling. It does not execute agents itself. Instead, external applications (Claude Code, OpenCode, custom scripts, etc.) connect to Automatic to retrieve credentials, discover skills, read MCP configurations, and sync project configs.
 
 Automatic exposes its services via an **MCP Server** interface for AI-native tools that already speak MCP (Claude Code, Cursor, etc.).
 

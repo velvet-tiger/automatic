@@ -535,6 +535,9 @@ pub fn run() {
             // Code if the CLI is available.  Runs on a background thread so
             // it never blocks the UI.
             std::thread::spawn(|| {
+                if let Err(e) = core::install_default_skills() {
+                    eprintln!("[nexus] skill install error: {}", e);
+                }
                 if let Err(e) = core::install_default_templates() {
                     eprintln!("[nexus] template install error: {}", e);
                 }

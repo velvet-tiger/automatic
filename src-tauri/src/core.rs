@@ -519,6 +519,34 @@ pub fn delete_template(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Built-in skills shipped with the app.  Each entry is (name, content).
+/// These are written to `~/.agents/skills/<name>/SKILL.md` on first run (or
+/// when the file is missing), but never overwrite existing files — user edits
+/// are always preserved.
+const DEFAULT_SKILLS: &[(&str, &str)] = &[(
+    "automatic",
+    include_str!("../skills/automatic/SKILL.md"),
+)];
+
+/// Write any missing default skills to `~/.agents/skills/`.
+/// Existing files are left untouched, so user edits are always preserved.
+pub fn install_default_skills() -> Result<(), String> {
+    let agents_dir = get_agents_skills_dir()?;
+
+    for (name, content) in DEFAULT_SKILLS {
+        let skill_dir = agents_dir.join(name);
+        if !skill_dir.exists() {
+            fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
+        }
+        let skill_path = skill_dir.join("SKILL.md");
+        if !skill_path.exists() {
+            fs::write(&skill_path, content).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Built-in templates shipped with the app.  Each entry is (name, content).
 /// These are written to `~/.nexus/templates/` on first run (or when missing),
 /// but never overwrite a file that already exists — user edits are preserved.
@@ -1064,6 +1092,148 @@ pub fn install_plugin_marketplace() -> Result<String, String> {
     }
 
     Ok("Plugin marketplace registered and plugins installed".into())
+}
+
+// ── Project Templates ─────────────────────────────────────────────────────────
+//
+// Project Templates capture agents, skills, MCP servers and a description that
+// can be applied when creating a new project or merged into an existing one.
+// Stored as JSON files in `~/.nexus/project_templates/{name}.json`.
+
+/// A single project file stored inline in a project template.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TemplateProjectFile {
+    pub filename: String,
+    #[serde(default)]
+    pub content: String,
+}
+
+/// A template that captures the shareable parts of a project configuration.
+/// Excludes per-project fields like `directory`, `created_at`, `updated_at`.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ProjectTemplate {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub mcp_servers: Vec<String>,
+    #[serde(default)]
+    pub providers: Vec<String>,
+    #[serde(default)]
+    pub agents: Vec<String>,
+    /// Project files (e.g. CLAUDE.md) stored inline so they can be written
+    /// to a project's directory when the template is applied.
+    #[serde(default)]
+    pub project_files: Vec<TemplateProjectFile>,
+}
+
+pub fn get_project_templates_dir() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    Ok(home.join(".nexus/project_templates"))
+}
+
+pub fn list_project_templates() -> Result<Vec<String>, String> {
+    let dir = get_project_templates_dir()?;
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut templates = Vec::new();
+    let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
+    for entry in entries {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if is_valid_name(stem) {
+                        templates.push(stem.to_string());
+                    }
+                }
+            }
+        }
+    }
+    templates.sort();
+    Ok(templates)
+}
+
+pub fn read_project_template(name: &str) -> Result<String, String> {
+    if !is_valid_name(name) {
+        return Err("Invalid template name".into());
+    }
+    let dir = get_project_templates_dir()?;
+    let path = dir.join(format!("{}.json", name));
+    if path.exists() {
+        fs::read_to_string(path).map_err(|e| e.to_string())
+    } else {
+        Err(format!("Project template '{}' not found", name))
+    }
+}
+
+pub fn save_project_template(name: &str, data: &str) -> Result<(), String> {
+    if !is_valid_name(name) {
+        return Err("Invalid template name".into());
+    }
+
+    // Validate that data is valid JSON for a ProjectTemplate
+    let template: ProjectTemplate =
+        serde_json::from_str(data).map_err(|e| format!("Invalid template data: {}", e))?;
+    let pretty = serde_json::to_string_pretty(&template).map_err(|e| e.to_string())?;
+
+    let dir = get_project_templates_dir()?;
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+
+    let path = dir.join(format!("{}.json", name));
+    fs::write(path, pretty).map_err(|e| e.to_string())
+}
+
+pub fn delete_project_template(name: &str) -> Result<(), String> {
+    if !is_valid_name(name) {
+        return Err("Invalid template name".into());
+    }
+    let dir = get_project_templates_dir()?;
+    let path = dir.join(format!("{}.json", name));
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn rename_project_template(old_name: &str, new_name: &str) -> Result<(), String> {
+    if !is_valid_name(old_name) {
+        return Err("Invalid current template name".into());
+    }
+    if !is_valid_name(new_name) {
+        return Err("Invalid new template name".into());
+    }
+    if old_name == new_name {
+        return Ok(());
+    }
+
+    let dir = get_project_templates_dir()?;
+    let old_path = dir.join(format!("{}.json", old_name));
+    let new_path = dir.join(format!("{}.json", new_name));
+
+    if !old_path.exists() {
+        return Err(format!("Project template '{}' not found", old_name));
+    }
+    if new_path.exists() {
+        return Err(format!("A project template named '{}' already exists", new_name));
+    }
+
+    // Read, update name field, write to new path, remove old
+    let raw = fs::read_to_string(&old_path).map_err(|e| e.to_string())?;
+    let mut template: ProjectTemplate =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid template data: {}", e))?;
+    template.name = new_name.to_string();
+    let pretty = serde_json::to_string_pretty(&template).map_err(|e| e.to_string())?;
+    fs::write(&new_path, pretty).map_err(|e| e.to_string())?;
+    fs::remove_file(&old_path).map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 // ── Projects ─────────────────────────────────────────────────────────────────
