@@ -1,12 +1,12 @@
-# Nexus - Project Constitution
+# Automatic - Project Constitution
 
 ## Identity
 
-Nexus is a cross-platform desktop application that serves as a **registry, credential vault, and configuration hub** for AI agent tooling. It does not execute agents itself. Instead, external applications (Claude Code, OpenCode, custom scripts, etc.) connect to Nexus to retrieve credentials, discover skills, read MCP configurations, and sync project configs.
+Automatic is a cross-platform desktop application that serves as a **registry, credential vault, and configuration hub** for AI agent tooling. It does not execute agents itself. Instead, external applications (Claude Code, OpenCode, custom scripts, etc.) connect to Automatic to retrieve credentials, discover skills, read MCP configurations, and sync project configs.
 
-Nexus exposes its services via an **MCP Server** interface for AI-native tools that already speak MCP (Claude Code, Cursor, etc.).
+Automatic exposes its services via an **MCP Server** interface for AI-native tools that already speak MCP (Claude Code, Cursor, etc.).
 
-The desktop UI (Tauri) provides a visual management layer for editing, browsing, and monitoring everything Nexus serves.
+The desktop UI (Tauri) provides a visual management layer for editing, browsing, and monitoring everything Automatic serves.
 
 ## Architecture
 
@@ -37,15 +37,15 @@ The Rust core is shared between the Tauri UI layer and the MCP server. Both call
 
 ### Data Flow
 
-Nexus is **passive by default**. It serves data on request:
+Automatic is **passive by default**. It serves data on request:
 
-**Outbound (Nexus serves to external apps):**
+**Outbound (Automatic serves to external apps):**
 - Credentials: "Give me the API key for Anthropic"
 - Skills: "List available skills" / "Read skill X"
 - MCP config: "What MCP servers should I connect to?"
 - Project configs: "What's the configuration for project Y?"
 
-Nexus does NOT:
+Automatic does NOT:
 - Spawn or manage agent processes
 - Proxy or mediate LLM API calls
 - Execute tools on behalf of agents
@@ -107,7 +107,7 @@ All commands must be registered in the `tauri::generate_handler![]` macro in `li
 
 ### MCP Server Interface
 
-Nexus runs as an MCP server via `nexus mcp-serve`. The server uses the `rmcp` SDK (official Rust MCP implementation) with stdio transport. It exposes Nexus capabilities as MCP tools:
+Automatic runs as an MCP server via `nexus mcp-serve`. The server uses the `rmcp` SDK (official Rust MCP implementation) with stdio transport. It exposes Automatic capabilities as MCP tools:
 
 | MCP Tool | Parameters | Description |
 |----------|------------|-------------|

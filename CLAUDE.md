@@ -1,19 +1,19 @@
-# Nexus - Agent Context
+# Automatic - Agent Context
 
 Read `.ai/constitution.md` before making any changes. It contains the full architecture, conventions, design system, and command reference.
 
 ## Core Concept
 
-Nexus is a **hub, not an executor**. It does not run agents. External applications (Claude Code, Cursor, custom agents) connect to Nexus to:
+Automatic is a **hub, not an executor**. It does not run agents. External applications (Claude Code, Cursor, custom agents) connect to Automatic to:
 
 - **Pull** credentials, skills, and MCP server configs
 - **Sync** project configurations to agent tool directories
 
-Nexus exposes an **MCP Server** interface (stdio transport) that agents connect to.
+Automatic exposes an **MCP Server** interface (stdio transport) that agents connect to.
 
 ## Quick Orientation
 
-Nexus is a Tauri 2 desktop app (Rust + React/TypeScript). The Rust backend has four modules:
+Automatic is a Tauri 2 desktop app (Rust + React/TypeScript). The Rust backend has four modules:
 
 - **`src-tauri/src/core.rs`** -- Shared business logic (credentials, skills, projects, MCP config). Called by both Tauri commands and the MCP server.
 - **`src-tauri/src/mcp.rs`** -- MCP server implementation using `rmcp` SDK. 5 tools exposed over stdio transport.

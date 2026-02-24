@@ -80,7 +80,7 @@ function App() {
               <line x1="10.5" y1="13" x2="6.5" y2="15" stroke="currentColor" strokeWidth="2"/>
               <line x1="10.5" y1="11" x2="6.5" y2="9" stroke="currentColor" strokeWidth="2"/>
             </svg>
-            <span>Nexus</span>
+            <span>Automatic</span>
           </div>
         </div>
 

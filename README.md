@@ -1,4 +1,4 @@
-# Nexus
+# Automatic
 
 A desktop application for managing LLM provider connections, running local AI agents, and editing Skills and MCP server configurations. Built with Tauri 2 (Rust) and React/TypeScript.
 
