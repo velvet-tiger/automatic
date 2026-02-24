@@ -140,13 +140,17 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </div>
 
           {projects.length === 0 ? (
-            <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-8 text-center">
-              <FolderOpen size={32} className="text-[#8A8C93] mx-auto mb-3 opacity-50" />
-              <h3 className="text-[#E0E1E6] font-medium mb-1">No projects yet</h3>
-              <p className="text-[#8A8C93] text-sm mb-4">Create your first project to start managing agent configurations.</p>
+            <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-16 flex flex-col items-center justify-center text-center">
+              <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-[#3B82F6]/10 border border-[#3B82F6]/20 flex items-center justify-center text-[#8A8C93]">
+                <FolderOpen size={24} className="text-[#3B82F6]" strokeWidth={1.5} />
+              </div>
+              <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">No projects yet</h2>
+              <p className="text-[14px] text-[#8A8C93] mb-8 leading-relaxed max-w-sm mx-auto">
+                Create your first project to start managing agent configurations.
+              </p>
               <button 
                 onClick={() => onNavigate("projects")}
-                className="px-4 py-2 bg-[#3B82F6] hover:bg-[#60A5FA] text-white rounded text-sm font-medium transition-colors"
+                className="px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors mx-auto"
               >
                 Go to Projects
               </button>
