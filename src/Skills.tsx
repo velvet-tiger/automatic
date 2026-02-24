@@ -11,6 +11,7 @@ import {
   Globe,
   HardDrive,
   Github,
+  Search,
 } from "lucide-react";
 
 interface SkillSource {
@@ -192,6 +193,7 @@ export default function Skills() {
   const [newSkillName, setNewSkillName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [filter, setFilter] = useState<"all" | "remote" | "local">("all");
+  const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [syncingSkill, setSyncingSkill] = useState<string | null>(null);
   const [syncingAll, setSyncingAll] = useState(false);
@@ -314,9 +316,11 @@ export default function Skills() {
   const remoteCount = skills.filter(s => !!s.source).length;
   const localCount = skills.length - remoteCount;
 
+  const searchLower = search.trim().toLowerCase();
   const filteredSkills = skills.filter(s => {
-    if (filter === "remote") return !!s.source;
-    if (filter === "local") return !s.source;
+    if (filter === "remote" && !s.source) return false;
+    if (filter === "local" && !!s.source) return false;
+    if (searchLower && !s.name.toLowerCase().includes(searchLower)) return false;
     return true;
   });
 
@@ -358,7 +362,7 @@ export default function Skills() {
           </div>
 
           {/* Filter tabs */}
-          <div className="flex gap-1">
+          <div className="flex gap-1 mb-2">
             {(["all", "remote", "local"] as const).map(f => (
               <button
                 key={f}
@@ -373,13 +377,35 @@ export default function Skills() {
               </button>
             ))}
           </div>
+
+          {/* Search */}
+          <div className="relative">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#8A8C93] pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search skills…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-7 pr-7 py-1.5 rounded bg-[#2D2E36] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] outline-none text-[12px] text-[#E0E1E6] placeholder-[#8A8C93]/60 transition-colors"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+              >
+                <X size={11} />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* List */}
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
           {filteredSkills.length === 0 && !isCreating ? (
             <div className="px-4 py-6 text-center">
-              <p className="text-[13px] text-[#8A8C93]">No skills found.</p>
+              <p className="text-[13px] text-[#8A8C93]">
+                {searchLower ? `No skills match "${search}".` : "No skills found."}
+              </p>
             </div>
           ) : (
             <ul className="space-y-px px-2">
