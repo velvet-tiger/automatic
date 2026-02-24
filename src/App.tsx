@@ -48,9 +48,21 @@ function App() {
         {/* Workspace Header */}
         <div className="h-12 px-4 flex items-center border-b border-[#33353A]/50">
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <div className="w-5 h-5 bg-gradient-to-br from-[#5E6AD2] to-[#8C98F2] rounded flex items-center justify-center text-white text-xs">
-              A
-            </div>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-white">
+              <circle cx="12" cy="12" r="2" fill="currentColor"/>
+              <circle cx="12" cy="4" r="2" fill="currentColor"/>
+              <circle cx="19" cy="8" r="2" fill="currentColor"/>
+              <circle cx="19" cy="16" r="2" fill="currentColor"/>
+              <circle cx="12" cy="20" r="2" fill="currentColor"/>
+              <circle cx="5" cy="16" r="2" fill="currentColor"/>
+              <circle cx="5" cy="8" r="2" fill="currentColor"/>
+              <line x1="12" y1="10" x2="12" y2="6" stroke="currentColor" strokeWidth="2"/>
+              <line x1="13.5" y1="13" x2="17.5" y2="15" stroke="currentColor" strokeWidth="2"/>
+              <line x1="13.5" y1="11" x2="17.5" y2="9" stroke="currentColor" strokeWidth="2"/>
+              <line x1="12" y1="14" x2="12" y2="18" stroke="currentColor" strokeWidth="2"/>
+              <line x1="10.5" y1="13" x2="6.5" y2="15" stroke="currentColor" strokeWidth="2"/>
+              <line x1="10.5" y1="11" x2="6.5" y2="9" stroke="currentColor" strokeWidth="2"/>
+            </svg>
             <span>Nexus</span>
           </div>
         </div>
