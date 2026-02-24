@@ -445,7 +445,12 @@ export default function Projects() {
 
   const handleSave = async () => {
     if (!project) return;
-    const name = isCreating ? newName.trim() : selectedName;
+    const folderName = project.directory
+      ? project.directory.split("/").filter(Boolean).pop() ?? ""
+      : "";
+    const name = isCreating
+      ? (newName.trim() || folderName)
+      : selectedName;
     if (!name) return;
     try {
       setSyncStatus("syncing");
@@ -758,7 +763,81 @@ export default function Projects() {
               </div>
             </div>
 
-            {/* Tab bar */}
+            {/* ── New project setup screen ─────────────────────────── */}
+            {isCreating && (
+              <div className="flex-1 flex flex-col items-center justify-center p-8">
+                <div className="w-full max-w-md">
+                  <div className="mb-8 text-center">
+                    <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-[#5E6AD2]/10 border border-[#5E6AD2]/30 flex items-center justify-center">
+                      <FolderOpen size={24} className="text-[#5E6AD2]" strokeWidth={1.5} />
+                    </div>
+                    <h2 className="text-[16px] font-semibold text-[#E0E1E6] mb-1">Where is this project?</h2>
+                    <p className="text-[13px] text-[#8A8C93] leading-relaxed">
+                      Choose the project directory so Nexus can detect what's already configured and sync agent files.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={project.directory}
+                        onChange={(e) => updateField("directory", e.target.value)}
+                        placeholder="/path/to/your/project"
+                        className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono transition-colors"
+                      />
+                      <button
+                        onClick={async () => {
+                          const selected = await open({
+                            directory: true,
+                            multiple: false,
+                            title: "Select project directory",
+                          });
+                          if (!selected) return;
+                          const dir = selected as string;
+                          // Derive name from folder if not already entered
+                          const folderName = dir.split("/").filter(Boolean).pop() ?? "";
+                          const name = newName.trim() || folderName;
+                          setNewName(name);
+                          updateField("directory", dir);
+                          // Auto-save then autodetect
+                          try {
+                            setSyncStatus("syncing");
+                            const toSave = { ...project, directory: dir, name, updated_at: new Date().toISOString() };
+                            await invoke("save_project", { name, data: JSON.stringify(toSave, null, 2) });
+                            setSelectedName(name);
+                            localStorage.setItem(LAST_PROJECT_KEY, name);
+                            setIsCreating(false);
+                            await loadProjects();
+                            await reloadProject(name);
+                            setSyncStatus("Saved");
+                            setTimeout(() => setSyncStatus(null), 3000);
+                          } catch (err: any) {
+                            setSyncStatus(null);
+                            setError(`Failed to save project: ${err}`);
+                          }
+                        }}
+                        className="px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors whitespace-nowrap"
+                      >
+                        Browse
+                      </button>
+                    </div>
+
+                    {project.directory && (
+                      <button
+                        onClick={handleSave}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+                      >
+                        <Check size={14} /> Create Project
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tab bar + content (hidden while in new-project setup) */}
+            {!isCreating && <>
             <div className="flex items-center gap-0 px-6 border-b border-[#33353A] bg-[#222327]">
               {([
                 { id: "summary" as ProjectTab, label: "Summary" },
@@ -1236,8 +1315,8 @@ export default function Projects() {
                       </section>
                     )}
 
-                    {/* Getting Started (if project is new/incomplete) */}
-                    {(!project.directory || project.agents.length === 0) && (
+                    {/* Getting Started (existing saved project that is still incomplete) */}
+                    {!isCreating && (!project.directory || project.agents.length === 0) && (
                       <section className="bg-gradient-to-br from-[#5E6AD2]/10 to-[#5E6AD2]/5 border border-[#5E6AD2]/20 rounded-lg p-5">
                         <div className="flex items-start gap-3">
                           <div className="p-2 bg-[#5E6AD2]/20 rounded-lg flex-shrink-0">
@@ -1652,6 +1731,7 @@ export default function Projects() {
               </div>
             </div>
             )}
+            </>}
           </div>
         ) : (
           /* Empty state */
