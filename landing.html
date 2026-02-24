@@ -427,9 +427,9 @@
                     <div class="w-12 h-12 bg-green-500/20 text-green-400 rounded-lg flex items-center justify-center mb-6">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                     </div>
-                    <h3 class="text-xl font-bold mb-3">Secure Credentials</h3>
+                    <h3 class="text-xl font-bold mb-3">Team Configuration Management</h3>
                     <p class="text-slate-400 text-sm leading-relaxed">
-                        Manage your LLM API providers securely. Nexus safely handles your keys locally so your automated scripts don't have to keep asking.
+                        Share your configured MCP servers, skills, and prompts with your entire team. Nexus keeps everyone's local agents in sync. <span class="text-indigo-400 font-semibold">(Coming Soon)</span>
                     </p>
                 </div>
             </div>
@@ -447,7 +447,7 @@
                 <ul class="space-y-4 mb-8">
                     <li class="flex items-start gap-3">
                         <svg class="w-6 h-6 text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-                        <span class="text-slate-300"><strong>Centralized Secrets Management:</strong> Store your API keys in one secure location locally, without needing to copy-paste them into every new project's `.env` file.</span>
+                        <span class="text-slate-300"><strong>Team Configuration Management:</strong> Share your configured MCP servers, skills, and prompts with your entire team. Nexus keeps everyone's local agents in sync.</span>
                     </li>
                     <li class="flex items-start gap-3">
                         <svg class="w-6 h-6 text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
@@ -472,22 +472,23 @@
                         <div class="text-xs text-slate-500 font-mono">Terminal</div>
                     </div>
                     <div class="p-6 font-mono text-sm overflow-x-auto">
-                        <div class="text-slate-400 mb-2">$ claude connect-mcp "nexus-app mcp-serve"</div>
-                        <div class="text-green-400 mb-4">✓ Connected to Nexus MCP Server</div>
-                        
-                        <div class="text-slate-400 mb-2">$ claude call-tool list_skills</div>
+                        <div class="text-slate-400 mb-2"><span class="text-slate-500"># ~/.claude/claude.json</span></div>
                         <div class="text-indigo-300 mb-4">
-                            [<br>
-                            &nbsp;&nbsp;{ "name": "skill-builder", "status": "active" },<br>
-                            &nbsp;&nbsp;{ "name": "rust-analyzer", "status": "active" }<br>
-                            ]
+                            {<br>
+                            &nbsp;&nbsp;"mcpServers": {<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;"nexus": {<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"command": "nexus-app",<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"args": ["mcp-serve"]<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;}<br>
+                            &nbsp;&nbsp;}<br>
+                            }
                         </div>
 
-                        <div class="text-slate-400 mb-2">$ claude setup-project</div>
+                        <div class="text-slate-400 mb-2">$ claude</div>
                         <div class="text-slate-300">
-                            → Syncing configurations from Nexus...<br>
-                            <span class="text-green-400">✓ Injected API keys</span><br>
-                            <span class="text-green-400">✓ Loaded local skills</span><br>
+                            <span class="text-green-400">✓ MCP server "nexus" connected</span><br>
+                            <span class="text-green-400">✓ Skills synced to ~/.claude/skills/</span><br>
+                            <span class="text-green-400">✓ Project MCP servers configured</span><br>
                             <span class="text-blue-400 mt-2 block">Agent is ready.</span>
                         </div>
                     </div>
@@ -501,7 +502,7 @@
         <div class="max-w-4xl mx-auto bg-gradient-to-br from-indigo-900/40 to-purple-900/40 border border-indigo-500/30 rounded-3xl p-12 text-center backdrop-blur-sm">
             <h2 class="text-3xl md:text-4xl font-bold mb-4">Ready to centralize your agents?</h2>
             <p class="text-slate-300 mb-8 max-w-xl mx-auto">
-                Stop manually copying `.env` files and `SKILL.md` configurations between projects. Let Nexus handle the context.
+                Stop manually copying MCP server configs and skills between projects. Let Nexus handle the context.
             </p>
             <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <a href="#" class="px-8 py-3 rounded-lg bg-primary hover:bg-indigo-400 text-white font-bold transition-all shadow-[0_0_20px_rgba(99,102,241,0.5)]">
