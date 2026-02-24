@@ -2,10 +2,10 @@
 type = "http"
 url = "https://mcp.clerk.com/mcp"
 
-[mcp_servers.nexus]
+[mcp_servers.automatic]
 command = "/Users/xtfer/working/velvet-tiger/nexus/nexus-app/src-tauri/target/debug/nexus"
 args = ["mcp-serve"]
 
-[mcp_servers.nexus.env]
-NEXUS_PROJECT = "nexus"
+[mcp_servers.automatic.env]
+AUTOMATIC_PROJECT = "nexus"
 

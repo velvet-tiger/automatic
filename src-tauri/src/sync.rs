@@ -61,11 +61,11 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
     let mut selected_servers = Map::new();
     let nexus_binary = find_nexus_binary();
     selected_servers.insert(
-        "nexus".to_string(),
+        "automatic".to_string(),
         json!({
             "command": nexus_binary,
             "args": ["mcp-serve"],
-            "env": { "NEXUS_PROJECT": project.name }
+            "env": { "AUTOMATIC_PROJECT": project.name }
         }),
     );
     for server_name in &project.mcp_servers {
@@ -324,18 +324,18 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
     // Read MCP server configs from the Nexus registry
     let mcp_config = load_mcp_server_configs()?;
 
-    // Build the set of MCP servers this project uses (+ always include Nexus)
+    // Build the set of MCP servers this project uses (+ always include Automatic)
     let mut selected_servers = Map::new();
 
-    // Always include Nexus MCP server
+    // Always include Automatic MCP server
     let nexus_binary = find_nexus_binary();
     selected_servers.insert(
-        "nexus".to_string(),
+        "automatic".to_string(),
         json!({
             "command": nexus_binary,
             "args": ["mcp-serve"],
             "env": {
-                "NEXUS_PROJECT": project.name
+                "AUTOMATIC_PROJECT": project.name
             }
         }),
     );

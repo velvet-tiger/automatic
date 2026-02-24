@@ -117,6 +117,33 @@ fn get_templates() -> Result<Vec<String>, String> {
     core::list_templates()
 }
 
+// ── Project Templates ─────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn get_project_templates() -> Result<Vec<String>, String> {
+    core::list_project_templates()
+}
+
+#[tauri::command]
+fn read_project_template(name: &str) -> Result<String, String> {
+    core::read_project_template(name)
+}
+
+#[tauri::command]
+fn save_project_template(name: &str, data: &str) -> Result<(), String> {
+    core::save_project_template(name, data)
+}
+
+#[tauri::command]
+fn delete_project_template(name: &str) -> Result<(), String> {
+    core::delete_project_template(name)
+}
+
+#[tauri::command]
+fn rename_project_template(old_name: &str, new_name: &str) -> Result<(), String> {
+    core::rename_project_template(old_name, new_name)
+}
+
 #[tauri::command]
 fn read_template(name: &str) -> Result<String, String> {
     core::read_template(name)
@@ -272,7 +299,7 @@ fn save_project(name: &str, data: &str) -> Result<(), String> {
 fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     core::rename_project(old_name, new_name)?;
 
-    // Re-sync agent configs so NEXUS_PROJECT reflects the new name.
+    // Re-sync agent configs so AUTOMATIC_PROJECT reflects the new name.
     let raw = core::read_project(new_name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -533,6 +560,11 @@ pub fn run() {
             read_template,
             save_template,
             delete_template,
+            get_project_templates,
+            read_project_template,
+            save_project_template,
+            delete_project_template,
+            rename_project_template,
             get_project_file_info,
             read_project_file,
             save_project_file,

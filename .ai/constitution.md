@@ -121,7 +121,7 @@ An external tool configures this in its MCP settings:
 ```json
 {
   "mcpServers": {
-    "nexus": {
+    "automatic": {
       "command": "nexus",
       "args": ["mcp-serve"]
     }
