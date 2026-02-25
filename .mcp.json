@@ -8,9 +8,9 @@
       "args": [
         "mcp-serve"
       ],
-      "command": "/Users/xtfer/working/velvet-tiger/nexus/nexus-app/src-tauri/target/debug/nexus",
+      "command": "/Users/xtfer/working/velvet-tiger/automatic/automatic-app/src-tauri/target/debug/automatic",
       "env": {
-        "AUTOMATIC_PROJECT": "nexus"
+        "AUTOMATIC_PROJECT": "automatic-app"
       }
     }
   }

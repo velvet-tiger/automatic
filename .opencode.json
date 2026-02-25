@@ -6,11 +6,11 @@
     },
     "automatic": {
       "command": [
-        "/Users/xtfer/working/velvet-tiger/nexus/nexus-app/src-tauri/target/debug/nexus",
+        "/Users/xtfer/working/velvet-tiger/automatic/automatic-app/src-tauri/target/debug/automatic",
         "mcp-serve"
       ],
       "environment": {
-        "AUTOMATIC_PROJECT": "nexus"
+        "AUTOMATIC_PROJECT": "automatic-app"
       },
       "type": "local"
     }
