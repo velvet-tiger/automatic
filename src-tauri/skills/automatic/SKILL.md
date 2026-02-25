@@ -65,7 +65,7 @@ query: string  — skill name, topic, or keyword, e.g. "react", "laravel", "dock
 
 ### `automatic_list_mcp_servers`
 
-Return all MCP server configurations stored in the Automatic registry (`~/.nexus/mcp_servers/`).
+Return all MCP server configurations stored in the Automatic registry (`~/.automatic/mcp_servers/`).
 
 **When to use:** When the user asks about available MCP servers, or when you need to reference server configs before syncing a project.
 

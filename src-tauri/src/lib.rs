@@ -505,7 +505,7 @@ async fn import_remote_skill(
     Ok(())
 }
 
-/// Return all entries from ~/.nexus/skills.json as a JSON object.
+/// Return all entries from ~/.automatic/skills.json as a JSON object.
 #[tauri::command]
 fn get_skill_sources() -> Result<String, String> {
     let registry = core::read_skill_sources()?;

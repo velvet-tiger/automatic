@@ -492,7 +492,7 @@ fn autodetect_inner(project: &Project) -> Result<(Project, Vec<(String, String)>
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Load MCP server configs from the Nexus registry (~/.nexus/mcp_servers/).
+/// Load MCP server configs from the Nexus registry (~/.automatic/mcp_servers/).
 fn load_mcp_server_configs() -> Result<Map<String, Value>, String> {
     let names = crate::core::list_mcp_server_configs()?;
     let mut servers = Map::new();

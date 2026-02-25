@@ -78,7 +78,7 @@ src-tauri/            # Rust backend
 |------|----------|-----------|
 | API keys | OS keychain | `keyring` crate, service name `nexus_desktop` |
 | Skills | `~/.agents/skills/<name>/SKILL.md` (primary, agentskills.io standard) + `~/.claude/skills/<name>/SKILL.md` (Claude Code) | Filesystem |
-| Projects | `<project-dir>/.nexus/project.json` (full config, pretty-printed); `~/.nexus/projects/<name>.json` (registry entry pointing to directory) | Filesystem (JSON) |
+| Projects | `<project-dir>/.automatic/project.json` (full config, pretty-printed); `~/.automatic/projects/<name>.json` (registry entry pointing to directory) | Filesystem (JSON) |
 | MCP config | `~/Library/Application Support/Claude/claude_desktop_config.json` | Read-only, Mac only |
 
 ### Frontend-Backend Communication (Tauri UI)
@@ -98,7 +98,7 @@ Current commands:
 | `sync_skill` | `name` | `Result<()>` | Copy a skill across both global directories |
 | `sync_all_skills` | none | `Result<Vec<String>>` | Sync all unsynced skills across both global directories |
 | `get_mcp_servers` | none | `Result<String>` | Read `claude_desktop_config.json` (Mac path) |
-| `get_projects` | none | `Result<Vec<String>>` | List project names from `~/.nexus/projects/` |
+| `get_projects` | none | `Result<Vec<String>>` | List project names from `~/.automatic/projects/` |
 | `read_project` | `name` | `Result<String>` | Read project JSON |
 | `save_project` | `name, data` | `Result<()>` | Validate and write project JSON |
 | `delete_project` | `name` | `Result<()>` | Delete project file |

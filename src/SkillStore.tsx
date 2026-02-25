@@ -325,7 +325,7 @@ export default function SkillStore() {
   const [rawContent, setRawContent] = useState<string>("");
   const [searching, setSearching] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
-  // registry: skill name → SkillSource, loaded from ~/.nexus/skills.json
+  // registry: skill name → SkillSource, loaded from ~/.automatic/skills.json
   const [registry, setRegistry] = useState<Record<string, SkillSource>>({});
   const [importing, setImporting] = useState(false);
   const [updating, setUpdating] = useState(false);

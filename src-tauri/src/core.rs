@@ -19,7 +19,7 @@ pub fn get_claude_skills_dir() -> Result<PathBuf, String> {
 
 pub fn get_projects_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".nexus/projects"))
+    Ok(home.join(".automatic/projects"))
 }
 
 pub fn is_valid_name(name: &str) -> bool {
@@ -29,7 +29,7 @@ pub fn is_valid_name(name: &str) -> bool {
 // ── Data Structures ──────────────────────────────────────────────────────────
 
 /// Remote origin of a skill imported from skills.sh.
-/// Stored in ~/.nexus/skills.json keyed by skill name.
+/// Stored in ~/.automatic/skills.json keyed by skill name.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SkillSource {
     /// GitHub owner/repo, e.g. "vercel-labs/skills"
@@ -46,7 +46,7 @@ pub struct SkillEntry {
     pub in_agents: bool,
     /// Exists in `~/.claude/skills/` (Claude Code)
     pub in_claude: bool,
-    /// Remote origin from ~/.nexus/skills.json, if this was imported from skills.sh
+    /// Remote origin from ~/.automatic/skills.json, if this was imported from skills.sh
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<SkillSource>,
 }
@@ -117,7 +117,7 @@ fn scan_skills_dir(dir: &PathBuf) -> Result<std::collections::HashSet<String>, S
 
 /// List skills from both `~/.agents/skills/` and `~/.claude/skills/`,
 /// returning entries that indicate which locations each skill exists in,
-/// with remote origin info joined from ~/.nexus/skills.json.
+/// with remote origin info joined from ~/.automatic/skills.json.
 pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
     let agents_dir = get_agents_skills_dir()?;
     let claude_dir = get_claude_skills_dir()?;
@@ -535,7 +535,7 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
     Err(format!("Could not fetch SKILL.md for '{}'", name))
 }
 
-// ── Skills Registry (~/.nexus/skills.json) ───────────────────────────────────
+// ── Skills Registry (~/.automatic/skills.json) ───────────────────────────────────
 //
 // Tracks the remote origin of skills imported from skills.sh.
 // Local skills (not imported) simply have no entry in this file.
@@ -548,7 +548,7 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
 
 fn get_skills_registry_path() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".nexus/skills.json"))
+    Ok(home.join(".automatic/skills.json"))
 }
 
 /// Read the full registry.  Returns an empty map if the file doesn't exist.
@@ -599,7 +599,7 @@ pub fn remove_skill_source(name: &str) -> Result<(), String> {
 
 pub fn get_templates_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".nexus/templates"))
+    Ok(home.join(".automatic/templates"))
 }
 
 pub fn list_templates() -> Result<Vec<String>, String> {
@@ -699,7 +699,7 @@ pub fn install_default_skills() -> Result<(), String> {
 }
 
 /// Built-in templates shipped with the app.  Each entry is (name, content).
-/// These are written to `~/.nexus/templates/` on first run (or when missing),
+/// These are written to `~/.automatic/templates/` on first run (or when missing),
 /// but never overwrite a file that already exists — user edits are preserved.
 const DEFAULT_TEMPLATES: &[(&str, &str)] = &[
     (
@@ -712,7 +712,7 @@ const DEFAULT_TEMPLATES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Write any missing default templates to `~/.nexus/templates/`.
+/// Write any missing default templates to `~/.automatic/templates/`.
 /// Existing files are left untouched, so user edits are always preserved.
 pub fn install_default_templates() -> Result<(), String> {
     let dir = get_templates_dir()?;
@@ -789,7 +789,7 @@ fn strip_managed_section(content: &str) -> String {
 
 pub fn get_mcp_servers_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".nexus/mcp_servers"))
+    Ok(home.join(".automatic/mcp_servers"))
 }
 
 pub fn list_mcp_server_configs() -> Result<Vec<String>, String> {
@@ -913,12 +913,12 @@ pub fn list_mcp_servers() -> Result<String, String> {
 
 pub fn get_plugins_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".nexus/plugins"))
+    Ok(home.join(".automatic/plugins"))
 }
 
 pub fn get_sessions_path() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".nexus/sessions.json"))
+    Ok(home.join(".automatic/sessions.json"))
 }
 
 /// The name used in marketplace.json and for `claude plugin` commands.
@@ -959,10 +959,10 @@ const HOOKS_JSON: &str = r#"
 
 const REGISTER_SESSION_SH: &str = r#"#!/usr/bin/env bash
 # register-session.sh — Called by the SessionStart hook.
-# Reads hook JSON from stdin, writes an entry to ~/.nexus/sessions.json.
+# Reads hook JSON from stdin, writes an entry to ~/.automatic/sessions.json.
 set -euo pipefail
 
-SESSIONS_FILE="$HOME/.nexus/sessions.json"
+SESSIONS_FILE="$HOME/.automatic/sessions.json"
 
 # Read the full hook input from stdin
 INPUT=$(cat)
@@ -1021,10 +1021,10 @@ exit 0
 
 const DEREGISTER_SESSION_SH: &str = r#"#!/usr/bin/env bash
 # deregister-session.sh — Called by the SessionEnd hook.
-# Removes the session entry from ~/.nexus/sessions.json.
+# Removes the session entry from ~/.automatic/sessions.json.
 set -euo pipefail
 
-SESSIONS_FILE="$HOME/.nexus/sessions.json"
+SESSIONS_FILE="$HOME/.automatic/sessions.json"
 
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
@@ -1151,7 +1151,7 @@ fn write_nexus_plugin(plugin_dir: &std::path::Path) -> Result<(), String> {
 /// marketplace.json and the full Nexus plugin.
 ///
 /// Layout:
-///   ~/.nexus/plugins/
+///   ~/.automatic/plugins/
 ///   ├── .claude-plugin/
 ///   │   └── marketplace.json
 ///   └── nexus/
@@ -1249,7 +1249,7 @@ pub fn install_plugin_marketplace() -> Result<String, String> {
 //
 // Project Templates capture agents, skills, MCP servers and a description that
 // can be applied when creating a new project or merged into an existing one.
-// Stored as JSON files in `~/.nexus/project_templates/{name}.json`.
+// Stored as JSON files in `~/.automatic/project_templates/{name}.json`.
 
 /// A single project file stored inline in a project template.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -1282,7 +1282,7 @@ pub struct ProjectTemplate {
 
 pub fn get_project_templates_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".nexus/project_templates"))
+    Ok(home.join(".automatic/project_templates"))
 }
 
 pub fn list_project_templates() -> Result<Vec<String>, String> {
@@ -1389,14 +1389,14 @@ pub fn rename_project_template(old_name: &str, new_name: &str) -> Result<(), Str
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 //
-// Project configs are stored in the project directory at `.nexus/project.json`.
-// A lightweight registry entry at `~/.nexus/projects/{name}.json` maps project
+// Project configs are stored in the project directory at `.automatic/project.json`.
+// A lightweight registry entry at `~/.automatic/projects/{name}.json` maps project
 // names to their directories so we can enumerate them.  When a project has no
 // directory set yet, the full config lives in the registry file as a fallback.
 
 /// Returns the path to the full project config inside the project directory.
 fn project_config_path(directory: &str) -> PathBuf {
-    PathBuf::from(directory).join(".nexus").join("project.json")
+    PathBuf::from(directory).join(".automatic").join("project.json")
 }
 
 pub fn list_projects() -> Result<Vec<String>, String> {
@@ -1485,7 +1485,7 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
 
     if !project.directory.is_empty() {
         // Write full config to project directory
-        let nexus_dir = PathBuf::from(&project.directory).join(".nexus");
+        let nexus_dir = PathBuf::from(&project.directory).join(".automatic");
         if !nexus_dir.exists() {
             fs::create_dir_all(&nexus_dir).map_err(|e| e.to_string())?;
         }
@@ -1551,8 +1551,8 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     // Write the in-directory config with the updated name
     if !project.directory.is_empty() {
         let config_path = project_config_path(&project.directory);
-        if config_path.exists() || PathBuf::from(&project.directory).join(".nexus").exists() {
-            let nexus_dir = PathBuf::from(&project.directory).join(".nexus");
+        if config_path.exists() || PathBuf::from(&project.directory).join(".automatic").exists() {
+            let nexus_dir = PathBuf::from(&project.directory).join(".automatic");
             if !nexus_dir.exists() {
                 fs::create_dir_all(&nexus_dir).map_err(|e| e.to_string())?;
             }
@@ -1603,8 +1603,8 @@ pub fn delete_project(name: &str) -> Result<(), String> {
                     if config_path.exists() {
                         let _ = fs::remove_file(&config_path);
                     }
-                    // Remove .nexus dir if it's now empty
-                    let nexus_dir = PathBuf::from(&project.directory).join(".nexus");
+                    // Remove .automatic dir if it's now empty
+                    let nexus_dir = PathBuf::from(&project.directory).join(".automatic");
                     if nexus_dir.exists() {
                         let _ = fs::remove_dir(&nexus_dir); // only succeeds if empty
                     }
