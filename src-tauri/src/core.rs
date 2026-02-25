@@ -79,12 +79,12 @@ pub struct Project {
 // ── API Keys ─────────────────────────────────────────────────────────────────
 
 pub fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
-    let entry = Entry::new("nexus_desktop", provider).map_err(|e| e.to_string())?;
+    let entry = Entry::new("automatic_desktop", provider).map_err(|e| e.to_string())?;
     entry.set_password(key).map_err(|e| e.to_string())
 }
 
 pub fn get_api_key(provider: &str) -> Result<String, String> {
-    let entry = Entry::new("nexus_desktop", provider).map_err(|e| e.to_string())?;
+    let entry = Entry::new("automatic_desktop", provider).map_err(|e| e.to_string())?;
     entry.get_password().map_err(|e| e.to_string())
 }
 
@@ -299,7 +299,7 @@ pub async fn search_remote_skills(query: &str) -> Result<Vec<RemoteSkillResult>,
 
     let resp = client
         .get(&url)
-        .header("User-Agent", "nexus-desktop/1.0")
+        .header("User-Agent", "automatic-desktop/1.0")
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
@@ -404,7 +404,7 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
         tasks.spawn(async move {
             let resp = client2
                 .get(&url)
-                .header("User-Agent", "nexus-desktop/1.0")
+                .header("User-Agent", "automatic-desktop/1.0")
                 .send()
                 .await
                 .ok()?;
@@ -431,7 +431,7 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
     // Clone only the git metadata (no file blobs). This is ~100-200 KB and
     // takes under a second. No GitHub API involved — no rate limit.
     let tmp_dir = std::env::temp_dir().join(format!(
-        "nexus-skill-{}-{}",
+        "automatic-skill-{}-{}",
         source.replace('/', "-"),
         name
     ));
@@ -511,9 +511,9 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
         let url = format!("{}/{}", raw_base, path);
         let resp = match client
             .get(&url)
-            .header("User-Agent", "nexus-desktop/1.0")
-            .send()
-            .await
+        .header("User-Agent", "automatic-desktop/1.0")
+        .send()
+        .await
         {
             Ok(r) => r,
             Err(_) => continue,
@@ -766,10 +766,10 @@ pub fn save_project_file(directory: &str, filename: &str, content: &str) -> Resu
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
-/// Strip the `<!-- nexus:skills:start -->...<!-- nexus:skills:end -->` section.
+/// Strip the `<!-- automatic:skills:start -->...<!-- automatic:skills:end -->` section.
 fn strip_managed_section(content: &str) -> String {
-    let start_marker = "<!-- nexus:skills:start -->";
-    let end_marker = "<!-- nexus:skills:end -->";
+    let start_marker = "<!-- automatic:skills:start -->";
+    let end_marker = "<!-- automatic:skills:end -->";
 
     if let (Some(start), Some(end)) = (content.find(start_marker), content.find(end_marker)) {
         let before = &content[..start];
@@ -922,7 +922,7 @@ pub fn get_sessions_path() -> Result<PathBuf, String> {
 }
 
 /// The name used in marketplace.json and for `claude plugin` commands.
-const MARKETPLACE_NAME: &str = "nexus-plugins";
+const MARKETPLACE_NAME: &str = "automatic-plugins";
 
 /// Current plugin version — bump when plugin content changes so Claude Code
 /// picks up updates via its cache.
@@ -1086,25 +1086,25 @@ fn make_executable(_path: &std::path::Path) -> Result<(), String> {
     Ok(()) // no-op on Windows
 }
 
-/// Resolve the Nexus binary path.  Uses the current executable when available
+/// Resolve the Automatic binary path.  Uses the current executable when available
 /// (gives an absolute path that survives being called from any directory),
-/// otherwise falls back to "nexus" on PATH.
-fn find_nexus_binary() -> String {
+/// otherwise falls back to "automatic" on PATH.
+fn find_automatic_binary() -> String {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "nexus".to_string())
+        .unwrap_or_else(|| "automatic".to_string())
 }
 
-/// Write the full Nexus plugin to disk.
-fn write_nexus_plugin(plugin_dir: &std::path::Path) -> Result<(), String> {
+/// Write the full Automatic plugin to disk.
+fn write_automatic_plugin(plugin_dir: &std::path::Path) -> Result<(), String> {
     // .claude-plugin/plugin.json
     let manifest_dir = plugin_dir.join(".claude-plugin");
     ensure_dir(&manifest_dir)?;
 
     let plugin_json = serde_json::json!({
-        "name": "nexus",
-        "description": "Nexus desktop app integration — session tracking and MCP tools",
+        "name": "automatic",
+        "description": "Automatic desktop app integration — session tracking and MCP tools",
         "version": PLUGIN_VERSION
     });
     write_file(
@@ -1112,12 +1112,12 @@ fn write_nexus_plugin(plugin_dir: &std::path::Path) -> Result<(), String> {
         &serde_json::to_string_pretty(&plugin_json).map_err(|e| format!("JSON error: {}", e))?,
     )?;
 
-    // .mcp.json — makes the Nexus MCP server available in every session
-    let nexus_binary = find_nexus_binary();
+    // .mcp.json — makes the Automatic MCP server available in every session
+    let automatic_binary = find_automatic_binary();
     let mcp_json = serde_json::json!({
         "mcpServers": {
-            "nexus": {
-                "command": nexus_binary,
+            "automatic": {
+                "command": automatic_binary,
                 "args": ["mcp-serve"]
             }
         }
@@ -1148,13 +1148,13 @@ fn write_nexus_plugin(plugin_dir: &std::path::Path) -> Result<(), String> {
 }
 
 /// Ensure the local plugin marketplace directory exists with a valid
-/// marketplace.json and the full Nexus plugin.
+/// marketplace.json and the full Automatic plugin.
 ///
 /// Layout:
 ///   ~/.automatic/plugins/
 ///   ├── .claude-plugin/
 ///   │   └── marketplace.json
-///   └── nexus/
+///   └── automatic/
 ///       ├── .claude-plugin/
 ///       │   └── plugin.json
 ///       ├── .mcp.json
@@ -1172,15 +1172,15 @@ pub fn ensure_plugin_marketplace() -> Result<PathBuf, String> {
 
     let marketplace_json = serde_json::json!({
         "name": MARKETPLACE_NAME,
-        "owner": { "name": "Nexus" },
+        "owner": { "name": "Automatic" },
         "metadata": {
-            "description": "Plugins bundled with the Nexus desktop app"
+            "description": "Plugins bundled with the Automatic desktop app"
         },
         "plugins": [
             {
-                "name": "nexus",
-                "source": "./nexus",
-                "description": "Nexus desktop app integration — session tracking via hooks",
+                "name": "automatic",
+                "source": "./automatic",
+                "description": "Automatic desktop app integration — session tracking via hooks",
                 "version": PLUGIN_VERSION
             }
         ]
@@ -1191,8 +1191,8 @@ pub fn ensure_plugin_marketplace() -> Result<PathBuf, String> {
             .map_err(|e| format!("JSON error: {}", e))?,
     )?;
 
-    // ── nexus plugin ────────────────────────────────────────────────────
-    write_nexus_plugin(&plugins_dir.join("nexus"))?;
+    // ── automatic plugin ─────────────────────────────────────────────────
+    write_automatic_plugin(&plugins_dir.join("automatic"))?;
 
     Ok(plugins_dir)
 }
@@ -1229,9 +1229,9 @@ pub fn install_plugin_marketplace() -> Result<String, String> {
         }
     }
 
-    // Install the nexus plugin (idempotent — reinstall is a no-op)
+    // Install the automatic plugin (idempotent — reinstall is a no-op)
     let install_result = std::process::Command::new("claude")
-        .args(["plugin", "install", &format!("nexus@{}", MARKETPLACE_NAME)])
+        .args(["plugin", "install", &format!("automatic@{}", MARKETPLACE_NAME)])
         .output()
         .map_err(|e| format!("Failed to run claude plugin install: {}", e))?;
 
@@ -1485,11 +1485,11 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
 
     if !project.directory.is_empty() {
         // Write full config to project directory
-        let nexus_dir = PathBuf::from(&project.directory).join(".automatic");
-        if !nexus_dir.exists() {
-            fs::create_dir_all(&nexus_dir).map_err(|e| e.to_string())?;
+        let automatic_dir = PathBuf::from(&project.directory).join(".automatic");
+        if !automatic_dir.exists() {
+            fs::create_dir_all(&automatic_dir).map_err(|e| e.to_string())?;
         }
-        let config_path = nexus_dir.join("project.json");
+        let config_path = automatic_dir.join("project.json");
         fs::write(&config_path, &pretty).map_err(|e| e.to_string())?;
 
         // Write lightweight registry entry
@@ -1552,9 +1552,9 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     if !project.directory.is_empty() {
         let config_path = project_config_path(&project.directory);
         if config_path.exists() || PathBuf::from(&project.directory).join(".automatic").exists() {
-            let nexus_dir = PathBuf::from(&project.directory).join(".automatic");
-            if !nexus_dir.exists() {
-                fs::create_dir_all(&nexus_dir).map_err(|e| e.to_string())?;
+            let automatic_dir = PathBuf::from(&project.directory).join(".automatic");
+            if !automatic_dir.exists() {
+                fs::create_dir_all(&automatic_dir).map_err(|e| e.to_string())?;
             }
             fs::write(&config_path, &pretty).map_err(|e| e.to_string())?;
         }

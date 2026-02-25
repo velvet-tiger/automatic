@@ -40,6 +40,60 @@ pub struct SyncProjectParams {
     pub name: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct StoreMemoryParams {
+    /// The project name
+    pub project: String,
+    /// The memory key (identifier)
+    pub key: String,
+    /// The memory value to store
+    pub value: String,
+    /// Optional: identifier for the agent/tool storing this memory
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct GetMemoryParams {
+    /// The project name
+    pub project: String,
+    /// The memory key to retrieve
+    pub key: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ListMemoriesParams {
+    /// The project name
+    pub project: String,
+    /// Optional: filter keys by this substring (case-insensitive)
+    pub pattern: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct SearchMemoriesParams {
+    /// The project name
+    pub project: String,
+    /// Search query to match against keys and values
+    pub query: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct DeleteMemoryParams {
+    /// The project name
+    pub project: String,
+    /// The memory key to delete
+    pub key: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ClearMemoriesParams {
+    /// The project name
+    pub project: String,
+    /// Optional: only delete memories with keys matching this pattern (case-insensitive)
+    pub pattern: Option<String>,
+    /// Must be set to true to confirm deletion
+    pub confirm: bool,
+}
+
 // ── MCP Server Handler ──────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -261,6 +315,115 @@ impl NexusMcpServer {
             ))])),
         }
     }
+
+    // ── Memory tools ─────────────────────────────────────────────────────
+
+    #[tool(
+        name = "automatic_store_memory",
+        description = "Stores a memory entry (key-value pair) for a project. AI agents can use this to persist learned information, preferences, or context over time."
+    )]
+    async fn store_memory(
+        &self,
+        params: Parameters<StoreMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::memory::store_memory(
+            &params.0.project,
+            &params.0.key,
+            &params.0.value,
+            params.0.source.as_deref(),
+        ) {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to store memory: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_get_memory",
+        description = "Retrieves a specific memory entry by key for a project."
+    )]
+    async fn get_memory(
+        &self,
+        params: Parameters<GetMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::memory::get_memory(&params.0.project, &params.0.key) {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to get memory: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_list_memories",
+        description = "Lists all stored memories for a project, optionally filtered by a key pattern."
+    )]
+    async fn list_memories(
+        &self,
+        params: Parameters<ListMemoriesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::memory::list_memories(&params.0.project, params.0.pattern.as_deref()) {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to list memories: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_search_memories",
+        description = "Searches memory keys and values for a query string (case-insensitive substring match)."
+    )]
+    async fn search_memories(
+        &self,
+        params: Parameters<SearchMemoriesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::memory::search_memories(&params.0.project, &params.0.query) {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to search memories: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_delete_memory",
+        description = "Deletes a specific memory entry by key for a project."
+    )]
+    async fn delete_memory(
+        &self,
+        params: Parameters<DeleteMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::memory::delete_memory(&params.0.project, &params.0.key) {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to delete memory: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_clear_memories",
+        description = "Clears all memories for a project, optionally filtered by pattern. Use with caution!"
+    )]
+    async fn clear_memories(
+        &self,
+        params: Parameters<ClearMemoriesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::memory::clear_memories(&params.0.project, params.0.pattern.as_deref(), params.0.confirm) {
+            Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to clear memories: {}",
+                e
+            ))])),
+        }
+    }
 }
 
 #[tool_handler]
@@ -276,7 +439,7 @@ impl ServerHandler for NexusMcpServer {
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation {
-                name: "nexus".into(),
+                name: "automatic".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
                 title: None,
                 description: None,

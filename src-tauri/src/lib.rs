@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod core;
 pub mod mcp;
+pub mod memory;
 pub mod sync;
 
 // ── Tauri Command Wrappers ───────────────────────────────────────────────────
@@ -18,6 +19,18 @@ fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
 #[tauri::command]
 fn get_api_key(provider: &str) -> Result<String, String> {
     core::get_api_key(provider)
+}
+
+// ── Settings ─────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn read_settings() -> Result<core::Settings, String> {
+    core::read_settings()
+}
+
+#[tauri::command]
+fn write_settings(settings: core::Settings) -> Result<(), String> {
+    core::write_settings(&settings)
 }
 
 // ── Agents ───────────────────────────────────────────────────────────────────
@@ -524,6 +537,38 @@ fn get_sessions() -> Result<String, String> {
     core::list_sessions()
 }
 
+// ── Memory ───────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn store_memory(project: &str, key: &str, value: &str, source: Option<&str>) -> Result<String, String> {
+    memory::store_memory(project, key, value, source)
+}
+
+#[tauri::command]
+fn get_memory(project: &str, key: &str) -> Result<String, String> {
+    memory::get_memory(project, key)
+}
+
+#[tauri::command]
+fn list_memories(project: &str, pattern: Option<&str>) -> Result<String, String> {
+    memory::list_memories(project, pattern)
+}
+
+#[tauri::command]
+fn search_memories(project: &str, query: &str) -> Result<String, String> {
+    memory::search_memories(project, query)
+}
+
+#[tauri::command]
+fn delete_memory(project: &str, key: &str) -> Result<String, String> {
+    memory::delete_memory(project, key)
+}
+
+#[tauri::command]
+fn clear_memories(project: &str, pattern: Option<&str>, confirm: bool) -> Result<String, String> {
+    memory::clear_memories(project, pattern, confirm)
+}
+
 // ── App Entry ────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -537,19 +582,21 @@ pub fn run() {
             // it never blocks the UI.
             std::thread::spawn(|| {
                 if let Err(e) = core::install_default_skills() {
-                    eprintln!("[nexus] skill install error: {}", e);
+                    eprintln!("[automatic] skill install error: {}", e);
                 }
                 if let Err(e) = core::install_default_templates() {
-                    eprintln!("[nexus] template install error: {}", e);
+                    eprintln!("[automatic] template install error: {}", e);
                 }
                 match core::install_plugin_marketplace() {
-                    Ok(msg) => eprintln!("[nexus] plugin startup: {}", msg),
-                    Err(e) => eprintln!("[nexus] plugin startup error: {}", e),
+                    Ok(msg) => eprintln!("[automatic] plugin startup: {}", msg),
+                    Err(e) => eprintln!("[automatic] plugin startup error: {}", e),
                 }
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            read_settings,
+            write_settings,
             save_api_key,
             get_api_key,
             list_agents,
@@ -594,6 +641,12 @@ pub fn run() {
             fetch_remote_skill_content,
             import_remote_skill,
             get_skill_sources,
+            store_memory,
+            get_memory,
+            list_memories,
+            search_memories,
+            delete_memory,
+            clear_memories,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
