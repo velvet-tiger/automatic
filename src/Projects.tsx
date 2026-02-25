@@ -1108,7 +1108,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 { id: "agents" as ProjectTab, label: "Agents" },
                 { id: "skills" as ProjectTab, label: "Skills" },
                 { id: "mcp_servers" as ProjectTab, label: "MCP Servers" },
-                { id: "project_file" as ProjectTab, label: "Project File" },
+                { id: "project_file" as ProjectTab, label: "Project Instructions" },
               ]).map((tab) => (
                 <button
                   key={tab.id}

@@ -146,7 +146,7 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
                       <span className="text-[13px] text-[#E0E1E6] font-mono">{selected.description}</span>
                     </div>
                     <div className="flex items-start gap-3 px-3 py-2.5 bg-[#1A1A1E] rounded-md border border-[#33353A]">
-                      <span className="text-[11px] text-[#8A8C93] w-24 flex-shrink-0 pt-0.5">Project File</span>
+                      <span className="text-[11px] text-[#8A8C93] w-24 flex-shrink-0 pt-0.5">Project Instructions</span>
                       <span className="text-[13px] text-[#E0E1E6] font-mono">{selected.project_file}</span>
                     </div>
                   </div>
