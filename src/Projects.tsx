@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { SkillSelector } from "./SkillSelector";
 import { AgentSelector } from "./AgentSelector";
 import { McpSelector } from "./McpSelector";
+import { MarkdownPreview } from "./MarkdownPreview";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -477,8 +478,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
   const selectProject = async (name: string) => {
     try {
-      const raw: string = await invoke("autodetect_project_dependencies", { name });
-      const parsed = JSON.parse(raw);
+      // Fetch both the stored state and the autodetected state in parallel so
+      // we can tell whether detection found anything new that hasn't been saved.
+      const [rawDetected, rawStored] = await Promise.all([
+        invoke<string>("autodetect_project_dependencies", { name }),
+        invoke<string>("read_project", { name }),
+      ]);
+      const parsed = JSON.parse(rawDetected);
+      const stored = JSON.parse(rawStored);
       // Normalize: ensure all fields exist with defaults for older projects
       const data: Project = {
         name: parsed.name || name,
@@ -492,10 +499,23 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         created_at: parsed.created_at || new Date().toISOString(),
         updated_at: parsed.updated_at || new Date().toISOString(),
       };
+
+      // Mark dirty if autodetection discovered agents/skills/MCP servers that
+      // aren't reflected in the stored config yet.
+      const storedAgents: string[] = stored.agents || [];
+      const storedSkills: string[] = stored.skills || [];
+      const storedLocalSkills: string[] = stored.local_skills || [];
+      const storedMcp: string[] = stored.mcp_servers || [];
+      const detectedDiffers =
+        data.agents.some((a) => !storedAgents.includes(a)) ||
+        data.skills.some((s) => !storedSkills.includes(s)) ||
+        data.local_skills.some((s) => !storedLocalSkills.includes(s)) ||
+        data.mcp_servers.some((m) => !storedMcp.includes(m));
+
       setSelectedName(name);
       localStorage.setItem(LAST_PROJECT_KEY, name);
       setProject(data);
-      setDirty(false);
+      setDirty(detectedDiffers);
       setIsCreating(false);
       setError(null);
       // Load project files for this project
@@ -1311,8 +1331,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               spellCheck={false}
                             />
                           ) : (
-                            <div className="flex-1 overflow-y-auto p-4 font-mono text-[12px] whitespace-pre-wrap text-[#E0E1E6] leading-relaxed custom-scrollbar bg-[#222327]">
-                              {projectFileContent || <span className="text-[#8A8C93] italic">Empty file.</span>}
+                            <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#222327]">
+                              {projectFileContent
+                                ? <MarkdownPreview content={projectFileContent} />
+                                : <span className="block p-4 text-[13px] text-[#8A8C93] italic">Empty file.</span>
+                              }
                             </div>
                           )}
                         </div>
