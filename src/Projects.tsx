@@ -524,33 +524,50 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       ]);
       const parsed = JSON.parse(rawDetected);
       const stored = JSON.parse(rawStored);
-      // Normalize: ensure all fields exist with defaults for older projects
-      const data: Project = {
-        name: parsed.name || name,
-        description: parsed.description || "",
-        directory: parsed.directory || "",
-        skills: parsed.skills || [],
-        local_skills: parsed.local_skills || [],
-        mcp_servers: parsed.mcp_servers || [],
-        providers: parsed.providers || [],
-        agents: parsed.agents || [],
-        created_at: parsed.created_at || new Date().toISOString(),
-        updated_at: parsed.updated_at || new Date().toISOString(),
-        file_rules: parsed.file_rules || {},
-        instruction_mode: parsed.instruction_mode || "per-agent",
-      };
 
-      // Mark dirty if autodetection discovered agents/skills/MCP servers that
-      // aren't reflected in the stored config yet.
+      // Use stored config as the source of truth so that intentional user
+      // removals (e.g. de-selecting an agent) are preserved. Autodetected
+      // items are only merged in when they are genuinely new — i.e. present
+      // in the detected result but absent from the stored config — never
+      // added back once the user has removed them.
       const storedAgents: string[] = stored.agents || [];
       const storedSkills: string[] = stored.skills || [];
       const storedLocalSkills: string[] = stored.local_skills || [];
       const storedMcp: string[] = stored.mcp_servers || [];
+
+      const detectedAgents: string[] = parsed.agents || [];
+      const detectedSkills: string[] = parsed.skills || [];
+      const detectedLocalSkills: string[] = parsed.local_skills || [];
+      const detectedMcp: string[] = parsed.mcp_servers || [];
+
+      // New items found by autodetect that aren't yet in the stored config.
+      const newAgents = detectedAgents.filter((a) => !storedAgents.includes(a));
+      const newSkills = detectedSkills.filter((s) => !storedSkills.includes(s));
+      const newLocalSkills = detectedLocalSkills.filter((s) => !storedLocalSkills.includes(s));
+      const newMcp = detectedMcp.filter((m) => !storedMcp.includes(m));
+
       const detectedDiffers =
-        data.agents.some((a) => !storedAgents.includes(a)) ||
-        data.skills.some((s) => !storedSkills.includes(s)) ||
-        data.local_skills.some((s) => !storedLocalSkills.includes(s)) ||
-        data.mcp_servers.some((m) => !storedMcp.includes(m));
+        newAgents.length > 0 ||
+        newSkills.length > 0 ||
+        newLocalSkills.length > 0 ||
+        newMcp.length > 0;
+
+      // Normalize: ensure all fields exist with defaults for older projects.
+      // Start from stored data and append any newly-detected items.
+      const data: Project = {
+        name: stored.name || name,
+        description: stored.description || "",
+        directory: stored.directory || "",
+        skills: [...storedSkills, ...newSkills],
+        local_skills: [...storedLocalSkills, ...newLocalSkills],
+        mcp_servers: [...storedMcp, ...newMcp],
+        providers: stored.providers || [],
+        agents: [...storedAgents, ...newAgents],
+        created_at: stored.created_at || new Date().toISOString(),
+        updated_at: stored.updated_at || new Date().toISOString(),
+        file_rules: stored.file_rules || {},
+        instruction_mode: stored.instruction_mode || "per-agent",
+      };
 
       setSelectedName(name);
       localStorage.setItem(LAST_PROJECT_KEY, name);

@@ -420,10 +420,13 @@ fn save_project(name: &str, data: &str) -> Result<(), String> {
     let project: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
 
-    // Sync uses the same path as the explicit sync_project command (including
-    // autodetect) so that save and sync are functionally identical.
+    // Use sync_without_autodetect so the user's explicit agent/skill
+    // selections are the source of truth. Autodetect runs only on an
+    // explicit "Sync" action (sync_project command), not on every save.
+    // This prevents removed agents from being re-added because their
+    // config files still exist on disk from a previous sync.
     if !project.directory.is_empty() && !project.agents.is_empty() {
-        sync::sync_project(&project)?;
+        sync::sync_project_without_autodetect(&project)?;
     }
 
     Ok(())
