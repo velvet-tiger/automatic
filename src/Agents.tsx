@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Bot, FolderOpen } from "lucide-react";
+import { Bot, FolderOpen, AlertCircle } from "lucide-react";
 import { ICONS } from "./icons";
 
 interface AgentProject {
@@ -13,6 +13,7 @@ interface AgentWithProjects {
   label: string;
   description: string;
   project_file: string;
+  mcp_note: string | null;
   projects: AgentProject[];
 }
 
@@ -146,6 +147,22 @@ export default function Agents() {
                     </div>
                   </div>
                 </section>
+
+                {/* Limitations */}
+                {selected.mcp_note && (
+                  <section>
+                    <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-3">
+                      Limitations
+                    </label>
+                    <div className="flex items-start gap-3 px-3 py-3 bg-[#1A1A1E] rounded-md border border-[#44474F]">
+                      <AlertCircle size={14} className="text-[#8A8C93] flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-[13px] font-medium text-[#E0E1E6] mb-1">MCP configuration</p>
+                        <p className="text-[12px] text-[#8A8C93] leading-relaxed">{selected.mcp_note}</p>
+                      </div>
+                    </div>
+                  </section>
+                )}
 
                 {/* Projects */}
                 <section>

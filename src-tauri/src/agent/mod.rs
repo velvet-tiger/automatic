@@ -24,6 +24,7 @@ mod junie;
 mod kilo_code;
 mod kiro;
 mod opencode;
+mod warp;
 
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -44,6 +45,7 @@ pub use junie::Junie;
 pub use kilo_code::KiloCode;
 pub use kiro::Kiro;
 pub use opencode::OpenCode;
+pub use warp::Warp;
 
 // ── Trait ────────────────────────────────────────────────────────────────────
 
@@ -95,6 +97,17 @@ pub trait Agent: Send + Sync {
         local_skill_names: &[String],
     ) -> Result<Vec<String>, String>;
 
+    // ── MCP capability ──────────────────────────────────────────────────
+
+    /// Returns a human-readable note if this agent cannot have its MCP
+    /// servers configured by Automatic (e.g. because the agent stores them
+    /// in an internal database rather than a project file).
+    ///
+    /// `None` (the default) means Automatic writes MCP config normally.
+    fn mcp_note(&self) -> Option<&'static str> {
+        None
+    }
+
     // ── Discovery ───────────────────────────────────────────────────────
 
     /// Scan this agent's config files in `dir` for MCP server definitions.
@@ -110,6 +123,9 @@ pub struct AgentInfo {
     pub id: String,
     pub label: String,
     pub description: String,
+    /// Human-readable note about MCP limitations, if any.
+    /// `None` means Automatic manages MCP config for this agent normally.
+    pub mcp_note: Option<String>,
 }
 
 impl AgentInfo {
@@ -118,6 +134,7 @@ impl AgentInfo {
             id: agent.id().to_string(),
             label: agent.label().to_string(),
             description: agent.config_description().to_string(),
+            mcp_note: agent.mcp_note().map(|s| s.to_string()),
         }
     }
 }
@@ -142,6 +159,7 @@ pub fn all() -> Vec<&'static dyn Agent> {
         &Goose,
         &CodexCli,
         &OpenCode,
+        &Warp,
     ]
 }
 

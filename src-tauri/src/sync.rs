@@ -366,7 +366,11 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
                 written_files.extend(skill_files);
 
                 let path = agent_instance.write_mcp_config(&dir, &selected_servers)?;
-                written_files.push(path);
+                // write_mcp_config returns "" for agents (like Warp) that
+                // cannot have their MCP config managed by Automatic.
+                if !path.is_empty() {
+                    written_files.push(path);
+                }
 
                 // Strip legacy managed sections from project files (once per filename)
                 let pf = agent_instance.project_file_name();

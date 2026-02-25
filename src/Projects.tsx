@@ -40,6 +40,8 @@ interface AgentInfo {
   id: string;
   label: string;
   description: string;
+  /** Non-null when this agent cannot have MCP config written by Automatic. */
+  mcp_note: string | null;
 }
 
 interface DriftedFile {
@@ -2041,20 +2043,49 @@ export default function Projects() {
                 )}
 
                 {/* ── MCP Servers tab ──────────────────────────────────── */}
-                {projectTab === "mcp_servers" && (
+                {projectTab === "mcp_servers" && (() => {
+                  const hasWarp = project.agents.includes("warp");
+                  const warpOnly = hasWarp && project.agents.length === 1;
+                  const warpNote = availableAgents.find((a) => a.id === "warp")?.mcp_note ?? null;
+                  return (
                   <section>
+                    {/* Warp-only: MCP config not available */}
+                    {warpOnly && warpNote && (
+                      <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-[#1A1A1E] border border-[#44474F] rounded-lg">
+                        <AlertCircle size={15} className="text-[#8A8C93] flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">MCP not configurable via Automatic</p>
+                          <p className="text-[12px] text-[#8A8C93] leading-relaxed">{warpNote}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Warp + other agents: partial warning */}
+                    {hasWarp && !warpOnly && warpNote && (
+                      <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-[#F59E0B]/8 border border-[#F59E0B]/30 rounded-lg">
+                        <AlertCircle size={15} className="text-[#F59E0B] flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-[13px] font-medium text-[#F59E0B] mb-0.5">Warp requires manual MCP setup</p>
+                          <p className="text-[12px] text-[#F59E0B]/80 leading-relaxed">{warpNote}</p>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
                         <Server size={12} /> MCP Servers
                       </label>
-                      <button
-                        onClick={() => setAddingMcp(!addingMcp)}
-                        className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
-                      >
-                        <Plus size={13} />
-                      </button>
+                      {/* Hide add button when Warp is the only agent — nothing to sync */}
+                      {!warpOnly && (
+                        <button
+                          onClick={() => setAddingMcp(!addingMcp)}
+                          className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                        >
+                          <Plus size={13} />
+                        </button>
+                      )}
                     </div>
-                    {addingMcp && (
+                    {addingMcp && !warpOnly && (
                       <div className="mb-2">
                         {availableMcpServers.filter((s) => !project.mcp_servers.includes(s)).length > 0 ? (
                           <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
@@ -2076,7 +2107,9 @@ export default function Projects() {
                       </div>
                     )}
                     {project.mcp_servers.length === 0 ? (
-                      <p className="text-[13px] text-[#8A8C93]/60 italic">No MCP servers attached.</p>
+                      <p className="text-[13px] text-[#8A8C93]/60 italic">
+                        {warpOnly ? "Add other agent tools to enable MCP server syncing." : "No MCP servers attached."}
+                      </p>
                     ) : (
                       <ul className="space-y-1">
                         {project.mcp_servers.map((s, i) => (
@@ -2099,7 +2132,8 @@ export default function Projects() {
                       </ul>
                     )}
                   </section>
-                )}
+                  );
+                })()}
 
               </div>
             </div>
