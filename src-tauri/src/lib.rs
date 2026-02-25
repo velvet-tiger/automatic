@@ -3,6 +3,7 @@ pub mod core;
 pub mod mcp;
 pub mod memory;
 pub mod sync;
+pub mod context;
 
 // ── Tauri Command Wrappers ───────────────────────────────────────────────────
 //

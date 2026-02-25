@@ -31,4 +31,5 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
 tempfile = "3"
 reqwest = { version = "0.12", features = ["json"] }
 urlencoding = "2"
+toml = "1.0.3"
 
