@@ -330,11 +330,17 @@ fn sync_project(name: &str) -> Result<String, String> {
 /// Check whether the on-disk agent configs have drifted from what Nexus would
 /// generate.  Returns a JSON-serialised [`sync::DriftReport`] describing which
 /// agents and files are out of sync.  This is a read-only operation.
+///
+/// Autodetection is run first (same as sync) so the drift check compares
+/// against the same enriched project state that was used when configs were
+/// last written — preventing false positives on the dashboard.
 #[tauri::command]
 fn check_project_drift(name: &str) -> Result<String, String> {
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    // Run autodetect so the drift baseline matches what sync_project would use.
+    let project = sync::autodetect_project_dependencies(&project)?;
     let report = sync::check_project_drift(&project)?;
     serde_json::to_string(&report).map_err(|e| e.to_string())
 }

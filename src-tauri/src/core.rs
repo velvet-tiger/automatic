@@ -354,56 +354,6 @@ fn extract_frontmatter_name(content: &str) -> Option<String> {
     None
 }
 
-/// Resolve the default branch of a GitHub repo.
-///
-/// Tries `main` first via a cheap HEAD request to raw.githubusercontent.com,
-/// then `master`, then falls back to the GitHub REST API which returns the
-/// authoritative `default_branch` field. Returns `"main"` if all attempts fail.
-async fn resolve_default_branch(
-    client: &reqwest::Client,
-    source: &str,
-) -> String {
-    // Fast path: probe raw.githubusercontent.com for `main` then `master`.
-    for branch in &["main", "master"] {
-        let probe = format!(
-            "https://raw.githubusercontent.com/{}/{}/",
-            source, branch
-        );
-        if let Ok(resp) = client
-            .head(&probe)
-            .header("User-Agent", "nexus-desktop/1.0")
-            .send()
-            .await
-        {
-            // Any non-404 response (including 400/403) means the branch exists.
-            if resp.status() != reqwest::StatusCode::NOT_FOUND {
-                return branch.to_string();
-            }
-        }
-    }
-
-    // Slow path: ask the GitHub API.
-    let api_url = format!("https://api.github.com/repos/{}", source);
-    if let Ok(resp) = client
-        .get(&api_url)
-        .header("User-Agent", "nexus-desktop/1.0")
-        .send()
-        .await
-    {
-        if let Ok(text) = resp.text().await {
-            // Extract "default_branch":"<value>" from the JSON.
-            if let Some(pos) = text.find("\"default_branch\":\"") {
-                let after = &text[pos + 18..];
-                if let Some(end) = after.find('"') {
-                    return after[..end].to_string();
-                }
-            }
-        }
-    }
-
-    "main".to_string()
-}
-
 /// Fetch the SKILL.md content for a remote skill by constructing the GitHub
 /// raw content URL from the skill's `source` ("owner/repo") and `name`.
 ///
@@ -412,119 +362,173 @@ async fn resolve_default_branch(
 /// name (e.g. dir "react-best-practices" has frontmatter `name: vercel-react-best-practices`).
 ///
 /// Strategy:
-/// 1. Resolve the repo's default branch (main, master, or whatever the API says).
-/// 2. Try the obvious static paths (directory == name, or root SKILL.md).
-///    For each candidate, if the file is found, verify its frontmatter name
-///    matches. If it does, return it. If no frontmatter is present, return it
-///    anyway (older single-skill repos).
-/// 3. If nothing matched, use the GitHub Git Trees API with `recursive=1` to
-///    get a flat list of all paths in the repo, then find every `SKILL.md` whose
-///    parent directory name matches `name`. This handles repos with arbitrary
-///    nesting (e.g. `plugins/<plugin>/skills/<name>/SKILL.md` or
-///    `terraform/provider-development/skills/<name>/SKILL.md`).
+/// 1. Try obvious static paths against `main` then `master` via raw.githubusercontent.com
+///    (no API calls, covers the majority of repos).
+/// 2. If nothing matched, do a blobless shallow git clone
+///    (`git clone --depth 1 --filter=blob:none --no-checkout`) into a temp dir,
+///    run `git ls-tree -r --name-only HEAD` to get a flat file listing, find the
+///    matching SKILL.md path, then fetch that file via raw.githubusercontent.com.
+///    This handles arbitrary repo layouts (e.g. hashicorp/agent-skills, wshobson/agents)
+///    with no GitHub API calls and no rate-limit exposure. The blobless clone
+///    downloads only git metadata (~100-200 KB), not file contents.
 pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
-    // ── Step 1: resolve the default branch ───────────────────────────────────
-    let branch = resolve_default_branch(&client, source).await;
+    // ── Step 1: static candidates fired in parallel ───────────────────────────
+    // All six candidate URLs (3 layouts × 2 branch names) are fetched
+    // concurrently. The first one that returns a matching SKILL.md wins.
+    // raw.githubusercontent.com is unauthenticated and not rate-limited.
+    let skill_md_suffix = format!("/{}/SKILL.md", name);
+    let static_urls: Vec<String> = ["main", "master"]
+        .iter()
+        .flat_map(|branch| {
+            let base = format!(
+                "https://raw.githubusercontent.com/{}/{}",
+                source, branch
+            );
+            [
+                format!("{}/skills/{}/SKILL.md", base, name),
+                format!("{}/{}/SKILL.md", base, name),
+                format!("{}/SKILL.md", base),
+            ]
+        })
+        .collect();
+
+    let mut tasks = tokio::task::JoinSet::new();
+    for url in static_urls {
+        let client2 = client.clone();
+        let name2 = name.to_string();
+        tasks.spawn(async move {
+            let resp = client2
+                .get(&url)
+                .header("User-Agent", "nexus-desktop/1.0")
+                .send()
+                .await
+                .ok()?;
+            if !resp.status().is_success() {
+                return None;
+            }
+            let content = resp.text().await.ok()?;
+            match extract_frontmatter_name(&content) {
+                Some(ref n) if n == &name2 => Some(content),
+                None => Some(content),
+                _ => None,
+            }
+        });
+    }
+
+    while let Some(result) = tasks.join_next().await {
+        if let Ok(Some(content)) = result {
+            tasks.abort_all();
+            return Ok(content);
+        }
+    }
+
+    // ── Step 2: blobless shallow clone + local tree walk ─────────────────────
+    // Clone only the git metadata (no file blobs). This is ~100-200 KB and
+    // takes under a second. No GitHub API involved — no rate limit.
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "nexus-skill-{}-{}",
+        source.replace('/', "-"),
+        name
+    ));
+    // Clean up any leftover from a previous failed attempt.
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+
+    let clone_url = format!("https://github.com/{}.git", source);
+    let clone_result = std::process::Command::new("git")
+        .args([
+            "clone",
+            "--depth", "1",
+            "--filter=blob:none",
+            "--no-checkout",
+            "--quiet",
+            &clone_url,
+            tmp_dir.to_str().unwrap_or(""),
+        ])
+        .output();
+
+    let clone_ok = match &clone_result {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
+    };
+
+    if !clone_ok {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        return Err(format!(
+            "Could not fetch SKILL.md for '{}': git clone failed (is git installed?)",
+            name
+        ));
+    }
+
+    // Get the flat file list from the local clone.
+    let ls_result = std::process::Command::new("git")
+        .args(["-C", tmp_dir.to_str().unwrap_or(""), "ls-tree", "-r", "--name-only", "HEAD"])
+        .output();
+
+    // Get the actual branch name so we can build a raw.githubusercontent.com URL.
+    let branch_result = std::process::Command::new("git")
+        .args(["-C", tmp_dir.to_str().unwrap_or(""), "rev-parse", "--abbrev-ref", "HEAD"])
+        .output();
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+
+    let ls_output = match ls_result {
+        Ok(out) if out.status.success() => out.stdout,
+        _ => return Err(format!("Could not list files in cloned repo for '{}'", name)),
+    };
+
+    let branch = match branch_result {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        }
+        _ => "main".to_string(),
+    };
+
+    let file_list = String::from_utf8_lossy(&ls_output);
     let raw_base = format!("https://raw.githubusercontent.com/{}/{}", source, branch);
 
-    // ── Step 2: static candidates ────────────────────────────────────────────
-    let static_candidates = [
-        format!("{}/skills/{}/SKILL.md", raw_base, name),
-        format!("{}/{}/SKILL.md", raw_base, name),
-        format!("{}/SKILL.md", raw_base),
-    ];
+    // Find paths ending with `/<name>/SKILL.md` or exactly `SKILL.md`.
+    let mut candidate_paths: Vec<&str> = file_list
+        .lines()
+        .filter(|p| p.ends_with(skill_md_suffix.as_str()) || *p == "SKILL.md")
+        .collect();
 
-    for url in &static_candidates {
-        let resp = client
-            .get(url)
-            .header("User-Agent", "nexus-desktop/1.0")
-            .send()
-            .await
-            .map_err(|e| format!("Request failed: {}", e))?;
-
-        if resp.status().is_success() {
-            let content = resp
-                .text()
-                .await
-                .map_err(|e| format!("Failed to read response: {}", e))?;
-
-            // Accept if frontmatter name matches, or if there is no frontmatter
-            // (single-skill repos that predate the convention).
-            match extract_frontmatter_name(&content) {
-                Some(ref n) if n == name => return Ok(content),
-                None => return Ok(content),
-                _ => {} // frontmatter name doesn't match — keep searching
-            }
-        }
-    }
-
-    // ── Step 3: recursive tree search via GitHub Git Trees API ───────────────
-    // Fetches the full flat file list for the repo and finds every SKILL.md
-    // whose parent directory name matches `name`. This handles arbitrary repo
-    // layouts like:
-    //   plugins/<plugin>/skills/<name>/SKILL.md  (wshobson/agents)
-    //   terraform/provider-development/skills/<name>/SKILL.md  (hashicorp/agent-skills)
-    let tree_url = format!(
-        "https://api.github.com/repos/{}/git/trees/{}?recursive=1",
-        source, branch
-    );
-    let tree_resp = client
-        .get(&tree_url)
-        .header("User-Agent", "nexus-desktop/1.0")
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
-
-    if !tree_resp.status().is_success() {
-        return Err(format!("Could not fetch SKILL.md for '{}'", name));
-    }
-
-    let tree_text = tree_resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read tree listing: {}", e))?;
-
-    // Extract all `"path":"..."` values that end with `/<name>/SKILL.md`.
-    let skill_md_suffix = format!("/{}/SKILL.md", name);
-    let mut candidate_paths: Vec<String> = Vec::new();
-    let mut remaining = tree_text.as_str();
-    while let Some(pos) = remaining.find("\"path\":\"") {
-        remaining = &remaining[pos + 8..];
-        if let Some(end) = remaining.find('"') {
-            let path = &remaining[..end];
-            if path.ends_with(&skill_md_suffix) || path == "SKILL.md" {
-                candidate_paths.push(path.to_string());
-            }
-            remaining = &remaining[end + 1..];
-        }
-    }
+    // Prefer the path whose parent directory name equals `name` exactly.
+    candidate_paths.sort_by_key(|p| {
+        let parent = std::path::Path::new(p)
+            .parent()
+            .and_then(|d| d.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if parent == name { 0usize } else { 1usize }
+    });
 
     for path in candidate_paths {
         let url = format!("{}/{}", raw_base, path);
-        let resp = client
+        let resp = match client
             .get(&url)
             .header("User-Agent", "nexus-desktop/1.0")
             .send()
             .await
-            .map_err(|e| format!("Request failed: {}", e))?;
-
-        if resp.status().is_success() {
-            let content = resp
-                .text()
-                .await
-                .map_err(|e| format!("Failed to read response: {}", e))?;
-
-            match extract_frontmatter_name(&content) {
-                Some(ref n) if n == name => return Ok(content),
-                // No frontmatter on a directory-name-matched path — accept it
-                None => return Ok(content),
-                _ => {} // frontmatter name mismatch — keep searching
-            }
+        {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let content = match resp.text().await {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        match extract_frontmatter_name(&content) {
+            Some(ref n) if n == name => return Ok(content),
+            None => return Ok(content),
+            _ => {}
         }
     }
 

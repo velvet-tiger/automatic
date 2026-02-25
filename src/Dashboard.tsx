@@ -7,7 +7,8 @@ import {
   Bot, 
   RefreshCw,
   AlertCircle,
-  ArrowRight
+  ArrowRight,
+  CheckCircle2,
 } from "lucide-react";
 
 interface Project {
@@ -23,6 +24,15 @@ interface Project {
   updated_at: string;
 }
 
+interface DriftReport {
+  drifted: boolean;
+  agents: {
+    agent_id: string;
+    agent_label: string;
+    files: { path: string; reason: string }[];
+  }[];
+}
+
 interface DashboardProps {
   onNavigate: (tab: string) => void;
 }
@@ -31,6 +41,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Map of project name → drift report (undefined = not yet checked, null = not applicable)
+  const [driftMap, setDriftMap] = useState<Record<string, DriftReport | null>>({});
 
   useEffect(() => {
     loadData();
@@ -55,8 +67,27 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         })
       );
       
-      setProjects(projectDetails.filter(Boolean) as Project[]);
+      const loaded = projectDetails.filter(Boolean) as Project[];
+      setProjects(loaded);
       setError(null);
+
+      // Check drift for projects that have a directory and at least one agent configured
+      const driftResults: Record<string, DriftReport | null> = {};
+      await Promise.all(
+        loaded.map(async (p) => {
+          if (!p.directory || p.agents.length === 0) {
+            driftResults[p.name] = null; // not applicable
+            return;
+          }
+          try {
+            const raw: string = await invoke("check_project_drift", { name: p.name });
+            driftResults[p.name] = JSON.parse(raw) as DriftReport;
+          } catch {
+            driftResults[p.name] = null;
+          }
+        })
+      );
+      setDriftMap(driftResults);
     } catch (err: any) {
       setError(`Failed to load dashboard data: ${err}`);
     } finally {
@@ -68,6 +99,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     localStorage.setItem("nexus.projects.selected", name);
     onNavigate("projects");
   };
+
+  const driftedCount = Object.values(driftMap).filter((r) => r?.drifted).length;
 
   if (loading) {
     return (
@@ -94,6 +127,26 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           <div className="bg-red-500/10 text-red-400 p-4 rounded-md border border-red-500/20 flex items-start gap-3">
             <AlertCircle size={16} className="mt-0.5 shrink-0" />
             <div className="text-sm">{error}</div>
+          </div>
+        )}
+
+        {/* Drift alert banner — shown when at least one project has drifted */}
+        {driftedCount > 0 && (
+          <div className="bg-[#F59E0B]/10 border border-[#F59E0B]/30 rounded-lg px-5 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-2.5 text-[#F59E0B]">
+              <AlertCircle size={15} className="shrink-0" />
+              <span className="text-[13px] font-medium">
+                {driftedCount === 1
+                  ? "1 project has drifted — agent config files are out of sync."
+                  : `${driftedCount} projects have drifted — agent config files are out of sync.`}
+              </span>
+            </div>
+            <button
+              onClick={() => onNavigate("projects")}
+              className="text-[12px] font-medium text-[#F59E0B] hover:text-[#FBB60D] underline decoration-[#F59E0B]/40 hover:decoration-[#FBB60D] transition-colors shrink-0 ml-4"
+            >
+              Review in Projects
+            </button>
           </div>
         )}
 
@@ -157,42 +210,79 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-4">
-              {projects.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()).slice(0, 6).map(project => (
-                <div 
-                  key={project.name}
-                  onClick={() => handleProjectClick(project.name)}
-                  className="bg-[#1A1A1E] border border-[#33353A] hover:border-[#3B82F6]/50 rounded-lg p-5 cursor-pointer transition-all group"
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <FolderOpen size={16} className="text-[#3B82F6]" />
-                      <h3 className="font-medium text-[#E0E1E6] group-hover:text-[#3B82F6] transition-colors">{project.name}</h3>
+              {projects.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()).slice(0, 6).map(project => {
+                const drift = driftMap[project.name];
+                const isDrifted = drift?.drifted === true;
+                const isInSync = drift !== undefined && drift !== null && !drift.drifted;
+                const isConfigured = !!project.directory && project.agents.length > 0;
+
+                return (
+                  <div 
+                    key={project.name}
+                    onClick={() => handleProjectClick(project.name)}
+                    className={`bg-[#1A1A1E] border rounded-lg p-5 cursor-pointer transition-all group ${
+                      isDrifted
+                        ? "border-[#F59E0B]/40 hover:border-[#F59E0B]/70"
+                        : "border-[#33353A] hover:border-[#3B82F6]/50"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <FolderOpen size={16} className={isDrifted ? "text-[#F59E0B]" : "text-[#3B82F6]"} />
+                        <h3 className={`font-medium text-[#E0E1E6] transition-colors ${
+                          isDrifted ? "group-hover:text-[#F59E0B]" : "group-hover:text-[#3B82F6]"
+                        }`}>{project.name}</h3>
+                      </div>
+                      {isConfigured && (
+                        isDrifted ? (
+                          <span className="flex items-center gap-1 text-[10px] bg-[#F59E0B]/10 text-[#F59E0B] px-1.5 py-0.5 rounded uppercase tracking-wider font-semibold">
+                            <AlertCircle size={9} />
+                            Drifted
+                          </span>
+                        ) : isInSync ? (
+                          <span className="flex items-center gap-1 text-[10px] bg-[#4ADE80]/10 text-[#4ADE80] px-1.5 py-0.5 rounded uppercase tracking-wider font-semibold">
+                            <CheckCircle2 size={9} />
+                            In Sync
+                          </span>
+                        ) : (
+                          <span className="text-[10px] bg-[#4ADE80]/10 text-[#4ADE80] px-1.5 py-0.5 rounded uppercase tracking-wider font-semibold">Configured</span>
+                        )
+                      )}
                     </div>
-                    {project.directory && project.agents.length > 0 && (
-                      <span className="text-[10px] bg-[#4ADE80]/10 text-[#4ADE80] px-1.5 py-0.5 rounded uppercase tracking-wider font-semibold">Configured</span>
+                    
+                    {project.description && (
+                      <p className="text-sm text-[#8A8C93] mb-4 line-clamp-2">{project.description}</p>
                     )}
+
+                    {/* Drift detail — which agents are affected */}
+                    {isDrifted && drift && (
+                      <div className="mb-3 text-[11px] text-[#F59E0B]/70 space-y-0.5">
+                        {drift.agents.map((a) => (
+                          <div key={a.agent_id}>
+                            <span className="font-medium text-[#F59E0B]/90">{a.agent_label}:</span>{" "}
+                            {a.files.map((f) => f.reason).join(", ")}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    
+                    <div className="flex items-center gap-4 mt-auto pt-2 border-t border-[#33353A]/50">
+                      <div className="flex items-center gap-1.5 text-xs text-[#8A8C93]">
+                        <Bot size={12} />
+                        <span>{project.agents.length}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs text-[#8A8C93]">
+                        <Code size={12} />
+                        <span>{project.skills.length + project.local_skills.length}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs text-[#8A8C93]">
+                        <Server size={12} />
+                        <span>{project.mcp_servers.length}</span>
+                      </div>
+                    </div>
                   </div>
-                  
-                  {project.description && (
-                    <p className="text-sm text-[#8A8C93] mb-4 line-clamp-2">{project.description}</p>
-                  )}
-                  
-                  <div className="flex items-center gap-4 mt-auto pt-2 border-t border-[#33353A]/50">
-                    <div className="flex items-center gap-1.5 text-xs text-[#8A8C93]">
-                      <Bot size={12} />
-                      <span>{project.agents.length}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs text-[#8A8C93]">
-                      <Code size={12} />
-                      <span>{project.skills.length + project.local_skills.length}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs text-[#8A8C93]">
-                      <Server size={12} />
-                      <span>{project.mcp_servers.length}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
