@@ -409,10 +409,69 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
                             written_files.push(p);
                         }
                     }
+                    // Re-inject rules for this project file if configured.
+                    // In unified mode, rules are stored under the "_unified" key.
+                    let rules = if project.instruction_mode == "unified" {
+                        project.file_rules.get("_unified")
+                    } else {
+                        project.file_rules.get(pf)
+                    };
+                    if let Some(rules) = rules {
+                        if !rules.is_empty() {
+                            if let Ok(true) = crate::core::inject_rules_into_project_file(
+                                &project.directory,
+                                pf,
+                                rules,
+                            ) {
+                                let rule_path = dir.join(pf).display().to_string();
+                                if !written_files.contains(&rule_path) {
+                                    written_files.push(rule_path);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             None => {
                 eprintln!("Unknown agent '{}', skipping", agent_id);
+            }
+        }
+    }
+
+    // ── Step 3: Unified mode — replicate content across all agent files ───
+    if project.instruction_mode == "unified" && cleaned_project_files.len() > 1 {
+        // Find the first existing file to use as the source of truth
+        let source_file = cleaned_project_files
+            .iter()
+            .find(|f| dir.join(f).exists())
+            .cloned();
+
+        if let Some(source) = source_file {
+            let raw = fs::read_to_string(dir.join(&source)).unwrap_or_default();
+            let user_content =
+                crate::core::strip_rules_section_pub(&crate::core::strip_managed_section_pub(&raw));
+
+            let rules = project
+                .file_rules
+                .get("_unified")
+                .cloned()
+                .unwrap_or_default();
+
+            for target in &cleaned_project_files {
+                if *target == source {
+                    continue;
+                }
+                if let Ok(()) = crate::core::save_project_file_with_rules(
+                    &project.directory,
+                    target,
+                    &user_content,
+                    &rules,
+                ) {
+                    let p = dir.join(target).display().to_string();
+                    if !written_files.contains(&p) {
+                        written_files.push(p);
+                    }
+                }
             }
         }
     }

@@ -78,6 +78,20 @@ pub struct Project {
     /// frontend from the useProfile hook.  Used for future team/cloud sync.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    /// Rules attached to each project instruction file.  Maps filename
+    /// (e.g. "CLAUDE.md") to an ordered list of rule names whose content is
+    /// appended below the user-authored content when the file is written.
+    /// In unified mode the key `"_unified"` is used for all files.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub file_rules: std::collections::HashMap<String, Vec<String>>,
+    /// `"unified"` — one set of instructions written to all agent files.
+    /// `"per-agent"` (default) — each agent file is edited independently.
+    #[serde(default = "default_instruction_mode")]
+    pub instruction_mode: String,
+}
+
+fn default_instruction_mode() -> String {
+    "per-agent".to_string()
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────
@@ -968,11 +982,326 @@ pub fn install_default_templates() -> Result<(), String> {
     Ok(())
 }
 
+// ── Rules ────────────────────────────────────────────────────────────────────
+
+/// A rule stored as JSON in `~/.automatic/rules/{machine_name}.json`.
+/// The machine name (filename stem) is an immutable lowercase slug.
+/// The display `name` can be freely renamed.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Rule {
+    /// Human-readable display name (can be renamed).
+    pub name: String,
+    /// Markdown content of the rule.
+    pub content: String,
+}
+
+/// Summary returned by `list_rules` — machine name + display name.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RuleEntry {
+    pub id: String,
+    pub name: String,
+}
+
+/// Validate a rule machine name: lowercase alphanumeric + hyphens only,
+/// must start with a letter, no consecutive hyphens, not empty.
+pub fn is_valid_machine_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 128 {
+        return false;
+    }
+    // Must start with a lowercase letter
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() => {}
+        _ => return false,
+    }
+    // Remaining: lowercase letters, digits, hyphens (no consecutive hyphens)
+    let mut prev_hyphen = false;
+    for c in chars {
+        if c == '-' {
+            if prev_hyphen {
+                return false;
+            }
+            prev_hyphen = true;
+        } else if c.is_ascii_lowercase() || c.is_ascii_digit() {
+            prev_hyphen = false;
+        } else {
+            return false;
+        }
+    }
+    // Must not end with a hyphen
+    !name.ends_with('-')
+}
+
+pub fn get_rules_dir() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    Ok(home.join(".automatic/rules"))
+}
+
+pub fn list_rules() -> Result<Vec<RuleEntry>, String> {
+    let dir = get_rules_dir()?;
+
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut rules = Vec::new();
+    let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
+
+    for entry in entries {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if is_valid_machine_name(stem) {
+                        if let Ok(raw) = fs::read_to_string(&path) {
+                            if let Ok(rule) = serde_json::from_str::<Rule>(&raw) {
+                                rules.push(RuleEntry {
+                                    id: stem.to_string(),
+                                    name: rule.name,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(rules)
+}
+
+/// Read the full rule (display name + content) by machine name.
+pub fn read_rule(machine_name: &str) -> Result<String, String> {
+    if !is_valid_machine_name(machine_name) {
+        return Err("Invalid rule machine name".into());
+    }
+    let dir = get_rules_dir()?;
+    let path = dir.join(format!("{}.json", machine_name));
+
+    if path.exists() {
+        fs::read_to_string(path).map_err(|e| e.to_string())
+    } else {
+        Err(format!("Rule '{}' not found", machine_name))
+    }
+}
+
+/// Read only the content of a rule (for injection into project files).
+pub fn read_rule_content(machine_name: &str) -> Result<String, String> {
+    let raw = read_rule(machine_name)?;
+    let rule: Rule =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid rule data: {}", e))?;
+    Ok(rule.content)
+}
+
+pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), String> {
+    if !is_valid_machine_name(machine_name) {
+        return Err("Invalid rule machine name. Use lowercase letters, digits, and hyphens only.".into());
+    }
+    if name.trim().is_empty() {
+        return Err("Rule display name cannot be empty".into());
+    }
+
+    let dir = get_rules_dir()?;
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+
+    let rule = Rule {
+        name: name.to_string(),
+        content: content.to_string(),
+    };
+    let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}.json", machine_name));
+    fs::write(path, pretty).map_err(|e| e.to_string())
+}
+
+pub fn delete_rule(machine_name: &str) -> Result<(), String> {
+    if !is_valid_machine_name(machine_name) {
+        return Err("Invalid rule machine name".into());
+    }
+    let dir = get_rules_dir()?;
+    let path = dir.join(format!("{}.json", machine_name));
+
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// Built-in rules shipped with the app.  Each entry is (machine_name, display_name, content).
+/// Written to `~/.automatic/rules/{machine_name}.json` on first run (or when missing),
+/// but never overwrite existing files — user edits are preserved.
+const DEFAULT_RULES: &[(&str, &str, &str)] = &[
+    (
+        "automatic-general",
+        "General",
+        include_str!("../rules/automatic/general.md"),
+    ),
+    (
+        "automatic-code-style",
+        "Code Style",
+        include_str!("../rules/automatic/code-style.md"),
+    ),
+    (
+        "automatic-checklist",
+        "Checklist",
+        include_str!("../rules/automatic/checklist.md"),
+    ),
+    (
+        "automatic-service",
+        "Automatic MCP Service",
+        include_str!("../rules/automatic/automatic-service.md"),
+    ),
+];
+
+/// Write any missing default rules to `~/.automatic/rules/`.
+/// Existing files are left untouched, so user edits are always preserved.
+pub fn install_default_rules() -> Result<(), String> {
+    let dir = get_rules_dir()?;
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+
+    for (machine_name, display_name, content) in DEFAULT_RULES {
+        let path = dir.join(format!("{}.json", machine_name));
+        if !path.exists() {
+            let rule = Rule {
+                name: display_name.to_string(),
+                content: content.to_string(),
+            };
+            let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
+            fs::write(&path, pretty).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+// ── Rules Injection ─────────────────────────────────────────────────────────
+
+const RULES_START_MARKER: &str = "<!-- automatic:rules:start -->";
+const RULES_END_MARKER: &str = "<!-- automatic:rules:end -->";
+
+/// Public wrapper for `strip_rules_section` (used by sync).
+pub fn strip_rules_section_pub(content: &str) -> String {
+    strip_rules_section(content)
+}
+
+/// Strip the `<!-- automatic:rules:start -->...<!-- automatic:rules:end -->` section.
+fn strip_rules_section(content: &str) -> String {
+    if let (Some(start), Some(end)) = (content.find(RULES_START_MARKER), content.find(RULES_END_MARKER)) {
+        let before = &content[..start];
+        let after = &content[end + RULES_END_MARKER.len()..];
+        let result = format!("{}{}", before.trim_end(), after.trim_start());
+        if result.trim().is_empty() {
+            String::new()
+        } else {
+            result
+        }
+    } else {
+        content.to_string()
+    }
+}
+
+/// Build the rules section content from a list of rule machine names.
+pub fn build_rules_section(rule_names: &[String]) -> Result<String, String> {
+    if rule_names.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut parts = Vec::new();
+    for machine_name in rule_names {
+        match read_rule_content(machine_name) {
+            Ok(content) if !content.trim().is_empty() => {
+                parts.push(content);
+            }
+            _ => {
+                // Skip missing or empty rules silently
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut section = String::new();
+    section.push_str(RULES_START_MARKER);
+    section.push('\n');
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            section.push('\n');
+        }
+        section.push_str(part.trim());
+        section.push('\n');
+    }
+    section.push_str(RULES_END_MARKER);
+
+    Ok(section)
+}
+
+/// Write a project file with rules appended.  The user content is written
+/// first, then any rules configured for this file are appended inside markers.
+pub fn save_project_file_with_rules(
+    directory: &str,
+    filename: &str,
+    user_content: &str,
+    rule_names: &[String],
+) -> Result<(), String> {
+    let rules_section = build_rules_section(rule_names)?;
+
+    let full_content = if rules_section.is_empty() {
+        user_content.to_string()
+    } else {
+        format!("{}\n\n{}\n", user_content.trim_end(), rules_section)
+    };
+
+    save_project_file(directory, filename, &full_content)
+}
+
+/// Re-inject rules into an existing project file.  Reads the file, strips
+/// any existing rules section, rebuilds it from the provided rule names,
+/// and writes back.  Used during sync to keep rules current.
+pub fn inject_rules_into_project_file(
+    directory: &str,
+    filename: &str,
+    rule_names: &[String],
+) -> Result<bool, String> {
+    if directory.is_empty() {
+        return Ok(false);
+    }
+
+    let path = PathBuf::from(directory).join(filename);
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let user_content = strip_rules_section(&strip_managed_section(&raw));
+
+    let rules_section = build_rules_section(rule_names)?;
+
+    let full_content = if rules_section.is_empty() {
+        user_content.clone()
+    } else {
+        format!("{}\n\n{}\n", user_content.trim_end(), rules_section)
+    };
+
+    // Only write if content actually changed
+    if full_content != raw {
+        fs::write(&path, full_content).map_err(|e| e.to_string())?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 // ── Project Files ────────────────────────────────────────────────────────────
 
 /// Read a project file from the project's directory, stripping any
-/// Nexus-managed sections (skills markers).  Returns the user-authored
-/// content only.
+/// Nexus-managed sections (skills markers) and rules sections.  Returns
+/// the user-authored content only.
 pub fn read_project_file(directory: &str, filename: &str) -> Result<String, String> {
     if directory.is_empty() {
         return Err("Project has no directory configured".into());
@@ -984,7 +1313,7 @@ pub fn read_project_file(directory: &str, filename: &str) -> Result<String, Stri
     }
 
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    Ok(strip_managed_section(&content))
+    Ok(strip_rules_section(&strip_managed_section(&content)))
 }
 
 /// Write a project file to the project's directory.  Writes exactly what the
@@ -1002,6 +1331,11 @@ pub fn save_project_file(directory: &str, filename: &str, content: &str) -> Resu
 
     let path = dir.join(filename);
     fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+/// Public wrapper for `strip_managed_section` (used by sync).
+pub fn strip_managed_section_pub(content: &str) -> String {
+    strip_managed_section(content)
 }
 
 /// Strip the `<!-- automatic:skills:start -->...<!-- automatic:skills:end -->` section.

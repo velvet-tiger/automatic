@@ -102,4 +102,15 @@ export const ICONS = {
     iconColor: "text-[#8B5CF6]",
     text: "text-[#8B5CF6]",
   },
+  /**
+   * Rules (reusable content blocks for project instructions)
+   * Colour: cyan  #22D3EE  — distinct from templates and skills
+   * Icon:   ScrollText
+   */
+  rule: {
+    hex: "#22D3EE",
+    iconBox: "w-8 h-8 rounded-md bg-[#22D3EE]/12 flex items-center justify-center flex-shrink-0",
+    iconColor: "text-[#22D3EE]",
+    text: "text-[#22D3EE]",
+  },
 } as const;

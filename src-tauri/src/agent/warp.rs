@@ -28,7 +28,7 @@ impl Agent for Warp {
     }
 
     fn project_file_name(&self) -> &'static str {
-        "AGENTS.md"
+        "WARP.md"
     }
 
     // ── Detection ───────────────────────────────────────────────────────

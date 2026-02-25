@@ -26,6 +26,9 @@ import {
   CheckCircle2,
   AlertCircle,
   ArrowRight,
+  ScrollText,
+  Files,
+  SplitSquareHorizontal,
 } from "lucide-react";
 
 interface Project {
@@ -40,6 +43,8 @@ interface Project {
   created_at: string;
   updated_at: string;
   created_by?: string;
+  file_rules?: Record<string, string[]>;
+  instruction_mode?: string;
 }
 
 interface AgentInfo {
@@ -70,6 +75,7 @@ interface ProjectFileInfo {
   filename: string;
   agents: string[];
   exists: boolean;
+  target_files?: string[];
 }
 
 interface ProjectTemplate {
@@ -97,6 +103,8 @@ function emptyProject(name: string): Project {
     agents: [],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    file_rules: {},
+    instruction_mode: "per-agent",
   };
 }
 
@@ -187,6 +195,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [projectFileSaving, setProjectFileSaving] = useState(false);
   const [availableTemplates, setAvailableTemplates] = useState<string[]>([]);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+  const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   // Tab navigation within a project
   type ProjectTab = "summary" | "details" | "agents" | "skills" | "mcp_servers" | "project_file" | "memory";
@@ -202,6 +211,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     loadAvailableSkills();
     loadAvailableMcpServers();
     loadAvailableTemplates();
+    loadAvailableRules();
     loadAvailableProjectTemplates();
   }, []);
 
@@ -382,6 +392,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
+  const loadAvailableRules = async () => {
+    try {
+      const result: { id: string; name: string }[] = await invoke("get_rules");
+      setAvailableRules(result.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch {
+      // Rules may not exist yet
+    }
+  };
+
   const loadAvailableProjectTemplates = async () => {
     try {
       const names: string[] = await invoke("get_project_templates");
@@ -517,6 +536,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         agents: parsed.agents || [],
         created_at: parsed.created_at || new Date().toISOString(),
         updated_at: parsed.updated_at || new Date().toISOString(),
+        file_rules: parsed.file_rules || {},
+        instruction_mode: parsed.instruction_mode || "per-agent",
       };
 
       // Mark dirty if autodetection discovered agents/skills/MCP servers that
@@ -563,7 +584,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   };
 
   // Reload project state from disk and refresh all dependent UI
-  const reloadProject = async (name: string) => {
+   const reloadProject = async (name: string) => {
     try {
       const raw: string = await invoke("read_project", { name });
       const parsed = JSON.parse(raw);
@@ -578,6 +599,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         agents: parsed.agents || [],
         created_at: parsed.created_at || new Date().toISOString(),
         updated_at: parsed.updated_at || new Date().toISOString(),
+        file_rules: parsed.file_rules || {},
+        instruction_mode: parsed.instruction_mode || "per-agent",
       };
       setProject(data);
       setDirty(false);
@@ -1182,9 +1205,60 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
             {projectTab === "project_file" && (
               <>
                 {project.directory && project.agents.length > 0 ? (
-                  <div className="flex-1 flex min-h-0">
-                    {/* File sidebar */}
-                    {projectFiles.length > 0 && (
+                  <div className="flex-1 flex flex-col min-h-0">
+                    {/* Mode toggle bar */}
+                    <div className="flex items-center gap-3 px-4 py-2.5 border-b border-[#33353A] bg-[#1A1A1E]/30 flex-shrink-0">
+                      <span className="text-[11px] text-[#8A8C93]">Mode:</span>
+                      <div className="flex rounded overflow-hidden border border-[#33353A]">
+                        <button
+                          onClick={async () => {
+                            if (project.instruction_mode !== "unified" && selectedName) {
+                              const updated = { ...project, instruction_mode: "unified", updated_at: new Date().toISOString() };
+                              setProject(updated);
+                              setDirty(false);
+                              await invoke("save_project", { name: selectedName, data: JSON.stringify(updated, null, 2) });
+                              await loadProjectFiles(selectedName);
+                            }
+                          }}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                            (project.instruction_mode || "per-agent") === "unified"
+                              ? "bg-[#5E6AD2] text-white"
+                              : "bg-[#2D2E36] text-[#8A8C93] hover:text-[#E0E1E6]"
+                          }`}
+                        >
+                          <Files size={11} />
+                          Unified
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (project.instruction_mode !== "per-agent" && selectedName) {
+                              const updated = { ...project, instruction_mode: "per-agent", updated_at: new Date().toISOString() };
+                              setProject(updated);
+                              setDirty(false);
+                              await invoke("save_project", { name: selectedName, data: JSON.stringify(updated, null, 2) });
+                              await loadProjectFiles(selectedName);
+                            }
+                          }}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                            (project.instruction_mode || "per-agent") === "per-agent"
+                              ? "bg-[#5E6AD2] text-white"
+                              : "bg-[#2D2E36] text-[#8A8C93] hover:text-[#E0E1E6]"
+                          }`}
+                        >
+                          <SplitSquareHorizontal size={11} />
+                          Per Agent
+                        </button>
+                      </div>
+                      {(project.instruction_mode || "per-agent") === "unified" && projectFiles.length > 0 && projectFiles[0].target_files && (
+                        <span className="text-[10px] text-[#8A8C93]">
+                          Writes to: {projectFiles[0].target_files.join(", ")}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex-1 flex min-h-0">
+                    {/* File sidebar — hidden in unified mode */}
+                    {(project.instruction_mode || "per-agent") === "per-agent" && projectFiles.length > 0 && (
                       <div className="w-52 flex-shrink-0 border-r border-[#33353A] bg-[#1A1A1E]/50 flex flex-col">
                         <div className="h-9 px-3 border-b border-[#33353A] flex items-center justify-between">
                           <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Files</span>
@@ -1302,12 +1376,29 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       }
 
                       // File exists or we're editing a new file
+                      const currentFileRules = (project.file_rules || {})[activeProjectFile] || [];
+
+                      const handleToggleRule = (ruleName: string) => {
+                        if (!project || !activeProjectFile) return;
+                        const existing = (project.file_rules || {})[activeProjectFile] || [];
+                        const updated = existing.includes(ruleName)
+                          ? existing.filter(r => r !== ruleName)
+                          : [...existing, ruleName];
+                        const newFileRules = { ...(project.file_rules || {}), [activeProjectFile]: updated };
+                        if (updated.length === 0) delete newFileRules[activeProjectFile];
+                        setProject({ ...project, file_rules: newFileRules });
+                        setDirty(true);
+                      };
+
                       return (
                         <div className="flex-1 flex flex-col min-w-0">
                           {/* Editor toolbar */}
                           <div className="flex items-center justify-between px-4 h-9 bg-[#1A1A1E] border-b border-[#33353A] flex-shrink-0">
                             <span className="text-[11px] text-[#8A8C93]">
-                              {activeProjectFile}{!fileExists ? " (new)" : ""}{projectFileEditing ? " — Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}
+                              {activeProjectFile === "_unified"
+                                ? <>{projectFileEditing ? "Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
+                                : <>{activeProjectFile}{!fileExists ? " (new)" : ""}{projectFileEditing ? " — Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
+                              }
                             </span>
                             <div className="flex items-center gap-1.5">
                               {!projectFileEditing ? (
@@ -1347,7 +1438,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             </div>
                           </div>
 
-                          {/* Content area — fills all remaining height */}
+                          {/* Content area — fills remaining height above rules panel */}
                           {projectFileEditing ? (
                             <textarea
                               value={projectFileContent}
@@ -1355,18 +1446,55 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 setProjectFileContent(e.target.value);
                                 setProjectFileDirty(true);
                               }}
-                              className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-[#222327] text-[#E0E1E6] leading-relaxed custom-scrollbar placeholder-[#8A8C93]/30"
+                              className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-[#222327] text-[#E0E1E6] leading-relaxed custom-scrollbar placeholder-[#8A8C93]/30 min-h-0"
                               placeholder="Write your project instructions here..."
                               spellCheck={false}
                             />
                           ) : (
-                            <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#222327]">
+                            <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#222327] min-h-0">
                               {projectFileContent
                                 ? <MarkdownPreview content={projectFileContent} />
                                 : <span className="block p-4 text-[13px] text-[#8A8C93] italic">Empty file.</span>
                               }
                             </div>
                           )}
+
+                          {/* Rules panel */}
+                          <div className="border-t border-[#33353A] bg-[#1A1A1E] flex-shrink-0">
+                            <div className="px-4 py-2 flex items-center gap-2">
+                              <ScrollText size={12} className="text-[#22D3EE]" />
+                              <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Rules</span>
+                              {currentFileRules.length > 0 && (
+                                <span className="text-[10px] text-[#22D3EE] bg-[#22D3EE]/10 px-1.5 py-0.5 rounded">{currentFileRules.length}</span>
+                              )}
+                            </div>
+                            {availableRules.length > 0 ? (
+                              <div className="px-4 pb-3 flex flex-wrap gap-1.5">
+                                {availableRules.map(rule => {
+                                  const isSelected = currentFileRules.includes(rule.id);
+                                  return (
+                                    <button
+                                      key={rule.id}
+                                      onClick={() => handleToggleRule(rule.id)}
+                                      className={`px-2.5 py-1 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
+                                        isSelected
+                                          ? "bg-[#22D3EE]/15 border-[#22D3EE]/40 text-[#22D3EE]"
+                                          : "bg-[#2D2E36] border-[#33353A] text-[#8A8C93] hover:text-[#E0E1E6] hover:border-[#44474F]"
+                                      }`}
+                                    >
+                                      <ScrollText size={10} />
+                                      {rule.name}
+                                      {isSelected && <Check size={10} />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="px-4 pb-3">
+                                <span className="text-[11px] text-[#8A8C93]/60 italic">No rules created yet. Create rules in the Rules section to attach them here.</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     })() : (
@@ -1374,6 +1502,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         <p className="text-[13px] text-[#8A8C93]/60 italic">No project files configured. Add agent tools on the Agents tab first.</p>
                       </div>
                     )}
+                  </div>
                   </div>
                 ) : (
                   <div className="flex-1 flex items-center justify-center">

@@ -8,9 +8,10 @@ import Projects from "./Projects";
 import ProjectTemplates from "./ProjectTemplates";
 import McpServers from "./McpServers";
 import Templates from "./Templates";
+import Rules from "./Rules";
 import Agents from "./Agents";
 import Settings from "./Settings";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon } from "lucide-react";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText } from "lucide-react";
 import "./App.css";
 
 function App() {
@@ -118,6 +119,7 @@ function App() {
               <NavItem id="skills" icon={Code} label="Skills & Prompts" />
               <NavItem id="project-templates" icon={Layers} label="Proj Templates" />
               <NavItem id="templates" icon={LayoutTemplate} label="File Templates" />
+              <NavItem id="rules" icon={ScrollText} label="Rules" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
               <NavItem id="settings" icon={SettingsIcon} label="Settings" />
             </ul>
@@ -204,6 +206,11 @@ function App() {
           {activeTab === "templates" && (
             <div className="flex-1 h-full">
               <Templates />
+            </div>
+          )}
+          {activeTab === "rules" && (
+            <div className="flex-1 h-full">
+              <Rules />
             </div>
           )}
           {activeTab === "mcp" && (

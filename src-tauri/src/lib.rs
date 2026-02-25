@@ -186,6 +186,33 @@ fn delete_template(name: &str) -> Result<(), String> {
     core::delete_template(name)
 }
 
+// ── Rules ────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn get_rules() -> Result<Vec<core::RuleEntry>, String> {
+    core::list_rules()
+}
+
+#[tauri::command]
+fn read_rule(machine_name: &str) -> Result<String, String> {
+    core::read_rule(machine_name)
+}
+
+#[tauri::command]
+fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), String> {
+    core::save_rule(machine_name, name, content)?;
+    // Re-sync all projects that reference this rule in their file_rules
+    sync_projects_referencing_rule(machine_name);
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_rule(machine_name: &str) -> Result<(), String> {
+    core::delete_rule(machine_name)?;
+    prune_rule_from_projects(machine_name);
+    Ok(())
+}
+
 // ── Project Files ────────────────────────────────────────────────────────────
 
 /// Returns JSON array of unique project file info objects for the project's agents.
@@ -198,6 +225,7 @@ fn get_project_file_info(name: &str) -> Result<String, String> {
 
     let project_dir = std::path::Path::new(&project.directory);
 
+    // Collect all unique agent filenames and their labels
     let mut files: Vec<serde_json::Value> = Vec::new();
     let mut seen_filenames: Vec<String> = Vec::new();
 
@@ -226,7 +254,37 @@ fn get_project_file_info(name: &str) -> Result<String, String> {
         }
     }
 
-    serde_json::to_string(&files).map_err(|e| e.to_string())
+    if project.instruction_mode == "unified" {
+        // In unified mode return a single virtual entry that targets all agent files
+        let empty_vec = vec![];
+        let all_agents: Vec<String> = files
+            .iter()
+            .flat_map(|f| {
+                f["agents"]
+                    .as_array()
+                    .unwrap_or(&empty_vec)
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            })
+            .collect();
+        let all_filenames: Vec<String> = seen_filenames.clone();
+        let any_exists = files.iter().any(|f| f["exists"].as_bool().unwrap_or(false));
+
+        let unified = serde_json::json!({
+            "filename": "_unified",
+            "agents": all_agents,
+            "exists": any_exists,
+            "target_files": all_filenames
+        });
+        serde_json::to_string(&vec![unified]).map_err(|e| e.to_string())
+    } else {
+        files.sort_by(|a, b| {
+            let fa = a["filename"].as_str().unwrap_or("");
+            let fb = b["filename"].as_str().unwrap_or("");
+            fa.cmp(fb)
+        });
+        serde_json::to_string(&files).map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]
@@ -234,7 +292,37 @@ fn read_project_file(name: &str, filename: &str) -> Result<String, String> {
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    core::read_project_file(&project.directory, filename)
+
+    if filename == "_unified" {
+        // Read from the first existing agent file
+        let project_dir = std::path::Path::new(&project.directory);
+        for agent_id in &project.agents {
+            if let Some(a) = agent::from_id(agent_id) {
+                let f = a.project_file_name();
+                if project_dir.join(f).exists() {
+                    return core::read_project_file(&project.directory, f);
+                }
+            }
+        }
+        // No file exists yet — return empty
+        Ok(String::new())
+    } else {
+        core::read_project_file(&project.directory, filename)
+    }
+}
+
+/// Collect the unique project filenames for all agents in a project.
+fn collect_agent_filenames(project: &core::Project) -> Vec<String> {
+    let mut filenames = Vec::new();
+    for agent_id in &project.agents {
+        if let Some(a) = agent::from_id(agent_id) {
+            let f = a.project_file_name().to_string();
+            if !filenames.contains(&f) {
+                filenames.push(f);
+            }
+        }
+    }
+    filenames
 }
 
 #[tauri::command]
@@ -242,7 +330,26 @@ fn save_project_file(name: &str, filename: &str, content: &str) -> Result<(), St
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    core::save_project_file(&project.directory, filename, content)
+
+    if filename == "_unified" || project.instruction_mode == "unified" {
+        // Write the same content (with rules) to every agent project file
+        let rules = project
+            .file_rules
+            .get("_unified")
+            .cloned()
+            .unwrap_or_default();
+        for f in collect_agent_filenames(&project) {
+            core::save_project_file_with_rules(&project.directory, &f, content, &rules)?;
+        }
+        Ok(())
+    } else {
+        let rules = project
+            .file_rules
+            .get(filename)
+            .cloned()
+            .unwrap_or_default();
+        core::save_project_file_with_rules(&project.directory, filename, content, &rules)
+    }
 }
 
 // ── MCP Servers ──────────────────────────────────────────────────────────────
@@ -480,6 +587,66 @@ fn prune_mcp_server_from_projects(server_name: &str) {
     });
 }
 
+fn sync_projects_referencing_rule(rule_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        let references_rule = project
+            .file_rules
+            .values()
+            .any(|rules| rules.iter().any(|r| r == rule_name));
+        if references_rule {
+            // Re-inject rules into any project files that use this rule
+            for (filename, rules) in &project.file_rules {
+                if rules.iter().any(|r| r == rule_name) {
+                    let _ = core::inject_rules_into_project_file(
+                        &project.directory,
+                        filename,
+                        rules,
+                    );
+                }
+            }
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
+fn prune_rule_from_projects(rule_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        let mut changed = false;
+        for rules in project.file_rules.values_mut() {
+            let before = rules.len();
+            rules.retain(|r| r != rule_name);
+            if rules.len() != before {
+                changed = true;
+            }
+        }
+        // Remove empty entries
+        project.file_rules.retain(|_, rules| !rules.is_empty());
+
+        if changed {
+            project.updated_at = chrono::Utc::now().to_rfc3339();
+            match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
+                Ok(data) => {
+                    if let Err(e) = core::save_project(project_name, &data) {
+                        eprintln!("Failed to update project '{}': {}", project_name, e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to serialize project '{}': {}", project_name, e);
+                }
+            }
+            // Re-inject rules for affected files
+            for (filename, rules) in &project.file_rules {
+                let _ = core::inject_rules_into_project_file(
+                    &project.directory,
+                    filename,
+                    rules,
+                );
+            }
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
 // ── Local Skills ─────────────────────────────────────────────────────────
 
 /// Import a local skill into the global registry and promote it to a normal
@@ -605,6 +772,9 @@ pub fn run() {
                 if let Err(e) = core::install_default_templates() {
                     eprintln!("[automatic] template install error: {}", e);
                 }
+                if let Err(e) = core::install_default_rules() {
+                    eprintln!("[automatic] rule install error: {}", e);
+                }
                 match core::install_plugin_marketplace() {
                     Ok(msg) => eprintln!("[automatic] plugin startup: {}", msg),
                     Err(e) => eprintln!("[automatic] plugin startup error: {}", e),
@@ -631,6 +801,10 @@ pub fn run() {
             read_template,
             save_template,
             delete_template,
+            get_rules,
+            read_rule,
+            save_rule,
+            delete_rule,
             get_project_templates,
             read_project_template,
             save_project_template,
