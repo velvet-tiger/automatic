@@ -298,7 +298,13 @@ pub fn sync_project(project: &Project) -> Result<Vec<String>, String> {
         return Err(format!("Directory '{}' does not exist", project.directory));
     }
 
-    let updated_project = autodetect_project_dependencies(project)?;
+    let (updated_project, discovered_servers) = autodetect_inner(project)?;
+
+    // Persist newly discovered MCP server configs into the global registry.
+    // This only happens during an explicit sync, not during a read-only load.
+    for (name, config_str) in discovered_servers {
+        let _ = crate::core::save_mcp_server_config(&name, &config_str);
+    }
 
     sync_project_without_autodetect(&updated_project)
 }
@@ -394,23 +400,35 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
 
 /// Discover dependencies already present in a project's directory and persist
 /// any new findings into the project + global registries.
+/// Pure read-only autodetection. Scans the project directory and returns an
+/// enriched [`Project`] with any newly discovered agents, skills, and MCP
+/// server names. Does not write anything to disk — callers that need to
+/// persist discoveries (e.g. `sync_project`) must do so themselves.
 pub fn autodetect_project_dependencies(project: &Project) -> Result<Project, String> {
+    let (updated, _) = autodetect_inner(project)?;
+    Ok(updated)
+}
+
+/// Inner autodetection that returns both the enriched project and the
+/// discovered MCP server configs (name → pretty-printed JSON string) so that
+/// `sync_project` can persist them without a second filesystem scan.
+fn autodetect_inner(project: &Project) -> Result<(Project, Vec<(String, String)>), String> {
     if project.directory.is_empty() {
-        return Ok(project.clone());
+        return Ok((project.clone(), vec![]));
     }
 
     let dir = PathBuf::from(&project.directory);
     if !dir.exists() {
-        return Ok(project.clone());
+        return Ok((project.clone(), vec![]));
     }
 
     let mut updated_project = project.clone();
-    let mut modified = false;
+    let mut discovered_servers: Vec<(String, String)> = Vec::new();
 
     // Detect which agents are present by asking each agent to check
     for a in agent::all() {
         if a.detect_in(&dir) {
-            modified |= add_unique(&mut updated_project.agents, a.id());
+            add_unique(&mut updated_project.agents, a.id());
         }
     }
 
@@ -441,11 +459,11 @@ pub fn autodetect_project_dependencies(project: &Project) -> Result<Project, Str
                             if global_skill_names.contains(name) {
                                 // Skill exists in the global registry — track
                                 // it as a normal (global) project skill.
-                                modified |= add_unique(&mut updated_project.skills, name);
+                                add_unique(&mut updated_project.skills, name);
                             } else if !updated_project.skills.contains(&name.to_string()) {
                                 // Skill only exists locally in this project —
                                 // track it separately without importing.
-                                modified |= add_unique(&mut updated_project.local_skills, name);
+                                add_unique(&mut updated_project.local_skills, name);
                             }
                         }
                     }
@@ -454,27 +472,22 @@ pub fn autodetect_project_dependencies(project: &Project) -> Result<Project, Str
         }
     }
 
-    // Discover MCP servers by asking each agent to scan its config files
+    // Discover MCP servers by asking each agent to scan its config files.
+    // Configs are collected here and returned to the caller — we do not write
+    // to the global MCP registry from this read-only function.
     for a in agent::all() {
         let servers = a.discover_mcp_servers(&dir);
         for (name, config) in servers {
             if let Ok(config_str) = serde_json::to_string_pretty(&config) {
-                let _ = crate::core::save_mcp_server_config(&name, &config_str);
                 if !updated_project.mcp_servers.contains(&name) {
                     updated_project.mcp_servers.push(name.clone());
-                    modified = true;
                 }
+                discovered_servers.push((name, config_str));
             }
         }
     }
 
-    if modified {
-        if let Ok(proj_str) = serde_json::to_string_pretty(&updated_project) {
-            let _ = crate::core::save_project(&updated_project.name, &proj_str);
-        }
-    }
-
-    Ok(updated_project)
+    Ok((updated_project, discovered_servers))
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

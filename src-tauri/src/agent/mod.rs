@@ -255,7 +255,12 @@ pub(crate) fn discover_mcp_servers_from_json(
     };
 
     for (name, config) in servers_obj {
-        if name == "nexus" || !crate::core::is_valid_name(name) {
+        // Skip Automatic-managed entries — "automatic" (current) and "nexus"
+        // (legacy name, pre-rename) are always injected at sync/drift-check
+        // time from the live binary path and project name.  Storing them in
+        // the shared registry would pollute every other project's drift
+        // baseline with a stale project name.
+        if name == "automatic" || name == "nexus" || !crate::core::is_valid_name(name) {
             continue;
         }
         result.insert(name.clone(), normalise(config.clone()));
