@@ -1,6 +1,6 @@
 # Automatic — Using the MCP Service
 
-Automatic is a desktop application that acts as a **skill registry and MCP configuration hub** for AI agent tooling. It does not run agents itself. Instead, it serves data to agents on request via an MCP server interface.
+Automatic is a desktop application that acts as a **skill registry, memory store, and MCP configuration hub** for AI agent tooling. It does not run agents itself. Instead, it serves data to agents on request via an MCP server interface.
 
 ## When to Use Automatic
 
@@ -8,12 +8,13 @@ Use the Automatic MCP tools when you need to:
 
 - Retrieve an API key for an LLM provider (Anthropic, OpenAI, Gemini, etc.)
 - Discover which skills are available in the user's skill registry
-- Load a skill's instructions before performing a task
+- Load a skill's instructions and discover its companion resources
 - Search the community skills.sh registry for relevant skills
 - Find MCP server configurations to suggest or apply
 - Inspect or list the user's registered projects
 - Check which Claude Code sessions are currently active
 - Sync a project's configurations to its directory
+- **Store, retrieve, or search long-term memory across sessions for a specific project**
 
 ## Available MCP Tools
 
@@ -41,7 +42,7 @@ List all skill names currently registered in the user's skill registry (`~/.agen
 
 ### `automatic_read_skill`
 
-Read the full `SKILL.md` content of a specific skill.
+Read the full `SKILL.md` content of a specific skill. This also automatically discovers and returns a list of any companion resources (scripts, templates, examples, etc.) bundled in the skill directory.
 
 ```
 name: string  — the skill directory name, e.g. "laravel-specialist"
@@ -91,14 +92,6 @@ name: string  — the project name as registered in Automatic
 
 ---
 
-### `automatic_list_sessions`
-
-List active Claude Code sessions tracked by the Nexus hooks. Each entry includes session id, working directory (`cwd`), model, and `started_at` timestamp.
-
-**When to use:** When you want to know what other Claude Code sessions are currently active — useful for awareness of parallel work or cross-session context.
-
----
-
 ### `automatic_sync_project`
 
 Sync a project's MCP server configs and skill references to its directory for all configured agent tools (Claude Code, Cursor, OpenCode, etc.).
@@ -111,9 +104,32 @@ name: string  — the project name as registered in Automatic
 
 ---
 
+### `automatic_list_sessions`
+
+List active Claude Code sessions tracked by the Nexus hooks. Each entry includes session id, working directory (`cwd`), model, and `started_at` timestamp.
+
+**When to use:** When you want to know what other Claude Code sessions are currently active — useful for awareness of parallel work or cross-session context.
+
+---
+
+### Agent Memory Tools
+
+Automatic provides a persistent key-value store for agents to retain context, user preferences, and learnings over time on a per-project basis.
+
+- **`automatic_store_memory`**: Stores a memory entry. Takes `project`, `key`, `value`, and optional `source`.
+- **`automatic_get_memory`**: Retrieves a specific memory entry by its `project` and `key`.
+- **`automatic_list_memories`**: Lists all stored memory keys for a `project`, optionally filtered by a `pattern`.
+- **`automatic_search_memories`**: Searches both keys and values for a `query` string within a `project`.
+- **`automatic_delete_memory`**: Deletes a specific memory entry by `project` and `key`.
+- **`automatic_clear_memories`**: Clears all memories for a `project` (requires `confirm: true` and optional `pattern`).
+
+**When to use:** Proactively store memory when you learn a significant project-specific rule, a user preference, or architectural decision that you (or other agents) will need in future sessions. Search memories at the start of complex tasks to see if previous guidance applies.
+
+---
+
 ## Recommended Workflow
 
-1. **On session start** — call `automatic_list_skills` to see what skills are available. If a skill matches the current task domain, call `automatic_read_skill` to load it.
+1. **On session start** — call `automatic_list_skills` to see what skills are available. If a skill matches the current task domain, call `automatic_read_skill` to load it and view its companion resources. Optionally call `automatic_search_memories` to retrieve past learnings for the current project.
 
 2. **For credentials** — call `automatic_get_credential` with the provider name instead of asking the user.
 
@@ -122,6 +138,8 @@ name: string  — the project name as registered in Automatic
 4. **For project setup** — call `automatic_list_mcp_servers` to see registered servers, then `automatic_sync_project` to apply the configuration.
 
 5. **For skill discovery** — call `automatic_search_skills` to find community skills relevant to the task at hand.
+
+6. **Wrapping up a session** — Call `automatic_store_memory` to capture any new project-specific conventions, pitfalls, or setup steps discovered so they aren't lost in future sessions.
 
 ## Configuration
 

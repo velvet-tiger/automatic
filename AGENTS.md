@@ -8,16 +8,18 @@ Automatic is a **hub, not an executor**. It does not run agents. External applic
 
 - **Pull** credentials, skills, and MCP server configs
 - **Sync** project configurations to agent tool directories
+- **Store and Retrieve** memory/context dynamically per-project
 
 Automatic exposes an **MCP Server** interface (stdio transport) that agents connect to.
 
 ## Quick Orientation
 
-Automatic is a Tauri 2 desktop app (Rust + React/TypeScript). The Rust backend has four modules:
+Automatic is a Tauri 2 desktop app (Rust + React/TypeScript). The Rust backend has five modules:
 
 - **`src-tauri/src/core.rs`** -- Shared business logic (credentials, skills, projects, MCP config). Called by both Tauri commands and the MCP server.
-- **`src-tauri/src/mcp.rs`** -- MCP server implementation using `rmcp` SDK. 5 tools exposed over stdio transport.
-- **`src-tauri/src/lib.rs`** -- Tauri command wrappers (thin delegates to `core`) + app entry point.
+- **`src-tauri/src/memory.rs`** -- Persistent JSON-backed key-value store for agent memory per project.
+- **`src-tauri/src/mcp.rs`** -- MCP server implementation using `rmcp` SDK. Exposes tools for skills, projects, and memory over stdio transport.
+- **`src-tauri/src/lib.rs`** -- Tauri command wrappers (thin delegates to `core` and `memory`) + app entry point.
 - **`src-tauri/src/main.rs`** -- CLI dispatch: no args = Tauri app, `mcp-serve` = MCP server on stdio.
 
 The React frontend:
@@ -32,9 +34,11 @@ The React frontend:
 | Navigation shell | `App.tsx` | -- | Done |
 | LLM API key storage | `Providers.tsx` | `core::save_api_key`, `core::get_api_key` | Done |
 | Skills CRUD | `Skills.tsx` | `core::list_skills`, `core::read_skill`, `core::save_skill`, `core::delete_skill` | Done |
+| Skills Companions | -- | `core::read_skill` finds `scripts/`, `docs/`, etc. | Done |
 | Projects CRUD | `Projects.tsx` | `core::list_projects`, `core::read_project`, `core::save_project`, `core::delete_project` | Done |
+| Agent Memory | -- | `memory.rs` (store, get, list, search, clear) | Done |
 | MCP config read | Used in `Projects.tsx` | `core::list_mcp_servers` | Done |
-| MCP Server | -- | `mcp.rs` (5 tools, stdio) | Done |
+| MCP Server | -- | `mcp.rs` (14 tools, stdio) | Done |
 | MCP Server config editing | Empty state in `App.tsx` | -- | Not started |
 | Settings | Placeholder in `App.tsx` | -- | Not started |
 

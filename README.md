@@ -56,8 +56,10 @@ AGENTS.md             # Quick-start context for LLM agents
 ## Current Features
 
 - **LLM Providers** -- Save and retrieve API keys securely via OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service).
-- **Skills Management** -- Full CRUD for agent skills stored at `~/.claude/skills/`. Two-pane UI with list + markdown editor.
-- **MCP Config Reading** -- Reads `claude_desktop_config.json` for MCP server definitions (read-only, Mac path).
+- **Skills Management** -- Full CRUD for agent skills stored at `~/.agents/skills/` and `~/.claude/skills/`. Supports discovering companion resources (scripts, templates).
+- **Project Configuration** -- Sync MCP server and skill configuration to project directories for specific agent tooling (Claude Code, Cursor).
+- **Agent Memory Store** -- Persistent JSON-backed key-value store for agents to retain per-project context and learnings across sessions.
+- **MCP Server** -- Exposes tools to external agents to access the central skill registry, provider keys, and memory database over stdio.
 
 ## Planned
 
