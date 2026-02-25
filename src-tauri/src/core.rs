@@ -154,21 +154,127 @@ pub fn list_skill_names() -> Result<Vec<String>, String> {
 /// Read a skill's SKILL.md content.  Checks `~/.agents/skills/` first
 /// (the canonical location), then falls back to `~/.claude/skills/`.
 pub fn read_skill(name: &str) -> Result<String, String> {
+    if let Some(path) = get_skill_path(name)? {
+        let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        
+        // Find the parent directory to check for companion files
+        if let Some(skill_dir) = path.parent() {
+            let companions = discover_companion_files(skill_dir);
+            if !companions.is_empty() {
+                return Ok(format_skill_with_companions(&content, &companions));
+            }
+        }
+        
+        return Ok(content);
+    }
+    Ok("".to_string())
+}
+
+/// Companion file entry discovered in a skill directory
+#[derive(Debug)]
+struct CompanionFile {
+    relative_path: String,
+    is_dir: bool,
+}
+
+/// Discover companion files and directories in a skill folder.
+/// Looks for common subdirectories: scripts/, references/, docs/, assets/, examples/
+fn discover_companion_files(skill_dir: &std::path::Path) -> Vec<CompanionFile> {
+    let mut companions = Vec::new();
+
+    // Common companion directory names for Claude/Codex skills
+    let known_dirs = [
+        "scripts",
+        "references",
+        "docs",
+        "assets",
+        "examples",
+        "templates",
+    ];
+
+    for dir_name in &known_dirs {
+        let dir_path = skill_dir.join(dir_name);
+        if dir_path.is_dir() {
+            // Add the directory itself
+            companions.push(CompanionFile {
+                relative_path: dir_name.to_string(),
+                is_dir: true,
+            });
+
+            // List files in the directory (non-recursive for now)
+            if let Ok(entries) = std::fs::read_dir(&dir_path) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_file() {
+                            if let Some(file_name) = entry.file_name().to_str() {
+                                companions.push(CompanionFile {
+                                    relative_path: format!("{}/{}", dir_name, file_name),
+                                    is_dir: false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    companions
+}
+
+/// Format skill content with companion files listed at the end
+fn format_skill_with_companions(skill_content: &str, companions: &[CompanionFile]) -> String {
+    let mut output = String::from(skill_content);
+
+    // Add companion files section
+    output.push_str("\n\n---\n\n");
+    output.push_str("## Companion Resources\n\n");
+    output.push_str("This skill includes additional resources:\n\n");
+
+    // Group by directory
+    let mut current_dir: Option<String> = None;
+    for companion in companions {
+        if companion.is_dir {
+            current_dir = Some(companion.relative_path.clone());
+            output.push_str(&format!("\n### {}\n", companion.relative_path));
+        } else {
+            // Extract directory and filename
+            if let Some(slash_pos) = companion.relative_path.rfind('/') {
+                let dir = &companion.relative_path[..slash_pos];
+                let file = &companion.relative_path[slash_pos + 1..];
+
+                if current_dir.as_deref() == Some(dir) {
+                    output.push_str(&format!("- `{}`\n", file));
+                } else {
+                    output.push_str(&format!("- `{}`\n", companion.relative_path));
+                }
+            } else {
+                output.push_str(&format!("- `{}`\n", companion.relative_path));
+            }
+        }
+    }
+
+    output
+}
+
+/// Get the absolute path to a skill's SKILL.md file. Checks `~/.agents/skills/` first,
+/// then falls back to `~/.claude/skills/`.
+pub fn get_skill_path(name: &str) -> Result<Option<PathBuf>, String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
 
     let agents_path = get_agents_skills_dir()?.join(name).join("SKILL.md");
     if agents_path.exists() {
-        return fs::read_to_string(agents_path).map_err(|e| e.to_string());
+        return Ok(Some(agents_path));
     }
 
     let claude_path = get_claude_skills_dir()?.join(name).join("SKILL.md");
     if claude_path.exists() {
-        return fs::read_to_string(claude_path).map_err(|e| e.to_string());
+        return Ok(Some(claude_path));
     }
 
-    Ok("".to_string())
+    Ok(None)
 }
 
 /// Save a skill to `~/.agents/skills/` (the agentskills.io standard location).
