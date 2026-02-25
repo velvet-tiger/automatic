@@ -59,11 +59,11 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
     // Build the MCP server map that sync would use
     let mcp_config = load_mcp_server_configs()?;
     let mut selected_servers = Map::new();
-    let nexus_binary = find_nexus_binary();
+    let automatic_binary = find_automatic_binary();
     selected_servers.insert(
         "automatic".to_string(),
         json!({
-            "command": nexus_binary,
+            "command": automatic_binary,
             "args": ["mcp-serve"],
             "env": { "AUTOMATIC_PROJECT": project.name }
         }),
@@ -327,18 +327,18 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
         let _ = crate::core::save_project(&project.name, &proj_str);
     }
 
-    // Read MCP server configs from the Nexus registry
+    // Read MCP server configs from the Automatic registry
     let mcp_config = load_mcp_server_configs()?;
 
     // Build the set of MCP servers this project uses (+ always include Automatic)
     let mut selected_servers = Map::new();
 
     // Always include Automatic MCP server
-    let nexus_binary = find_nexus_binary();
+    let automatic_binary = find_automatic_binary();
     selected_servers.insert(
         "automatic".to_string(),
         json!({
-            "command": nexus_binary,
+            "command": automatic_binary,
             "args": ["mcp-serve"],
             "env": {
                 "AUTOMATIC_PROJECT": project.name
@@ -346,7 +346,7 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
         }),
     );
 
-    // Add project-selected MCP servers from the Nexus registry
+    // Add project-selected MCP servers from the Automatic registry
     for server_name in &project.mcp_servers {
         if let Some(server_config) = mcp_config.get(server_name) {
             selected_servers.insert(server_name.clone(), server_config.clone());
@@ -525,15 +525,15 @@ fn load_skill_contents(skill_names: &[String]) -> Vec<(String, String)> {
     contents
 }
 
-/// Find the Nexus binary path.
-fn find_nexus_binary() -> String {
+/// Find the Automatic binary path.
+fn find_automatic_binary() -> String {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "nexus".to_string())
+        .unwrap_or_else(|| "automatic".to_string())
 }
 
-/// Strip any legacy `<!-- nexus:skills:start -->…<!-- nexus:skills:end -->`
+/// Strip any legacy `<!-- automatic:skills:start -->…<!-- automatic:skills:end -->`
 /// managed section from a project file.  Returns the path if the file was
 /// modified, or None if no cleanup was needed.
 fn clean_project_file(dir: &PathBuf, filename: &str) -> Result<Option<String>, String> {
@@ -544,8 +544,8 @@ fn clean_project_file(dir: &PathBuf, filename: &str) -> Result<Option<String>, S
 
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
 
-    let start_marker = "<!-- nexus:skills:start -->";
-    let end_marker = "<!-- nexus:skills:end -->";
+    let start_marker = "<!-- automatic:skills:start -->";
+    let end_marker = "<!-- automatic:skills:end -->";
 
     if let (Some(start), Some(end)) = (content.find(start_marker), content.find(end_marker)) {
         let before = &content[..start];

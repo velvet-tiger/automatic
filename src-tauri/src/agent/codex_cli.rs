@@ -206,8 +206,8 @@ mod tests {
     fn stdio_servers() -> Map<String, Value> {
         let mut s = Map::new();
         s.insert(
-            "nexus".to_string(),
-            json!({"type":"stdio","command":"/usr/local/bin/nexus","args":["mcp-serve"]}),
+            "automatic".to_string(),
+            json!({"type":"stdio","command":"/usr/local/bin/automatic","args":["mcp-serve"]}),
         );
         s.insert(
             "github".to_string(),
@@ -243,7 +243,7 @@ mod tests {
             .unwrap();
 
         let content = fs::read_to_string(dir.path().join(".codex/config.toml")).unwrap();
-        assert!(content.contains("[mcp_servers.nexus]"));
+        assert!(content.contains("[mcp_servers.automatic]"));
         assert!(content.contains("[mcp_servers.github]"));
         assert!(content.contains("GITHUB_TOKEN"));
     }
@@ -266,11 +266,11 @@ mod tests {
     fn test_toml_merge() {
         let existing =
             "[model]\nprovider = \"anthropic\"\n\n[mcp_servers.old_server]\ncommand = \"old\"\n";
-        let new_mcp = "[mcp_servers.nexus]\ncommand = \"nexus\"\n\n";
+        let new_mcp = "[mcp_servers.automatic]\ncommand = \"automatic\"\n\n";
         let merged = merge_toml_mcp_section(existing, new_mcp);
 
         assert!(merged.contains("[model]"));
-        assert!(merged.contains("[mcp_servers.nexus]"));
+        assert!(merged.contains("[mcp_servers.automatic]"));
         assert!(!merged.contains("[mcp_servers.old_server]"));
     }
 }

@@ -143,8 +143,8 @@ mod tests {
     fn stdio_servers() -> Map<String, Value> {
         let mut s = Map::new();
         s.insert(
-            "nexus".to_string(),
-            json!({"type":"stdio","command":"/usr/local/bin/nexus","args":["mcp-serve"]}),
+            "automatic".to_string(),
+            json!({"type":"stdio","command":"/usr/local/bin/automatic","args":["mcp-serve"]}),
         );
         s
     }
@@ -185,7 +185,7 @@ mod tests {
         // Existing non-MCP settings preserved
         assert_eq!(parsed["theme"].as_str().unwrap(), "dark");
         // MCP servers replaced
-        assert!(parsed["mcpServers"]["nexus"]["command"].is_string());
+        assert!(parsed["mcpServers"]["automatic"]["command"].is_string());
         assert!(parsed["mcpServers"]["old"].is_null());
     }
 
@@ -198,9 +198,9 @@ mod tests {
 
         let content = fs::read_to_string(dir.path().join(".gemini/settings.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
-        assert!(parsed["mcpServers"]["nexus"]["command"]
+        assert!(parsed["mcpServers"]["automatic"]["command"]
             .as_str()
             .unwrap()
-            .contains("nexus"));
+            .contains("automatic"));
     }
 }

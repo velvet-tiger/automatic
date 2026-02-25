@@ -191,8 +191,8 @@ mod tests {
     fn stdio_servers() -> Map<String, Value> {
         let mut s = Map::new();
         s.insert(
-            "nexus".to_string(),
-            json!({"type":"stdio","command":"/usr/local/bin/nexus","args":["mcp-serve"]}),
+            "automatic".to_string(),
+            json!({"type":"stdio","command":"/usr/local/bin/automatic","args":["mcp-serve"]}),
         );
         s.insert(
             "github".to_string(),
@@ -229,9 +229,12 @@ mod tests {
         let content = fs::read_to_string(dir.path().join(".opencode.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
-        assert_eq!(parsed["mcp"]["nexus"]["type"].as_str().unwrap(), "local");
-        let cmd = parsed["mcp"]["nexus"]["command"].as_array().unwrap();
-        assert_eq!(cmd[0].as_str().unwrap(), "/usr/local/bin/nexus");
+        assert_eq!(
+            parsed["mcp"]["automatic"]["type"].as_str().unwrap(),
+            "local"
+        );
+        let cmd = parsed["mcp"]["automatic"]["command"].as_array().unwrap();
+        assert_eq!(cmd[0].as_str().unwrap(), "/usr/local/bin/automatic");
         assert_eq!(cmd[1].as_str().unwrap(), "mcp-serve");
 
         let env = parsed["mcp"]["github"]["environment"].as_object().unwrap();

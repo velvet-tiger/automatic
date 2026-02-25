@@ -128,8 +128,8 @@ mod tests {
     fn stdio_servers() -> Map<String, Value> {
         let mut s = Map::new();
         s.insert(
-            "nexus".to_string(),
-            json!({"type":"stdio","command":"/usr/local/bin/nexus","args":["mcp-serve"]}),
+            "automatic".to_string(),
+            json!({"type":"stdio","command":"/usr/local/bin/automatic","args":["mcp-serve"]}),
         );
         s
     }
@@ -164,13 +164,13 @@ mod tests {
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
         assert_eq!(
-            parsed["mcpServers"]["nexus"]["type"].as_str().unwrap(),
+            parsed["mcpServers"]["automatic"]["type"].as_str().unwrap(),
             "stdio"
         );
-        assert!(parsed["mcpServers"]["nexus"]["command"]
+        assert!(parsed["mcpServers"]["automatic"]["command"]
             .as_str()
             .unwrap()
-            .contains("nexus"));
+            .contains("automatic"));
     }
 
     #[test]

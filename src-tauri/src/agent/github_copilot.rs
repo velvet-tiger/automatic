@@ -146,8 +146,8 @@ mod tests {
     fn stdio_servers() -> Map<String, Value> {
         let mut s = Map::new();
         s.insert(
-            "nexus".to_string(),
-            json!({"type":"stdio","command":"/usr/local/bin/nexus","args":["mcp-serve"]}),
+            "automatic".to_string(),
+            json!({"type":"stdio","command":"/usr/local/bin/automatic","args":["mcp-serve"]}),
         );
         s
     }
@@ -190,11 +190,11 @@ mod tests {
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
         // Uses "servers" key, not "mcpServers"
-        assert!(parsed["servers"]["nexus"]["type"].is_null());
-        assert!(parsed["servers"]["nexus"]["command"]
+        assert!(parsed["servers"]["automatic"]["type"].is_null());
+        assert!(parsed["servers"]["automatic"]["command"]
             .as_str()
             .unwrap()
-            .contains("nexus"));
+            .contains("automatic"));
     }
 
     #[test]
@@ -244,7 +244,7 @@ mod tests {
         // Existing non-server keys preserved
         assert!(parsed["inputs"].is_array());
         // Servers replaced
-        assert!(parsed["servers"]["nexus"]["command"].is_string());
+        assert!(parsed["servers"]["automatic"]["command"].is_string());
         assert!(parsed["servers"]["old"].is_null());
     }
 }
