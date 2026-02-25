@@ -186,8 +186,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "details" | "agents" | "skills" | "mcp_servers" | "project_file";
+  type ProjectTab = "summary" | "details" | "agents" | "skills" | "mcp_servers" | "project_file" | "memory";
   const [projectTab, setProjectTab] = useState<ProjectTab>("summary");
+
+  // Memory state
+  const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
+  const [loadingMemories, setLoadingMemories] = useState(false);
 
   useEffect(() => {
     loadProjects();
@@ -390,6 +394,18 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
+  const loadMemories = async (projectName: string) => {
+    try {
+      setLoadingMemories(true);
+      const data: Record<string, { value: string; timestamp: string; source: string | null }> = await invoke("get_project_memories", { project: projectName });
+      setMemories(data);
+    } catch (err: any) {
+      console.error("Failed to load memories:", err);
+    } finally {
+      setLoadingMemories(false);
+    }
+  };
+
   const applyProjectTemplate = (tmpl: ProjectTemplate) => {
     if (!project) return;
     // Merge: add template values, preserving anything already on the project
@@ -528,6 +544,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         setProjectFileEditing(false);
         setProjectFileDirty(false);
       }
+      await loadMemories(name);
     } catch (err: any) {
       setError(`Failed to read project: ${err}`);
     }
@@ -564,6 +581,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
       await loadAvailableSkills();
       await loadAvailableMcpServers();
+      await loadMemories(name);
 
       if (data.directory && data.agents.length > 0) {
         await loadProjectFiles(name);
@@ -1129,6 +1147,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 { id: "skills" as ProjectTab, label: "Skills" },
                 { id: "mcp_servers" as ProjectTab, label: "MCP Servers" },
                 { id: "project_file" as ProjectTab, label: "Project Instructions" },
+                { id: "memory" as ProjectTab, label: "Memory" },
               ]).map((tab) => (
                 <button
                   key={tab.id}
@@ -2017,6 +2036,90 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   </section>
                   );
                 })()}
+
+                {/* ── Memory tab ──────────────────────────────────── */}
+                {projectTab === "memory" && (
+                  <section>
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="text-[14px] font-medium text-[#E0E1E6]">Agent Memory</h3>
+                        <p className="text-[12px] text-[#8A8C93] mt-1">
+                          Persistent context and learnings stored by agents working on this project.
+                        </p>
+                      </div>
+                      {Object.keys(memories).length > 0 && (
+                        <button
+                          onClick={async () => {
+                            if (!selectedName || !confirm("Are you sure you want to clear all memory for this project? This cannot be undone.")) return;
+                            try {
+                              await invoke("clear_memories", { project: selectedName, confirm: true, pattern: null });
+                              await loadMemories(selectedName);
+                            } catch (err: any) {
+                              setError(`Failed to clear memories: ${err}`);
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FF6B6B]/10 hover:bg-[#FF6B6B]/20 text-[#FF6B6B] rounded text-[12px] font-medium border border-[#FF6B6B]/20 transition-colors"
+                        >
+                          <Trash2 size={12} /> Clear All
+                        </button>
+                      )}
+                    </div>
+
+                    {loadingMemories ? (
+                      <div className="text-[13px] text-[#8A8C93] text-center py-8">Loading memories...</div>
+                    ) : Object.keys(memories).length === 0 ? (
+                      <div className="text-center py-12 bg-[#1A1A1E] rounded-lg border border-[#33353A] border-dashed">
+                        <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#2D2E36] flex items-center justify-center">
+                          <Bot size={20} className="text-[#8A8C93]" />
+                        </div>
+                        <h4 className="text-[13px] font-medium text-[#E0E1E6] mb-1">No memories yet</h4>
+                        <p className="text-[12px] text-[#8A8C93] max-w-sm mx-auto">
+                          Agents haven't stored any learnings or context for this project yet.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {Object.entries(memories).map(([key, memory]) => (
+                          <div key={key} className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-4 group">
+                            <div className="flex items-start justify-between gap-4 mb-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <h4 className="text-[13px] font-semibold text-[#E0E1E6] font-mono truncate">{key}</h4>
+                                  {memory.source && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#8A8C93] border border-[#3A3B42]">
+                                      {memory.source}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-[#8A8C93]">
+                                  {new Date(memory.timestamp).toLocaleString()}
+                                </p>
+                              </div>
+                              <button
+                                onClick={async () => {
+                                  if (!selectedName) return;
+                                  try {
+                                    await invoke("delete_memory", { project: selectedName, key });
+                                    await loadMemories(selectedName);
+                                  } catch (err: any) {
+                                    setError(`Failed to delete memory: ${err}`);
+                                  }
+                                }}
+                                className="text-[#8A8C93] hover:text-[#FF6B6B] p-1.5 hover:bg-[#33353A] rounded transition-colors opacity-0 group-hover:opacity-100"
+                                title="Delete memory"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                            <div className="text-[13px] text-[#E0E1E6] whitespace-pre-wrap font-mono bg-[#222327] p-3 rounded border border-[#33353A] max-h-60 overflow-y-auto custom-scrollbar">
+                              {memory.value}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                )}
 
               </div>
             </div>

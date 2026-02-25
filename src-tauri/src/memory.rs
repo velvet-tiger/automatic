@@ -54,6 +54,18 @@ pub fn current_timestamp() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
+// ============================================================================
+// Raw API for Frontend UI
+// ============================================================================
+
+pub fn get_all_memories(project_name: &str) -> Result<MemoryDb, String> {
+    read_memory_db(project_name)
+}
+
+// ============================================================================
+// Formatted API for MCP (Agents)
+// ============================================================================
+
 pub fn store_memory(
     project_name: &str,
     key: &str,

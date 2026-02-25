@@ -541,6 +541,11 @@ fn get_sessions() -> Result<String, String> {
 // ── Memory ───────────────────────────────────────────────────────────────────
 
 #[tauri::command]
+fn get_project_memories(project: &str) -> Result<memory::MemoryDb, String> {
+    memory::get_all_memories(project)
+}
+
+#[tauri::command]
 fn store_memory(project: &str, key: &str, value: &str, source: Option<&str>) -> Result<String, String> {
     memory::store_memory(project, key, value, source)
 }
@@ -642,6 +647,7 @@ pub fn run() {
             fetch_remote_skill_content,
             import_remote_skill,
             get_skill_sources,
+            get_project_memories,
             store_memory,
             get_memory,
             list_memories,
