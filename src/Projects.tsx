@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { SkillSelector } from "./SkillSelector";
+import { AgentSelector } from "./AgentSelector";
+import { McpSelector } from "./McpSelector";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -159,9 +162,6 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [availableMcpServers, setAvailableMcpServers] = useState<string[]>([]);
 
   // Inline add state
-  const [addingSkill, setAddingSkill] = useState(false);
-  const [addingMcp, setAddingMcp] = useState(false);
-  const [addingAgent, setAddingAgent] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   // Drift detection state
@@ -1834,66 +1834,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {/* ── Agents tab ───────────────────────────────────────── */}
                 {projectTab === "agents" && (
                   <section>
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
-                        <Bot size={12} /> Agent Tools
-                      </label>
-                      <button
-                        onClick={() => setAddingAgent(!addingAgent)}
-                        className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
-                      >
-                        <Plus size={13} />
-                      </button>
-                    </div>
-                    {addingAgent && (
-                      <div className="mb-2">
-                        {availableAgents.filter((a) => !project.agents.includes(a.id)).length > 0 ? (
-                          <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
-                            {availableAgents
-                              .filter((a) => !project.agents.includes(a.id))
-                              .map((a) => (
-                                <button
-                                  key={a.id}
-                                  onClick={() => { addItem("agents", a.id); setAddingAgent(false); }}
-                                  className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors flex items-center gap-1.5"
-                                >
-                                  <span>{a.label}</span>
-                                  <span className="text-[10px] text-[#8A8C93]">{a.description}</span>
-                                </button>
-                              ))}
-                          </div>
-                        ) : (
-                          <p className="text-[12px] text-[#8A8C93] italic">All agents added.</p>
-                        )}
-                      </div>
-                    )}
-                    {project.agents.length === 0 ? (
-                      <p className="text-[13px] text-[#8A8C93]/60 italic">No agent tools selected. Add tools to enable config sync.</p>
-                    ) : (
-                      <ul className="space-y-1">
-                        {project.agents.map((agentId, i) => {
-                          const agent = availableAgents.find((a) => a.id === agentId);
-                          return (
-                            <li
-                              key={agentId}
-                              className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
-                            >
-                              <span className="flex items-center gap-2">
-                                <Bot size={12} className="text-[#8A8C93]" />
-                                {agent?.label || agentId}
-                                <span className="text-[11px] text-[#8A8C93]">{agent?.description}</span>
-                              </span>
-                              <button
-                                onClick={() => removeItem("agents", i)}
-                                className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
+                    <AgentSelector
+                      agentIds={project.agents}
+                      availableAgents={availableAgents}
+                      onAdd={(id) => addItem("agents", id)}
+                      onRemove={(i) => removeItem("agents", i)}
+                      emptyMessage="No agent tools selected. Add tools to enable config sync."
+                    />
                   </section>
                 )}
 
@@ -1901,63 +1848,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {projectTab === "skills" && (
                   <>
                     {/* Global Skills */}
-                    <section>
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
-                          <Code size={12} /> Skills
-                        </label>
-                        <button
-                          onClick={() => { if (!addingSkill) loadAvailableSkills(); setAddingSkill(!addingSkill); }}
-                          className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
-                        >
-                          <Plus size={13} />
-                        </button>
-                      </div>
-                      {addingSkill && (
-                        <div className="mb-2">
-                          {availableSkills.filter((s) => !project.skills.includes(s)).length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
-                              {availableSkills
-                                .filter((s) => !project.skills.includes(s))
-                                .map((s) => (
-                                  <button
-                                    key={s}
-                                    onClick={() => { addItem("skills", s); setAddingSkill(false); }}
-                                    className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors"
-                                  >
-                                    {s}
-                                  </button>
-                                ))}
-                            </div>
-                          ) : (
-                            <p className="text-[12px] text-[#8A8C93] italic">No more skills available.</p>
-                          )}
-                        </div>
-                      )}
-                      {project.skills.length === 0 ? (
-                        <p className="text-[13px] text-[#8A8C93]/60 italic">No skills attached.</p>
-                      ) : (
-                        <ul className="space-y-1">
-                          {project.skills.map((s, i) => (
-                            <li
-                              key={s}
-                              className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
-                            >
-                              <span className="flex items-center gap-2">
-                                <Code size={12} className="text-[#8A8C93]" />
-                                {s}
-                              </span>
-                              <button
-                                onClick={() => removeItem("skills", i)}
-                                className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </section>
+                     <section>
+                       <SkillSelector
+                         skills={project.skills}
+                         availableSkills={availableSkills}
+                         onAdd={(s) => addItem("skills", s)}
+                         onRemove={(i) => removeItem("skills", i)}
+                         emptyMessage="No skills attached."
+                       />
+                     </section>
 
                     {/* Local Skills */}
                     {project.local_skills.length > 0 && (
@@ -2084,66 +1983,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </div>
                     )}
 
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
-                        <Server size={12} /> MCP Servers
-                      </label>
-                      {/* Hide add button when Warp is the only agent — nothing to sync */}
-                      {!warpOnly && (
-                        <button
-                          onClick={() => setAddingMcp(!addingMcp)}
-                          className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
-                        >
-                          <Plus size={13} />
-                        </button>
-                      )}
-                    </div>
-                    {addingMcp && !warpOnly && (
-                      <div className="mb-2">
-                        {availableMcpServers.filter((s) => !project.mcp_servers.includes(s)).length > 0 ? (
-                          <div className="flex flex-wrap gap-1.5 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
-                            {availableMcpServers
-                              .filter((s) => !project.mcp_servers.includes(s))
-                              .map((s) => (
-                                <button
-                                  key={s}
-                                  onClick={() => { addItem("mcp_servers", s); setAddingMcp(false); }}
-                                  className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors"
-                                >
-                                  {s}
-                                </button>
-                              ))}
-                          </div>
-                        ) : (
-                          <p className="text-[12px] text-[#8A8C93] italic">No MCP servers found in config.</p>
-                        )}
-                      </div>
-                    )}
-                    {project.mcp_servers.length === 0 ? (
-                      <p className="text-[13px] text-[#8A8C93]/60 italic">
-                        {warpOnly ? "Add other agent tools to enable MCP server syncing." : "No MCP servers attached."}
-                      </p>
-                    ) : (
-                      <ul className="space-y-1">
-                        {project.mcp_servers.map((s, i) => (
-                          <li
-                            key={s}
-                            className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
-                          >
-                            <span className="flex items-center gap-2">
-                              <Server size={12} className="text-[#8A8C93]" />
-                              {s}
-                            </span>
-                            <button
-                              onClick={() => removeItem("mcp_servers", i)}
-                              className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                    <McpSelector
+                      servers={project.mcp_servers}
+                      availableServers={availableMcpServers}
+                      onAdd={(s) => addItem("mcp_servers", s)}
+                      onRemove={(i) => removeItem("mcp_servers", i)}
+                      disableAdd={warpOnly}
+                      emptyMessage={warpOnly ? "Add other agent tools to enable MCP server syncing." : "No MCP servers attached."}
+                    />
                   </section>
                   );
                 })()}

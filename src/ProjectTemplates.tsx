@@ -1,19 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { SkillSelector } from "./SkillSelector";
+import { AgentSelector, AgentInfo } from "./AgentSelector";
+import { McpSelector } from "./McpSelector";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Plus,
   X,
   Check,
-  Code,
-  Server,
   Trash2,
-  Bot,
   LayoutTemplate,
   Copy,
   ChevronDown,
   FileText,
   ChevronRight,
-  Search,
 } from "lucide-react";
 
 interface TemplateProjectFile {
@@ -31,11 +30,6 @@ interface ProjectTemplate {
   project_files: TemplateProjectFile[];
 }
 
-interface AgentInfo {
-  id: string;
-  label: string;
-  description: string;
-}
 
 interface Project {
   name: string;
@@ -101,10 +95,6 @@ export default function ProjectTemplates() {
   const [applyStatus, setApplyStatus] = useState<string | null>(null);
 
   // Inline-add state
-  const [addingSkill, setAddingSkill] = useState(false);
-  const [skillSearch, setSkillSearch] = useState("");
-  const [addingMcp, setAddingMcp] = useState(false);
-  const [addingAgent, setAddingAgent] = useState(false);
   const [addingFile, setAddingFile] = useState(false);
   const [customFilename, setCustomFilename] = useState("");
 
@@ -749,271 +739,28 @@ export default function ProjectTemplates() {
                 )}
 
                 {/* Agents */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Bot size={13} className="text-[#5E6AD2]" />
-                      <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
-                        Agent Tools
-                      </span>
-                    </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setAddingAgent(true); }}
-                      className="text-[11px] text-[#5E6AD2] hover:text-[#6B78E3] flex items-center gap-1 transition-colors"
-                    >
-                      <Plus size={12} /> Add
-                    </button>
-                  </div>
-
-                  {template.agents.length === 0 && !addingAgent && (
-                    <p className="text-[12px] text-[#8A8C93]/50 italic pl-1">No agents configured.</p>
-                  )}
-
-                  <div className="space-y-2">
-                    {template.agents.map((id, idx) => {
-                      const info = availableAgents.find((a) => a.id === id);
-                      return (
-                        <div
-                          key={id}
-                          className="flex items-center gap-3 px-3 py-3 bg-[#1A1A1E] border border-[#33353A] rounded-lg group"
-                        >
-                          <div className="w-8 h-8 rounded-md bg-[#5E6AD2]/15 flex items-center justify-center flex-shrink-0">
-                            <Bot size={15} className="text-[#5E6AD2]" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[13px] font-medium text-[#E0E1E6]">{info?.label ?? id}</div>
-                            {info?.description && (
-                              <div className="text-[11px] text-[#8A8C93] mt-0.5">{info.description}</div>
-                            )}
-                          </div>
-                          <button
-                            onClick={() => removeItem("agents", idx)}
-                            className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-[#33353A] rounded"
-                          >
-                            <X size={12} />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {addingAgent && (
-                    <div className="mt-2 p-2 bg-[#1A1A1E] border border-[#33353A] rounded-lg">
-                      <p className="text-[11px] text-[#8A8C93] mb-2 px-1">Select agents to add:</p>
-                      <div className="space-y-0.5">
-                        {availableAgents
-                          .filter((a) => !template.agents.includes(a.id))
-                          .map((a) => (
-                            <button
-                              key={a.id}
-                              onClick={() => { addItem("agents", a.id); setAddingAgent(false); }}
-                              className="w-full flex items-center gap-2.5 px-2 py-1.5 hover:bg-[#2D2E36] rounded-md text-left transition-colors"
-                            >
-                              <Bot size={13} className="text-[#5E6AD2] shrink-0" />
-                              <span className="text-[13px] text-[#E0E1E6] font-medium">{a.label}</span>
-                              <span className="text-[11px] text-[#8A8C93]">{a.description}</span>
-                            </button>
-                          ))}
-                        {availableAgents.filter((a) => !template.agents.includes(a.id)).length === 0 && (
-                          <p className="text-[12px] text-[#8A8C93] italic px-2 py-1">All agents already added.</p>
-                        )}
-                      </div>
-                      <button onClick={() => setAddingAgent(false)} className="mt-1.5 px-2 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors">
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <AgentSelector
+                  agentIds={template.agents}
+                  availableAgents={availableAgents}
+                  onAdd={(id) => addItem("agents", id)}
+                  onRemove={(idx) => removeItem("agents", idx)}
+                />
 
                 {/* Skills */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Code size={13} className="text-[#4ADE80]" />
-                      <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
-                        Skills
-                      </span>
-                    </div>
-                    {availableSkills.length > 0 && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setAddingSkill(true); }}
-                        className="text-[11px] text-[#5E6AD2] hover:text-[#6B78E3] flex items-center gap-1 transition-colors"
-                      >
-                        <Plus size={12} /> Add
-                      </button>
-                    )}
-                  </div>
-
-                  {template.skills.length === 0 && !addingSkill && (
-                    <p className="text-[12px] text-[#8A8C93]/50 italic pl-1">No skills configured.</p>
-                  )}
-
-                  <div className="space-y-2">
-                    {template.skills.map((skill, idx) => (
-                      <div
-                        key={skill}
-                        className="flex items-center gap-3 px-3 py-3 bg-[#1A1A1E] border border-[#33353A] rounded-lg group"
-                      >
-                        <div className="w-8 h-8 rounded-md bg-[#4ADE80]/12 flex items-center justify-center flex-shrink-0">
-                          <Code size={15} className="text-[#4ADE80]" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[13px] font-medium text-[#E0E1E6]">{skill}</div>
-                        </div>
-                        <button
-                          onClick={() => removeItem("skills", idx)}
-                          className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-[#33353A] rounded"
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-
-                  {addingSkill && (() => {
-                    const unaddedSkills = availableSkills.filter((s) => !template.skills.includes(s));
-                    const filteredSkills = skillSearch.trim()
-                      ? unaddedSkills.filter((s) => s.toLowerCase().includes(skillSearch.toLowerCase()))
-                      : unaddedSkills;
-                    return (
-                      <div className="mt-2 bg-[#1A1A1E] border border-[#33353A] rounded-lg overflow-hidden">
-                        {/* Search input */}
-                        <div className="flex items-center gap-2 px-3 py-2 border-b border-[#33353A]">
-                          <Search size={12} className="text-[#8A8C93] shrink-0" />
-                          <input
-                            type="text"
-                            value={skillSearch}
-                            onChange={(e) => setSkillSearch(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Escape") { setAddingSkill(false); setSkillSearch(""); }
-                              if (e.key === "Enter" && filteredSkills.length === 1) {
-                                addItem("skills", filteredSkills[0]!);
-                                setAddingSkill(false);
-                                setSkillSearch("");
-                              }
-                            }}
-                            placeholder="Search skills..."
-                            autoFocus
-                            className="flex-1 bg-transparent outline-none text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/50"
-                          />
-                          {skillSearch && (
-                            <button
-                              onClick={() => setSkillSearch("")}
-                              className="text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
-                            >
-                              <X size={11} />
-                            </button>
-                          )}
-                        </div>
-                        {/* Results list */}
-                        <div className="max-h-48 overflow-y-auto custom-scrollbar py-1">
-                          {filteredSkills.length > 0 ? (
-                            filteredSkills.map((s) => (
-                              <button
-                                key={s}
-                                onClick={() => { addItem("skills", s); setAddingSkill(false); setSkillSearch(""); }}
-                                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[#2D2E36] text-left transition-colors"
-                              >
-                                <div className="w-5 h-5 rounded bg-[#4ADE80]/10 flex items-center justify-center flex-shrink-0">
-                                  <Code size={11} className="text-[#4ADE80]" />
-                                </div>
-                                <span className="text-[13px] text-[#E0E1E6]">{s}</span>
-                              </button>
-                            ))
-                          ) : (
-                            <p className="text-[12px] text-[#8A8C93] italic px-3 py-3">
-                              {unaddedSkills.length === 0 ? "All skills already added." : "No skills match."}
-                            </p>
-                          )}
-                        </div>
-                        {/* Footer */}
-                        <div className="border-t border-[#33353A] px-3 py-2 flex items-center justify-between">
-                          <span className="text-[11px] text-[#8A8C93]">
-                            {filteredSkills.length} of {unaddedSkills.length} skill{unaddedSkills.length !== 1 ? "s" : ""}
-                          </span>
-                          <button
-                            onClick={() => { setAddingSkill(false); setSkillSearch(""); }}
-                            className="text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
+                <SkillSelector
+                  skills={template.skills}
+                  availableSkills={availableSkills}
+                  onAdd={(s) => addItem("skills", s)}
+                  onRemove={(idx) => removeItem("skills", idx)}
+                />
 
                 {/* MCP Servers */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Server size={13} className="text-[#F59E0B]" />
-                      <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
-                        MCP Servers
-                      </span>
-                    </div>
-                    {availableMcpServers.length > 0 && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setAddingMcp(true); }}
-                        className="text-[11px] text-[#5E6AD2] hover:text-[#6B78E3] flex items-center gap-1 transition-colors"
-                      >
-                        <Plus size={12} /> Add
-                      </button>
-                    )}
-                  </div>
-
-                  {template.mcp_servers.length === 0 && !addingMcp && (
-                    <p className="text-[12px] text-[#8A8C93]/50 italic pl-1">No MCP servers configured.</p>
-                  )}
-
-                  <div className="space-y-2">
-                    {template.mcp_servers.map((srv, idx) => (
-                      <div
-                        key={srv}
-                        className="flex items-center gap-3 px-3 py-3 bg-[#1A1A1E] border border-[#33353A] rounded-lg group"
-                      >
-                        <div className="w-8 h-8 rounded-md bg-[#F59E0B]/12 flex items-center justify-center flex-shrink-0">
-                          <Server size={15} className="text-[#F59E0B]" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[13px] font-medium text-[#E0E1E6]">{srv}</div>
-                        </div>
-                        <button
-                          onClick={() => removeItem("mcp_servers", idx)}
-                          className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-[#33353A] rounded"
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-
-                  {addingMcp && (
-                    <div className="mt-2 p-2 bg-[#1A1A1E] border border-[#33353A] rounded-lg max-h-48 overflow-y-auto custom-scrollbar">
-                      <p className="text-[11px] text-[#8A8C93] mb-2 px-1">Select an MCP server:</p>
-                      <div className="space-y-0.5">
-                        {availableMcpServers
-                          .filter((s) => !template.mcp_servers.includes(s))
-                          .map((s) => (
-                            <button
-                              key={s}
-                              onClick={() => { addItem("mcp_servers", s); setAddingMcp(false); }}
-                              className="w-full flex items-center gap-2.5 px-2 py-1.5 hover:bg-[#2D2E36] rounded-md text-left transition-colors"
-                            >
-                              <Server size={12} className="text-[#F59E0B] shrink-0" />
-                              <span className="text-[13px] text-[#E0E1E6]">{s}</span>
-                            </button>
-                          ))}
-                        {availableMcpServers.filter((s) => !template.mcp_servers.includes(s)).length === 0 && (
-                          <p className="text-[12px] text-[#8A8C93] italic px-2 py-1">All MCP servers already added.</p>
-                        )}
-                      </div>
-                      <button onClick={() => setAddingMcp(false)} className="mt-1.5 px-2 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors">
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <McpSelector
+                  servers={template.mcp_servers}
+                  availableServers={availableMcpServers}
+                  onAdd={(s) => addItem("mcp_servers", s)}
+                  onRemove={(idx) => removeItem("mcp_servers", idx)}
+                />
 
                 {/* Project Files */}
                 <div>
