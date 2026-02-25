@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Bot, FolderOpen, AlertCircle } from "lucide-react";
+import { Bot, FolderOpen, AlertCircle, ArrowRight } from "lucide-react";
 import { ICONS } from "./icons";
 
 interface AgentProject {
@@ -17,7 +17,11 @@ interface AgentWithProjects {
   projects: AgentProject[];
 }
 
-export default function Agents() {
+interface AgentsProps {
+  onNavigateToProject?: (projectName: string) => void;
+}
+
+export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
   const LAST_AGENT_KEY = "nexus.agents.selected";
   const [agents, setAgents] = useState<AgentWithProjects[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(() => {
@@ -176,21 +180,26 @@ export default function Agents() {
                   ) : (
                     <ul className="space-y-2">
                       {selected.projects.map((p) => (
-                        <li
-                          key={p.name}
-                          className="flex items-center gap-3 px-3 py-3 bg-[#1A1A1E] rounded-lg border border-[#33353A]"
-                        >
-                          <div className={ICONS.project.iconBox}>
-                            <FolderOpen size={15} className={ICONS.project.iconColor} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[13px] font-medium text-[#E0E1E6]">{p.name}</div>
-                            {p.directory && (
-                              <div className="text-[11px] text-[#8A8C93] font-mono truncate mt-0.5">
-                                {p.directory}
-                              </div>
+                        <li key={p.name}>
+                          <button
+                            onClick={() => onNavigateToProject?.(p.name)}
+                            className={`w-full flex items-center gap-3 px-3 py-3 bg-[#1A1A1E] rounded-lg border border-[#33353A] text-left transition-colors ${onNavigateToProject ? "hover:bg-[#2D2E36] hover:border-[#5E6AD2]/40 group cursor-pointer" : "cursor-default"}`}
+                          >
+                            <div className={ICONS.project.iconBox}>
+                              <FolderOpen size={15} className={ICONS.project.iconColor} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[13px] font-medium text-[#E0E1E6]">{p.name}</div>
+                              {p.directory && (
+                                <div className="text-[11px] text-[#8A8C93] font-mono truncate mt-0.5">
+                                  {p.directory}
+                                </div>
+                              )}
+                            </div>
+                            {onNavigateToProject && (
+                              <ArrowRight size={13} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity" />
                             )}
-                          </div>
+                          </button>
                         </li>
                       ))}
                     </ul>

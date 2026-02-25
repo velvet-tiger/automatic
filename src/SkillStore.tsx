@@ -4,12 +4,13 @@ import {
   Search,
   Download,
   ExternalLink,
-  TrendingUp,
   Loader2,
   CheckCircle2,
   Github,
   Package,
+  ArrowRight,
 } from "lucide-react";
+import featuredSkillsData from "./featured-skills.json";
 
 interface RemoteSkillResult {
   id: string;
@@ -466,7 +467,117 @@ export default function SkillStore() {
   const displayName = meta.name || selected?.name || "";
   const description = meta.description || "";
 
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const SAMPLE_SEARCHES = [
+    "laravel",
+    "react best practices",
+    "github workflow",
+    "code review",
+    "tailwind",
+    "pair programming",
+  ];
+
   // ── Render ──────────────────────────────────────────────────────────────
+
+  // Landing page shown when there is no active query and no skill selected
+  if (!query.trim() && !selected) {
+    return (
+      <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-[#222327]">
+        <div className="flex flex-col items-center px-8 pt-14 pb-10 w-full">
+          <div className="w-full max-w-2xl">
+            {/* Icon + heading */}
+            <div className="text-center mb-8">
+              <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#5E6AD2]/10 border border-[#5E6AD2]/20 flex items-center justify-center">
+                <Download size={22} className="text-[#5E6AD2]" strokeWidth={1.5} />
+              </div>
+              <h2 className="text-[18px] font-semibold text-[#E0E1E6] mb-2">Skill Store</h2>
+              <p className="text-[13px] text-[#8A8C93] leading-relaxed max-w-sm mx-auto">
+                Browse and install agent skills from{" "}
+                <a
+                  href="https://skills.sh"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
+                >
+                  skills.sh
+                </a>
+                . Skills are reusable instruction sets that extend what your AI agents can do.
+              </p>
+            </div>
+
+            {/* Big search box */}
+            <div className="relative mb-4">
+              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8A8C93] pointer-events-none" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search for skills…"
+                autoFocus
+                className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-xl pl-11 pr-4 py-3.5 text-[14px] text-[#E0E1E6] placeholder-[#8A8C93]/60 outline-none transition-colors shadow-sm"
+              />
+            </div>
+
+            {/* Sample searches */}
+            <div className="flex flex-wrap gap-2 justify-center mb-10">
+              {SAMPLE_SEARCHES.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setQuery(s)}
+                  className="px-3 py-1.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[12px] text-[#8A8C93] hover:text-[#E0E1E6] hover:border-[#44474F] transition-colors"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+
+            {/* Featured skills */}
+            <div>
+              <h3 className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-3">
+                Featured
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                {featuredSkillsData.map((skill) => {
+                  const alreadyImported = Object.values(registry).some((s) => s.id === skill.id);
+                  return (
+                    <button
+                      key={skill.id}
+                      onClick={() => handleSelect({ id: skill.id, name: skill.name, source: skill.source, installs: skill.installs })}
+                      className="group text-left p-4 rounded-xl bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] hover:bg-[#1E1F24] transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <span className="text-[13px] font-medium text-[#E0E1E6] leading-snug">
+                          {skill.displayName}
+                        </span>
+                        <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
+                          {alreadyImported && (
+                            <CheckCircle2 size={12} className="text-[#4ADE80]" />
+                          )}
+                          <ArrowRight size={12} className="text-[#33353A] group-hover:text-[#8A8C93] transition-colors" />
+                        </div>
+                      </div>
+                      <p className="text-[12px] text-[#8A8C93] leading-relaxed mb-3 line-clamp-2">
+                        {skill.description}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-[#8A8C93]/60 truncate">{skill.source}</span>
+                        <span className="text-[10px] text-[#8A8C93]/30">·</span>
+                        <span className="text-[10px] text-[#5E6AD2] flex-shrink-0">
+                          {formatInstalls(skill.installs)}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full">
@@ -499,15 +610,18 @@ export default function SkillStore() {
 
         {/* Results list */}
         <div className="flex-1 overflow-y-auto custom-scrollbar">
+          {!query.trim() && (
+            <div className="px-3 pt-3 pb-1">
+              <button
+                onClick={() => { setSelected(null); setRawContent(""); setPreviewError(null); }}
+                className="flex items-center gap-1.5 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+              >
+                ← Browse all skills
+              </button>
+            </div>
+          )}
           {results.length === 0 && !searching && query.trim().length >= 2 && !searchError && (
             <div className="p-4 text-center text-[13px] text-[#8A8C93]">No skills found</div>
-          )}
-          {results.length === 0 && query.trim().length < 2 && (
-            <div className="p-6 text-center">
-              <TrendingUp size={24} className="mx-auto mb-3 text-[#33353A]" />
-              <p className="text-[13px] text-[#8A8C93]">Search the open agent skills ecosystem</p>
-              <p className="mt-1 text-[11px] text-[#8A8C93]/50">Powered by skills.sh</p>
-            </div>
           )}
           {results.map((skill) => {
             const isActive = selected?.id === skill.id;

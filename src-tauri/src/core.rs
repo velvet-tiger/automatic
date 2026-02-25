@@ -338,34 +338,108 @@ pub async fn search_remote_skills(query: &str) -> Result<Vec<RemoteSkillResult>,
         .collect())
 }
 
+/// Extract the value of a YAML frontmatter field from raw SKILL.md text.
+/// Handles the `---\nkey: value\n---` block at the top of the file.
+fn extract_frontmatter_name(content: &str) -> Option<String> {
+    let inner = content.strip_prefix("---")?.trim_start_matches('\n').trim_start_matches('\r');
+    let end = inner.find("\n---")?;
+    for line in inner[..end].lines() {
+        if let Some(rest) = line.strip_prefix("name:") {
+            let val = rest.trim().trim_matches('"').trim_matches('\'');
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Resolve the default branch of a GitHub repo.
+///
+/// Tries `main` first via a cheap HEAD request to raw.githubusercontent.com,
+/// then `master`, then falls back to the GitHub REST API which returns the
+/// authoritative `default_branch` field. Returns `"main"` if all attempts fail.
+async fn resolve_default_branch(
+    client: &reqwest::Client,
+    source: &str,
+) -> String {
+    // Fast path: probe raw.githubusercontent.com for `main` then `master`.
+    for branch in &["main", "master"] {
+        let probe = format!(
+            "https://raw.githubusercontent.com/{}/{}/",
+            source, branch
+        );
+        if let Ok(resp) = client
+            .head(&probe)
+            .header("User-Agent", "nexus-desktop/1.0")
+            .send()
+            .await
+        {
+            // Any non-404 response (including 400/403) means the branch exists.
+            if resp.status() != reqwest::StatusCode::NOT_FOUND {
+                return branch.to_string();
+            }
+        }
+    }
+
+    // Slow path: ask the GitHub API.
+    let api_url = format!("https://api.github.com/repos/{}", source);
+    if let Ok(resp) = client
+        .get(&api_url)
+        .header("User-Agent", "nexus-desktop/1.0")
+        .send()
+        .await
+    {
+        if let Ok(text) = resp.text().await {
+            // Extract "default_branch":"<value>" from the JSON.
+            if let Some(pos) = text.find("\"default_branch\":\"") {
+                let after = &text[pos + 18..];
+                if let Some(end) = after.find('"') {
+                    return after[..end].to_string();
+                }
+            }
+        }
+    }
+
+    "main".to_string()
+}
+
 /// Fetch the SKILL.md content for a remote skill by constructing the GitHub
 /// raw content URL from the skill's `source` ("owner/repo") and `name`.
 ///
-/// Tries the canonical path `skills/<name>/SKILL.md` first, then falls back
-/// to a root-level `SKILL.md` (for single-skill repos).
+/// The canonical skill name is defined by the `name:` field in the SKILL.md
+/// frontmatter — it may differ from both the registry ID and the directory
+/// name (e.g. dir "react-best-practices" has frontmatter `name: vercel-react-best-practices`).
+///
+/// Strategy:
+/// 1. Resolve the repo's default branch (main, master, or whatever the API says).
+/// 2. Try the obvious static paths (directory == name, or root SKILL.md).
+///    For each candidate, if the file is found, verify its frontmatter name
+///    matches. If it does, return it. If no frontmatter is present, return it
+///    anyway (older single-skill repos).
+/// 3. If nothing matched, use the GitHub Git Trees API with `recursive=1` to
+///    get a flat list of all paths in the repo, then find every `SKILL.md` whose
+///    parent directory name matches `name`. This handles repos with arbitrary
+///    nesting (e.g. `plugins/<plugin>/skills/<name>/SKILL.md` or
+///    `terraform/provider-development/skills/<name>/SKILL.md`).
 pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<String, String> {
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
-    // Try the standard nested path first
-    let candidates = [
-        format!(
-            "https://raw.githubusercontent.com/{}/main/skills/{}/SKILL.md",
-            source, name
-        ),
-        format!(
-            "https://raw.githubusercontent.com/{}/main/{}/SKILL.md",
-            source, name
-        ),
-        format!(
-            "https://raw.githubusercontent.com/{}/main/SKILL.md",
-            source
-        ),
+    // ── Step 1: resolve the default branch ───────────────────────────────────
+    let branch = resolve_default_branch(&client, source).await;
+    let raw_base = format!("https://raw.githubusercontent.com/{}/{}", source, branch);
+
+    // ── Step 2: static candidates ────────────────────────────────────────────
+    let static_candidates = [
+        format!("{}/skills/{}/SKILL.md", raw_base, name),
+        format!("{}/{}/SKILL.md", raw_base, name),
+        format!("{}/SKILL.md", raw_base),
     ];
 
-    for url in &candidates {
+    for url in &static_candidates {
         let resp = client
             .get(url)
             .header("User-Agent", "nexus-desktop/1.0")
@@ -374,10 +448,83 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
             .map_err(|e| format!("Request failed: {}", e))?;
 
         if resp.status().is_success() {
-            return resp
+            let content = resp
                 .text()
                 .await
-                .map_err(|e| format!("Failed to read response: {}", e));
+                .map_err(|e| format!("Failed to read response: {}", e))?;
+
+            // Accept if frontmatter name matches, or if there is no frontmatter
+            // (single-skill repos that predate the convention).
+            match extract_frontmatter_name(&content) {
+                Some(ref n) if n == name => return Ok(content),
+                None => return Ok(content),
+                _ => {} // frontmatter name doesn't match — keep searching
+            }
+        }
+    }
+
+    // ── Step 3: recursive tree search via GitHub Git Trees API ───────────────
+    // Fetches the full flat file list for the repo and finds every SKILL.md
+    // whose parent directory name matches `name`. This handles arbitrary repo
+    // layouts like:
+    //   plugins/<plugin>/skills/<name>/SKILL.md  (wshobson/agents)
+    //   terraform/provider-development/skills/<name>/SKILL.md  (hashicorp/agent-skills)
+    let tree_url = format!(
+        "https://api.github.com/repos/{}/git/trees/{}?recursive=1",
+        source, branch
+    );
+    let tree_resp = client
+        .get(&tree_url)
+        .header("User-Agent", "nexus-desktop/1.0")
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !tree_resp.status().is_success() {
+        return Err(format!("Could not fetch SKILL.md for '{}'", name));
+    }
+
+    let tree_text = tree_resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read tree listing: {}", e))?;
+
+    // Extract all `"path":"..."` values that end with `/<name>/SKILL.md`.
+    let skill_md_suffix = format!("/{}/SKILL.md", name);
+    let mut candidate_paths: Vec<String> = Vec::new();
+    let mut remaining = tree_text.as_str();
+    while let Some(pos) = remaining.find("\"path\":\"") {
+        remaining = &remaining[pos + 8..];
+        if let Some(end) = remaining.find('"') {
+            let path = &remaining[..end];
+            if path.ends_with(&skill_md_suffix) || path == "SKILL.md" {
+                candidate_paths.push(path.to_string());
+            }
+            remaining = &remaining[end + 1..];
+        }
+    }
+
+    for path in candidate_paths {
+        let url = format!("{}/{}", raw_base, path);
+        let resp = client
+            .get(&url)
+            .header("User-Agent", "nexus-desktop/1.0")
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        if resp.status().is_success() {
+            let content = resp
+                .text()
+                .await
+                .map_err(|e| format!("Failed to read response: {}", e))?;
+
+            match extract_frontmatter_name(&content) {
+                Some(ref n) if n == name => return Ok(content),
+                // No frontmatter on a directory-name-matched path — accept it
+                None => return Ok(content),
+                _ => {} // frontmatter name mismatch — keep searching
+            }
         }
     }
 

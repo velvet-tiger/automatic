@@ -94,7 +94,12 @@ function emptyProject(name: string): Project {
   };
 }
 
-export default function Projects() {
+interface ProjectsProps {
+  initialProject?: string | null;
+  onInitialProjectConsumed?: () => void;
+}
+
+export default function Projects({ initialProject = null, onInitialProjectConsumed }: ProjectsProps = {}) {
   const LAST_PROJECT_KEY = "nexus.projects.selected";
   const PROJECT_ORDER_KEY = "nexus.projects.order";
   const [projects, setProjects] = useState<string[]>([]);
@@ -205,6 +210,14 @@ export default function Projects() {
       selectProject(preferred);
     }
   }, [projects]);
+
+  // Navigate to a specific project when directed from another view (e.g. Agents)
+  useEffect(() => {
+    if (initialProject && projects.includes(initialProject)) {
+      selectProject(initialProject);
+      onInitialProjectConsumed?.();
+    }
+  }, [initialProject, projects]);
 
   // Reset drift state whenever the active project changes
   useEffect(() => {

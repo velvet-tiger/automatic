@@ -18,10 +18,16 @@ function App() {
     if (saved === "activity") return "dashboard";
     return saved || "dashboard";
   });
+  const [pendingProject, setPendingProject] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem("nexus.activeTab", activeTab);
   }, [activeTab]);
+
+  const navigateToProject = (projectName: string) => {
+    setPendingProject(projectName);
+    setActiveTab("projects");
+  };
 
   const NavItem = ({ id, icon: Icon, label, count }: any) => {
     const isActive = activeTab === id;
@@ -113,6 +119,15 @@ function App() {
             </ul>
           </div>
 
+          <div className="mb-6">
+            <div className="px-3 pb-1.5 text-[11px] font-semibold text-[#8A8C93] tracking-wider flex items-center justify-between group cursor-pointer hover:text-[#E0E1E6]">
+              <span>Marketplace</span>
+              <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+            <ul className="space-y-0.5">
+              <NavItem id="skill-store" icon={Store} label="Skills.sh" />
+            </ul>
+          </div>
 
         </nav>
 
@@ -159,7 +174,7 @@ function App() {
           )}
           {activeTab === "projects" && (
             <div className="flex-1 h-full">
-              <Projects />
+              <Projects initialProject={pendingProject} onInitialProjectConsumed={() => setPendingProject(null)} />
             </div>
           )}
           {activeTab === "project-templates" && (
@@ -169,7 +184,7 @@ function App() {
           )}
           {activeTab === "agents" && (
             <div className="flex-1 h-full">
-              <Agents />
+              <Agents onNavigateToProject={navigateToProject} />
             </div>
           )}
           {activeTab === "skills" && (

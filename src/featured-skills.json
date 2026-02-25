@@ -1,0 +1,34 @@
+[
+  {
+    "name": "web-design-guidelines",
+    "source": "vercel-labs/agent-skills",
+    "id": "vercel-labs/agent-skills/web-design-guidelines",
+    "displayName": "Web Interface Guidelines",
+    "description": "Audits files for compliance with Vercel's web interface guidelines, fetching the latest rules from the source.",
+    "installs": 112100
+  },
+  {
+    "name": "frontend-design",
+    "source": "anthropics/skills",
+    "id": "anthropics/skills/frontend-design",
+    "displayName": "Frontend Design",
+    "description": "Guides creation of distinctive, production-grade frontend interfaces that avoid generic AI aesthetics.",
+    "installs": 96300
+  },
+  {
+    "name": "audit-website",
+    "source": "squirrelscan/skills",
+    "id": "squirrelscan/skills/audit-website",
+    "displayName": "Website Audit",
+    "description": "Audits websites for SEO, performance, security and accessibility issues across 230+ rules using squirrelscan.",
+    "installs": 27100
+  },
+  {
+    "name": "systematic-debugging",
+    "source": "obra/superpowers",
+    "id": "obra/superpowers/systematic-debugging",
+    "displayName": "Systematic Debugging",
+    "description": "Enforces root-cause investigation before any fix attempt — no patches without understanding the problem first.",
+    "installs": 16200
+  }
+]
