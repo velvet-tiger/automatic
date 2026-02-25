@@ -1850,6 +1850,14 @@ pub struct ProjectTemplate {
     /// to a project's directory when the template is applied.
     #[serde(default)]
     pub project_files: Vec<TemplateProjectFile>,
+    /// Single unified project instruction content (written to all agent
+    /// instruction files when the template is applied in unified mode).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub unified_instruction: String,
+    /// Rule IDs attached to the unified instruction. These are written into
+    /// the project's `file_rules["_unified"]` when the template is applied.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unified_rules: Vec<String>,
 }
 
 pub fn get_project_templates_dir() -> Result<PathBuf, String> {

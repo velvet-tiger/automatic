@@ -13,6 +13,9 @@ import {
   ChevronDown,
   FileText,
   ChevronRight,
+  ScrollText,
+  Edit2,
+  Files,
 } from "lucide-react";
 
 interface TemplateProjectFile {
@@ -28,6 +31,10 @@ interface ProjectTemplate {
   providers: string[];
   agents: string[];
   project_files: TemplateProjectFile[];
+  /** Single unified project instruction content (written to CLAUDE.md / AGENTS.md etc.) */
+  unified_instruction?: string;
+  /** Rule IDs attached to the unified instruction */
+  unified_rules?: string[];
 }
 
 
@@ -47,7 +54,7 @@ const SIDEBAR_MAX = 420;
 const SIDEBAR_DEFAULT = 220;
 
 function emptyTemplate(name: string): ProjectTemplate {
-  return { name, description: "", skills: [], mcp_servers: [], providers: [], agents: [], project_files: [] };
+  return { name, description: "", skills: [], mcp_servers: [], providers: [], agents: [], project_files: [], unified_instruction: "", unified_rules: [] };
 }
 
 // Derive a colour for the sidebar icon box based on what's in the template
@@ -88,6 +95,11 @@ export default function ProjectTemplates() {
   const [availableSkills, setAvailableSkills] = useState<string[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<string[]>([]);
   const [availableFileTemplates, setAvailableFileTemplates] = useState<string[]>([]);
+  const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
+
+  // Unified instruction editing state
+  const [unifiedEditing, setUnifiedEditing] = useState(false);
+  const [showUnifiedTemplatePicker, setShowUnifiedTemplatePicker] = useState(false);
 
   // All projects (for "Applied to" + "Apply to project")
   const [allProjects, setAllProjects] = useState<Project[]>([]);
@@ -142,6 +154,7 @@ export default function ProjectTemplates() {
     loadAvailableSkills();
     loadAvailableMcpServers();
     loadAvailableFileTemplates();
+    loadAvailableRules();
     loadAllProjects();
   }, []);
 
@@ -205,6 +218,13 @@ export default function ProjectTemplates() {
     } catch { /* ignore */ }
   };
 
+  const loadAvailableRules = async () => {
+    try {
+      const result: { id: string; name: string }[] = await invoke("get_rules");
+      setAvailableRules(result.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch { /* ignore */ }
+  };
+
   const loadAllProjects = async () => {
     try {
       const names: string[] = await invoke("get_projects");
@@ -235,7 +255,10 @@ export default function ProjectTemplates() {
         providers: parsed.providers || [],
         agents: parsed.agents || [],
         project_files: parsed.project_files || [],
+        unified_instruction: parsed.unified_instruction || "",
+        unified_rules: parsed.unified_rules || [],
       });
+      setUnifiedEditing(false);
       setDirty(false);
       setIsCreating(false);
       setError(null);
@@ -325,7 +348,10 @@ export default function ProjectTemplates() {
     const proj = allProjects.find((p) => p.name === projectName);
     if (!proj) return;
     try {
-      // Merge config
+      // Switch to unified mode when template has a unified instruction OR rules
+      const hasUnifiedContent = !!(template.unified_instruction && template.unified_instruction.trim());
+      const hasUnifiedRules = (template.unified_rules || []).length > 0;
+      const hasUnified = hasUnifiedContent || hasUnifiedRules;
       const updated: Project = {
         ...proj,
         description: proj.description || template.description,
@@ -333,8 +359,36 @@ export default function ProjectTemplates() {
         skills: [...new Set([...proj.skills, ...template.skills])],
         mcp_servers: [...new Set([...proj.mcp_servers, ...template.mcp_servers])],
         providers: [...new Set([...proj.providers, ...template.providers])],
+        ...(hasUnified ? { instruction_mode: "unified" } : {}),
       };
       await invoke("save_project", { name: projectName, data: JSON.stringify(updated, null, 2) });
+
+      // Apply unified instruction and/or rules to the project.
+      // Rules-only templates (no instruction content) are valid — rules still
+      // need to be persisted into file_rules and then written out.
+      if (hasUnified) {
+        // Re-read the just-saved project so we have the exact on-disk state
+        // (save_project may have synced additional fields) before mutating it.
+        const latestRaw: string = await invoke("read_project", { name: projectName });
+        const latestProj = JSON.parse(latestRaw);
+        if (hasUnifiedRules) {
+          const withRules = {
+            ...latestProj,
+            file_rules: {
+              ...(latestProj.file_rules || {}),
+              _unified: template.unified_rules,
+            },
+          };
+          await invoke("save_project", { name: projectName, data: JSON.stringify(withRules, null, 2) });
+        }
+        // Write the content (may be empty string if rules-only) — backend fans
+        // out to all agent files and appends the rules section.
+        await invoke("save_project_file", {
+          name: projectName,
+          filename: "_unified",
+          content: template.unified_instruction || "",
+        });
+      }
 
       // Write project files to the project's directory (non-destructive: only if file doesn't exist)
       for (const pf of template.project_files) {
@@ -364,6 +418,8 @@ export default function ProjectTemplates() {
     setDirty(true);
     setIsCreating(true);
     setNewName("");
+    setUnifiedEditing(false);
+    setShowUnifiedTemplatePicker(false);
   };
 
   const startRename = () => {
@@ -761,6 +817,150 @@ export default function ProjectTemplates() {
                   onAdd={(s) => addItem("mcp_servers", s)}
                   onRemove={(idx) => removeItem("mcp_servers", idx)}
                 />
+
+                {/* Unified Project Instruction */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Files size={13} className="text-[#5E6AD2]" />
+                      <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+                        Unified Project Instruction
+                      </span>
+                      {template.unified_instruction && template.unified_instruction.trim() && (
+                        <span className="text-[10px] text-[#5E6AD2] bg-[#5E6AD2]/10 px-1.5 py-0.5 rounded">Active</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {availableFileTemplates.length > 0 && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setShowUnifiedTemplatePicker(!showUnifiedTemplatePicker); }}
+                          className="text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] flex items-center gap-1 transition-colors px-1.5 py-0.5 hover:bg-[#2D2E36] rounded"
+                          title="Load from file template"
+                        >
+                          <LayoutTemplate size={11} /> Template
+                        </button>
+                      )}
+                      {!unifiedEditing ? (
+                        <button
+                          onClick={() => setUnifiedEditing(true)}
+                          className="text-[11px] text-[#5E6AD2] hover:text-[#6B78E3] flex items-center gap-1 transition-colors"
+                        >
+                          <Edit2 size={11} /> Edit
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setUnifiedEditing(false)}
+                          className="text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                        >
+                          Done
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Template picker dropdown */}
+                  {showUnifiedTemplatePicker && (
+                    <div className="mb-2 p-2 bg-[#1A1A1E] border border-[#33353A] rounded-lg" onClick={(e) => e.stopPropagation()}>
+                      <p className="text-[10px] text-[#8A8C93] mb-1.5 px-1">Load from file template:</p>
+                      <div className="space-y-0.5 max-h-32 overflow-y-auto custom-scrollbar">
+                        {availableFileTemplates.map((ft) => (
+                          <button
+                            key={ft}
+                            onClick={async () => {
+                              try {
+                                const content: string = await invoke("read_template", { name: ft });
+                                updateField("unified_instruction", content);
+                                setUnifiedEditing(true);
+                              } catch { /* ignore */ }
+                              setShowUnifiedTemplatePicker(false);
+                            }}
+                            className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#2D2E36] rounded text-left transition-colors"
+                          >
+                            <LayoutTemplate size={11} className="text-[#8B5CF6] shrink-0" />
+                            <span className="text-[12px] text-[#E0E1E6]">{ft}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => setShowUnifiedTemplatePicker(false)}
+                        className="mt-1.5 w-full text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors text-left px-1"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+
+                  {unifiedEditing ? (
+                    <textarea
+                      value={template.unified_instruction || ""}
+                      onChange={(e) => updateField("unified_instruction", e.target.value)}
+                      placeholder="Write project instructions here. This becomes the single unified instruction file (CLAUDE.md / AGENTS.md etc.) when applied to a project."
+                      rows={10}
+                      className="w-full bg-[#111114] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[12px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none resize-y transition-colors font-mono leading-relaxed"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <div
+                      className="min-h-[48px] bg-[#1A1A1E] border border-[#33353A] rounded-md px-3 py-2 cursor-pointer hover:border-[#44474F] transition-colors"
+                      onClick={() => setUnifiedEditing(true)}
+                    >
+                      {template.unified_instruction && template.unified_instruction.trim() ? (
+                        <pre className="text-[12px] text-[#E0E1E6] font-mono whitespace-pre-wrap line-clamp-4 leading-relaxed">
+                          {template.unified_instruction}
+                        </pre>
+                      ) : (
+                        <span className="text-[12px] text-[#8A8C93]/50 italic">
+                          No unified instruction yet. Click Edit to write one or load from a template.
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Rules selection */}
+                  <div className="mt-3 pt-3 border-t border-[#33353A]">
+                    <div className="flex items-center gap-2 mb-2">
+                      <ScrollText size={12} className="text-[#22D3EE]" />
+                      <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Rules</span>
+                      {(template.unified_rules || []).length > 0 && (
+                        <span className="text-[10px] text-[#22D3EE] bg-[#22D3EE]/10 px-1.5 py-0.5 rounded">
+                          {(template.unified_rules || []).length}
+                        </span>
+                      )}
+                    </div>
+                    {availableRules.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {availableRules.map((rule) => {
+                          const isSelected = (template.unified_rules || []).includes(rule.id);
+                          return (
+                            <button
+                              key={rule.id}
+                              onClick={() => {
+                                const current = template.unified_rules || [];
+                                const updated = isSelected
+                                  ? current.filter((r) => r !== rule.id)
+                                  : [...current, rule.id];
+                                updateField("unified_rules", updated);
+                              }}
+                              className={`px-2.5 py-1 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
+                                isSelected
+                                  ? "bg-[#22D3EE]/15 border-[#22D3EE]/40 text-[#22D3EE]"
+                                  : "bg-[#2D2E36] border-[#33353A] text-[#8A8C93] hover:text-[#E0E1E6] hover:border-[#44474F]"
+                              }`}
+                            >
+                              <ScrollText size={10} />
+                              {rule.name}
+                              {isSelected && <Check size={10} />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-[#8A8C93]/50 italic">
+                        No rules created yet. Create rules in the Rules section to attach them here.
+                      </p>
+                    )}
+                  </div>
+                </div>
 
                 {/* Project Files */}
                 <div>

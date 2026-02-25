@@ -29,6 +29,7 @@ import {
   ScrollText,
   Files,
   SplitSquareHorizontal,
+  Brain,
 } from "lucide-react";
 
 interface Project {
@@ -85,6 +86,8 @@ interface ProjectTemplate {
   mcp_servers: string[];
   providers: string[];
   agents: string[];
+  unified_instruction?: string;
+  unified_rules?: string[];
 }
 
 const SIDEBAR_MIN = 160;
@@ -185,6 +188,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [availableProjectTemplates, setAvailableProjectTemplates] = useState<ProjectTemplate[]>([]);
   const [showProjectTemplatePicker, setShowProjectTemplatePicker] = useState(false);
   const [selectedProjectTemplate, setSelectedProjectTemplate] = useState<string | null>(null);
+  // Pending unified instruction content + rules to write after next save (from template apply)
+  const pendingUnifiedInstruction = useRef<{ content: string; rules: string[] } | null>(null);
 
   // Project file state
   const [projectFiles, setProjectFiles] = useState<ProjectFileInfo[]>([]);
@@ -435,6 +440,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     const mergedSkills = [...new Set([...project.skills, ...tmpl.skills])];
     const mergedMcpServers = [...new Set([...project.mcp_servers, ...tmpl.mcp_servers])];
     const mergedProviders = [...new Set([...project.providers, ...tmpl.providers])];
+    const hasUnifiedContent = !!(tmpl.unified_instruction && tmpl.unified_instruction.trim());
+    const hasUnifiedRules = (tmpl.unified_rules || []).length > 0;
+    const hasUnified = hasUnifiedContent || hasUnifiedRules;
     setProject({
       ...project,
       description: project.description || tmpl.description,
@@ -442,7 +450,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       skills: mergedSkills,
       mcp_servers: mergedMcpServers,
       providers: mergedProviders,
+      ...(hasUnified ? { instruction_mode: "unified" } : {}),
     });
+    // Stash the unified instruction content + rules so handleSave can write them after the project is saved
+    if (hasUnified) {
+      pendingUnifiedInstruction.current = {
+        content: tmpl.unified_instruction || "",
+        rules: tmpl.unified_rules || [],
+      };
+    }
     setDirty(true);
     setSelectedProjectTemplate(tmpl.name);
     setShowProjectTemplatePicker(false);
@@ -675,6 +691,27 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         : "Saved");
       if (toSave.directory && toSave.agents.length > 0) {
         setDriftReport({ drifted: false, agents: [] });
+      }
+
+      // Write any pending unified instruction content from a template apply
+      const pending = pendingUnifiedInstruction.current;
+      if (pending !== null && toSave.directory && toSave.agents.length > 0) {
+        pendingUnifiedInstruction.current = null;
+        // If the template had rules, persist them into file_rules before writing
+        if (pending.rules.length > 0) {
+          const latestRaw: string = await invoke("read_project", { name });
+          const latestProj = JSON.parse(latestRaw);
+          const withRules = {
+            ...latestProj,
+            file_rules: { ...(latestProj.file_rules || {}), _unified: pending.rules },
+          };
+          await invoke("save_project", { name, data: JSON.stringify(withRules, null, 2) });
+        }
+        await invoke("save_project_file", {
+          name,
+          filename: "_unified",
+          content: pending.content,
+        });
       }
 
       // Reload UI state from disk (picks up autodetected changes)
@@ -1819,52 +1856,19 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                         </button>
 
-                        {!dirty && project.directory && project.agents.length > 0 && (
-                          driftReport?.drifted ? (
-                            <button
-                              onClick={handleSync}
-                              className="group flex items-center gap-3 bg-[#F59E0B]/5 border border-[#F59E0B]/40 hover:border-[#F59E0B]/70 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#F59E0B]/10 text-left"
-                            >
-                              <div className="p-2 bg-[#F59E0B]/15 rounded-lg group-hover:bg-[#F59E0B]/25 transition-colors">
-                                <RefreshCw size={16} className="text-[#F59E0B]" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-[13px] font-medium text-[#F59E0B] mb-0.5">Sync Configs</div>
-                                <div className="text-[11px] text-[#F59E0B]/70">Configuration has drifted</div>
-                              </div>
-                              <ArrowRight size={14} className="text-[#F59E0B]/60 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                            </button>
-                          ) : driftReport && !driftReport.drifted ? (
-                            <button
-                              onClick={handleSync}
-                              className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#4ADE80]/20 hover:border-[#4ADE80]/40 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#4ADE80]/5 text-left"
-                              title="Click to force sync"
-                            >
-                              <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/15 transition-colors">
-                                <CheckCircle2 size={16} className="text-[#4ADE80]" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-[13px] font-medium text-[#4ADE80] mb-0.5">In Sync</div>
-                                <div className="text-[11px] text-[#8A8C93]">All configs up to date</div>
-                              </div>
-                              <ArrowRight size={14} className="text-[#4ADE80]/40 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                            </button>
-                          ) : (
-                            <button
-                              onClick={handleSync}
-                              className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#33353A] rounded-lg p-4 transition-all text-left"
-                            >
-                              <div className="p-2 bg-[#33353A]/50 rounded-lg group-hover:bg-[#33353A] transition-colors">
-                                <RefreshCw size={16} className="text-[#8A8C93]" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Sync Configs</div>
-                                <div className="text-[11px] text-[#8A8C93]">Update agent configurations</div>
-                              </div>
-                              <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                            </button>
-                          )
-                        )}
+                        <button
+                           onClick={() => setProjectTab("memory")}
+                           className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10 text-left"
+                         >
+                           <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors">
+                             <Brain size={16} className="text-[#5E6AD2]" />
+                           </div>
+                           <div className="flex-1 min-w-0">
+                             <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Memory</div>
+                             <div className="text-[11px] text-[#8A8C93]">View agent memory</div>
+                           </div>
+                           <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                         </button>
 
                         <button
                           onClick={() => setProjectTab("skills")}
