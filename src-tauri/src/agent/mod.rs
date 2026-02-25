@@ -216,12 +216,41 @@ pub(crate) fn sync_individual_skills(
         return Ok(());
     }
 
+    let settings = crate::core::read_settings().unwrap_or_default();
+    let use_symlink = settings.skill_sync_mode == "symlink";
+
     for (name, content) in skills {
         let skill_dir = base_dir.join(name);
         fs::create_dir_all(&skill_dir).map_err(|e| format!("Failed to create skill dir: {}", e))?;
         let skill_path = skill_dir.join("SKILL.md");
-        fs::write(&skill_path, content)
-            .map_err(|e| format!("Failed to write skill '{}': {}", name, e))?;
+
+        // Clean up existing file or symlink
+        if skill_path.exists() || skill_path.symlink_metadata().is_ok() {
+            let _ = fs::remove_file(&skill_path);
+        }
+
+        let mut linked = false;
+        if use_symlink {
+            if let Ok(Some(src_path)) = crate::core::get_skill_path(name) {
+                #[cfg(unix)]
+                {
+                    if std::os::unix::fs::symlink(&src_path, &skill_path).is_ok() {
+                        linked = true;
+                    }
+                }
+                #[cfg(windows)]
+                {
+                    if std::os::windows::fs::symlink_file(&src_path, &skill_path).is_ok() {
+                        linked = true;
+                    }
+                }
+            }
+        }
+
+        if !linked {
+            fs::write(&skill_path, content)
+                .map_err(|e| format!("Failed to write skill '{}': {}", name, e))?;
+        }
         written.push(skill_path.display().to_string());
     }
     Ok(())
