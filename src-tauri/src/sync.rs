@@ -358,18 +358,40 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
 
     let mut written_files = Vec::new();
 
-    // Resolve each agent string id to a trait object and delegate
+    // ── Step 1: Copy skills into the project's canonical .agents/skills/ ──
+    //
+    // This is the project-local hub.  Full directories are copied from the
+    // global registry (~/.agents/skills/) so companion files are included.
+    let project_skills_dir = dir.join(".agents").join("skills");
+    agent::copy_skills_to_project(
+        &project_skills_dir,
+        &skill_contents,
+        &project.skills,
+        &project.local_skills,
+        &mut written_files,
+    )?;
+
+    // ── Step 2: Per-agent config (MCP, symlinks, project-file cleanup) ────
     let mut cleaned_project_files = HashSet::new();
     for agent_id in &project.agents {
         match agent::from_id(agent_id) {
             Some(agent_instance) => {
-                let skill_files = agent_instance.sync_skills(
-                    &dir,
-                    &skill_contents,
-                    &project.skills,
-                    &project.local_skills,
-                )?;
-                written_files.extend(skill_files);
+                // Symlink agent-specific skill directories to the project hub.
+                // Agents whose skill dir IS .agents/skills/ are skipped — they
+                // already have the skills from Step 1.
+                for skill_dir in agent_instance.skill_dirs(&dir) {
+                    if skill_dir == project_skills_dir {
+                        continue;
+                    }
+                    agent::symlink_skills_from_project(
+                        &skill_dir,
+                        &project_skills_dir,
+                        &skill_contents,
+                        &project.skills,
+                        &project.local_skills,
+                        &mut written_files,
+                    )?;
+                }
 
                 let path = agent_instance.write_mcp_config(&dir, &selected_servers)?;
                 // write_mcp_config returns "" for agents (like Warp) that

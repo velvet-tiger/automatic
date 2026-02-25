@@ -179,6 +179,9 @@ pub fn from_id(id: &str) -> Option<&'static dyn Agent> {
 ///
 /// `preserve_names` lists skill directory names that should never be removed
 /// (e.g. local skills that only exist in this project directory).
+///
+/// Used by individual agent `sync_skills()` implementations and by drift
+/// detection (which writes expected state into a tempdir).
 pub(crate) fn sync_individual_skills(
     base_dir: &Path,
     skills: &[(String, String)],
@@ -186,91 +189,207 @@ pub(crate) fn sync_individual_skills(
     preserve_names: &[String],
     written: &mut Vec<String>,
 ) -> Result<(), String> {
-    let selected: HashSet<&str> = selected_skill_names.iter().map(|s| s.as_str()).collect();
-    let preserved: HashSet<&str> = preserve_names.iter().map(|s| s.as_str()).collect();
+    cleanup_skill_dir(base_dir, selected_skill_names, preserve_names)?;
 
-    if base_dir.exists() {
-        for entry in fs::read_dir(base_dir)
-            .map_err(|e| format!("Failed to read {}: {}", base_dir.display(), e))?
-        {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            let meta = match path.symlink_metadata() {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
+    for (name, content) in skills {
+        let skill_dir = base_dir.join(name);
+        fs::create_dir_all(&skill_dir).map_err(|e| format!("Failed to create skill dir: {}", e))?;
+        let skill_path = skill_dir.join("SKILL.md");
+        fs::write(&skill_path, content)
+            .map_err(|e| format!("Failed to write skill '{}': {}", name, e))?;
+        written.push(skill_dir.display().to_string());
+    }
+    Ok(())
+}
 
-            // Accept real directories and symlinks (which may point to directories)
-            if !meta.is_dir() && !meta.file_type().is_symlink() {
-                continue;
-            }
+/// Copy skill directories from the global registry (`~/.agents/skills/`) into
+/// the project's canonical `.agents/skills/` directory.  This is the first step
+/// of project sync — it populates the project-local hub that other agent
+/// directories will symlink to.
+///
+/// Each skill directory is copied recursively so that companion files
+/// (`scripts/`, `docs/`, etc.) are included, not just `SKILL.md`.
+///
+/// `skill_contents` is used as a fallback: if a skill's source directory
+/// cannot be found in the global registry, the SKILL.md content is written
+/// directly.
+pub(crate) fn copy_skills_to_project(
+    project_skills_dir: &Path,
+    skills: &[(String, String)],
+    selected_skill_names: &[String],
+    preserve_names: &[String],
+    written: &mut Vec<String>,
+) -> Result<(), String> {
+    cleanup_skill_dir(project_skills_dir, selected_skill_names, preserve_names)?;
 
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if crate::core::is_valid_name(name)
-                    && !selected.contains(name)
-                    && !preserved.contains(name)
-                {
-                    if meta.file_type().is_symlink() {
-                        // Symlinks (even to directories) are removed with remove_file
-                        fs::remove_file(&path).map_err(|e| {
-                            format!("Failed to remove skill symlink '{}': {}", path.display(), e)
-                        })?;
-                    } else {
-                        fs::remove_dir_all(&path).map_err(|e| {
-                            format!("Failed to remove skill dir '{}': {}", path.display(), e)
-                        })?;
-                    }
-                }
+    for (name, content) in skills {
+        let target_dir = project_skills_dir.join(name);
+
+        // Remove existing entry so we get a clean copy
+        if let Ok(meta) = target_dir.symlink_metadata() {
+            if meta.file_type().is_symlink() {
+                let _ = fs::remove_file(&target_dir);
+            } else if meta.is_dir() {
+                let _ = fs::remove_dir_all(&target_dir);
             }
         }
-    }
 
-    if skills.is_empty() {
-        return Ok(());
+        // Try to copy the full directory from the global registry
+        let copied = if let Ok(Some(src_dir)) = crate::core::get_skill_dir(name) {
+            copy_dir_recursive(&src_dir, &target_dir).is_ok()
+        } else {
+            false
+        };
+
+        if !copied {
+            // Fallback: write just SKILL.md
+            fs::create_dir_all(&target_dir)
+                .map_err(|e| format!("Failed to create skill dir: {}", e))?;
+            fs::write(target_dir.join("SKILL.md"), content)
+                .map_err(|e| format!("Failed to write skill '{}': {}", name, e))?;
+        }
+
+        written.push(target_dir.display().to_string());
     }
+    Ok(())
+}
+
+/// Create directory symlinks from an agent's skill directory to the project's
+/// canonical `.agents/skills/` directory.  This is the second step of project
+/// sync — agents that store skills somewhere other than `.agents/skills/`
+/// (e.g. `.claude/skills/`, `.cline/skills/`) get symlinks pointing back to
+/// the project hub.
+///
+/// When the user's `skill_sync_mode` setting is `"copy"`, files are copied
+/// instead of symlinked.
+pub(crate) fn symlink_skills_from_project(
+    agent_skills_dir: &Path,
+    project_skills_dir: &Path,
+    skills: &[(String, String)],
+    selected_skill_names: &[String],
+    preserve_names: &[String],
+    written: &mut Vec<String>,
+) -> Result<(), String> {
+    cleanup_skill_dir(agent_skills_dir, selected_skill_names, preserve_names)?;
 
     let settings = crate::core::read_settings().unwrap_or_default();
     let use_symlink = settings.skill_sync_mode == "symlink";
 
     for (name, content) in skills {
-        let skill_dir = base_dir.join(name);
+        let link_path = agent_skills_dir.join(name);
+        let target_dir = project_skills_dir.join(name);
 
-        // Clean up existing entry (real dir or symlink) before writing
-        if let Ok(meta) = skill_dir.symlink_metadata() {
+        // Remove existing entry
+        if let Ok(meta) = link_path.symlink_metadata() {
             if meta.file_type().is_symlink() {
-                let _ = fs::remove_file(&skill_dir);
+                let _ = fs::remove_file(&link_path);
             } else if meta.is_dir() {
-                let _ = fs::remove_dir_all(&skill_dir);
+                let _ = fs::remove_dir_all(&link_path);
             }
         }
 
         let mut linked = false;
-        if use_symlink {
-            if let Ok(Some(src_dir)) = crate::core::get_skill_dir(name) {
-                #[cfg(unix)]
-                {
-                    if std::os::unix::fs::symlink(&src_dir, &skill_dir).is_ok() {
-                        linked = true;
-                    }
+        if use_symlink && target_dir.exists() {
+            #[cfg(unix)]
+            {
+                if std::os::unix::fs::symlink(&target_dir, &link_path).is_ok() {
+                    linked = true;
                 }
-                #[cfg(windows)]
-                {
-                    if std::os::windows::fs::symlink_dir(&src_dir, &skill_dir).is_ok() {
-                        linked = true;
-                    }
+            }
+            #[cfg(windows)]
+            {
+                if std::os::windows::fs::symlink_dir(&target_dir, &link_path).is_ok() {
+                    linked = true;
                 }
             }
         }
 
         if !linked {
             // Fallback: create directory and write SKILL.md as a copy
-            fs::create_dir_all(&skill_dir)
+            fs::create_dir_all(&link_path)
                 .map_err(|e| format!("Failed to create skill dir: {}", e))?;
-            let skill_path = skill_dir.join("SKILL.md");
-            fs::write(&skill_path, content)
+            fs::write(link_path.join("SKILL.md"), content)
                 .map_err(|e| format!("Failed to write skill '{}': {}", name, e))?;
         }
-        written.push(skill_dir.display().to_string());
+
+        written.push(link_path.display().to_string());
+    }
+    Ok(())
+}
+
+/// Remove skill entries from `base_dir` that are not in the selected set
+/// and not in the preserve set.  Handles both real directories and symlinks.
+fn cleanup_skill_dir(
+    base_dir: &Path,
+    selected_skill_names: &[String],
+    preserve_names: &[String],
+) -> Result<(), String> {
+    let selected: HashSet<&str> = selected_skill_names.iter().map(|s| s.as_str()).collect();
+    let preserved: HashSet<&str> = preserve_names.iter().map(|s| s.as_str()).collect();
+
+    if !base_dir.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(base_dir)
+        .map_err(|e| format!("Failed to read {}: {}", base_dir.display(), e))?
+    {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let meta = match path.symlink_metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        // Accept real directories and symlinks (which may point to directories)
+        if !meta.is_dir() && !meta.file_type().is_symlink() {
+            continue;
+        }
+
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if crate::core::is_valid_name(name)
+                && !selected.contains(name)
+                && !preserved.contains(name)
+            {
+                if meta.file_type().is_symlink() {
+                    fs::remove_file(&path).map_err(|e| {
+                        format!("Failed to remove skill symlink '{}': {}", path.display(), e)
+                    })?;
+                } else {
+                    fs::remove_dir_all(&path).map_err(|e| {
+                        format!("Failed to remove skill dir '{}': {}", path.display(), e)
+                    })?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Recursively copy a directory and all its contents.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst)
+        .map_err(|e| format!("Failed to create dir '{}': {}", dst.display(), e))?;
+
+    for entry in
+        fs::read_dir(src).map_err(|e| format!("Failed to read dir '{}': {}", src.display(), e))?
+    {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path).map_err(|e| {
+                format!(
+                    "Failed to copy '{}' -> '{}': {}",
+                    src_path.display(),
+                    dst_path.display(),
+                    e
+                )
+            })?;
+        }
     }
     Ok(())
 }
