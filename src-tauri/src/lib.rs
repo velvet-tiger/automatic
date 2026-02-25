@@ -22,6 +22,18 @@ fn get_api_key(provider: &str) -> Result<String, String> {
     core::get_api_key(provider)
 }
 
+// ── User Profile ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn read_profile() -> Result<Option<core::UserProfile>, String> {
+    core::read_profile()
+}
+
+#[tauri::command]
+fn save_profile(profile: core::UserProfile) -> Result<(), String> {
+    core::save_profile(&profile)
+}
+
 // ── Settings ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -601,6 +613,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            read_profile,
+            save_profile,
             read_settings,
             write_settings,
             save_api_key,

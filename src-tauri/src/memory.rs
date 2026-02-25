@@ -12,6 +12,10 @@ pub struct MemoryEntry {
     pub timestamp: String,
     /// Optional source identifier (e.g., which agent or tool stored this).
     pub source: Option<String>,
+    /// Clerk user ID of the user whose agent stored this entry.
+    /// Populated by the frontend/MCP caller for future team/cloud sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
 }
 
 /// Memory database type: a simple key-value store.
@@ -80,6 +84,7 @@ pub fn store_memory(
             value: value.to_string(),
             timestamp: current_timestamp(),
             source: source.map(|s| s.to_string()),
+            created_by: None,
         },
     );
 
@@ -169,8 +174,7 @@ pub fn search_memories(project_name: &str, query: &str) -> Result<String, String
     let mut matches: Vec<(&String, &MemoryEntry)> = db
         .iter()
         .filter(|(k, v)| {
-            k.to_lowercase().contains(&query_lower)
-                || v.value.to_lowercase().contains(&query_lower)
+            k.to_lowercase().contains(&query_lower) || v.value.to_lowercase().contains(&query_lower)
         })
         .collect();
 
@@ -214,7 +218,11 @@ pub fn delete_memory(project_name: &str, key: &str) -> Result<String, String> {
     ))
 }
 
-pub fn clear_memories(project_name: &str, pattern: Option<&str>, confirm: bool) -> Result<String, String> {
+pub fn clear_memories(
+    project_name: &str,
+    pattern: Option<&str>,
+    confirm: bool,
+) -> Result<String, String> {
     if !confirm {
         return Err("Deletion not confirmed. Set 'confirm' to true to proceed.".to_string());
     }

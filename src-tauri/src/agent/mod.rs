@@ -195,7 +195,13 @@ pub(crate) fn sync_individual_skills(
         {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
-            if !path.is_dir() {
+            let meta = match path.symlink_metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            // Accept real directories and symlinks (which may point to directories)
+            if !meta.is_dir() && !meta.file_type().is_symlink() {
                 continue;
             }
 
@@ -204,9 +210,16 @@ pub(crate) fn sync_individual_skills(
                     && !selected.contains(name)
                     && !preserved.contains(name)
                 {
-                    fs::remove_dir_all(&path).map_err(|e| {
-                        format!("Failed to remove skill dir '{}': {}", path.display(), e)
-                    })?;
+                    if meta.file_type().is_symlink() {
+                        // Symlinks (even to directories) are removed with remove_file
+                        fs::remove_file(&path).map_err(|e| {
+                            format!("Failed to remove skill symlink '{}': {}", path.display(), e)
+                        })?;
+                    } else {
+                        fs::remove_dir_all(&path).map_err(|e| {
+                            format!("Failed to remove skill dir '{}': {}", path.display(), e)
+                        })?;
+                    }
                 }
             }
         }
@@ -221,26 +234,28 @@ pub(crate) fn sync_individual_skills(
 
     for (name, content) in skills {
         let skill_dir = base_dir.join(name);
-        fs::create_dir_all(&skill_dir).map_err(|e| format!("Failed to create skill dir: {}", e))?;
-        let skill_path = skill_dir.join("SKILL.md");
 
-        // Clean up existing file or symlink
-        if skill_path.exists() || skill_path.symlink_metadata().is_ok() {
-            let _ = fs::remove_file(&skill_path);
+        // Clean up existing entry (real dir or symlink) before writing
+        if let Ok(meta) = skill_dir.symlink_metadata() {
+            if meta.file_type().is_symlink() {
+                let _ = fs::remove_file(&skill_dir);
+            } else if meta.is_dir() {
+                let _ = fs::remove_dir_all(&skill_dir);
+            }
         }
 
         let mut linked = false;
         if use_symlink {
-            if let Ok(Some(src_path)) = crate::core::get_skill_path(name) {
+            if let Ok(Some(src_dir)) = crate::core::get_skill_dir(name) {
                 #[cfg(unix)]
                 {
-                    if std::os::unix::fs::symlink(&src_path, &skill_path).is_ok() {
+                    if std::os::unix::fs::symlink(&src_dir, &skill_dir).is_ok() {
                         linked = true;
                     }
                 }
                 #[cfg(windows)]
                 {
-                    if std::os::windows::fs::symlink_file(&src_path, &skill_path).is_ok() {
+                    if std::os::windows::fs::symlink_dir(&src_dir, &skill_dir).is_ok() {
                         linked = true;
                     }
                 }
@@ -248,10 +263,14 @@ pub(crate) fn sync_individual_skills(
         }
 
         if !linked {
+            // Fallback: create directory and write SKILL.md as a copy
+            fs::create_dir_all(&skill_dir)
+                .map_err(|e| format!("Failed to create skill dir: {}", e))?;
+            let skill_path = skill_dir.join("SKILL.md");
             fs::write(&skill_path, content)
                 .map_err(|e| format!("Failed to write skill '{}': {}", name, e))?;
         }
-        written.push(skill_path.display().to_string());
+        written.push(skill_dir.display().to_string());
     }
     Ok(())
 }

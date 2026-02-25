@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { SignIn, SignedIn, SignedOut, UserButton } from "@clerk/clerk-react";
+import { ProfileProvider } from "./ProfileContext";
 import Dashboard from "./Dashboard";
 import Skills from "./Skills";
 import SkillStore from "./SkillStore";
@@ -53,6 +54,7 @@ function App() {
   };
 
   return (
+    <ProfileProvider>
     <div className="relative flex h-screen w-screen overflow-hidden bg-[#222327] text-[#e0e1e6] selection:bg-[#5E6AD2]/30">
       {/* Sign-in overlay when not authenticated */}
       <SignedOut>
@@ -217,6 +219,7 @@ function App() {
         </div>
       </main>
     </div>
+    </ProfileProvider>
   );
 }
 

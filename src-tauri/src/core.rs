@@ -74,6 +74,10 @@ pub struct Project {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    /// Clerk user ID of the user who created this project.  Populated by the
+    /// frontend from the useProfile hook.  Used for future team/cloud sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
 }
 
 // ── API Keys ─────────────────────────────────────────────────────────────────
@@ -255,6 +259,26 @@ fn format_skill_with_companions(skill_content: &str, companions: &[CompanionFile
     }
 
     output
+}
+
+/// Get the absolute path to a skill's directory. Checks `~/.agents/skills/` first,
+/// then falls back to `~/.claude/skills/`.
+pub fn get_skill_dir(name: &str) -> Result<Option<PathBuf>, String> {
+    if !is_valid_name(name) {
+        return Err("Invalid skill name".into());
+    }
+
+    let agents_dir = get_agents_skills_dir()?.join(name);
+    if agents_dir.join("SKILL.md").exists() {
+        return Ok(Some(agents_dir));
+    }
+
+    let claude_dir = get_claude_skills_dir()?.join(name);
+    if claude_dir.join("SKILL.md").exists() {
+        return Ok(Some(claude_dir));
+    }
+
+    Ok(None)
 }
 
 /// Get the absolute path to a skill's SKILL.md file. Checks `~/.agents/skills/` first,
@@ -699,6 +723,77 @@ pub fn remove_skill_source(name: &str) -> Result<(), String> {
     let mut registry = read_skill_sources()?;
     registry.remove(name);
     write_skill_sources(&registry)
+}
+
+// ── User Profile (~/.automatic/profile.json) ─────────────────────────────────
+//
+// Captures the authenticated Clerk user identity locally.  The shape is
+// designed for future cloud sync: the `clerk_id` is the stable foreign key
+// that a team-management API would reference.
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UserProfile {
+    /// Clerk's stable user ID (e.g. "user_2x...").  Primary key for cloud sync.
+    pub clerk_id: String,
+    /// Primary email address from Clerk.
+    #[serde(default)]
+    pub email: String,
+    /// Display name shown in the UI / synced to team roster.
+    #[serde(default)]
+    pub display_name: String,
+    /// Avatar URL from Clerk (typically a hosted image).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+    /// ISO 8601 timestamp of the first time this profile was saved locally.
+    #[serde(default)]
+    pub created_at: String,
+    /// ISO 8601 timestamp of the last profile update.
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+fn get_profile_path() -> Result<std::path::PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    Ok(home.join(".automatic/profile.json"))
+}
+
+pub fn read_profile() -> Result<Option<UserProfile>, String> {
+    let path = get_profile_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let profile: UserProfile =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid profile data: {}", e))?;
+    Ok(Some(profile))
+}
+
+/// Save or update the local user profile.  On the first save the `created_at`
+/// field is set; subsequent saves only update `updated_at`.
+pub fn save_profile(profile: &UserProfile) -> Result<(), String> {
+    let path = get_profile_path()?;
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+
+    let mut to_save = profile.clone();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Preserve original created_at if the file already exists
+    if let Ok(Some(existing)) = read_profile() {
+        if !existing.created_at.is_empty() {
+            to_save.created_at = existing.created_at;
+        }
+    }
+    if to_save.created_at.is_empty() {
+        to_save.created_at = now.clone();
+    }
+    to_save.updated_at = now;
+
+    let raw = serde_json::to_string_pretty(&to_save).map_err(|e| e.to_string())?;
+    fs::write(&path, raw).map_err(|e| e.to_string())
 }
 
 // ── Settings (~/.automatic/settings.json) ────────────────────────────────────

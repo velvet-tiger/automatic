@@ -3,6 +3,7 @@ import { SkillSelector } from "./SkillSelector";
 import { AgentSelector } from "./AgentSelector";
 import { McpSelector } from "./McpSelector";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { useCurrentUser } from "./ProfileContext";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -38,6 +39,7 @@ interface Project {
   agents: string[];
   created_at: string;
   updated_at: string;
+  created_by?: string;
 }
 
 interface AgentInfo {
@@ -104,6 +106,7 @@ interface ProjectsProps {
 }
 
 export default function Projects({ initialProject = null, onInitialProjectConsumed }: ProjectsProps = {}) {
+  const { userId } = useCurrentUser();
   const LAST_PROJECT_KEY = "nexus.projects.selected";
   const PROJECT_ORDER_KEY = "nexus.projects.order";
   const [projects, setProjects] = useState<string[]>([]);
@@ -609,6 +612,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     try {
       setSyncStatus("syncing");
       const toSave = { ...project, name, updated_at: new Date().toISOString() };
+      // Tag new projects with the current user for future team/cloud sync
+      if (isCreating && userId && !toSave.created_by) {
+        toSave.created_by = userId;
+      }
       // save_project writes the project config AND syncs all agent configs
       // (skills, MCP servers) in one atomic backend call.
       await invoke("save_project", {
@@ -915,9 +922,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     </button>
                   ) : driftReport && !driftReport.drifted ? (
                     <button
-                      disabled
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] text-[#4ADE80] rounded text-[12px] font-medium border border-[#4ADE80]/20 opacity-70 cursor-default"
-                      title="Configuration is up to date"
+                      onClick={handleSync}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#4ADE80] rounded text-[12px] font-medium border border-[#4ADE80]/20 hover:border-[#4ADE80]/40 transition-colors"
+                      title="Configuration is up to date — click to force sync"
                     >
                       <Check size={12} /> In Sync
                     </button>
@@ -1105,6 +1112,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           try {
                             setSyncStatus("syncing");
                             const toSave = { ...project, directory: dir, name, updated_at: new Date().toISOString() };
+                            if (userId && !toSave.created_by) {
+                              toSave.created_by = userId;
+                            }
                             await invoke("save_project", { name, data: JSON.stringify(toSave, null, 2) });
                             setSelectedName(name);
                             localStorage.setItem(LAST_PROJECT_KEY, name);
@@ -1679,15 +1689,20 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               <ArrowRight size={14} className="text-[#F59E0B]/60 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                             </button>
                           ) : driftReport && !driftReport.drifted ? (
-                            <div className="flex items-center gap-3 bg-[#1A1A1E] border border-[#4ADE80]/20 rounded-lg p-4">
-                              <div className="p-2 bg-[#4ADE80]/10 rounded-lg">
+                            <button
+                              onClick={handleSync}
+                              className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#4ADE80]/20 hover:border-[#4ADE80]/40 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#4ADE80]/5 text-left"
+                              title="Click to force sync"
+                            >
+                              <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/15 transition-colors">
                                 <CheckCircle2 size={16} className="text-[#4ADE80]" />
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="text-[13px] font-medium text-[#4ADE80] mb-0.5">In Sync</div>
                                 <div className="text-[11px] text-[#8A8C93]">All configs up to date</div>
                               </div>
-                            </div>
+                              <ArrowRight size={14} className="text-[#4ADE80]/40 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                            </button>
                           ) : (
                             <button
                               onClick={handleSync}
