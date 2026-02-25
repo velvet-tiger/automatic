@@ -6,6 +6,7 @@ import { MarkdownPreview } from "./MarkdownPreview";
 import { useCurrentUser } from "./ProfileContext";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import {
   Plus,
   X,
@@ -30,6 +31,7 @@ import {
   Files,
   SplitSquareHorizontal,
   Brain,
+  RotateCcw,
 } from "lucide-react";
 
 interface Project {
@@ -1577,7 +1579,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {projectTab === "summary" && (
                   <>
                     {/* Quick Stats */}
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-4 gap-4">
                       {/* Agents Card */}
                       <button
                         onClick={() => setProjectTab("agents")}
@@ -1652,6 +1654,32 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           </div>
                           <div className="p-2 bg-[#F59E0B]/10 rounded-lg group-hover:bg-[#F59E0B]/20 transition-colors shrink-0">
                             <Server size={18} className="text-[#F59E0B]" />
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* Memory Card */}
+                      <button
+                        onClick={() => setProjectTab("memory")}
+                        className="group bg-[#1A1A1E] border border-[#33353A] hover:border-[#22D3EE]/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-[#22D3EE]/10"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between">
+                              <div className="text-3xl font-semibold text-[#E0E1E6] leading-none mb-1">
+                                {Object.keys(memories).length}
+                              </div>
+                              <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                            </div>
+                            <div className="text-[13px] text-[#8A8C93] mb-1">Memory</div>
+                            <div className="text-[11px] text-[#8A8C93]/60 truncate">
+                              {Object.keys(memories).length === 0
+                                ? "No memories stored"
+                                : `${Object.keys(memories).length} entr${Object.keys(memories).length === 1 ? "y" : "ies"}`}
+                            </div>
+                          </div>
+                          <div className="p-2 bg-[#22D3EE]/10 rounded-lg group-hover:bg-[#22D3EE]/20 transition-colors shrink-0">
+                            <Brain size={18} className="text-[#22D3EE]" />
                           </div>
                         </div>
                       </button>
@@ -1842,62 +1870,51 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                        )}
 
                        <div className="grid grid-cols-2 gap-3">
+                         {/* Open Directory */}
                          <button
-                           onClick={() => setProjectTab("project_file")}
-                           className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10 text-left"
-                         >
-                          <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors">
-                            <FileText size={16} className="text-[#5E6AD2]" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Project Files</div>
-                            <div className="text-[11px] text-[#8A8C93]">Manage agent instructions</div>
-                          </div>
-                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                        </button>
-
-                        <button
-                           onClick={() => setProjectTab("memory")}
-                           className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10 text-left"
+                           onClick={async () => {
+                             if (project.directory) {
+                               try {
+                                 await openPath(project.directory);
+                               } catch (err: any) {
+                                 setError(`Failed to open directory: ${err}`);
+                               }
+                             }
+                           }}
+                           disabled={!project.directory}
+                           className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10 text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[#33353A] disabled:hover:shadow-none"
                          >
                            <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors">
-                             <Brain size={16} className="text-[#5E6AD2]" />
+                             <FolderOpen size={16} className="text-[#5E6AD2]" />
                            </div>
                            <div className="flex-1 min-w-0">
-                             <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Memory</div>
-                             <div className="text-[11px] text-[#8A8C93]">View agent memory</div>
+                             <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Open Directory</div>
+                             <div className="text-[11px] text-[#8A8C93]">
+                               {project.directory ? "Open in Finder" : "No directory set"}
+                             </div>
                            </div>
                            <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                          </button>
 
-                        <button
-                          onClick={() => setProjectTab("skills")}
-                          className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#4ADE80]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#4ADE80]/10 text-left"
-                        >
-                          <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/20 transition-colors">
-                            <Package size={16} className="text-[#4ADE80]" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Manage Skills</div>
-                            <div className="text-[11px] text-[#8A8C93]">Add or remove capabilities</div>
-                          </div>
-                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                        </button>
-
-                        <button
-                          onClick={() => setProjectTab("mcp_servers")}
-                          className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#F59E0B]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#F59E0B]/10 text-left"
-                        >
-                          <div className="p-2 bg-[#F59E0B]/10 rounded-lg group-hover:bg-[#F59E0B]/20 transition-colors">
-                            <Server size={16} className="text-[#F59E0B]" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">MCP Servers</div>
-                            <div className="text-[11px] text-[#8A8C93]">Configure integrations</div>
-                          </div>
-                          <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                        </button>
-                      </div>
+                         {/* Force Refresh */}
+                         <button
+                           onClick={async () => {
+                             if (selectedName) {
+                               await reloadProject(selectedName);
+                             }
+                           }}
+                           className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#4ADE80]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#4ADE80]/10 text-left"
+                         >
+                           <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/20 transition-colors">
+                             <RotateCcw size={16} className="text-[#4ADE80]" />
+                           </div>
+                           <div className="flex-1 min-w-0">
+                             <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Force Refresh</div>
+                             <div className="text-[11px] text-[#8A8C93]">Reload project from disk</div>
+                           </div>
+                           <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                         </button>
+                       </div>
                     </section>
 
                     {/* Description */}
