@@ -595,6 +595,43 @@ pub fn remove_skill_source(name: &str) -> Result<(), String> {
     write_skill_sources(&registry)
 }
 
+// ── Settings (~/.automatic/settings.json) ────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Settings {
+    pub skill_sync_mode: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            skill_sync_mode: "symlink".to_string(),
+        }
+    }
+}
+
+pub fn read_settings() -> Result<Settings, String> {
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    let path = home.join(".automatic/settings.json");
+    if !path.exists() {
+        return Ok(Settings::default());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    Ok(serde_json::from_str(&raw).unwrap_or_default())
+}
+
+pub fn write_settings(settings: &Settings) -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    let path = home.join(".automatic/settings.json");
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    fs::write(&path, raw).map_err(|e| e.to_string())
+}
+
 // ── Templates ────────────────────────────────────────────────────────────────
 
 pub fn get_templates_dir() -> Result<PathBuf, String> {
@@ -1604,9 +1641,9 @@ pub fn delete_project(name: &str) -> Result<(), String> {
                         let _ = fs::remove_file(&config_path);
                     }
                     // Remove .automatic dir if it's now empty
-                    let nexus_dir = PathBuf::from(&project.directory).join(".automatic");
-                    if nexus_dir.exists() {
-                        let _ = fs::remove_dir(&nexus_dir); // only succeeds if empty
+                    let automatic_dir = PathBuf::from(&project.directory).join(".automatic");
+                    if automatic_dir.exists() {
+                        let _ = fs::remove_dir(&automatic_dir); // only succeeds if empty
                     }
                 }
             }

@@ -8,7 +8,8 @@ import ProjectTemplates from "./ProjectTemplates";
 import McpServers from "./McpServers";
 import Templates from "./Templates";
 import Agents from "./Agents";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store } from "lucide-react";
+import Settings from "./Settings";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon } from "lucide-react";
 import "./App.css";
 
 function App() {
@@ -116,6 +117,7 @@ function App() {
               <NavItem id="project-templates" icon={Layers} label="Proj Templates" />
               <NavItem id="templates" icon={LayoutTemplate} label="File Templates" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
+              <NavItem id="settings" icon={SettingsIcon} label="Settings" />
             </ul>
           </div>
 
@@ -208,10 +210,9 @@ function App() {
             </div>
           )}
           {activeTab === "settings" && (
-             <div className="flex-1 p-8 bg-[#222327]">
-                <h3 className="text-sm font-medium mb-4">Preferences</h3>
-                <div className="text-[13px] text-[#8A8C93]">Application settings will go here.</div>
-             </div>
+            <div className="flex-1 h-full">
+              <Settings />
+            </div>
           )}
         </div>
       </main>
