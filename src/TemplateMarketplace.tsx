@@ -36,15 +36,15 @@ interface BundledProjectTemplate {
 
 const CATEGORY_COLOURS: Record<string, { bg: string; text: string; dot: string }> = {
   "Web Application":  { bg: "bg-[#5E6AD2]/15", text: "text-[#5E6AD2]", dot: "bg-[#5E6AD2]" },
-  "API / Backend":    { bg: "bg-[#F59E0B]/15", text: "text-[#F59E0B]", dot: "bg-[#F59E0B]" },
-  "Data & Analytics": { bg: "bg-[#22D3EE]/15", text: "text-[#22D3EE]", dot: "bg-[#22D3EE]" },
-  "Desktop App":      { bg: "bg-[#4ADE80]/15", text: "text-[#4ADE80]", dot: "bg-[#4ADE80]" },
-  "Infrastructure":   { bg: "bg-[#F97316]/15", text: "text-[#F97316]", dot: "bg-[#F97316]" },
-  "Frontend":         { bg: "bg-[#A78BFA]/15", text: "text-[#A78BFA]", dot: "bg-[#A78BFA]" },
+  "API / Backend":    { bg: "bg-[#5E6AD2]/15", text: "text-[#5E6AD2]", dot: "bg-[#5E6AD2]" },
+  "Data & Analytics": { bg: "bg-[#5E6AD2]/15", text: "text-[#5E6AD2]", dot: "bg-[#5E6AD2]" },
+  "Desktop App":      { bg: "bg-[#5E6AD2]/15", text: "text-[#5E6AD2]", dot: "bg-[#5E6AD2]" },
+  "Infrastructure":   { bg: "bg-[#5E6AD2]/15", text: "text-[#5E6AD2]", dot: "bg-[#5E6AD2]" },
+  "Frontend":         { bg: "bg-[#5E6AD2]/15", text: "text-[#5E6AD2]", dot: "bg-[#5E6AD2]" },
 };
 
 function categoryStyle(cat: string) {
-  return CATEGORY_COLOURS[cat] ?? { bg: "bg-[#C8CAD0]/15", text: "text-[#C8CAD0]", dot: "bg-[#C8CAD0]" };
+  return CATEGORY_COLOURS[cat] ?? { bg: "bg-[#5E6AD2]/15", text: "text-[#5E6AD2]", dot: "bg-[#5E6AD2]" };
 }
 
 // ── Card ─────────────────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ function TemplateCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
-          {imported && <CheckCircle2 size={13} className="text-[#4ADE80]" />}
+          {imported && <CheckCircle2 size={13} className="text-[#5E6AD2]" />}
           <ArrowRight size={13} className="text-[#33353A] group-hover:text-[#C8CAD0] transition-colors" />
         </div>
       </div>
@@ -171,7 +171,7 @@ function TemplateDetail({
         <div className="flex items-center gap-2">
           {error && <span className="text-[12px] text-red-400">{error}</span>}
           {imported ? (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#2D2E36] border border-[#33353A] text-[#4ADE80]">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#2D2E36] border border-[#33353A] text-[#5E6AD2]">
               <CheckCircle2 size={12} />
               Imported
             </div>
@@ -416,23 +416,23 @@ export default function TemplateMarketplace({ resetKey }: { resetKey?: number })
   // Landing
   return (
     <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-[#222327]">
-      <div className="flex flex-col items-center px-8 pt-12 pb-10 w-full">
-        <div className="w-full max-w-4xl">
+      <div className="flex flex-col px-6 pt-10 pb-10 w-full">
+        <div className="w-full max-w-4xl mx-auto">
 
           {/* Heading */}
-          <div className="text-center mb-8">
-            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#5E6AD2]/10 border border-[#5E6AD2]/20 flex items-center justify-center">
-              <FolderOpen size={22} className="text-[#5E6AD2]" strokeWidth={1.5} />
+          <div className="text-center mb-6 max-w-lg mx-auto">
+            <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-[#5E6AD2]/10 border border-[#5E6AD2]/20 flex items-center justify-center">
+              <FolderOpen size={20} className="text-[#5E6AD2]" strokeWidth={1.5} />
             </div>
-            <h2 className="text-[20px] font-semibold text-[#F8F8FA] mb-2">Template Marketplace</h2>
-            <p className="text-[13px] text-[#C8CAD0] leading-relaxed max-w-md mx-auto">
+            <h2 className="text-[18px] font-semibold text-[#F8F8FA] mb-1.5">Template Marketplace</h2>
+            <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
               Pre-built project configurations for common stacks. Import a template to add it to
               your Project Templates library, then apply it to any project.
             </p>
           </div>
 
           {/* Search */}
-          <div className="relative mb-8">
+          <div className="relative mb-6">
             <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#C8CAD0] pointer-events-none" />
             <input
               type="text"
@@ -440,7 +440,7 @@ export default function TemplateMarketplace({ resetKey }: { resetKey?: number })
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by name, category, or tag…"
               autoFocus
-              className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-xl pl-11 pr-10 py-3.5 text-[14px] text-[#F8F8FA] placeholder-[#C8CAD0]/60 outline-none transition-colors shadow-sm"
+              className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-xl pl-11 pr-10 py-3 text-[14px] text-[#F8F8FA] placeholder-[#C8CAD0]/60 outline-none transition-colors shadow-sm"
             />
             {query && (
               <button
@@ -464,9 +464,9 @@ export default function TemplateMarketplace({ resetKey }: { resetKey?: number })
               </div>
               <h3 className="text-[14px] font-medium text-[#F8F8FA] mb-1">No templates found</h3>
               <p className="text-[13px] text-[#C8CAD0]">Try a different search term</p>
-              <button onClick={() => setQuery("")} className="mt-4 text-[12px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors">
-                Clear search
-              </button>
+               <button onClick={() => setQuery("")} className="mt-4 text-[12px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors">
+                 Clear search
+               </button>
             </div>
           ) : (
             <>
@@ -475,7 +475,7 @@ export default function TemplateMarketplace({ resetKey }: { resetKey?: number })
                   {query.trim() ? `${results.length} result${results.length !== 1 ? "s" : ""}` : "Featured Templates"}
                 </h3>
                 {!query.trim() && importedNames.size > 0 && (
-                  <span className="text-[11px] text-[#4ADE80]">{importedNames.size} imported</span>
+                  <span className="text-[11px] text-[#5E6AD2]">{importedNames.size} imported</span>
                 )}
               </div>
               <div className="grid grid-cols-2 gap-4">
