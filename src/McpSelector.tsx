@@ -59,7 +59,7 @@ export function McpSelector({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Server size={13} className="text-[#F59E0B]" />
-          <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+          <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
             {label}
           </span>
         </div>
@@ -75,7 +75,7 @@ export function McpSelector({
 
       {/* Empty state */}
       {servers.length === 0 && !adding && (
-        <p className="text-[12px] text-[#8A8C93]/50 italic pl-1">{emptyMessage}</p>
+        <p className="text-[12px] text-[#C8CAD0]/50 italic pl-1">{emptyMessage}</p>
       )}
 
       {/* Current servers list */}
@@ -89,11 +89,11 @@ export function McpSelector({
               <Server size={15} className="text-[#F59E0B]" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-[13px] font-medium text-[#E0E1E6]">{srv}</div>
+              <div className="text-[13px] font-medium text-[#F8F8FA]">{srv}</div>
             </div>
             <button
               onClick={() => onRemove(idx)}
-              className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-[#33353A] rounded"
+              className="text-[#C8CAD0] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-[#33353A] rounded"
             >
               <Trash2 size={12} />
             </button>
@@ -106,7 +106,7 @@ export function McpSelector({
         <div className="mt-2 bg-[#1A1A1E] border border-[#33353A] rounded-lg overflow-hidden">
           {/* Search input */}
           <div className="flex items-center gap-2 px-3 py-2 border-b border-[#33353A]">
-            <Search size={12} className="text-[#8A8C93] shrink-0" />
+            <Search size={12} className="text-[#C8CAD0] shrink-0" />
             <input
               type="text"
               value={search}
@@ -117,12 +117,12 @@ export function McpSelector({
               }}
               placeholder="Search MCP servers..."
               autoFocus
-              className="flex-1 bg-transparent outline-none text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/50"
+              className="flex-1 bg-transparent outline-none text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/50"
             />
             {search && (
               <button
                 onClick={() => setSearch("")}
-                className="text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
               >
                 <X size={11} />
               </button>
@@ -141,11 +141,11 @@ export function McpSelector({
                   <div className="w-5 h-5 rounded bg-[#F59E0B]/10 flex items-center justify-center flex-shrink-0">
                     <Server size={11} className="text-[#F59E0B]" />
                   </div>
-                  <span className="text-[13px] text-[#E0E1E6]">{s}</span>
+                  <span className="text-[13px] text-[#F8F8FA]">{s}</span>
                 </button>
               ))
             ) : (
-              <p className="text-[12px] text-[#8A8C93] italic px-3 py-3">
+              <p className="text-[12px] text-[#C8CAD0] italic px-3 py-3">
                 {unaddedServers.length === 0 ? "All MCP servers already added." : "No servers match."}
               </p>
             )}
@@ -153,12 +153,12 @@ export function McpSelector({
 
           {/* Footer */}
           <div className="border-t border-[#33353A] px-3 py-2 flex items-center justify-between">
-            <span className="text-[11px] text-[#8A8C93]">
+            <span className="text-[11px] text-[#C8CAD0]">
               {filteredServers.length} of {unaddedServers.length} server{unaddedServers.length !== 1 ? "s" : ""}
             </span>
             <button
               onClick={handleCancel}
-              className="text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+              className="text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
             >
               Cancel
             </button>

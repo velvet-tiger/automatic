@@ -20,7 +20,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
           colorPrimary: "#5E6AD2",
           colorBackground: "#1A1A1E",
           colorInputBackground: "#222327",
-          colorInputText: "#E0E1E6",
+          colorInputText: "#F8F8FA",
           borderRadius: "0.375rem",
         },
       }}
