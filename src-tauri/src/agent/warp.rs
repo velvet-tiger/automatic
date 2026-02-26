@@ -20,7 +20,7 @@ impl Agent for Warp {
     }
 
     fn label(&self) -> &'static str {
-        "Warp"
+        "Warp (Beta)"
     }
 
     fn config_description(&self) -> &'static str {

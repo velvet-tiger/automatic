@@ -20,7 +20,7 @@ impl Agent for GitHubCopilot {
     }
 
     fn label(&self) -> &'static str {
-        "GitHub Copilot"
+        "GitHub Copilot (Beta)"
     }
 
     fn config_description(&self) -> &'static str {

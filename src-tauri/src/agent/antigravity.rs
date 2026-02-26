@@ -19,7 +19,7 @@ impl Agent for Antigravity {
     }
 
     fn label(&self) -> &'static str {
-        "Antigravity"
+        "Antigravity (Beta)"
     }
 
     fn config_description(&self) -> &'static str {

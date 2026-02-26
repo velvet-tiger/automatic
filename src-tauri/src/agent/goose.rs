@@ -20,7 +20,7 @@ impl Agent for Goose {
     }
 
     fn label(&self) -> &'static str {
-        "Goose"
+        "Goose (Beta)"
     }
 
     fn config_description(&self) -> &'static str {

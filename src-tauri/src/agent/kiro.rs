@@ -16,7 +16,7 @@ impl Agent for Kiro {
     }
 
     fn label(&self) -> &'static str {
-        "Kiro"
+        "Kiro (Beta)"
     }
 
     fn config_description(&self) -> &'static str {

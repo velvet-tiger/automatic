@@ -16,7 +16,7 @@ impl Agent for Cline {
     }
 
     fn label(&self) -> &'static str {
-        "Cline"
+        "Cline (Beta)"
     }
 
     fn config_description(&self) -> &'static str {

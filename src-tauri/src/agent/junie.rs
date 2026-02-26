@@ -16,7 +16,7 @@ impl Agent for Junie {
     }
 
     fn label(&self) -> &'static str {
-        "Junie"
+        "Junie (Beta)"
     }
 
     fn config_description(&self) -> &'static str {

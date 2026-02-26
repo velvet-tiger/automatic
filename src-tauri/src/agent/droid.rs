@@ -16,7 +16,7 @@ impl Agent for Droid {
     }
 
     fn label(&self) -> &'static str {
-        "Droid"
+        "Droid (Beta)"
     }
 
     fn config_description(&self) -> &'static str {

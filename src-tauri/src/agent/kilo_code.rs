@@ -20,7 +20,7 @@ impl Agent for KiloCode {
     }
 
     fn label(&self) -> &'static str {
-        "Kilo Code"
+        "Kilo Code (Beta)"
     }
 
     fn config_description(&self) -> &'static str {

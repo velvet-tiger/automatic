@@ -17,7 +17,7 @@ impl Agent for GeminiCli {
     }
 
     fn label(&self) -> &'static str {
-        "Gemini CLI"
+        "Gemini CLI (Beta)"
     }
 
     fn config_description(&self) -> &'static str {

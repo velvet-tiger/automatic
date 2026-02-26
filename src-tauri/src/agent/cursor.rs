@@ -16,7 +16,7 @@ impl Agent for Cursor {
     }
 
     fn label(&self) -> &'static str {
-        "Cursor"
+        "Cursor (Beta)"
     }
 
     fn config_description(&self) -> &'static str {
