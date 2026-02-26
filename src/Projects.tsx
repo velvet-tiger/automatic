@@ -24,7 +24,6 @@ import {
   ArrowRightLeft,
   GripVertical,
   Package,
-  CheckCircle2,
   AlertCircle,
   ArrowRight,
   ScrollText,
@@ -380,7 +379,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "details" | "agents" | "skills" | "mcp_servers" | "project_file" | "memory";
+  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "memory";
   const [projectTab, setProjectTab] = useState<ProjectTab>("summary");
 
   // Memory state
@@ -1024,6 +1023,61 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     updateField(key, project[key].filter((_, i) => i !== idx));
   };
 
+  /**
+   * Remove an agent from the project, prompting for confirmation and cleaning
+   * up the agent's config files and skill directories from the project directory.
+   *
+   * If the project has no directory (not yet synced), falls back to an in-memory
+   * removal so the user can save later.
+   */
+  const handleRemoveAgent = async (idx: number) => {
+    if (!project) return;
+    const agentId = project.agents[idx];
+    if (!agentId) return;
+
+    const agentInfo = availableAgents.find((a) => a.id === agentId);
+    const agentLabel = agentInfo?.label ?? agentId;
+
+    // If no directory or project not yet persisted → in-memory removal only
+    if (!project.directory || !selectedName || isCreating) {
+      const message = `Remove ${agentLabel} from this project?\n\nNo config files will be deleted since no project directory is configured.`;
+      const confirmed = await ask(message, { title: "Remove Agent", kind: "warning" });
+      if (!confirmed) return;
+      removeItem("agents", idx);
+      return;
+    }
+
+    const name = selectedName; // narrowed: guaranteed non-null from here on
+
+    // Fetch the list of files that would be cleaned up (read-only preview)
+    let preview: string[] = [];
+    try {
+      const raw: string = await invoke("get_agent_cleanup_preview", { name, agentId });
+      preview = JSON.parse(raw);
+    } catch {
+      // Non-fatal — proceed with a generic message if the preview fails
+    }
+
+    const fileList =
+      preview.length > 0
+        ? `\n\nThe following files and directories will be deleted:\n${preview.map((p) => `  • ${p}`).join("\n")}`
+        : "\n\nNo config files were found on disk for this agent.";
+
+    const confirmed = await ask(
+      `Remove ${agentLabel} from this project?${fileList}`,
+      { title: "Remove Agent", kind: "warning" }
+    );
+    if (!confirmed) return;
+
+    try {
+      await invoke("remove_agent_from_project", { name, agentId });
+      await reloadProject(name);
+      setDirty(false);
+    } catch (err: any) {
+      setError(`Failed to remove agent: ${err}`);
+    }
+  };
+
   const handleSync = async () => {
     const name = isCreating ? newName.trim() : selectedName;
     if (!name || !project) return;
@@ -1493,11 +1547,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
             {/* Tab bar + content (hidden while in new-project setup) */}
             {!isCreating && <>
-            <div className="flex items-center gap-0 px-6 border-b border-[#33353A] bg-[#222327]">
+            <div className="flex flex-wrap items-center gap-0 px-6 border-b border-[#33353A] bg-[#222327]">
               {([
-                { id: "summary" as ProjectTab, label: "Summary" },
-                { id: "details" as ProjectTab, label: "Details" },
-                { id: "agents" as ProjectTab, label: "Agents" },
+                 { id: "summary" as ProjectTab, label: "Summary" },
+                 { id: "agents" as ProjectTab, label: "Agents" },
                 { id: "skills" as ProjectTab, label: "Skills" },
                 { id: "mcp_servers" as ProjectTab, label: "MCP Servers" },
                 { id: "project_file" as ProjectTab, label: "Project Instructions" },
@@ -1844,7 +1897,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {projectTab === "summary" && (
                   <>
                     {/* Quick Stats */}
-                    <div className="grid grid-cols-4 gap-4">
+                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
                       {/* Agents Card */}
                       <button
                         onClick={() => setProjectTab("agents")}
@@ -1950,107 +2003,63 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </button>
                     </div>
 
-                    {/* Project Status */}
-                    <section className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5">
-                      <div className="flex items-start justify-between mb-4">
-                        <div>
-                          <h3 className="text-[13px] font-semibold text-[#F8F8FA] mb-1">Project Status</h3>
-                          <p className="text-[11px] text-[#C8CAD0]">Configuration and sync status</p>
-                        </div>
-                        {project.directory && project.agents.length > 0 ? (
-                          <CheckCircle2 size={18} className="text-[#4ADE80]" />
-                        ) : (
-                          <AlertCircle size={18} className="text-[#F59E0B]" />
-                        )}
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+                    {/* Description + Directory */}
+                    <section className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 space-y-4">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
+                          Description
+                        </label>
+                        <textarea
+                          value={project.description}
+                          onChange={(e) => updateField("description", e.target.value)}
+                          placeholder="What is this project for?"
+                          rows={3}
+                          className="w-full bg-[#222327] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none resize-none transition-colors"
+                        />
                       </div>
-
-                      <div className="space-y-3">
-                        {/* Directory Status */}
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <FolderOpen size={13} className="text-[#C8CAD0]" />
-                            <span className="text-[12px] text-[#F8F8FA]">Project Directory</span>
-                          </div>
-                          {project.directory ? (
-                            <div className="flex items-center gap-1.5">
-                              <CheckCircle2 size={12} className="text-[#4ADE80]" />
-                              <span className="text-[11px] text-[#4ADE80]">Configured</span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5">
-                              <AlertCircle size={12} className="text-[#F59E0B]" />
-                              <button
-                                onClick={() => setProjectTab("details")}
-                                className="text-[11px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
-                              >
-                                Set directory
-                              </button>
-                            </div>
-                          )}
+                      <div>
+                        <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
+                          <span className="flex items-center gap-1.5">
+                            <FolderOpen size={12} /> Project Directory
+                          </span>
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={project.directory}
+                            onChange={(e) => updateField("directory", e.target.value)}
+                            placeholder="/path/to/your/project"
+                            className="flex-1 bg-[#222327] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors"
+                          />
+                          <button
+                            onClick={async () => {
+                              const selected = await open({
+                                directory: true,
+                                multiple: false,
+                                title: "Select project directory",
+                              });
+                              if (selected) {
+                                updateField("directory", selected as string);
+                              }
+                            }}
+                            className="px-3 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#F8F8FA] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors whitespace-nowrap"
+                          >
+                            Browse
+                          </button>
                         </div>
-
-                        {/* Agents Status */}
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Bot size={13} className="text-[#C8CAD0]" />
-                            <span className="text-[12px] text-[#F8F8FA]">Agent Tools</span>
-                          </div>
-                          {project.agents.length > 0 ? (
-                            <div className="flex items-center gap-1.5">
-                              <CheckCircle2 size={12} className="text-[#4ADE80]" />
-                              <span className="text-[11px] text-[#4ADE80]">{project.agents.length} configured</span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5">
-                              <AlertCircle size={12} className="text-[#F59E0B]" />
-                              <button
-                                onClick={() => setProjectTab("agents")}
-                                className="text-[11px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
-                              >
-                                Add agents
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Sync Status */}
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <RefreshCw size={13} className="text-[#C8CAD0]" />
-                            <span className="text-[12px] text-[#F8F8FA]">Configuration Sync</span>
-                          </div>
-                          {project.directory && project.agents.length > 0 ? (
-                            <div className="flex items-center gap-1.5">
-                              <CheckCircle2 size={12} className="text-[#4ADE80]" />
-                              <span className="text-[11px] text-[#4ADE80]">Ready</span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5">
-                              <AlertCircle size={12} className="text-[#C8CAD0]" />
-                              <span className="text-[11px] text-[#C8CAD0]">Not available</span>
-                            </div>
-                          )}
-                        </div>
+                        <p className="mt-1.5 text-[11px] text-[#C8CAD0]">
+                          Agent configs will be written to this directory when you sync.
+                        </p>
                       </div>
-
-                      {/* Directory Path */}
-                      {project.directory && (
-                        <div className="mt-4 pt-4 border-t border-[#33353A]">
-                          <div className="text-[10px] text-[#C8CAD0] mb-1">Location</div>
-                          <div className="text-[11px] font-mono text-[#F8F8FA] break-all bg-[#222327] px-2 py-1.5 rounded border border-[#33353A]">
-                            {project.directory}
-                          </div>
-                        </div>
-                      )}
                     </section>
 
-                    {/* Quick Actions */}
-                     <section>
-                       <h3 className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-3">Quick Actions</h3>
+                      {/* Quick Actions */}
+                      <div className="flex flex-col gap-3">
 
                        {/* Apply Project Template */}
                        {availableProjectTemplates.length > 0 && (
-                         <div className="mb-3">
+                         <div>
                            <button
                              onClick={() => setShowProjectTemplatePicker(!showProjectTemplatePicker)}
                              className="w-full group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10 text-left"
@@ -2134,8 +2143,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                          </div>
                        )}
 
-                       <div className="grid grid-cols-2 gap-3">
-                          {/* Open in editor card */}
+                           {/* Open in editor card */}
                           <div className={`bg-[#1A1A1E] border border-[#33353A] rounded-lg p-4 transition-all ${project.directory ? "" : "opacity-40"}`}>
                             <div className="flex items-center gap-3 mb-3">
                               <div className="p-2 bg-[#5E6AD2]/10 rounded-lg">
@@ -2191,18 +2199,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                            </div>
                            <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                          </button>
-                       </div>
-                    </section>
+                         </div>
+                     </div>
 
-                    {/* Description */}
-                    {project.description && (
-                      <section className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5">
-                        <h3 className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">Description</h3>
-                        <p className="text-[13px] text-[#F8F8FA] leading-relaxed whitespace-pre-wrap">
-                          {project.description}
-                        </p>
-                      </section>
-                    )}
 
                     {/* Getting Started (existing saved project that is still incomplete) */}
                     {!isCreating && (!project.directory || project.agents.length === 0) && (
@@ -2223,12 +2222,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     <span className="text-[10px] text-[#5E6AD2]">1</span>
                                   </div>
                                   <div>
-                                    <button
-                                      onClick={() => setProjectTab("details")}
-                                      className="text-[#5E6AD2] hover:text-[#6B78E3] transition-colors font-medium"
-                                    >
-                                      Set project directory
-                                    </button>
+                                     <span className="text-[#F8F8FA] font-medium">
+                                       Set project directory
+                                     </span>
                                     <div className="text-[11px] text-[#C8CAD0] mt-0.5">
                                       Choose where agent configs will be synced
                                     </div>
@@ -2278,70 +2274,16 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 )}
 
                 {/* ── Details tab ──────────────────────────────────────── */}
-                {projectTab === "details" && (
-                  <>
-                    {/* Description */}
-                    <section>
-                      <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
-                        Description
-                      </label>
-                      <textarea
-                        value={project.description}
-                        onChange={(e) => updateField("description", e.target.value)}
-                        placeholder="What is this project for?"
-                        rows={3}
-                        className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none resize-none transition-colors"
-                      />
-                    </section>
-
-                    {/* Directory */}
-                    <section>
-                      <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
-                        <span className="flex items-center gap-1.5">
-                          <FolderOpen size={12} /> Project Directory
-                        </span>
-                      </label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={project.directory}
-                          onChange={(e) => updateField("directory", e.target.value)}
-                          placeholder="/path/to/your/project"
-                          className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors"
-                        />
-                        <button
-                          onClick={async () => {
-                            const selected = await open({
-                              directory: true,
-                              multiple: false,
-                              title: "Select project directory",
-                            });
-                            if (selected) {
-                              updateField("directory", selected as string);
-                            }
-                          }}
-                          className="px-3 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#F8F8FA] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors whitespace-nowrap"
-                        >
-                          Browse
-                        </button>
-                      </div>
-                      <p className="mt-1.5 text-[11px] text-[#C8CAD0]">
-                        Agent configs will be written to this directory when you sync.
-                      </p>
-                    </section>
-                  </>
-                )}
-
-                {/* ── Agents tab ───────────────────────────────────────── */}
+                 {/* ── Agents tab ───────────────────────────────────────── */}
                 {projectTab === "agents" && (
                   <section>
-                    <AgentSelector
-                      agentIds={project.agents}
-                      availableAgents={availableAgents}
-                      onAdd={(id) => addItem("agents", id)}
-                      onRemove={(i) => removeItem("agents", i)}
-                      emptyMessage="No agent tools selected. Add tools to enable config sync."
-                    />
+                     <AgentSelector
+                       agentIds={project.agents}
+                       availableAgents={availableAgents}
+                       onAdd={(id) => addItem("agents", id)}
+                       onRemove={(i) => handleRemoveAgent(i)}
+                       emptyMessage="No agent tools selected. Add tools to enable config sync."
+                     />
                   </section>
                 )}
 
