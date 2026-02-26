@@ -43,8 +43,24 @@ impl Agent for Junie {
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
-    fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
-        vec![dir.join(".junie").join("mcp.json")]
+    /// Junie owns the entire `.junie/` directory — remove it all on removal.
+    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+        let junie_dir = dir.join(".junie");
+        if junie_dir.exists() {
+            if fs::remove_dir_all(&junie_dir).is_ok() {
+                return vec![junie_dir.display().to_string()];
+            }
+        }
+        vec![]
+    }
+
+    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
+        let junie_dir = dir.join(".junie");
+        if junie_dir.exists() {
+            vec![junie_dir.display().to_string()]
+        } else {
+            vec![]
+        }
     }
 
     // ── Config writing ──────────────────────────────────────────────────
@@ -160,6 +176,33 @@ mod tests {
         fs::create_dir_all(dir.path().join(".junie")).unwrap();
         fs::write(dir.path().join(".junie/mcp.json"), "{}").unwrap();
         assert!(Junie.detect_in(dir.path()));
+    }
+
+    #[test]
+    fn test_cleanup_removes_junie_dir() {
+        let dir = tempdir().unwrap();
+        let junie_dir = dir.path().join(".junie");
+        fs::create_dir_all(&junie_dir).unwrap();
+        fs::write(junie_dir.join("mcp.json"), "{}").unwrap();
+        fs::write(junie_dir.join("guidelines.md"), "# Guidelines").unwrap();
+
+        let removed = Junie.cleanup_mcp_config(dir.path());
+
+        assert!(!junie_dir.exists(), ".junie/ should be deleted");
+        assert_eq!(removed, vec![junie_dir.display().to_string()]);
+    }
+
+    #[test]
+    fn test_cleanup_preview() {
+        let dir = tempdir().unwrap();
+        let junie_dir = dir.path().join(".junie");
+
+        // No .junie dir — nothing to preview
+        assert!(Junie.cleanup_mcp_preview(dir.path()).is_empty());
+
+        fs::create_dir_all(&junie_dir).unwrap();
+        let preview = Junie.cleanup_mcp_preview(dir.path());
+        assert_eq!(preview, vec![junie_dir.display().to_string()]);
     }
 
     #[test]
