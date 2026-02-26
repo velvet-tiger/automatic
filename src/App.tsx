@@ -14,6 +14,7 @@ import Settings from "./Settings";
 import TemplateMarketplace from "./TemplateMarketplace";
 import McpMarketplace from "./McpMarketplace";
 import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText } from "lucide-react";
+import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
 
 function App() {
@@ -95,21 +96,7 @@ function App() {
         {/* Workspace Header */}
         <div className="h-12 px-4 flex items-center border-b border-[#33353A]/50">
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-white">
-              <circle cx="12" cy="12" r="2" fill="currentColor"/>
-              <circle cx="12" cy="4" r="2" fill="currentColor"/>
-              <circle cx="19" cy="8" r="2" fill="currentColor"/>
-              <circle cx="19" cy="16" r="2" fill="currentColor"/>
-              <circle cx="12" cy="20" r="2" fill="currentColor"/>
-              <circle cx="5" cy="16" r="2" fill="currentColor"/>
-              <circle cx="5" cy="8" r="2" fill="currentColor"/>
-              <line x1="12" y1="10" x2="12" y2="6" stroke="currentColor" strokeWidth="2"/>
-              <line x1="13.5" y1="13" x2="17.5" y2="15" stroke="currentColor" strokeWidth="2"/>
-              <line x1="13.5" y1="11" x2="17.5" y2="9" stroke="currentColor" strokeWidth="2"/>
-              <line x1="12" y1="14" x2="12" y2="18" stroke="currentColor" strokeWidth="2"/>
-              <line x1="10.5" y1="13" x2="6.5" y2="15" stroke="currentColor" strokeWidth="2"/>
-              <line x1="10.5" y1="11" x2="6.5" y2="9" stroke="currentColor" strokeWidth="2"/>
-            </svg>
+            <img src={graphLogo} width="20" height="20" alt="Automatic" />
             <span>Automatic</span>
           </div>
         </div>
