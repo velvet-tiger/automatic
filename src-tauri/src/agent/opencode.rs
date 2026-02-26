@@ -134,6 +134,12 @@ impl Agent for OpenCode {
         Ok(written)
     }
 
+    // ── MCP capability ──────────────────────────────────────────────────
+
+    fn mcp_note(&self) -> Option<&'static str> {
+        Some("MCP server access is currently broken in Claude when using OpenCode. MCP servers configured here will be written to opencode.json but may not function correctly until this issue is resolved.")
+    }
+
     // ── Discovery ───────────────────────────────────────────────────────
 
     fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value> {
