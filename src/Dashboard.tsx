@@ -152,36 +152,6 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </div>
         )}
 
-        {/* Quick Stats */}
-        <div className="grid grid-cols-4 gap-4">
-          <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 flex flex-col items-center justify-center text-center cursor-pointer hover:border-[#44474F] transition-colors" onClick={() => onNavigate("projects")}>
-            <FolderOpen size={24} className="text-[#3B82F6] mb-2" />
-            <div className="text-2xl font-semibold text-[#F8F8FA] mb-1">{projects.length}</div>
-            <div className="text-xs text-[#C8CAD0] uppercase tracking-wider font-medium">Projects</div>
-          </div>
-          <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 flex flex-col items-center justify-center text-center cursor-pointer hover:border-[#44474F] transition-colors" onClick={() => onNavigate("agents")}>
-            <Bot size={24} className="text-[#818CF8] mb-2" />
-            <div className="text-2xl font-semibold text-[#F8F8FA] mb-1">
-               {new Set(projects.flatMap(p => p.agents)).size}
-            </div>
-            <div className="text-xs text-[#C8CAD0] uppercase tracking-wider font-medium">Active Agents</div>
-          </div>
-          <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 flex flex-col items-center justify-center text-center cursor-pointer hover:border-[#44474F] transition-colors" onClick={() => onNavigate("skills")}>
-            <Code size={24} className="text-[#4ADE80] mb-2" />
-            <div className="text-2xl font-semibold text-[#F8F8FA] mb-1">
-               {new Set(projects.flatMap(p => p.skills)).size}
-            </div>
-            <div className="text-xs text-[#C8CAD0] uppercase tracking-wider font-medium">Skills In Use</div>
-          </div>
-          <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 flex flex-col items-center justify-center text-center cursor-pointer hover:border-[#44474F] transition-colors" onClick={() => onNavigate("mcp")}>
-            <Server size={24} className="text-[#F59E0B] mb-2" />
-            <div className="text-2xl font-semibold text-[#F8F8FA] mb-1">
-               {new Set(projects.flatMap(p => p.mcp_servers)).size}
-            </div>
-            <div className="text-xs text-[#C8CAD0] uppercase tracking-wider font-medium">MCP Servers</div>
-          </div>
-        </div>
-
         {/* Getting Started — shown only when there are no projects */}
         {projects.length === 0 && (
           <div>
