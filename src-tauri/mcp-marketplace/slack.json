@@ -1,0 +1,36 @@
+{
+  "name": "slack",
+  "display_name": "Slack",
+  "description": "Read and send Slack messages, list channels, fetch thread history, and search across your workspace. Lets agents triage notifications, post summaries, and keep teams updated without leaving your workflow.",
+  "category": "Communication",
+  "tags": ["slack", "messaging", "team", "notifications", "channels"],
+  "transport": "stdio",
+  "author": "Anthropic",
+  "config": {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-slack"],
+    "env": {
+      "SLACK_BOT_TOKEN": "",
+      "SLACK_TEAM_ID": ""
+    }
+  },
+  "env_vars": [
+    {
+      "key": "SLACK_BOT_TOKEN",
+      "label": "Bot Token",
+      "description": "A Slack Bot User OAuth Token (starts with xoxb-). Create a Slack app at api.slack.com/apps and install it to your workspace.",
+      "secret": true,
+      "required": true
+    },
+    {
+      "key": "SLACK_TEAM_ID",
+      "label": "Team ID",
+      "description": "Your Slack workspace Team ID. Find it in your workspace URL or via the Slack API.",
+      "secret": false,
+      "required": true
+    }
+  ],
+  "setup_notes": "Create a Slack app at api.slack.com/apps. Add the Bot Token Scopes: channels:read, chat:write, users:read. Install the app to your workspace to get the Bot Token.",
+  "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/slack"
+}

@@ -9,6 +9,7 @@ import {
   Github,
   Package,
   ArrowRight,
+  ArrowLeft,
 } from "lucide-react";
 import featuredSkillsData from "./featured-skills.json";
 
@@ -318,7 +319,7 @@ interface SkillSource {
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export default function SkillStore() {
+export default function SkillStore({ resetKey }: { resetKey?: number }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<RemoteSkillResult[]>([]);
   const [selected, setSelected] = useState<RemoteSkillResult | null>(null);
@@ -332,6 +333,18 @@ export default function SkillStore() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Return to landing when the nav item is clicked again
+  useEffect(() => {
+    if (resetKey !== undefined) {
+      setSelected(null);
+      setRawContent("");
+      setQuery("");
+      setResults([]);
+      setPreviewError(null);
+      setSearchError(null);
+    }
+  }, [resetKey]);
 
   // ── Load registry on mount ───────────────────────────────────────────────
 
@@ -686,6 +699,14 @@ export default function SkillStore() {
                 <div className="flex-1 min-w-0 px-8 py-6">
                   {/* Breadcrumb */}
                   <div className="flex items-center gap-1.5 text-[11px] text-[#8A8C93] mb-4">
+                    <button
+                      onClick={() => { setSelected(null); setRawContent(""); setPreviewError(null); }}
+                      className="flex items-center gap-1 hover:text-[#E0E1E6] transition-colors"
+                    >
+                      <ArrowLeft size={11} />
+                      Back
+                    </button>
+                    <span>/</span>
                     <a
                       href="https://skills.sh"
                       target="_blank"

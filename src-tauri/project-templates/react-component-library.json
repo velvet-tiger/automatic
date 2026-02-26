@@ -1,0 +1,14 @@
+{
+  "name": "react-component-library",
+  "display_name": "React Component Library",
+  "description": "A publishable React component library with TypeScript, Storybook for interactive development, Vitest for unit tests, and Rollup for dual CJS/ESM output. Includes accessibility-first component patterns, automated visual regression testing, and a semantic release pipeline.",
+  "category": "Frontend",
+  "tags": ["react", "typescript", "storybook", "component-library", "vitest", "rollup"],
+  "skills": ["vercel-react-best-practices", "tailwindcss-development"],
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# React Component Library\n\n## Stack\n- **Language**: TypeScript (strict)\n- **Framework**: React 18+\n- **Dev Environment**: Storybook 8\n- **Testing**: Vitest + Testing Library + Playwright (visual regression)\n- **Bundler**: Rollup (CJS + ESM output)\n- **Release**: semantic-release + Changesets\n\n## Project Structure\n```\nsrc/\n  components/\n    Button/\n      Button.tsx          # Component\n      Button.stories.tsx  # Storybook stories\n      Button.test.tsx     # Vitest unit tests\n      index.ts            # Named export\n  hooks/                  # Shared hooks\n  utils/                  # Utility functions\n  types/                  # Shared TypeScript types\n  index.ts                # Library entry point\ndist/                     # Built output (CJS + ESM)\n.storybook/               # Storybook configuration\n```\n\n## Conventions\n- Every component exports: component, prop types, and a defaultProps object\n- All props must have JSDoc comments (consumed by Storybook's autodocs)\n- Components are accessibility-first: use semantic HTML + ARIA attributes\n- No component may import from a sibling component directory (use hooks/utils for shared logic)\n- Story files must cover: default, all variants, loading state, error state, disabled state\n\n## Key Commands\n```bash\nnpm run storybook      # Start Storybook dev server\nnpm test               # Run Vitest\nnpm run build          # Build for distribution\nnpm run release        # Semantic release (CI only)\n```\n",
+  "unified_rules": []
+}

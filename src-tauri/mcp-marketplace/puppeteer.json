@@ -1,0 +1,17 @@
+{
+  "name": "puppeteer",
+  "display_name": "Puppeteer",
+  "description": "Full browser automation via Puppeteer. Navigate pages, take screenshots, fill forms, click elements, and extract content from any website. Useful for scraping, testing web UIs, and automating browser-based workflows.",
+  "category": "Web & Search",
+  "tags": ["browser", "puppeteer", "automation", "scraping", "screenshots", "testing"],
+  "transport": "stdio",
+  "author": "Anthropic",
+  "config": {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-puppeteer"]
+  },
+  "env_vars": [],
+  "setup_notes": "Puppeteer downloads Chromium automatically on first run. No additional setup is required. For headless environments, ensure your system has the required Chromium dependencies installed.",
+  "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer"
+}

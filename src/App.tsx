@@ -11,6 +11,8 @@ import Templates from "./Templates";
 import Rules from "./Rules";
 import Agents from "./Agents";
 import Settings from "./Settings";
+import TemplateMarketplace from "./TemplateMarketplace";
+import McpMarketplace from "./McpMarketplace";
 import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText } from "lucide-react";
 import "./App.css";
 
@@ -22,6 +24,9 @@ function App() {
     return saved || "dashboard";
   });
   const [pendingProject, setPendingProject] = useState<string | null>(null);
+  const [skillStoreResetKey, setSkillStoreResetKey] = useState(0);
+  const [templateMarketplaceResetKey, setTemplateMarketplaceResetKey] = useState(0);
+  const [mcpMarketplaceResetKey, setMcpMarketplaceResetKey] = useState(0);
 
   useEffect(() => {
     localStorage.setItem("nexus.activeTab", activeTab);
@@ -32,11 +37,24 @@ function App() {
     setActiveTab("projects");
   };
 
+  const MARKETPLACE_TABS: Record<string, () => void> = {
+    "skill-store": () => setSkillStoreResetKey((k) => k + 1),
+    "template-marketplace": () => setTemplateMarketplaceResetKey((k) => k + 1),
+    "mcp-marketplace": () => setMcpMarketplaceResetKey((k) => k + 1),
+  };
+
+  const handleTabClick = (id: string) => {
+    if (activeTab === id && MARKETPLACE_TABS[id]) {
+      MARKETPLACE_TABS[id]!();
+    }
+    setActiveTab(id);
+  };
+
   const NavItem = ({ id, icon: Icon, label, count }: any) => {
     const isActive = activeTab === id;
     return (
       <button
-        onClick={() => setActiveTab(id)}
+        onClick={() => handleTabClick(id)}
         className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
           isActive 
             ? "bg-[#2D2E36] text-[#E0E1E6]" 
@@ -132,6 +150,8 @@ function App() {
             </div>
             <ul className="space-y-0.5">
               <NavItem id="skill-store" icon={Store} label="Skills.sh" />
+              <NavItem id="template-marketplace" icon={Layers} label="Templates" />
+              <NavItem id="mcp-marketplace" icon={Server} label="MCP Servers" />
             </ul>
           </div>
 
@@ -169,6 +189,24 @@ function App() {
               Skill Store
             </button>
           )}
+          {activeTab === "project-templates" && (
+            <button
+              onClick={() => setActiveTab("template-marketplace")}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] text-white shadow-sm transition-colors"
+            >
+              <Store size={13} />
+              Template Marketplace
+            </button>
+          )}
+          {activeTab === "mcp" && (
+            <button
+              onClick={() => setActiveTab("mcp-marketplace")}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] text-white shadow-sm transition-colors"
+            >
+              <Store size={13} />
+              MCP Marketplace
+            </button>
+          )}
         </header>
 
         {/* Content Area */}
@@ -200,7 +238,17 @@ function App() {
           )}
           {activeTab === "skill-store" && (
             <div className="flex-1 h-full">
-              <SkillStore />
+              <SkillStore resetKey={skillStoreResetKey} />
+            </div>
+          )}
+          {activeTab === "template-marketplace" && (
+            <div className="flex-1 h-full">
+              <TemplateMarketplace resetKey={templateMarketplaceResetKey} />
+            </div>
+          )}
+          {activeTab === "mcp-marketplace" && (
+            <div className="flex-1 h-full">
+              <McpMarketplace resetKey={mcpMarketplaceResetKey} />
             </div>
           )}
           {activeTab === "templates" && (

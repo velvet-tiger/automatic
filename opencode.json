@@ -1,11 +1,17 @@
 {
-  "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "nexus": {
+    "Clerk": {
+      "type": "remote",
+      "url": "https://mcp.clerk.com/mcp"
+    },
+    "automatic": {
       "command": [
-        "/Users/xtfer/working/agentic/src-tauri/target/debug/nexus",
+        "/Users/xtfer/working/velvet-tiger/automatic/automatic-app/src-tauri/target/debug/automatic",
         "mcp-serve"
       ],
+      "environment": {
+        "AUTOMATIC_PROJECT": "automatic-app"
+      },
       "type": "local"
     }
   }

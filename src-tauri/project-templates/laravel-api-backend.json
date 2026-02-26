@@ -1,0 +1,14 @@
+{
+  "name": "laravel-api-backend",
+  "display_name": "Laravel API Backend",
+  "description": "Production-ready Laravel REST API with Sanctum authentication, API resources, feature flags via Pennant, job queues, and a test suite scaffolded with Pest. Built for teams building mobile or SPA frontends on a solid PHP backend.",
+  "category": "API / Backend",
+  "tags": ["laravel", "php", "rest-api", "sanctum", "pest", "queues"],
+  "skills": ["laravel-specialist", "pennant-development"],
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# Laravel API Backend\n\n## Stack\n- **Framework**: Laravel 11+\n- **Auth**: Laravel Sanctum (token-based)\n- **Testing**: Pest PHP\n- **Queues**: Laravel Horizon (Redis)\n- **Feature Flags**: Laravel Pennant\n- **Language**: PHP 8.3+\n\n## Project Structure\n```\napp/\n  Http/\n    Controllers/Api/  # Versioned API controllers\n    Resources/        # API Resource transformers\n    Requests/         # Form Request validation classes\n  Models/             # Eloquent models\n  Jobs/               # Queueable jobs\n  Events/ Listeners/  # Event system\ndatabase/\n  migrations/         # Database migrations\n  factories/          # Model factories for testing\ntests/\n  Feature/            # Pest feature tests\n  Unit/               # Pest unit tests\n```\n\n## Conventions\n- All API routes are versioned: `/api/v1/...`\n- Controllers are thin — business logic lives in service classes or actions\n- Every endpoint has a corresponding Pest feature test\n- Use API Resources for all JSON responses (never return raw models)\n- Validation lives in Form Request classes, never in controllers\n\n## Key Commands\n```bash\nphp artisan serve          # Start dev server\nphp artisan test           # Run Pest test suite\nphp artisan horizon        # Start queue worker UI\nphp artisan tinker         # Interactive REPL\n```\n",
+  "unified_rules": []
+}

@@ -1,0 +1,14 @@
+{
+  "name": "tauri-desktop-app",
+  "display_name": "Tauri Desktop App",
+  "description": "Cross-platform desktop application template using Tauri 2, React, TypeScript, and Tailwind CSS. Features a sidebar navigation shell, OS keychain integration, filesystem access, and a Rust backend with Tauri command wrappers following the Automatic architecture pattern.",
+  "category": "Desktop App",
+  "tags": ["tauri", "rust", "react", "typescript", "desktop", "cross-platform"],
+  "skills": ["tailwindcss-development", "vercel-react-best-practices"],
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# Tauri Desktop App\n\n## Stack\n- **Shell**: Tauri 2 (Rust backend + webview frontend)\n- **Frontend**: React 18 + TypeScript\n- **Styling**: Tailwind CSS v4\n- **Icons**: lucide-react\n- **Backend Language**: Rust (stable)\n\n## Architecture\n```\nsrc/                  # React/TypeScript frontend\n  App.tsx             # Root layout + sidebar navigation\n  components/         # Reusable UI components\nsrc-tauri/\n  src/\n    main.rs           # Binary entry point\n    lib.rs            # Tauri command wrappers\n    core.rs           # Shared business logic\n  Cargo.toml          # Rust dependencies\n```\n\n## Key Patterns\n- Business logic lives in `core.rs`; Tauri commands in `lib.rs` are thin wrappers\n- Frontend calls backend with `invoke()` from `@tauri-apps/api/core`\n- All `#[tauri::command]` functions must be registered in `generate_handler![]`\n- Path safety: validate all user-provided names with `is_valid_name()` before filesystem ops\n- Use OS keychain (`keyring` crate) for secrets — never store secrets in plain files\n\n## Commands\n```bash\nnpm run tauri dev    # Full dev mode with hot reload\nnpm run build        # Frontend type check + bundle\ncargo check          # Rust compilation check (from src-tauri/)\ncargo test           # Run Rust unit tests\n```\n",
+  "unified_rules": []
+}

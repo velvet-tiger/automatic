@@ -1,0 +1,17 @@
+{
+  "name": "postgres",
+  "display_name": "PostgreSQL",
+  "description": "Connect your agent to a PostgreSQL database. Supports read-only queries, schema introspection, and listing tables. Useful for agents that need to explore data, write analytics queries, or generate migrations.",
+  "category": "Databases",
+  "tags": ["postgres", "database", "sql", "read-only", "schema"],
+  "transport": "stdio",
+  "author": "Anthropic",
+  "config": {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://username:password@localhost/dbname"]
+  },
+  "env_vars": [],
+  "setup_notes": "Replace the connection string argument with your PostgreSQL connection URL. The server runs in read-only mode by default for safety.",
+  "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres"
+}

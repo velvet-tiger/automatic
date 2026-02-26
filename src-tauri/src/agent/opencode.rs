@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use super::{discover_mcp_servers_from_json, sync_individual_skills, Agent};
 
-/// OpenCode agent — writes `.opencode.json` and stores skills under
+/// OpenCode agent — writes `opencode.json` and stores skills under
 /// `<project>/.agents/skills/<name>/SKILL.md`.
 pub struct OpenCode;
 
@@ -20,7 +20,7 @@ impl Agent for OpenCode {
     }
 
     fn config_description(&self) -> &'static str {
-        ".opencode.json"
+        "opencode.json"
     }
 
     fn project_file_name(&self) -> &'static str {
@@ -107,10 +107,10 @@ impl Agent for OpenCode {
         }
 
         let output = json!({ "mcp": Value::Object(oc_servers) });
-        let path = dir.join(".opencode.json");
+        let path = dir.join("opencode.json");
         let content =
             serde_json::to_string_pretty(&output).map_err(|e| format!("JSON error: {}", e))?;
-        fs::write(&path, content).map_err(|e| format!("Failed to write .opencode.json: {}", e))?;
+        fs::write(&path, content).map_err(|e| format!("Failed to write opencode.json: {}", e))?;
 
         Ok(path.display().to_string())
     }
@@ -226,7 +226,7 @@ mod tests {
             .write_mcp_config(dir.path(), &stdio_servers())
             .unwrap();
 
-        let content = fs::read_to_string(dir.path().join(".opencode.json")).unwrap();
+        let content = fs::read_to_string(dir.path().join("opencode.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
         assert_eq!(
@@ -248,7 +248,7 @@ mod tests {
             .write_mcp_config(dir.path(), &http_servers())
             .unwrap();
 
-        let content = fs::read_to_string(dir.path().join(".opencode.json")).unwrap();
+        let content = fs::read_to_string(dir.path().join("opencode.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
         assert_eq!(

@@ -1,0 +1,14 @@
+{
+  "name": "python-data-pipeline",
+  "display_name": "Python Data Pipeline",
+  "description": "A structured Python project for building ETL and data transformation pipelines. Includes Pydantic data models, async processing with asyncio, DuckDB for local analytics, pytest with fixtures, and pre-commit hooks for code quality.",
+  "category": "Data & Analytics",
+  "tags": ["python", "etl", "data", "pydantic", "duckdb", "async", "pytest"],
+  "skills": [],
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# Python Data Pipeline\n\n## Stack\n- **Language**: Python 3.12+\n- **Data Models**: Pydantic v2\n- **Analytics**: DuckDB (embedded, zero-config)\n- **Async**: asyncio + aiohttp for concurrent fetching\n- **Testing**: pytest with pytest-asyncio\n- **Linting**: ruff + mypy (strict)\n\n## Project Structure\n```\nsrc/\n  pipeline/\n    extract/     # Data source connectors\n    transform/   # Transformation logic\n    load/        # Destination writers\n    models/      # Pydantic data models\n  utils/         # Shared helpers\ntests/\n  fixtures/      # Shared pytest fixtures\n  unit/          # Unit tests\n  integration/   # Integration tests (use real connectors)\nscripts/         # One-off utility scripts\n```\n\n## Conventions\n- All data flowing between stages must be typed Pydantic models\n- Extractors and loaders are stateless classes implementing a common interface\n- Side effects (DB writes, HTTP calls) are never called directly from transform functions\n- Every public function has a docstring and type annotations\n- Use `uv` for dependency management (`uv sync`, `uv run`)\n\n## Key Commands\n```bash\nuv run pytest              # Run test suite\nuv run python -m pipeline  # Run the pipeline\nuv run mypy src/           # Type check\nuv run ruff check src/     # Lint\n```\n",
+  "unified_rules": []
+}

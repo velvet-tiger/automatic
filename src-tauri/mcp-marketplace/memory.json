@@ -1,0 +1,17 @@
+{
+  "name": "memory",
+  "display_name": "Memory",
+  "description": "Gives your agent a persistent knowledge graph it can read from and write to across sessions. The agent can store facts, relationships, and notes that survive conversation restarts — useful for long-running projects.",
+  "category": "Agent Tools",
+  "tags": ["memory", "persistence", "knowledge-graph", "context", "notes"],
+  "transport": "stdio",
+  "author": "Anthropic",
+  "config": {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-memory"]
+  },
+  "env_vars": [],
+  "setup_notes": "The memory server stores its knowledge graph as a local file. By default it writes to the system's temp directory. You can set MEMORY_FILE_PATH to control where the graph is persisted.",
+  "docs_url": "https://github.com/modelcontextprotocol/servers/tree/main/src/memory"
+}
