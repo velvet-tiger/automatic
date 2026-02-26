@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Bot, Plus, Search, Trash2, X } from "lucide-react";
+import { AgentIcon } from "./AgentIcon";
 
 export interface AgentInfo {
   id: string;
@@ -66,7 +67,7 @@ export function AgentSelector({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Bot size={13} className="text-[#5E6AD2]" />
-          <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+          <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
             {label}
           </span>
         </div>
@@ -80,7 +81,7 @@ export function AgentSelector({
 
       {/* Empty state */}
       {agentIds.length === 0 && !adding && (
-        <p className="text-[12px] text-[#8A8C93]/50 italic pl-1">{emptyMessage}</p>
+        <p className="text-[12px] text-[#C8CAD0]/50 italic pl-1">{emptyMessage}</p>
       )}
 
       {/* Current agents list */}
@@ -92,18 +93,16 @@ export function AgentSelector({
               key={id}
               className="flex items-center gap-3 px-3 py-3 bg-[#1A1A1E] border border-[#33353A] rounded-lg group"
             >
-              <div className="w-8 h-8 rounded-md bg-[#5E6AD2]/15 flex items-center justify-center flex-shrink-0">
-                <Bot size={15} className="text-[#5E6AD2]" />
-              </div>
+              <AgentIcon agentId={id} size={20} />
               <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-medium text-[#E0E1E6]">{info?.label ?? id}</div>
+                <div className="text-[13px] font-medium text-[#F8F8FA]">{info?.label ?? id}</div>
                 {info?.description && (
-                  <div className="text-[11px] text-[#8A8C93] mt-0.5">{info.description}</div>
+                  <div className="text-[11px] text-[#C8CAD0] mt-0.5">{info.description}</div>
                 )}
               </div>
               <button
                 onClick={() => onRemove(idx)}
-                className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-[#33353A] rounded"
+                className="text-[#C8CAD0] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-[#33353A] rounded"
               >
                 <Trash2 size={12} />
               </button>
@@ -117,7 +116,7 @@ export function AgentSelector({
         <div className="mt-2 bg-[#1A1A1E] border border-[#33353A] rounded-lg overflow-hidden">
           {/* Search input */}
           <div className="flex items-center gap-2 px-3 py-2 border-b border-[#33353A]">
-            <Search size={12} className="text-[#8A8C93] shrink-0" />
+            <Search size={12} className="text-[#C8CAD0] shrink-0" />
             <input
               type="text"
               value={search}
@@ -128,12 +127,12 @@ export function AgentSelector({
               }}
               placeholder="Search agents..."
               autoFocus
-              className="flex-1 bg-transparent outline-none text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/50"
+              className="flex-1 bg-transparent outline-none text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/50"
             />
             {search && (
               <button
                 onClick={() => setSearch("")}
-                className="text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
               >
                 <X size={11} />
               </button>
@@ -149,19 +148,17 @@ export function AgentSelector({
                   onClick={() => handleAdd(a.id)}
                   className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[#2D2E36] text-left transition-colors"
                 >
-                  <div className="w-5 h-5 rounded bg-[#5E6AD2]/15 flex items-center justify-center flex-shrink-0">
-                    <Bot size={11} className="text-[#5E6AD2]" />
-                  </div>
+                  <AgentIcon agentId={a.id} size={14} />
                   <div className="flex-1 min-w-0">
-                    <span className="text-[13px] text-[#E0E1E6] font-medium">{a.label}</span>
+                    <span className="text-[13px] text-[#F8F8FA] font-medium">{a.label}</span>
                     {a.description && (
-                      <span className="text-[11px] text-[#8A8C93] ml-2">{a.description}</span>
+                      <span className="text-[11px] text-[#C8CAD0] ml-2">{a.description}</span>
                     )}
                   </div>
                 </button>
               ))
             ) : (
-              <p className="text-[12px] text-[#8A8C93] italic px-3 py-3">
+              <p className="text-[12px] text-[#C8CAD0] italic px-3 py-3">
                 {unaddedAgents.length === 0 ? "All agents already added." : "No agents match."}
               </p>
             )}
@@ -169,12 +166,12 @@ export function AgentSelector({
 
           {/* Footer */}
           <div className="border-t border-[#33353A] px-3 py-2 flex items-center justify-between">
-            <span className="text-[11px] text-[#8A8C93]">
+            <span className="text-[11px] text-[#C8CAD0]">
               {filteredAgents.length} of {unaddedAgents.length} agent{unaddedAgents.length !== 1 ? "s" : ""}
             </span>
             <button
               onClick={handleCancel}
-              className="text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+              className="text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
             >
               Cancel
             </button>

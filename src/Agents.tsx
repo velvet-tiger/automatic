@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Bot, FolderOpen, AlertCircle, ArrowRight } from "lucide-react";
 import { ICONS } from "./icons";
+import { AgentIcon } from "./AgentIcon";
 
 interface AgentProject {
   name: string;
@@ -89,9 +90,7 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
                           : "text-[#C8CAD0] hover:bg-[#2D2E36]/60 hover:text-[#F8F8FA]"
                       }`}
                     >
-                      <div className={ICONS.agent.iconBox}>
-                        <Bot size={15} className={ICONS.agent.iconColor} />
-                      </div>
+                      <AgentIcon agentId={agent.id} size={20} />
                       <div className="flex-1 min-w-0">
                         <div className={`text-[13px] font-medium truncate ${isActive ? "text-[#F8F8FA]" : "text-[#E8E9ED]"}`}>
                           {agent.label}
@@ -126,7 +125,7 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
           <div className="flex-1 flex flex-col h-full">
             {/* Header */}
             <div className="h-11 px-6 border-b border-[#33353A] flex items-center gap-3">
-              <Bot size={14} className={ICONS.agent.iconColor} />
+              <AgentIcon agentId={selected.id} size={16} />
               <h3 className="text-[14px] font-medium text-[#F8F8FA]">
                 {selected.label}
               </h3>
