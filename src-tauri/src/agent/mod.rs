@@ -113,6 +113,56 @@ pub trait Agent: Send + Sync {
     /// Scan this agent's config files in `dir` for MCP server definitions.
     /// Returns configs normalised to Nexus's canonical format.
     fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value>;
+
+    // ── Cleanup ─────────────────────────────────────────────────────────
+
+    /// Paths of MCP config files that are exclusively owned by Automatic for
+    /// this agent.  These files are safe to delete outright when the agent is
+    /// removed from a project.
+    ///
+    /// Agents that *merge* into shared config files (e.g. Gemini CLI writes
+    /// into `.gemini/settings.json` which may contain other user settings)
+    /// should return an empty vec here and override [`cleanup_mcp_config`]
+    /// instead to strip only Automatic-managed sections.
+    ///
+    /// Default: empty vec — no files to delete.
+    fn owned_config_paths(&self, _dir: &Path) -> Vec<PathBuf> {
+        vec![]
+    }
+
+    /// Remove MCP configuration written by this agent from the project directory.
+    /// Called when the agent is removed from a project.
+    ///
+    /// The default implementation deletes every file returned by
+    /// [`owned_config_paths`] that exists on disk.  Agents that merge into
+    /// shared config files should override this to strip only their managed
+    /// sections rather than deleting the whole file.
+    ///
+    /// Returns paths of files deleted or modified.
+    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+        let mut removed = Vec::new();
+        for path in self.owned_config_paths(dir) {
+            if path.exists() {
+                if fs::remove_file(&path).is_ok() {
+                    removed.push(path.display().to_string());
+                }
+            }
+        }
+        removed
+    }
+
+    /// Returns the list of file/directory paths that *would* be affected when
+    /// this agent's MCP config is cleaned up.  Used to populate the
+    /// confirmation dialog shown to the user before removal.
+    ///
+    /// Default: owned_config_paths that currently exist on disk.
+    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
+        self.owned_config_paths(dir)
+            .into_iter()
+            .filter(|p| p.exists())
+            .map(|p| p.display().to_string())
+            .collect()
+    }
 }
 
 // ── Frontend DTO ────────────────────────────────────────────────────────────
@@ -392,6 +442,88 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Remove all Automatic-managed resources for a specific agent from a project
+/// directory.  Called after the user confirms removal of an agent.
+///
+/// Steps performed:
+/// 1. Call [`Agent::cleanup_mcp_config`] — removes or strips the agent's MCP
+///    config file.
+/// 2. Remove agent-specific skill directories (those returned by
+///    [`Agent::skill_dirs`] that are NOT the shared `.agents/skills/` hub).
+/// 3. If no agents in `remaining_agent_ids` use the `.agents/skills/` hub,
+///    remove it too, and attempt to remove the now-empty `.agents/` directory.
+///
+/// Returns the list of paths that were successfully removed or modified.
+pub(crate) fn cleanup_agent_from_project(
+    agent_instance: &dyn Agent,
+    dir: &Path,
+    remaining_agent_ids: &[String],
+) -> Vec<String> {
+    let mut removed = Vec::new();
+    let hub = dir.join(".agents").join("skills");
+
+    // 1. Clean up MCP config
+    removed.extend(agent_instance.cleanup_mcp_config(dir));
+
+    // 2. Remove agent-specific skill directories (never the shared hub)
+    for skill_dir in agent_instance.skill_dirs(dir) {
+        if skill_dir != hub && skill_dir.exists() {
+            if fs::remove_dir_all(&skill_dir).is_ok() {
+                removed.push(skill_dir.display().to_string());
+            }
+        }
+    }
+
+    // 3. Remove the hub if no remaining agents use it
+    let remaining_uses_hub = remaining_agent_ids
+        .iter()
+        .any(|id| from_id(id).map_or(false, |a| a.skill_dirs(dir).iter().any(|d| d == &hub)));
+
+    if !remaining_uses_hub && hub.exists() {
+        if fs::remove_dir_all(&hub).is_ok() {
+            removed.push(hub.display().to_string());
+            // Attempt to remove the parent .agents/ dir if it is now empty
+            let agents_dir = dir.join(".agents");
+            let _ = fs::remove_dir(&agents_dir); // silently ignored if not empty
+        }
+    }
+
+    removed
+}
+
+/// Returns a list of file/directory paths that *would* be removed when
+/// [`cleanup_agent_from_project`] is called.  Used to populate the
+/// confirmation dialog before the user commits to the removal.
+pub(crate) fn cleanup_agent_preview(
+    agent_instance: &dyn Agent,
+    dir: &Path,
+    remaining_agent_ids: &[String],
+) -> Vec<String> {
+    let mut preview = Vec::new();
+    let hub = dir.join(".agents").join("skills");
+
+    // MCP config files
+    preview.extend(agent_instance.cleanup_mcp_preview(dir));
+
+    // Agent-specific skill directories
+    for skill_dir in agent_instance.skill_dirs(dir) {
+        if skill_dir != hub && skill_dir.exists() {
+            preview.push(skill_dir.display().to_string());
+        }
+    }
+
+    // Hub if no remaining agent uses it
+    let remaining_uses_hub = remaining_agent_ids
+        .iter()
+        .any(|id| from_id(id).map_or(false, |a| a.skill_dirs(dir).iter().any(|d| d == &hub)));
+
+    if !remaining_uses_hub && hub.exists() {
+        preview.push(hub.display().to_string());
+    }
+
+    preview
 }
 
 /// Read a JSON config file containing MCP server definitions, extract them,

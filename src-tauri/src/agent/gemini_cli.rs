@@ -116,6 +116,54 @@ impl Agent for GeminiCli {
         Ok(written)
     }
 
+    // ── Cleanup ─────────────────────────────────────────────────────────
+
+    /// Gemini CLI merges into `.gemini/settings.json` which may contain user
+    /// auth or model settings.  Strip only the `mcpServers` key rather than
+    /// deleting the whole file.
+    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+        let path = dir.join(".gemini").join("settings.json");
+        if !path.exists() {
+            return vec![];
+        }
+        let raw = match fs::read_to_string(&path) {
+            Ok(r) => r,
+            Err(_) => return vec![],
+        };
+        let mut root: Map<String, Value> = match serde_json::from_str::<Value>(&raw) {
+            Ok(Value::Object(m)) => m,
+            _ => return vec![],
+        };
+        if root.remove("mcpServers").is_none() {
+            // Nothing to remove
+            return vec![];
+        }
+        if root.is_empty() {
+            // File would become `{}` — delete it entirely
+            if fs::remove_file(&path).is_ok() {
+                return vec![path.display().to_string()];
+            }
+        } else {
+            let content = match serde_json::to_string_pretty(&Value::Object(root)) {
+                Ok(c) => c,
+                Err(_) => return vec![],
+            };
+            if fs::write(&path, content).is_ok() {
+                return vec![path.display().to_string()];
+            }
+        }
+        vec![]
+    }
+
+    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
+        let path = dir.join(".gemini").join("settings.json");
+        if path.exists() {
+            vec![path.display().to_string()]
+        } else {
+            vec![]
+        }
+    }
+
     // ── Discovery ───────────────────────────────────────────────────────
 
     fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value> {

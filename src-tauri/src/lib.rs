@@ -437,18 +437,84 @@ fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 fn save_project(name: &str, data: &str) -> Result<(), String> {
-    core::save_project(name, data)?;
-
-    let project: core::Project =
+    let incoming: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
 
-    // Use sync_without_autodetect so the user's explicit agent/skill
-    // selections are the source of truth. Autodetect runs only on an
-    // explicit "Sync" action (sync_project command), not on every save.
-    // This prevents removed agents from being re-added because their
-    // config files still exist on disk from a previous sync.
-    if !project.directory.is_empty() && !project.agents.is_empty() {
-        sync::sync_project_without_autodetect(&project)?;
+    // No directory configured yet — just persist to the registry and return.
+    // There is nothing to sync until the user has pointed us at a real directory.
+    if incoming.directory.is_empty() {
+        return core::save_project(name, data);
+    }
+
+    // Detect whether this is a brand-new project (no existing registry entry).
+    let is_new = core::read_project(name).is_err();
+
+    if is_new {
+        // ── Case 1: Project is being added for the first time ─────────────
+        //
+        // Save the initial state so the project exists in the registry even if
+        // the subsequent autodetect fails for any reason.  Then run full
+        // autodetect to discover all agents, skills, and MCP servers that are
+        // already present in the directory.  The enriched project config is
+        // written back to disk by sync_project (via sync_project_without_autodetect).
+        //
+        // Nothing is deleted during this step — autodetect only adds findings.
+        core::save_project(name, data)?;
+
+        // Errors are intentionally swallowed: partial success (project saved
+        // but no agent configs written because the directory has no AI tools)
+        // is better than returning a hard error to the frontend.
+        let _ = sync::sync_project(&incoming);
+    } else {
+        // ── Case 2 / ongoing saves: Existing project update ───────────────
+        //
+        // Use sync_without_autodetect so the user's explicit agent/skill
+        // removals are respected — we never re-add an agent the user
+        // intentionally removed just because its config files still exist.
+        //
+        // Exception: when the user *adds* a new agent, read its existing
+        // config files (if any) to discover MCP servers it already has
+        // configured, and merge those into the project so they are not
+        // silently discarded when Automatic writes its own config.
+        let existing_project = core::read_project(name)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<core::Project>(&raw).ok());
+
+        let mut enriched = incoming.clone();
+
+        if let Some(existing) = existing_project {
+            let new_agent_ids: Vec<String> = incoming
+                .agents
+                .iter()
+                .filter(|a| !existing.agents.contains(a))
+                .cloned()
+                .collect();
+
+            if !new_agent_ids.is_empty() {
+                let dir = std::path::PathBuf::from(&incoming.directory);
+                let discovered =
+                    sync::discover_new_agent_mcp_configs(&dir, &new_agent_ids);
+
+                for (server_name, config_str) in discovered {
+                    // Add the server name to the project's selection list.
+                    if !enriched.mcp_servers.contains(&server_name) {
+                        enriched.mcp_servers.push(server_name.clone());
+                    }
+                    // Persist the config to the global registry so that
+                    // sync_project_without_autodetect can include it when
+                    // building the mcpServers map written to disk.
+                    let _ = core::save_mcp_server_config(&server_name, &config_str);
+                }
+            }
+        }
+
+        let enriched_data = serde_json::to_string_pretty(&enriched)
+            .map_err(|e| e.to_string())?;
+        core::save_project(name, &enriched_data)?;
+
+        if !enriched.agents.is_empty() {
+            sync::sync_project_without_autodetect(&enriched)?;
+        }
     }
 
     Ok(())
@@ -483,6 +549,30 @@ fn sync_project(name: &str) -> Result<String, String> {
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
     let written = sync::sync_project(&project)?;
     serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
+}
+
+/// Return the list of file/directory paths that would be removed if the given
+/// agent were removed from the project.  Read-only — used to populate the
+/// confirmation dialog before the user commits to the removal.
+#[tauri::command]
+fn get_agent_cleanup_preview(name: &str, agent_id: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let preview = sync::get_agent_cleanup_preview(&project, agent_id)?;
+    serde_json::to_string(&preview).map_err(|e| e.to_string())
+}
+
+/// Remove an agent from a project and delete all files it wrote.
+/// The project config is persisted and remaining agents are re-synced.
+/// Returns a JSON array of paths that were removed or modified.
+#[tauri::command]
+fn remove_agent_from_project(name: &str, agent_id: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let mut project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let removed = sync::remove_agent_from_project(&mut project, agent_id)?;
+    serde_json::to_string(&removed).map_err(|e| e.to_string())
 }
 
 /// Check whether the on-disk agent configs have drifted from what Nexus would
@@ -873,6 +963,8 @@ pub fn run() {
             rename_project,
             delete_project,
             sync_project,
+            get_agent_cleanup_preview,
+            remove_agent_from_project,
             check_project_drift,
             import_local_skill,
             sync_local_skills,

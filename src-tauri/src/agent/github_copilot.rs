@@ -118,6 +118,52 @@ impl Agent for GitHubCopilot {
         Ok(written)
     }
 
+    // ── Cleanup ─────────────────────────────────────────────────────────
+
+    /// GitHub Copilot merges into `.vscode/mcp.json` which may contain VS Code
+    /// extension settings.  Strip only the `servers` key rather than deleting
+    /// the file.
+    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+        let path = dir.join(".vscode").join("mcp.json");
+        if !path.exists() {
+            return vec![];
+        }
+        let raw = match fs::read_to_string(&path) {
+            Ok(r) => r,
+            Err(_) => return vec![],
+        };
+        let mut root: Map<String, Value> = match serde_json::from_str::<Value>(&raw) {
+            Ok(Value::Object(m)) => m,
+            _ => return vec![],
+        };
+        if root.remove("servers").is_none() {
+            return vec![];
+        }
+        if root.is_empty() {
+            if fs::remove_file(&path).is_ok() {
+                return vec![path.display().to_string()];
+            }
+        } else {
+            let content = match serde_json::to_string_pretty(&Value::Object(root)) {
+                Ok(c) => c,
+                Err(_) => return vec![],
+            };
+            if fs::write(&path, content).is_ok() {
+                return vec![path.display().to_string()];
+            }
+        }
+        vec![]
+    }
+
+    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
+        let path = dir.join(".vscode").join("mcp.json");
+        if path.exists() {
+            vec![path.display().to_string()]
+        } else {
+            vec![]
+        }
+    }
+
     // ── Discovery ───────────────────────────────────────────────────────
 
     fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value> {

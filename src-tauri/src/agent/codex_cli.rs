@@ -144,6 +144,41 @@ impl Agent for CodexCli {
         Ok(written)
     }
 
+    // ── Cleanup ─────────────────────────────────────────────────────────
+
+    /// Codex CLI merges into `.codex/config.toml` which may contain model or
+    /// history settings set by the user.  Strip only the `[mcp_servers.*]`
+    /// sections rather than deleting the whole file.
+    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+        let path = dir.join(".codex").join("config.toml");
+        if !path.exists() {
+            return vec![];
+        }
+        let existing = read_existing_toml(&path);
+        // Pass an empty mcp section to strip all [mcp_servers.*] blocks
+        let stripped = merge_toml_mcp_section(&existing, "");
+        let trimmed = stripped.trim();
+        if trimmed.is_empty() {
+            if fs::remove_file(&path).is_ok() {
+                return vec![path.display().to_string()];
+            }
+        } else {
+            if fs::write(&path, format!("{}\n", trimmed)).is_ok() {
+                return vec![path.display().to_string()];
+            }
+        }
+        vec![]
+    }
+
+    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
+        let path = dir.join(".codex").join("config.toml");
+        if path.exists() {
+            vec![path.display().to_string()]
+        } else {
+            vec![]
+        }
+    }
+
     // ── Discovery ───────────────────────────────────────────────────────
 
     fn discover_mcp_servers(&self, _dir: &Path) -> Map<String, Value> {

@@ -37,6 +37,12 @@ impl Agent for Droid {
         vec![dir.join(".agents").join("skills")]
     }
 
+    // ── Cleanup ─────────────────────────────────────────────────────────
+
+    fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".factory").join("mcp.json")]
+    }
+
     // ── Config writing ──────────────────────────────────────────────────
 
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {

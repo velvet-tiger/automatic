@@ -6,7 +6,7 @@ Read `.ai/constitution.md` before making any changes. It contains the full archi
 
 Automatic is a **hub, not an executor**. It does not run agents. External applications (Claude Code, Cursor, custom agents) connect to Automatic to:
 
-- **Pull** credentials, skills, and MCP server configs
+- **Pull** skills and MCP server configs
 - **Sync** project configurations to agent tool directories
 
 Automatic exposes an **MCP Server** interface (stdio transport) that agents connect to.
@@ -15,7 +15,7 @@ Automatic exposes an **MCP Server** interface (stdio transport) that agents conn
 
 Automatic is a Tauri 2 desktop app (Rust + React/TypeScript). The Rust backend has four modules:
 
-- **`src-tauri/src/core.rs`** -- Shared business logic (credentials, skills, projects, MCP config). Called by both Tauri commands and the MCP server.
+- **`src-tauri/src/core.rs`** -- Shared business logic (skills, projects, MCP config). Called by both Tauri commands and the MCP server.
 - **`src-tauri/src/mcp.rs`** -- MCP server implementation using `rmcp` SDK. 5 tools exposed over stdio transport.
 - **`src-tauri/src/lib.rs`** -- Tauri command wrappers (thin delegates to `core`) + app entry point.
 - **`src-tauri/src/main.rs`** -- CLI dispatch: no args = Tauri app, `mcp-serve` = MCP server on stdio.
@@ -23,14 +23,13 @@ Automatic is a Tauri 2 desktop app (Rust + React/TypeScript). The Rust backend h
 The React frontend:
 
 - **`src/App.tsx`** -- Shell (sidebar + tab routing)
-- **`src/Skills.tsx`**, **`src/Projects.tsx`**, **`src/Providers.tsx`** -- Configuration views
+- **`src/Skills.tsx`**, **`src/Projects.tsx`** -- Configuration views
 
 ## What Exists
 
 | Feature | Frontend | Backend | Status |
 |---------|----------|---------|--------|
 | Navigation shell | `App.tsx` | -- | Done |
-| LLM API key storage | `Providers.tsx` | `core::save_api_key`, `core::get_api_key` | Done |
 | Skills CRUD | `Skills.tsx` | `core::list_skills`, `core::read_skill`, `core::save_skill`, `core::delete_skill` | Done |
 | Projects CRUD | `Projects.tsx` | `core::list_projects`, `core::read_project`, `core::save_project`, `core::delete_project` | Done |
 | MCP config read | Used in `Projects.tsx` | `core::list_mcp_servers` | Done |
@@ -100,6 +99,19 @@ Use the memory tools to persist and retrieve project-specific context across ses
 ## Session End
 
 Before finishing a session, call `automatic_store_memory` to capture any new project-specific rules, pitfalls, setup steps, or decisions discovered during the session. This prevents knowledge loss across sessions.
+
+# Operational Checklist (Preflight)
+
+1. Have I confirmed what I’m building?
+2. Do I fully understand the local context and dependencies?
+3. Am I editing only what’s relevant?
+4. Have I verified correctness through tests or validation?
+5. Did I avoid assumptions about unseen systems?
+6. Have I avoided placeholders or incomplete features without disclosure?
+7. Is my code type-safe, deterministic, and testable?
+8. Does my design follow project conventions?
+9. Have I declared uncertainty or missing context clearly?
+10. Have I presented the result truthfully, without exaggeration?
 
 You are a senior developer. IT is your job to check inputs and outputs. Insert debugging when required. Don't make assumptions. Debug, investigate, then test.
 

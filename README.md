@@ -1,70 +1,89 @@
 # Automatic
 
-A desktop application for managing LLM provider connections, running local AI agents, and editing Skills and MCP server configurations. Built with Tauri 2 (Rust) and React/TypeScript.
+Automatic is a desktop hub for managing your AI agent configurations. It gives you a central place to organise the skills, MCP servers, rules, and project settings that power tools like Claude Code, Cursor, and other MCP-compatible agents — so your agents always have the right context, wherever they run.
 
-## Prerequisites
+## What it does
 
-- [Node.js](https://nodejs.org/) >= 20.x
-- [Rust](https://rustup.rs/) (stable)
-- Platform build dependencies for Tauri: see [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)
+Automatic does not run agents. Instead, it acts as a registry that your agents connect to at the start of each session to discover skills and load project configurations. You manage everything in one place; your agents stay in sync automatically.
 
-## Quick Start
+## Features
 
-```bash
-npm install
-npm run tauri dev
+### Dashboard
+
+An at-a-glance overview of your workspace: how many projects you have, which agents are active, how many skills are in use, and how many MCP servers are connected. The dashboard also surfaces a **drift alert** if any project's agent configuration files have fallen out of sync, so you know immediately when something needs attention.
+
+### Projects
+
+Create and manage projects that link a directory on your machine to a set of agent configurations. Each project can have:
+
+- One or more **agents** (Claude Code, Cursor, etc.)
+- A set of **skills** to load into those agents
+- **MCP servers** to connect
+- A description and custom rules
+
+When you sync a project, Automatic writes the appropriate configuration files into your project directory so the agents pick them up automatically. Automatic also monitors for **drift** — if the files on disk diverge from what you've configured here, the dashboard and project list will warn you.
+
+### Agents
+
+Configure the AI agents you work with (Claude Code, Cursor, and others). Agent configurations define how Automatic syncs settings to each tool's expected directory structure and config format.
+
+### Skills
+
+Skills are reusable sets of instructions, workflows, or domain knowledge that you load into an agent for a specific task. Create and edit your own skills in a built-in markdown editor, or install community skills directly from the Skills.sh marketplace. Skills are stored at `~/.agents/skills/` and are available across all your projects.
+
+### Project Templates
+
+Start new projects from pre-built templates that bundle a proven configuration of agents, skills, MCP servers, and rules. Browse the Template Marketplace to find community-contributed templates, or save your own as reusable starting points.
+
+### File Templates
+
+Manage reusable file templates (boilerplate, scaffolds, prompts) that your agents can use when generating code or content.
+
+### Rules
+
+Define standing instructions and constraints that apply across your projects — things like coding conventions, preferred libraries, output format expectations, or tone guidelines. Rules are shared to agent config files alongside skills and MCP server configs.
+
+### MCP Servers
+
+View and manage the MCP (Model Context Protocol) servers registered in your Claude Desktop configuration. MCP servers extend what your agents can do — giving them access to databases, APIs, file systems, and other external tools. Browse the MCP Marketplace to discover and add new servers.
+
+### Settings
+
+Configure global preferences for Automatic, including the skill sync mode (symlink or copy).
+
+### Marketplaces
+
+Three built-in marketplaces let you extend Automatic without leaving the app:
+
+- **Skills Marketplace (Skills.sh)** — Browse and install community skills
+- **Templates Marketplace** — Discover project and file templates
+- **MCP Servers Marketplace** — Find MCP server integrations to connect to your agents
+
+## Connecting your agents
+
+Automatic exposes an MCP server interface so agents can connect directly. Add the following to your agent's MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "automatic": {
+      "command": "nexus",
+      "args": ["mcp-serve"]
+    }
+  }
+}
 ```
 
-This compiles the Rust backend and launches the app with hot-reloading for the React frontend.
+Once connected, your agent can list and read skills, look up MCP server configurations, and sync project settings — all without you having to copy-paste anything manually.
 
-## Build
+## Platforms
 
-```bash
-npm run tauri build
-```
+Automatic runs on macOS, Windows, and Linux.
 
-Produces a native `.app` (macOS), `.msi` (Windows), or `.deb`/`.AppImage` (Linux) in `src-tauri/target/release/bundle/`.
+> **Note:** MCP server config reading currently reads from the Claude Desktop config path on macOS. Cross-platform support for this feature is in progress.
 
-## Project Structure
+## Coming soon
 
-```
-src/                  # React frontend (TypeScript, Tailwind CSS v4)
-  App.tsx             # Shell: sidebar navigation + tab routing
-  Skills.tsx          # Skills list + markdown editor (two-pane)
-  Providers.tsx       # LLM API key management
-
-src-tauri/            # Rust backend
-  src/lib.rs          # All Tauri commands (backend API surface)
-  src/main.rs         # Binary entry point
-  tauri.conf.json     # Window config, bundling, identifiers
-
-.ai/constitution.md   # Full architecture docs, conventions, design tokens
-AGENTS.md             # Quick-start context for LLM agents
-```
-
-## Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Backend | Rust, Tauri 2 |
-| Frontend | React 19, TypeScript, Vite 7 |
-| Styling | Tailwind CSS v4 |
-| Icons | lucide-react |
-| Key Storage | OS keychain via `keyring` crate |
-| Skills Storage | `~/.claude/skills/<name>/SKILL.md` (filesystem) |
-
-## Current Features
-
-- **LLM Providers** -- Save and retrieve API keys securely via OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service).
-- **Skills Management** -- Full CRUD for agent skills stored at `~/.agents/skills/` and `~/.claude/skills/`. Supports discovering companion resources (scripts, templates).
-- **Project Configuration** -- Sync MCP server and skill configuration to project directories for specific agent tooling (Claude Code, Cursor).
-- **Agent Memory Store** -- Persistent JSON-backed key-value store for agents to retain per-project context and learnings across sessions.
-- **MCP Server** -- Exposes tools to external agents to access the central skill registry, provider keys, and memory database over stdio.
-
-## Planned
-
-- Local agent process orchestration (spawn, monitor, stream logs, kill)
-- MCP server configuration editing
-- Activity log with real-time agent output
-- System tray for background agent management
+- MCP server configuration editing and creation within the app
 - Cross-platform MCP config path support
+- Remote MCP server with OAuth authentication
