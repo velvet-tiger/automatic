@@ -9,6 +9,7 @@ import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
+  Layers,
 } from "lucide-react";
 
 interface Project {
@@ -284,9 +285,72 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                 );
               })}
             </div>
-          )}
+           )}
+         </div>
+
+        {/* Marketplace Section */}
+        <div>
+          <h2 className="text-lg font-medium text-[#F8F8FA] mb-4">Discover & Extend</h2>
+          <div className="grid grid-cols-3 gap-4">
+            {/* Skills Marketplace */}
+            <button
+              onClick={() => onNavigate("skill-store")}
+              className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-6 text-left hover:border-[#4ADE80]/50 hover:bg-[#222327] transition-all group flex flex-col justify-between"
+            >
+              <div>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2.5 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/20 transition-colors">
+                    <Code size={20} className="text-[#4ADE80]" />
+                  </div>
+                  <h3 className="font-semibold text-[#F8F8FA]">Skills Marketplace</h3>
+                </div>
+                <p className="text-sm text-[#C8CAD0]">Discover and install pre-built skills, prompts, and workflows from the community.</p>
+              </div>
+              <div className="flex items-center gap-1.5 text-[12px] font-medium text-[#4ADE80] group-hover:gap-2 transition-all mt-4">
+                Browse Skills <ArrowRight size={14} />
+              </div>
+            </button>
+
+            {/* Templates Marketplace */}
+            <button
+              onClick={() => onNavigate("template-marketplace")}
+              className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-6 text-left hover:border-[#818CF8]/50 hover:bg-[#222327] transition-all group flex flex-col justify-between"
+            >
+              <div>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2.5 bg-[#818CF8]/10 rounded-lg group-hover:bg-[#818CF8]/20 transition-colors">
+                    <Layers size={20} className="text-[#818CF8]" />
+                  </div>
+                  <h3 className="font-semibold text-[#F8F8FA]">Templates Marketplace</h3>
+                </div>
+                <p className="text-sm text-[#C8CAD0]">Explore project templates and file scaffolds to jumpstart your development.</p>
+              </div>
+              <div className="flex items-center gap-1.5 text-[12px] font-medium text-[#818CF8] group-hover:gap-2 transition-all mt-4">
+                Browse Templates <ArrowRight size={14} />
+              </div>
+            </button>
+
+            {/* MCP Servers Marketplace */}
+            <button
+              onClick={() => onNavigate("mcp-marketplace")}
+              className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-6 text-left hover:border-[#F59E0B]/50 hover:bg-[#222327] transition-all group flex flex-col justify-between"
+            >
+              <div>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2.5 bg-[#F59E0B]/10 rounded-lg group-hover:bg-[#F59E0B]/20 transition-colors">
+                    <Server size={20} className="text-[#F59E0B]" />
+                  </div>
+                  <h3 className="font-semibold text-[#F8F8FA]">MCP Servers Marketplace</h3>
+                </div>
+                <p className="text-sm text-[#C8CAD0]">Connect AI-powered integrations and extend your agents with MCP servers.</p>
+              </div>
+              <div className="flex items-center gap-1.5 text-[12px] font-medium text-[#F59E0B] group-hover:gap-2 transition-all mt-4">
+                Browse Servers <ArrowRight size={14} />
+              </div>
+            </button>
+          </div>
         </div>
-      </div>
-    </div>
-  );
+       </div>
+     </div>
+   );
 }
