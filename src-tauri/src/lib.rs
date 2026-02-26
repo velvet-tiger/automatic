@@ -151,6 +151,48 @@ fn get_project_templates() -> Result<Vec<String>, String> {
     core::list_project_templates()
 }
 
+// ── MCP Marketplace (bundled) ─────────────────────────────────────────────────
+
+#[tauri::command]
+fn list_mcp_marketplace() -> Result<String, String> {
+    core::list_mcp_marketplace()
+}
+
+#[tauri::command]
+fn search_mcp_marketplace(query: &str) -> Result<String, String> {
+    core::search_mcp_marketplace(query)
+}
+
+#[tauri::command]
+fn install_mcp_marketplace_entry(
+    name: &str,
+    env_values: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    core::install_mcp_marketplace_entry(name, &env_values)
+}
+
+// ── Template Marketplace (bundled) ────────────────────────────────────────────
+
+#[tauri::command]
+fn list_bundled_project_templates() -> Result<String, String> {
+    core::list_bundled_project_templates()
+}
+
+#[tauri::command]
+fn read_bundled_project_template(name: &str) -> Result<String, String> {
+    core::read_bundled_project_template(name)
+}
+
+#[tauri::command]
+fn import_bundled_project_template(name: &str) -> Result<(), String> {
+    core::import_bundled_project_template(name)
+}
+
+#[tauri::command]
+fn search_bundled_project_templates(query: &str) -> Result<String, String> {
+    core::search_bundled_project_templates(query)
+}
+
 #[tauri::command]
 fn read_project_template(name: &str) -> Result<String, String> {
     core::read_project_template(name)
@@ -757,6 +799,23 @@ fn clear_memories(project: &str, pattern: Option<&str>, confirm: bool) -> Result
     memory::clear_memories(project, pattern, confirm)
 }
 
+// ── Editor Detection & Open ───────────────────────────────────────────────────
+
+#[tauri::command]
+fn check_installed_editors() -> Vec<core::EditorInfo> {
+    core::check_installed_editors()
+}
+
+#[tauri::command]
+fn open_in_editor(editor_id: &str, path: &str) -> Result<(), String> {
+    core::open_in_editor(editor_id, path)
+}
+
+#[tauri::command]
+fn get_editor_icon(editor_id: &str) -> Result<String, String> {
+    core::get_editor_icon(editor_id)
+}
+
 // ── App Entry ────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -813,6 +872,10 @@ pub fn run() {
             save_project_template,
             delete_project_template,
             rename_project_template,
+            list_bundled_project_templates,
+            read_bundled_project_template,
+            import_bundled_project_template,
+            search_bundled_project_templates,
             get_project_file_info,
             read_project_file,
             save_project_file,
@@ -822,6 +885,9 @@ pub fn run() {
             save_mcp_server_config,
             delete_mcp_server_config,
             import_mcp_servers,
+            list_mcp_marketplace,
+            search_mcp_marketplace,
+            install_mcp_marketplace_entry,
             get_projects,
             read_project,
             autodetect_project_dependencies,
@@ -845,6 +911,9 @@ pub fn run() {
             search_memories,
             delete_memory,
             clear_memories,
+            check_installed_editors,
+            open_in_editor,
+            get_editor_icon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

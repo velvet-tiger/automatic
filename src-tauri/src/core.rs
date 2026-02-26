@@ -1967,6 +1967,281 @@ pub fn rename_project_template(old_name: &str, new_name: &str) -> Result<(), Str
     Ok(())
 }
 
+// ── Bundled Project Template Marketplace ─────────────────────────────────────
+//
+// Templates shipped with the app, compiled in via `include_str!`.
+// These are served to the Template Marketplace UI without any network calls.
+// Users can import them into `~/.automatic/project_templates/` as editable copies.
+
+/// A bundled project template marketplace entry (richer than ProjectTemplate).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BundledProjectTemplate {
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub skills: Vec<String>,
+    pub mcp_servers: Vec<String>,
+    pub providers: Vec<String>,
+    pub agents: Vec<String>,
+    pub project_files: Vec<TemplateProjectFile>,
+    #[serde(default)]
+    pub unified_instruction: String,
+    #[serde(default)]
+    pub unified_rules: Vec<String>,
+}
+
+/// All bundled marketplace templates, compiled in at build time.
+const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
+    (
+        "nextjs-saas-starter",
+        include_str!("../project-templates/nextjs-saas-starter.json"),
+    ),
+    (
+        "laravel-api-backend",
+        include_str!("../project-templates/laravel-api-backend.json"),
+    ),
+    (
+        "python-data-pipeline",
+        include_str!("../project-templates/python-data-pipeline.json"),
+    ),
+    (
+        "tauri-desktop-app",
+        include_str!("../project-templates/tauri-desktop-app.json"),
+    ),
+    (
+        "terraform-aws-infrastructure",
+        include_str!("../project-templates/terraform-aws-infrastructure.json"),
+    ),
+    (
+        "react-component-library",
+        include_str!("../project-templates/react-component-library.json"),
+    ),
+];
+
+/// Return all bundled marketplace templates as JSON array.
+pub fn list_bundled_project_templates() -> Result<String, String> {
+    let templates: Result<Vec<BundledProjectTemplate>, _> = BUNDLED_TEMPLATES
+        .iter()
+        .map(|(_, raw)| serde_json::from_str::<BundledProjectTemplate>(raw))
+        .collect();
+
+    let templates = templates.map_err(|e| format!("Failed to parse bundled template: {}", e))?;
+    serde_json::to_string(&templates).map_err(|e| e.to_string())
+}
+
+/// Return a single bundled marketplace template by name as JSON.
+pub fn read_bundled_project_template(name: &str) -> Result<String, String> {
+    for (slug, raw) in BUNDLED_TEMPLATES {
+        if *slug == name {
+            return Ok(raw.to_string());
+        }
+    }
+    Err(format!("Bundled template '{}' not found", name))
+}
+
+/// Import a bundled marketplace template into the user's local project templates.
+/// If a template with the same name already exists it is overwritten.
+pub fn import_bundled_project_template(name: &str) -> Result<(), String> {
+    let raw = read_bundled_project_template(name)?;
+    let bundled: BundledProjectTemplate =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid template: {}", e))?;
+
+    // Convert to the standard ProjectTemplate structure for storage
+    let pt = ProjectTemplate {
+        name: bundled.name.clone(),
+        description: bundled.description,
+        skills: bundled.skills,
+        mcp_servers: bundled.mcp_servers,
+        providers: bundled.providers,
+        agents: bundled.agents,
+        project_files: bundled.project_files,
+        unified_instruction: bundled.unified_instruction,
+        unified_rules: bundled.unified_rules,
+    };
+
+    let json = serde_json::to_string_pretty(&pt).map_err(|e| e.to_string())?;
+    save_project_template(&bundled.name, &json)
+}
+
+/// Search bundled templates by query (matches name, display_name, description, tags, category).
+pub fn search_bundled_project_templates(query: &str) -> Result<String, String> {
+    let q = query.to_lowercase();
+    let templates: Result<Vec<BundledProjectTemplate>, _> = BUNDLED_TEMPLATES
+        .iter()
+        .map(|(_, raw)| serde_json::from_str::<BundledProjectTemplate>(raw))
+        .collect();
+
+    let templates = templates.map_err(|e| format!("Failed to parse bundled template: {}", e))?;
+
+    if q.trim().is_empty() {
+        let json = serde_json::to_string(&templates).map_err(|e| e.to_string())?;
+        return Ok(json);
+    }
+
+    let filtered: Vec<&BundledProjectTemplate> = templates
+        .iter()
+        .filter(|t| {
+            t.name.to_lowercase().contains(&q)
+                || t.display_name.to_lowercase().contains(&q)
+                || t.description.to_lowercase().contains(&q)
+                || t.category.to_lowercase().contains(&q)
+                || t.tags.iter().any(|tag| tag.to_lowercase().contains(&q))
+        })
+        .collect();
+
+    serde_json::to_string(&filtered).map_err(|e| e.to_string())
+}
+
+// ── Bundled MCP Marketplace ───────────────────────────────────────────────────
+//
+// Curated MCP server definitions compiled into the binary.  Each entry
+// describes a popular MCP server: its transport config, required env vars,
+// and setup notes.  Users can install any entry directly into their local
+// MCP server registry (~/.automatic/mcp_servers/).
+
+/// An environment variable required (or optional) by a marketplace server.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct McpEnvVar {
+    /// The env var key, e.g. "GITHUB_PERSONAL_ACCESS_TOKEN"
+    pub key: String,
+    /// Human-readable label, e.g. "Personal Access Token"
+    pub label: String,
+    /// One-line description shown in the UI
+    pub description: String,
+    /// Whether the value should be masked in the UI
+    #[serde(default)]
+    pub secret: bool,
+    /// Whether the server won't work without this var
+    #[serde(default)]
+    pub required: bool,
+}
+
+/// A marketplace entry for a bundled MCP server.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct McpMarketplaceEntry {
+    /// The name used when saving to the local registry (no spaces/slashes)
+    pub name: String,
+    /// Human-readable name shown in the UI
+    pub display_name: String,
+    /// Description of what the server provides
+    pub description: String,
+    /// Broad category for grouping, e.g. "Developer Tools"
+    pub category: String,
+    /// Searchable tags
+    pub tags: Vec<String>,
+    /// "stdio" or "http"
+    pub transport: String,
+    /// Author / publisher
+    pub author: String,
+    /// The ready-to-save JSON config (matches McpServerConfig shape)
+    pub config: serde_json::Value,
+    /// Environment variables the user needs to fill in
+    pub env_vars: Vec<McpEnvVar>,
+    /// Plain-text setup instructions
+    pub setup_notes: String,
+    /// Link to official docs / GitHub repo
+    pub docs_url: String,
+}
+
+const BUNDLED_MCP_SERVERS: &[(&str, &str)] = &[
+    ("filesystem",   include_str!("../mcp-marketplace/filesystem.json")),
+    ("github",       include_str!("../mcp-marketplace/github.json")),
+    ("postgres",     include_str!("../mcp-marketplace/postgres.json")),
+    ("brave-search", include_str!("../mcp-marketplace/brave-search.json")),
+    ("memory",       include_str!("../mcp-marketplace/memory.json")),
+    ("slack",        include_str!("../mcp-marketplace/slack.json")),
+    ("puppeteer",    include_str!("../mcp-marketplace/puppeteer.json")),
+    ("linear",       include_str!("../mcp-marketplace/linear.json")),
+];
+
+/// Return all bundled MCP marketplace entries as a JSON array.
+pub fn list_mcp_marketplace() -> Result<String, String> {
+    let entries: Result<Vec<McpMarketplaceEntry>, _> = BUNDLED_MCP_SERVERS
+        .iter()
+        .map(|(_, raw)| serde_json::from_str::<McpMarketplaceEntry>(raw))
+        .collect();
+    let entries = entries.map_err(|e| format!("Failed to parse MCP marketplace entry: {}", e))?;
+    serde_json::to_string(&entries).map_err(|e| e.to_string())
+}
+
+/// Return a single bundled MCP marketplace entry by name.
+pub fn read_mcp_marketplace_entry(name: &str) -> Result<String, String> {
+    for (slug, raw) in BUNDLED_MCP_SERVERS {
+        if *slug == name {
+            return Ok(raw.to_string());
+        }
+    }
+    Err(format!("MCP marketplace entry '{}' not found", name))
+}
+
+/// Search bundled MCP marketplace entries by query.
+pub fn search_mcp_marketplace(query: &str) -> Result<String, String> {
+    let q = query.to_lowercase();
+    let entries: Result<Vec<McpMarketplaceEntry>, _> = BUNDLED_MCP_SERVERS
+        .iter()
+        .map(|(_, raw)| serde_json::from_str::<McpMarketplaceEntry>(raw))
+        .collect();
+    let entries = entries.map_err(|e| format!("Failed to parse MCP marketplace entry: {}", e))?;
+
+    if q.trim().is_empty() {
+        return serde_json::to_string(&entries).map_err(|e| e.to_string());
+    }
+
+    let filtered: Vec<&McpMarketplaceEntry> = entries
+        .iter()
+        .filter(|e| {
+            e.name.to_lowercase().contains(&q)
+                || e.display_name.to_lowercase().contains(&q)
+                || e.description.to_lowercase().contains(&q)
+                || e.category.to_lowercase().contains(&q)
+                || e.author.to_lowercase().contains(&q)
+                || e.tags.iter().any(|t| t.to_lowercase().contains(&q))
+        })
+        .collect();
+
+    serde_json::to_string(&filtered).map_err(|e| e.to_string())
+}
+
+/// Install a bundled MCP marketplace entry into the local registry.
+/// The `env_values` map provides user-supplied values for the env vars
+/// declared in the entry (keyed by env var key).
+/// Already-installed servers are overwritten — callers must confirm first.
+pub fn install_mcp_marketplace_entry(
+    name: &str,
+    env_values: &std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let raw = read_mcp_marketplace_entry(name)?;
+    let entry: McpMarketplaceEntry =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid MCP entry: {}", e))?;
+
+    // Clone the config and merge in the user-supplied env values
+    let mut config = entry.config.clone();
+
+    if !env_values.is_empty() {
+        if let Some(env_obj) = config.get_mut("env") {
+            if let Some(map) = env_obj.as_object_mut() {
+                for (k, v) in env_values {
+                    map.insert(k.clone(), serde_json::Value::String(v.clone()));
+                }
+            }
+        } else {
+            // env key didn't exist — insert it
+            let env_map: serde_json::Map<String, serde_json::Value> = env_values
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("env".to_string(), serde_json::Value::Object(env_map));
+            }
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    save_mcp_server_config(&entry.name, &json)
+}
+
 // ── Projects ─────────────────────────────────────────────────────────────────
 //
 // Project configs are stored in the project directory at `.automatic/project.json`.
@@ -2196,4 +2471,218 @@ pub fn delete_project(name: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+// ── Editor Detection & Open ───────────────────────────────────────────────────
+
+/// Known editors with their detection strategy (macOS-first, cross-platform fallback).
+#[derive(Debug, Clone, Serialize)]
+pub struct EditorInfo {
+    /// Stable identifier used when calling `open_in_editor`.
+    pub id: String,
+    /// Human-readable label shown in the UI.
+    pub label: String,
+    /// Whether this editor was detected as installed on the current machine.
+    pub installed: bool,
+}
+
+/// Probe whether a given app bundle path exists OR a CLI command is on PATH.
+fn app_installed(app_path: &str, cli_name: Option<&str>) -> bool {
+    if std::path::Path::new(app_path).exists() {
+        return true;
+    }
+    if let Some(cli) = cli_name {
+        // Use `which` to check if the CLI is on PATH
+        std::process::Command::new("which")
+            .arg(cli)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    } else {
+        false
+    }
+}
+
+/// Return all supported editors with their installation status.
+pub fn check_installed_editors() -> Vec<EditorInfo> {
+    vec![
+        EditorInfo {
+            id: "finder".into(),
+            label: "Finder".into(),
+            // Finder is always available on macOS
+            installed: cfg!(target_os = "macos"),
+        },
+        EditorInfo {
+            id: "vscode".into(),
+            label: "VS Code".into(),
+            installed: app_installed(
+                "/Applications/Visual Studio Code.app",
+                Some("code"),
+            ),
+        },
+        EditorInfo {
+            id: "cursor".into(),
+            label: "Cursor".into(),
+            installed: app_installed("/Applications/Cursor.app", Some("cursor")),
+        },
+        EditorInfo {
+            id: "zed".into(),
+            label: "Zed".into(),
+            installed: app_installed("/Applications/Zed.app", Some("zed")),
+        },
+        EditorInfo {
+            id: "textmate".into(),
+            label: "TextMate".into(),
+            installed: app_installed("/Applications/TextMate.app", Some("mate")),
+        },
+        EditorInfo {
+            id: "antigravity".into(),
+            label: "Antigravity".into(),
+            installed: app_installed("/Applications/Antigravity.app", None),
+        },
+        EditorInfo {
+            id: "xcode".into(),
+            label: "Xcode".into(),
+            installed: app_installed("/Applications/Xcode.app", Some("xed")),
+        },
+    ]
+}
+
+/// Open a directory in the specified editor.
+///
+/// `editor_id` must match one of the `id` values returned by `check_installed_editors`.
+/// `path` must be an absolute directory path.
+pub fn open_in_editor(editor_id: &str, path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("No project directory set".into());
+    }
+
+    let status = match editor_id {
+        "finder" => {
+            // `open` on macOS opens Finder at the directory
+            std::process::Command::new("open")
+                .arg(path)
+                .spawn()
+                .map_err(|e| format!("Failed to open Finder: {}", e))?;
+            return Ok(());
+        }
+        "vscode" => {
+            // Prefer the CLI; fall back to `open -a`
+            if which_available("code") {
+                std::process::Command::new("code").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "Visual Studio Code", path])
+                    .spawn()
+            }
+        }
+        "cursor" => {
+            if which_available("cursor") {
+                std::process::Command::new("cursor").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "Cursor", path])
+                    .spawn()
+            }
+        }
+        "zed" => {
+            if which_available("zed") {
+                std::process::Command::new("zed").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "Zed", path])
+                    .spawn()
+            }
+        }
+        "textmate" => {
+            if which_available("mate") {
+                std::process::Command::new("mate").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "TextMate", path])
+                    .spawn()
+            }
+        }
+        "antigravity" => std::process::Command::new("open")
+            .args(["-a", "Antigravity", path])
+            .spawn(),
+        "xcode" => {
+            if which_available("xed") {
+                std::process::Command::new("xed").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "Xcode", path])
+                    .spawn()
+            }
+        }
+        other => return Err(format!("Unknown editor id: {}", other)),
+    };
+
+    status.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Convert the `.icns` file for `editor_id` to a PNG and return it as a
+/// base64-encoded string suitable for use in a `data:image/png;base64,...` URL.
+///
+/// The PNG is cached in `/tmp/automatic-icons/` to avoid re-running `sips` on
+/// every call.  Uses macOS `sips` (always available on macOS) to do the
+/// conversion.  Returns an error string if the editor id is unknown, the
+/// `.icns` file does not exist, or `sips` / IO fails.
+pub fn get_editor_icon(editor_id: &str) -> Result<String, String> {
+    let icns_path: &str = match editor_id {
+        "finder" => "/System/Library/CoreServices/Finder.app/Contents/Resources/Finder.icns",
+        "vscode" => "/Applications/Visual Studio Code.app/Contents/Resources/Code.icns",
+        "cursor" => "/Applications/Cursor.app/Contents/Resources/Cursor.icns",
+        "zed" => "/Applications/Zed.app/Contents/Resources/Zed.icns",
+        "textmate" => "/Applications/TextMate.app/Contents/Resources/TextMate.icns",
+        "antigravity" => "/Applications/Antigravity.app/Contents/Resources/Antigravity.icns",
+        "xcode" => "/Applications/Xcode.app/Contents/Resources/Xcode.icns",
+        other => return Err(format!("Unknown editor id: {}", other)),
+    };
+
+    if !std::path::Path::new(icns_path).exists() {
+        return Err(format!("Icon file not found: {}", icns_path));
+    }
+
+    let cache_dir = std::path::Path::new("/tmp/automatic-icons");
+    std::fs::create_dir_all(cache_dir)
+        .map_err(|e| format!("Failed to create icon cache dir: {}", e))?;
+
+    let out_path = cache_dir.join(format!("{}.png", editor_id));
+    let out_str = out_path
+        .to_str()
+        .ok_or_else(|| "Invalid output path".to_string())?
+        .to_string();
+
+    // Convert .icns → PNG if not already cached
+    if !out_path.exists() {
+        let output = std::process::Command::new("sips")
+            .args(["-s", "format", "png", icns_path, "--out", &out_str])
+            .output()
+            .map_err(|e| format!("Failed to run sips: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("sips failed: {}", stderr));
+        }
+    }
+
+    // Read the PNG and return it as a base64 data URI so the frontend can
+    // embed it directly without needing the Tauri asset protocol.
+    let bytes = std::fs::read(&out_path)
+        .map_err(|e| format!("Failed to read cached icon: {}", e))?;
+
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let b64 = STANDARD.encode(&bytes);
+
+    Ok(format!("data:image/png;base64,{}", b64))
+}
+
+/// Return true when `name` resolves to an executable via `which`.
+fn which_available(name: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
