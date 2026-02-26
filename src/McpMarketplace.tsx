@@ -1,590 +1,823 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Search,
   Server,
-  Loader2,
-  ArrowRight,
   ArrowLeft,
-  X,
-  Terminal,
-  Globe,
   ExternalLink,
-  KeyRound,
-  Package,
   Github,
+  Copy,
+  Check,
+  Globe,
+  Terminal,
+  Key,
+  Package,
+  Shield,
+  Cloud,
+  Monitor,
+  Lock,
+  Download,
+  CheckCircle2,
+  Loader2,
 } from "lucide-react";
+import serversData from "./featured-mcp-servers.json";
 
-// ── Registry API types ────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────
 
-interface RegistryEnvVar {
+interface EnvVar {
   name: string;
-  description?: string;
-  isRequired?: boolean;
-  isSecret?: boolean;
-  format?: string;
+  description: string;
+  secret: boolean;
 }
 
-interface RegistryPackage {
-  registryType: string; // "npm" | "pypi" | "oci" | ...
-  identifier: string;
-  version?: string;
-  transport?: { type: string };
-  environmentVariables?: RegistryEnvVar[];
-}
-
-interface RegistryRemote {
-  type: string; // "streamable-http" | "sse"
-  url: string;
-  headers?: { name: string; description?: string; isRequired?: boolean; isSecret?: boolean }[];
-}
-
-interface RegistryRepository {
-  url?: string;
-  source?: string;
-  subfolder?: string;
-}
-
-interface RegistryServer {
+interface McpServer {
+  slug: string;
   name: string;
-  title?: string;
-  description?: string;
-  version?: string;
-  websiteUrl?: string;
-  repository?: RegistryRepository;
-  packages?: RegistryPackage[];
-  remotes?: RegistryRemote[];
+  title: string;
+  description: string;
+  provider: string;
+  classification: string;
+  repository_url: string | null;
+  remote: { transport: string; url: string } | null;
+  local: {
+    registry: string;
+    package: string;
+    version: string | null;
+    transport: string;
+    command: string;
+  } | null;
+  auth: { method: string; env_vars: EnvVar[] };
 }
 
-interface RegistryEntry {
-  server: RegistryServer;
-  _meta?: {
-    "io.modelcontextprotocol.registry/official"?: {
-      status: string;
-      publishedAt: string;
-      updatedAt: string;
-      isLatest: boolean;
-    };
-  };
-}
+const servers: McpServer[] = serversData as McpServer[];
 
-interface RegistryResponse {
-  servers: RegistryEntry[];
-  metadata: {
-    nextCursor?: string;
-    count: number;
-  };
-}
+// ── Constants ──────────────────────────────────────────────────────────────
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+const ACCENT = "#F59E0B"; // amber — ICONS.mcp.hex
+const ACCENT_BG = "bg-[#F59E0B]/10";
+const ACCENT_BORDER = "border-[#F59E0B]/20";
 
-const REGISTRY_BASE = "https://registry.modelcontextprotocol.io";
-const PAGE_SIZE = 20;
+const CLASSIFICATIONS = ["all", "official", "reference", "community"] as const;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+const CLASSIFICATION_LABELS: Record<string, string> = {
+  all: "All",
+  official: "Official",
+  reference: "Reference",
+  community: "Community",
+};
 
-function displayName(entry: RegistryEntry): string {
-  return entry.server.title || entry.server.name.split("/").pop() || entry.server.name;
-}
+const CLASSIFICATION_COLORS: Record<string, string> = {
+  official: "bg-[#3B82F6]/15 text-[#60A5FA] border-[#3B82F6]/20",
+  reference: "bg-[#8B5CF6]/15 text-[#A78BFA] border-[#8B5CF6]/20",
+  community: "bg-[#22D3EE]/15 text-[#67E8F9] border-[#22D3EE]/20",
+};
 
-function transports(entry: RegistryEntry): string[] {
-  const types = new Set<string>();
-  (entry.server.packages ?? []).forEach((p) => {
-    if (p.transport?.type) types.add(p.transport.type);
-  });
-  (entry.server.remotes ?? []).forEach((r) => types.add(r.type));
-  return [...types];
-}
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-function registryUrl(name: string): string {
-  return `${REGISTRY_BASE}/?name=${encodeURIComponent(name)}`;
-}
-
-async function fetchRegistry(params: Record<string, string>): Promise<RegistryResponse> {
-  const url = new URL(`${REGISTRY_BASE}/v0/servers`);
-  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`Registry returned ${res.status}`);
-  return res.json();
-}
-
-// ── Transport badge ───────────────────────────────────────────────────────────
-
-function TransportBadge({ type }: { type: string }) {
-  const isStdio = type === "stdio";
+function classificationBadge(classification: string) {
+  const cls =
+    CLASSIFICATION_COLORS[classification] ||
+    "bg-[#33353A] text-[#C8CAD0] border-[#33353A]";
   return (
-    <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono ${
-      isStdio ? "bg-[#2D2E36] text-[#8A8C93]" : "bg-[#22D3EE]/10 text-[#22D3EE]"
-    }`}>
-      {isStdio ? <Terminal size={9} /> : <Globe size={9} />}
-      {type}
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${cls}`}
+    >
+      {classification}
     </span>
   );
 }
 
-// ── Package type badge ────────────────────────────────────────────────────────
-
-function PackageTypeBadge({ type }: { type: string }) {
-  const colours: Record<string, string> = {
-    npm:  "bg-[#CB3837]/10 text-[#CB3837]",
-    pypi: "bg-[#3775A9]/10 text-[#3775A9]",
-    oci:  "bg-[#4ADE80]/10 text-[#4ADE80]",
-  };
-  return (
-    <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono ${colours[type] ?? "bg-[#2D2E36] text-[#8A8C93]"}`}>
-      <Package size={9} />
-      {type}
-    </span>
-  );
-}
-
-// ── Card ─────────────────────────────────────────────────────────────────────
-
-function McpCard({ entry, onClick }: { entry: RegistryEntry; onClick: () => void }) {
-  const name = displayName(entry);
-  const types = transports(entry);
-  const hasEnvVars = (entry.server.packages ?? []).some(
-    (p) => (p.environmentVariables ?? []).length > 0
-  );
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [text]);
 
   return (
     <button
-      onClick={onClick}
-      className="group text-left p-5 rounded-xl bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] hover:bg-[#1E1F24] transition-all flex flex-col"
+      onClick={handleCopy}
+      className="flex-shrink-0 p-1.5 rounded hover:bg-[#33353A] transition-colors"
+      title="Copy to clipboard"
     >
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <div className="text-[14px] font-semibold text-[#E0E1E6] leading-snug truncate">
-            {name}
-          </div>
-          <div className="text-[10px] text-[#8A8C93] truncate mt-0.5">{entry.server.name}</div>
-        </div>
-        <ArrowRight size={13} className="text-[#33353A] group-hover:text-[#8A8C93] transition-colors flex-shrink-0 mt-0.5" />
-      </div>
-
-      <p className="text-[12px] text-[#8A8C93] leading-relaxed line-clamp-3 flex-1">
-        {entry.server.description || "No description provided."}
-      </p>
-
-      <div className="flex items-center gap-1.5 mt-3 flex-wrap">
-        {types.map((t) => <TransportBadge key={t} type={t} />)}
-        {(entry.server.packages ?? []).map((p, i) => (
-          <PackageTypeBadge key={i} type={p.registryType} />
-        ))}
-        {hasEnvVars && (
-          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-[#F59E0B]/10 text-[#F59E0B]">
-            <KeyRound size={9} />
-            env vars
-          </span>
-        )}
-      </div>
+      {copied ? (
+        <Check size={12} className="text-[#4ADE80]" />
+      ) : (
+        <Copy size={12} className="text-[#C8CAD0]" />
+      )}
     </button>
   );
 }
 
-// ── Detail view ───────────────────────────────────────────────────────────────
-
-function McpDetail({ entry, onClose }: { entry: RegistryEntry; onClose: () => void }) {
-  const name = displayName(entry);
-  const types = transports(entry);
-  const repoUrl = entry.server.repository?.url;
-  const websiteUrl = entry.server.websiteUrl;
-
-  return (
-    <div className="flex h-full flex-col bg-[#222327]">
-      {/* Header */}
-      <div className="h-12 px-6 border-b border-[#33353A] flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onClose}
-            className="flex items-center gap-1.5 text-[12px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
-          >
-            <ArrowLeft size={13} />
-            Back
-          </button>
-          <span className="text-[#33353A]">/</span>
-          <span className="text-[14px] font-semibold text-[#E0E1E6] truncate">{name}</span>
-          {types.map((t) => <TransportBadge key={t} type={t} />)}
-        </div>
-        <div className="flex items-center gap-2">
-          {repoUrl && (
-            <a
-              href={repoUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#2D2E36] border border-[#33353A] hover:border-[#44474F] text-[#E0E1E6] transition-colors"
-            >
-              <Github size={12} />
-              Repository
-            </a>
-          )}
-          <a
-            href={registryUrl(entry.server.name)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] text-white transition-colors"
-          >
-            <ExternalLink size={12} />
-            View on Registry
-          </a>
-        </div>
-      </div>
-
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
-        <div className="max-w-3xl mx-auto px-8 py-8 space-y-8">
-
-          {/* Description */}
-          <p className="text-[14px] text-[#C0C1C6] leading-relaxed pb-8 border-b border-[#33353A]">
-            {entry.server.description || "No description provided."}
-          </p>
-
-          <div className="grid grid-cols-[1fr_240px] gap-8">
-
-            {/* Left — packages + remotes */}
-            <div className="space-y-7">
-
-              {(entry.server.packages ?? []).length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Package size={13} className="text-[#5E6AD2]" />
-                    <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Packages</span>
-                  </div>
-                  <div className="space-y-4">
-                    {entry.server.packages!.map((pkg, i) => (
-                      <div key={i} className="bg-[#111114] border border-[#33353A] rounded-lg p-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <PackageTypeBadge type={pkg.registryType} />
-                          {pkg.transport && <TransportBadge type={pkg.transport.type} />}
-                        </div>
-                        <code className="text-[12px] text-[#E0E1E6] font-mono">{pkg.identifier}</code>
-                        {pkg.version && (
-                          <span className="ml-2 text-[11px] text-[#8A8C93]">v{pkg.version}</span>
-                        )}
-                        {(pkg.environmentVariables ?? []).length > 0 && (
-                          <div className="mt-3 space-y-2">
-                            <div className="text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider">
-                              Environment Variables
-                            </div>
-                            {pkg.environmentVariables!.map((ev) => (
-                              <div key={ev.name} className="flex items-start gap-2 flex-wrap">
-                                <code className="text-[11px] font-mono text-[#5E6AD2] flex-shrink-0">{ev.name}</code>
-                                {ev.isRequired && (
-                                  <span className="text-[10px] text-[#F59E0B] flex-shrink-0">required</span>
-                                )}
-                                {ev.isSecret && (
-                                  <span className="inline-flex items-center gap-0.5 text-[10px] text-[#8A8C93] flex-shrink-0">
-                                    <KeyRound size={9} /> secret
-                                  </span>
-                                )}
-                                {ev.description && (
-                                  <span className="text-[11px] text-[#8A8C93]">{ev.description}</span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {(entry.server.remotes ?? []).length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Globe size={13} className="text-[#22D3EE]" />
-                    <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Remote Endpoints</span>
-                  </div>
-                  <div className="space-y-3">
-                    {entry.server.remotes!.map((remote, i) => (
-                      <div key={i} className="bg-[#111114] border border-[#33353A] rounded-lg p-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <TransportBadge type={remote.type} />
-                        </div>
-                        <code className="text-[12px] text-[#E0E1E6] font-mono break-all">{remote.url}</code>
-                        {(remote.headers ?? []).length > 0 && (
-                          <div className="mt-3 space-y-1.5">
-                            <div className="text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider">Headers</div>
-                            {remote.headers!.map((h) => (
-                              <div key={h.name} className="flex items-center gap-2 flex-wrap">
-                                <code className="text-[11px] font-mono text-[#5E6AD2]">{h.name}</code>
-                                {h.isRequired && <span className="text-[10px] text-[#F59E0B]">required</span>}
-                                {h.description && <span className="text-[11px] text-[#8A8C93]">{h.description}</span>}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Right sidebar */}
-            <div className="space-y-6">
-              <div>
-                <div className="text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider mb-1.5">Registry ID</div>
-                <code className="text-[11px] text-[#C0C1C6] font-mono break-all">{entry.server.name}</code>
-              </div>
-
-              {entry.server.version && (
-                <div>
-                  <div className="text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider mb-1.5">Version</div>
-                  <span className="text-[13px] text-[#E0E1E6]">{entry.server.version}</span>
-                </div>
-              )}
-
-              {websiteUrl && (
-                <div>
-                  <div className="text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider mb-1.5">Website</div>
-                  <a
-                    href={websiteUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-[12px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
-                  >
-                    <ExternalLink size={12} />
-                    <span className="truncate">{websiteUrl.replace(/^https?:\/\//, "")}</span>
-                  </a>
-                </div>
-              )}
-
-              {repoUrl && (
-                <div>
-                  <div className="text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider mb-1.5">Repository</div>
-                  <a
-                    href={repoUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-[12px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
-                  >
-                    <Github size={12} className="flex-shrink-0" />
-                    <span className="truncate">{repoUrl.replace("https://github.com/", "")}</span>
-                  </a>
-                </div>
-              )}
-
-              <div className="p-3.5 rounded-lg bg-[#1A1A1E] border border-[#33353A]">
-                <div className="text-[10px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
-                  How to use
-                </div>
-                <p className="text-[11px] text-[#8A8C93] leading-relaxed">
-                  View this server on the MCP Registry for full installation instructions and documentation.
-                </p>
-                <a
-                  href={registryUrl(entry.server.name)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-2 flex items-center gap-1 text-[11px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
-                >
-                  <ExternalLink size={10} />
-                  registry.modelcontextprotocol.io
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+function hasRemote(s: McpServer): boolean {
+  return s.remote !== null;
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
+function hasLocal(s: McpServer): boolean {
+  return s.local !== null;
+}
 
-export default function McpMarketplace({ resetKey }: { resetKey?: number }) {
+function hasAuth(s: McpServer): boolean {
+  return s.auth.method !== "none" && s.auth.env_vars.length > 0;
+}
+
+// ── Component ──────────────────────────────────────────────────────────────
+
+/** Build config name from server title: "GitHub (Anthropic Reference)" → "github-anthropic-reference" */
+function configName(server: McpServer): string {
+  return server.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+/** Build a save-ready config JSON from marketplace data. Prefers local, falls back to remote. */
+function buildConfig(server: McpServer): Record<string, unknown> {
+  if (server.local) {
+    const parts = server.local.command.split(/\s+/);
+    const cmd = parts[0] || "";
+    const args = parts.slice(1);
+    const env: Record<string, string> = {};
+    server.auth.env_vars.forEach((v) => {
+      env[v.name] = "";
+    });
+    const cfg: Record<string, unknown> = { type: "stdio", command: cmd };
+    if (args.length > 0) cfg.args = args;
+    if (Object.keys(env).length > 0) cfg.env = env;
+    return cfg;
+  }
+  if (server.remote) {
+    const type = server.remote.transport === "sse" ? "sse" : "http";
+    return { type, url: server.remote.url };
+  }
+  return { type: "stdio", command: "" };
+}
+
+export default function McpMarketplace({
+  resetKey,
+}: {
+  resetKey?: number;
+}) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<RegistryEntry[]>([]);
-  const [featured, setFeatured] = useState<RegistryEntry[]>([]);
-  const [selected, setSelected] = useState<RegistryEntry | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [featuredLoading, setFeaturedLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [classification, setClassification] = useState<string>("all");
+  const [selected, setSelected] = useState<McpServer | null>(null);
+  const [setupTab, setSetupTab] = useState<"remote" | "local" | "auth">(
+    "local"
+  );
+  const [installedServers, setInstalledServers] = useState<Set<string>>(new Set());
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
 
-  // Return to landing when nav item is clicked again
+  // Load installed MCP servers
+  const loadInstalled = useCallback(async () => {
+    try {
+      const result: string[] = await invoke("list_mcp_server_configs");
+      setInstalledServers(new Set(result));
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  useEffect(() => { loadInstalled(); }, [loadInstalled]);
+
+  // Reset when the nav item is re-clicked
   useEffect(() => {
     if (resetKey !== undefined) {
       setSelected(null);
       setQuery("");
-      setResults([]);
-      setNextCursor(null);
-      setError(null);
+      setClassification("all");
+      setInstallError(null);
     }
   }, [resetKey]);
 
-  // Load featured servers on mount — pull the most recent page from the registry
-  useEffect(() => {
-    (async () => {
-      setFeaturedLoading(true);
-      try {
-        const data = await fetchRegistry({ limit: String(PAGE_SIZE) });
-        setFeatured(data.servers);
-      } catch {
-        setFeatured([]);
-      } finally {
-        setFeaturedLoading(false);
-      }
-    })();
-  }, []);
-
-  const doSearch = useCallback(async (q: string) => {
-    if (!q.trim()) {
-      setResults([]);
-      setNextCursor(null);
-      setError(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
+  // Install a server config
+  const handleInstall = useCallback(async (server: McpServer) => {
+    setInstalling(true);
+    setInstallError(null);
     try {
-      const data = await fetchRegistry({ search: q, limit: String(PAGE_SIZE) });
-      setResults(data.servers);
-      setNextCursor(data.metadata.nextCursor ?? null);
+      const name = configName(server);
+      const data = JSON.stringify(buildConfig(server));
+      await invoke("save_mcp_server_config", { name, data });
+      setInstalledServers((prev) => new Set([...prev, name]));
     } catch (err: any) {
-      setError(`Search failed: ${err.message ?? err}`);
-      setResults([]);
+      setInstallError(`Failed to add server: ${err}`);
     } finally {
-      setLoading(false);
+      setInstalling(false);
     }
   }, []);
 
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => doSearch(query), 300);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query, doSearch]);
-
-  const loadMore = useCallback(async () => {
-    if (!nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const params: Record<string, string> = { limit: String(PAGE_SIZE), cursor: nextCursor };
-      if (query.trim()) params.search = query;
-      const data = await fetchRegistry(params);
-      setResults((prev) => [...prev, ...data.servers]);
-      setNextCursor(data.metadata.nextCursor ?? null);
-    } catch (err: any) {
-      setError(`Failed to load more: ${err.message ?? err}`);
-    } finally {
-      setLoadingMore(false);
+  // Filter servers
+  const filtered = useMemo(() => {
+    let list = servers;
+    if (classification !== "all") {
+      list = list.filter((s) => s.classification === classification);
     }
-  }, [nextCursor, loadingMore, query]);
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(
+        (s) =>
+          s.title.toLowerCase().includes(q) ||
+          s.description.toLowerCase().includes(q) ||
+          s.provider.toLowerCase().includes(q) ||
+          s.slug.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [query, classification]);
 
-  // Detail view
+  // When selecting a server, pick the best default tab
+  const handleSelect = useCallback((server: McpServer) => {
+    setSelected(server);
+    if (hasRemote(server)) {
+      setSetupTab("remote");
+    } else if (hasLocal(server)) {
+      setSetupTab("local");
+    } else if (hasAuth(server)) {
+      setSetupTab("auth");
+    } else {
+      setSetupTab("local");
+    }
+  }, []);
+
+  // ── Detail view ──────────────────────────────────────────────────────────
+
   if (selected) {
-    return <McpDetail entry={selected} onClose={() => setSelected(null)} />;
+    const tabs: { id: "remote" | "local" | "auth"; label: string; icon: typeof Globe; available: boolean }[] = [
+      { id: "remote", label: "Remote", icon: Cloud, available: hasRemote(selected) },
+      { id: "local", label: "Local Install", icon: Monitor, available: hasLocal(selected) },
+      { id: "auth", label: "Authentication", icon: Lock, available: hasAuth(selected) },
+    ];
+
+    return (
+      <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-[#222327]">
+        <div className="flex flex-col items-center px-8 pt-8 pb-10 w-full">
+          <div className="w-full max-w-2xl">
+            {/* Back button */}
+            <button
+              onClick={() => setSelected(null)}
+              className="flex items-center gap-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors mb-6"
+            >
+              <ArrowLeft size={13} />
+              Back to directory
+            </button>
+
+            {/* Header */}
+            <div className="flex items-start gap-4 mb-6">
+              <div
+                className={`w-12 h-12 rounded-xl ${ACCENT_BG} ${ACCENT_BORDER} border flex items-center justify-center flex-shrink-0`}
+              >
+                <Server size={20} style={{ color: ACCENT }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2.5 mb-1.5">
+                  <h1 className="text-[20px] font-semibold text-[#F8F8FA] leading-tight">
+                    {selected.title}
+                  </h1>
+                  {classificationBadge(selected.classification)}
+                </div>
+                <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
+                  {selected.description}
+                </p>
+              </div>
+            </div>
+
+            {/* Install button */}
+            {(() => {
+              const name = configName(selected);
+              const isInstalled = installedServers.has(name);
+              return (
+                <div className="mb-6">
+                  {isInstalled ? (
+                    <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#4ADE80]/10 border border-[#4ADE80]/20">
+                      <CheckCircle2 size={15} className="text-[#4ADE80]" />
+                      <span className="text-[13px] text-[#4ADE80] font-medium">
+                        Added to MCP Servers
+                      </span>
+                      <span className="text-[11px] text-[#C8CAD0] ml-1">
+                        as "{name}"
+                      </span>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => handleInstall(selected)}
+                      disabled={installing}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#F59E0B] hover:bg-[#FBBF24] text-[#1A1A1E] font-medium text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {installing ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          Adding...
+                        </>
+                      ) : (
+                        <>
+                          <Download size={14} />
+                          Add to MCP Servers
+                        </>
+                      )}
+                    </button>
+                  )}
+                  {installError && (
+                    <p className="mt-2 text-[12px] text-red-400">{installError}</p>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Meta row */}
+            <div className="flex items-center gap-4 mb-6 pb-6 border-b border-[#33353A]">
+              <div className="flex items-center gap-1.5 text-[12px] text-[#C8CAD0]">
+                <Package size={12} style={{ color: ACCENT }} />
+                <span className="text-[#F8F8FA] font-medium">{selected.provider}</span>
+              </div>
+              {selected.repository_url && (
+                <a
+                  href={selected.repository_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-[12px] hover:text-[#F8F8FA] transition-colors"
+                  style={{ color: ACCENT }}
+                >
+                  <Github size={12} />
+                  Repository
+                  <ExternalLink size={10} />
+                </a>
+              )}
+              <div className="flex items-center gap-1.5 text-[12px] text-[#C8CAD0]">
+                {hasRemote(selected) && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#F59E0B]/10 text-[#F59E0B] text-[10px] font-medium">
+                    <Cloud size={10} />
+                    Remote
+                  </span>
+                )}
+                {hasLocal(selected) && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#4ADE80]/10 text-[#4ADE80] text-[10px] font-medium">
+                    <Monitor size={10} />
+                    Local
+                  </span>
+                )}
+                {hasAuth(selected) && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#F87171]/10 text-[#F87171] text-[10px] font-medium">
+                    <Lock size={10} />
+                    Auth
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Setup tabs */}
+            <div className="mb-4">
+              <div className="flex gap-1 border-b border-[#33353A]">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => tab.available && setSetupTab(tab.id)}
+                    disabled={!tab.available}
+                    className={`flex items-center gap-1.5 px-4 py-2.5 text-[12px] font-medium border-b-2 transition-colors -mb-[1px] ${
+                      setupTab === tab.id && tab.available
+                        ? "border-[#F59E0B] text-[#F8F8FA]"
+                        : tab.available
+                        ? "border-transparent text-[#C8CAD0] hover:text-[#F8F8FA]"
+                        : "border-transparent text-[#C8CAD0]/30 cursor-not-allowed"
+                    }`}
+                  >
+                    <tab.icon size={13} />
+                    {tab.label}
+                    {!tab.available && (
+                      <span className="text-[9px] text-[#C8CAD0]/40 ml-1">N/A</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Tab content */}
+            <div className="bg-[#1A1A1E] border border-[#33353A] rounded-xl p-6">
+              {/* Remote tab */}
+              {setupTab === "remote" && selected.remote && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-[11px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-3">
+                      Remote Endpoint
+                    </h3>
+                    <p className="text-[12px] text-[#C8CAD0] mb-4">
+                      Connect directly to the hosted server — no local installation needed.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                      Transport
+                    </label>
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#F59E0B]/10 text-[#F59E0B] text-[11px] font-mono font-medium">
+                      <Globe size={11} />
+                      {selected.remote.transport}
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                      URL
+                    </label>
+                    <div className="flex items-center gap-2 bg-[#222327] border border-[#33353A] rounded-md px-3 py-2">
+                      <code className="flex-1 text-[12px] font-mono text-[#F8F8FA] truncate">
+                        {selected.remote.url}
+                      </code>
+                      <CopyButton text={selected.remote.url} />
+                    </div>
+                  </div>
+
+                  {/* Example config */}
+                  <div>
+                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                      Example Configuration
+                    </label>
+                    <div className="relative">
+                      <pre className="bg-[#222327] border border-[#33353A] rounded-md px-4 py-3 font-mono text-[11px] text-[#E5E6EA] leading-relaxed overflow-x-auto whitespace-pre">
+{`{
+  "${selected.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}": {
+    "type": "${selected.remote.transport === "sse" ? "sse" : "http"}",
+    "url": "${selected.remote.url}"${hasAuth(selected) ? `,
+    "headers": {
+      "Authorization": "Bearer <YOUR_TOKEN>"
+    }` : ""}
+  }
+}`}
+                      </pre>
+                      <div className="absolute top-2 right-2">
+                        <CopyButton
+                          text={JSON.stringify(
+                            {
+                              [selected.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")]: {
+                                type: selected.remote.transport === "sse" ? "sse" : "http",
+                                url: selected.remote.url,
+                                ...(hasAuth(selected)
+                                  ? { headers: { Authorization: "Bearer <YOUR_TOKEN>" } }
+                                  : {}),
+                              },
+                            },
+                            null,
+                            2
+                          )}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Local install tab */}
+              {setupTab === "local" && selected.local && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-[11px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-3">
+                      Local Installation
+                    </h3>
+                    <p className="text-[12px] text-[#C8CAD0] mb-4">
+                      Run the server locally on your machine via stdio transport.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                        Registry
+                      </label>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#33353A] text-[#E5E6EA] text-[11px] font-mono">
+                        <Package size={11} />
+                        {selected.local.registry}
+                      </span>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                        Transport
+                      </label>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#33353A] text-[#E5E6EA] text-[11px] font-mono">
+                        <Terminal size={11} />
+                        {selected.local.transport}
+                      </span>
+                    </div>
+                    {selected.local.version && (
+                      <div>
+                        <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                          Version
+                        </label>
+                        <span className="inline-flex items-center px-2.5 py-1 rounded bg-[#33353A] text-[#E5E6EA] text-[11px] font-mono">
+                          {selected.local.version}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                      Package
+                    </label>
+                    <div className="flex items-center gap-2 bg-[#222327] border border-[#33353A] rounded-md px-3 py-2">
+                      <code className="flex-1 text-[12px] font-mono text-[#F8F8FA] truncate">
+                        {selected.local.package}
+                      </code>
+                      <CopyButton text={selected.local.package} />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                      Install / Run Command
+                    </label>
+                    <div className="flex items-center gap-2 bg-[#222327] border border-[#33353A] rounded-md px-3 py-2">
+                      <code className="flex-1 text-[12px] font-mono text-[#4ADE80] truncate">
+                        $ {selected.local.command}
+                      </code>
+                      <CopyButton text={selected.local.command} />
+                    </div>
+                  </div>
+
+                  {/* Example config */}
+                  <div>
+                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                      Example Configuration
+                    </label>
+                    <div className="relative">
+                      <pre className="bg-[#222327] border border-[#33353A] rounded-md px-4 py-3 font-mono text-[11px] text-[#E5E6EA] leading-relaxed overflow-x-auto whitespace-pre">
+{(() => {
+  const parts = selected.local!.command.split(/\s+/);
+  const cmd = parts[0] || "";
+  const args = parts.slice(1);
+  const envObj: Record<string, string> = {};
+  selected.auth.env_vars.forEach((v) => {
+    envObj[v.name] = v.secret ? "<YOUR_VALUE>" : "";
+  });
+  const configObj: Record<string, unknown> = {
+    type: "stdio",
+    command: cmd,
+  };
+  if (args.length > 0) configObj.args = args;
+  if (Object.keys(envObj).length > 0) configObj.env = envObj;
+  return JSON.stringify(
+    { [selected.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")]: configObj },
+    null,
+    2
+  );
+})()}
+                      </pre>
+                      <div className="absolute top-2 right-2">
+                        <CopyButton
+                          text={(() => {
+                            const parts = selected.local!.command.split(/\s+/);
+                            const cmd = parts[0] || "";
+                            const args = parts.slice(1);
+                            const envObj: Record<string, string> = {};
+                            selected.auth.env_vars.forEach((v) => {
+                              envObj[v.name] = v.secret ? "<YOUR_VALUE>" : "";
+                            });
+                            const configObj: Record<string, unknown> = {
+                              type: "stdio",
+                              command: cmd,
+                            };
+                            if (args.length > 0) configObj.args = args;
+                            if (Object.keys(envObj).length > 0) configObj.env = envObj;
+                            return JSON.stringify(
+                              { [selected.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")]: configObj },
+                              null,
+                              2
+                            );
+                          })()}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Auth tab */}
+              {setupTab === "auth" && hasAuth(selected) && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-[11px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-3">
+                      Authentication
+                    </h3>
+                    <p className="text-[12px] text-[#C8CAD0] mb-4">
+                      This server requires authentication. Set the following environment variables.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                      Method
+                    </label>
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#F87171]/10 text-[#F87171] text-[11px] font-medium">
+                      <Shield size={11} />
+                      {selected.auth.method}
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-2 block">
+                      Environment Variables
+                    </label>
+                    <div className="space-y-2">
+                      {selected.auth.env_vars.map((v) => (
+                        <div
+                          key={v.name}
+                          className="flex items-start gap-3 bg-[#222327] border border-[#33353A] rounded-md px-3 py-2.5"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <code className="text-[12px] font-mono text-[#F8F8FA] font-medium">
+                                {v.name}
+                              </code>
+                              {v.secret && (
+                                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[#F87171]/10 text-[#F87171] text-[9px] font-medium">
+                                  <Key size={8} />
+                                  secret
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-[#C8CAD0] leading-relaxed">
+                              {v.description}
+                            </p>
+                          </div>
+                          <CopyButton text={v.name} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Fallback for unavailable tabs */}
+              {setupTab === "remote" && !selected.remote && (
+                <div className="text-center py-8">
+                  <Cloud size={24} className="mx-auto mb-3 text-[#33353A]" />
+                  <p className="text-[13px] text-[#C8CAD0]">
+                    No remote endpoint available for this server.
+                  </p>
+                  <p className="text-[11px] text-[#C8CAD0]/60 mt-1">
+                    Use local installation instead.
+                  </p>
+                </div>
+              )}
+              {setupTab === "local" && !selected.local && (
+                <div className="text-center py-8">
+                  <Monitor size={24} className="mx-auto mb-3 text-[#33353A]" />
+                  <p className="text-[13px] text-[#C8CAD0]">
+                    No local installation available for this server.
+                  </p>
+                  <p className="text-[11px] text-[#C8CAD0]/60 mt-1">
+                    Use the remote endpoint instead.
+                  </p>
+                </div>
+              )}
+              {setupTab === "auth" && !hasAuth(selected) && (
+                <div className="text-center py-8">
+                  <Lock size={24} className="mx-auto mb-3 text-[#33353A]" />
+                  <p className="text-[13px] text-[#C8CAD0]">
+                    No authentication required for this server.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
-  const showingSearch = !!query.trim();
-  const showingResults = showingSearch ? results : featured;
-  const isLoadingMain = showingSearch ? loading : featuredLoading;
+  // ── Landing / directory view ─────────────────────────────────────────────
 
   return (
     <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-[#222327]">
-      <div className="flex flex-col items-center px-8 pt-12 pb-10 w-full">
-        <div className="w-full max-w-4xl">
-
-          {/* Heading */}
-          <div className="text-center mb-8">
-            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#F59E0B]/10 border border-[#F59E0B]/20 flex items-center justify-center">
-              <Server size={22} className="text-[#F59E0B]" strokeWidth={1.5} />
-            </div>
-            <h2 className="text-[20px] font-semibold text-[#E0E1E6] mb-2">MCP Registry</h2>
-            <p className="text-[13px] text-[#8A8C93] leading-relaxed max-w-md mx-auto">
-              Browse and discover MCP servers from the{" "}
-              <a
-                href="https://registry.modelcontextprotocol.io"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
-              >
-                official MCP Registry
-              </a>
-              . Live data — always up to date.
-            </p>
+      <div className="flex flex-col px-6 pt-10 pb-10 w-full">
+        {/* Header — centered, constrained width */}
+        <div className="text-center mb-6 max-w-lg mx-auto">
+          <div
+            className={`w-12 h-12 mx-auto mb-4 rounded-2xl ${ACCENT_BG} ${ACCENT_BORDER} border flex items-center justify-center`}
+          >
+            <Server size={20} style={{ color: ACCENT }} strokeWidth={1.5} />
           </div>
+          <h2 className="text-[18px] font-semibold text-[#F8F8FA] mb-1.5">
+            MCP Server Directory
+          </h2>
+          <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
+            Browse popular MCP servers. View setup instructions, install
+            commands, and authentication requirements.
+          </p>
+        </div>
 
-          {/* Search */}
-          <div className="relative mb-8">
-            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8A8C93] pointer-events-none" />
+        {/* Search + filters — constrained */}
+        <div className="max-w-xl mx-auto w-full mb-6">
+          <div className="relative mb-3">
+            <Search
+              size={16}
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-[#C8CAD0] pointer-events-none"
+            />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search servers by name, description…"
+              placeholder="Search servers..."
               autoFocus
-              className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-xl pl-11 pr-10 py-3.5 text-[14px] text-[#E0E1E6] placeholder-[#8A8C93]/60 outline-none transition-colors shadow-sm"
+              className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#F59E0B] rounded-xl pl-11 pr-4 py-3 text-[14px] text-[#F8F8FA] placeholder-[#C8CAD0]/60 outline-none transition-colors shadow-sm"
             />
-            {query && (
-              <button
-                onClick={() => setQuery("")}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
-              >
-                <X size={14} />
-              </button>
-            )}
           </div>
-
-          {/* Error */}
-          {error && (
-            <div className="mb-6 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/20 text-[13px] text-red-400">
-              {error}
-            </div>
-          )}
-
-          {/* Results */}
-          {isLoadingMain ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 size={20} className="animate-spin text-[#8A8C93]" />
-            </div>
-          ) : showingResults.length === 0 && showingSearch ? (
-            <div className="text-center py-16">
-              <div className="w-12 h-12 rounded-full border-2 border-dashed border-[#33353A] flex items-center justify-center mx-auto mb-4">
-                <Search size={18} className="text-[#8A8C93]" />
-              </div>
-              <h3 className="text-[14px] font-medium text-[#E0E1E6] mb-1">No servers found</h3>
-              <p className="text-[13px] text-[#8A8C93]">Try a different search term</p>
+          <div className="flex gap-2 justify-center">
+            {CLASSIFICATIONS.map((c) => (
               <button
-                onClick={() => setQuery("")}
-                className="mt-4 text-[12px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
+                key={c}
+                onClick={() => setClassification(c)}
+                className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${
+                  classification === c
+                    ? "bg-[#F59E0B]/15 text-[#F59E0B] border-[#F59E0B]/30"
+                    : "bg-[#2D2E36] border-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] hover:border-[#44474F]"
+                }`}
               >
-                Clear search
+                {CLASSIFICATION_LABELS[c]}
               </button>
-            </div>
-          ) : showingResults.length > 0 ? (
-            <>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
-                  {showingSearch
-                    ? `${results.length} result${results.length !== 1 ? "s" : ""}`
-                    : "Recently Updated"}
-                </h3>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                {showingResults.map((e, i) => (
-                  <McpCard key={`${e.server.name}-${i}`} entry={e} onClick={() => setSelected(e)} />
-                ))}
-              </div>
-
-              {/* Load more (search only — featured doesn't paginate) */}
-              {showingSearch && nextCursor && (
-                <div className="mt-6 flex justify-center">
-                  <button
-                    onClick={loadMore}
-                    disabled={loadingMore}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2D2E36] border border-[#33353A] hover:border-[#44474F] text-[13px] text-[#E0E1E6] transition-colors disabled:opacity-50"
-                  >
-                    {loadingMore && <Loader2 size={13} className="animate-spin" />}
-                    Load more
-                  </button>
-                </div>
-              )}
-            </>
-          ) : null}
+            ))}
+          </div>
         </div>
+
+        {/* Results count — full width */}
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+            {filtered.length} Server{filtered.length !== 1 ? "s" : ""}
+          </h3>
+          <div className="flex items-center gap-3 text-[10px] text-[#C8CAD0]/60">
+            <span className="flex items-center gap-1">
+              <Cloud size={9} />
+              Remote
+            </span>
+            <span className="flex items-center gap-1">
+              <Monitor size={9} />
+              Local
+            </span>
+            <span className="flex items-center gap-1">
+              <Lock size={9} />
+              Auth
+            </span>
+          </div>
+        </div>
+
+        {/* Server grid — full width */}
+        {filtered.length === 0 ? (
+          <div className="text-center py-12">
+            <Server
+              size={32}
+              className="mx-auto mb-4 text-[#33353A]"
+            />
+            <p className="text-[13px] text-[#C8CAD0]">
+              No servers match your search.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-4 items-stretch">
+            {filtered.map((server) => (
+              <button
+                key={server.slug}
+                onClick={() => handleSelect(server)}
+                className="group flex flex-col text-left p-5 rounded-xl bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] hover:bg-[#1E1F24] transition-colors"
+              >
+                {/* Title row */}
+                <div className="flex items-center gap-2.5 mb-1.5">
+                  <Server
+                    size={15}
+                    style={{ color: ACCENT }}
+                    className="flex-shrink-0"
+                  />
+                  <span className="text-[14px] font-medium text-[#F8F8FA] leading-snug truncate flex-1">
+                    {server.title}
+                  </span>
+                  {installedServers.has(configName(server)) && (
+                    <CheckCircle2 size={14} className="text-[#4ADE80] flex-shrink-0" />
+                  )}
+                </div>
+                {/* Badge */}
+                <div className="flex items-center gap-2 mb-2">
+                  {classificationBadge(server.classification)}
+                </div>
+                {/* Description */}
+                <p className="text-[12px] text-[#C8CAD0] leading-relaxed line-clamp-3 flex-1">
+                  {server.description}
+                </p>
+                {/* Footer — pinned to bottom */}
+                <div className="flex items-center justify-between gap-4 mt-3 pt-2.5 border-t border-[#33353A]/40">
+                  <span className="text-[11px] text-[#C8CAD0]/60 truncate">
+                    {server.provider}
+                  </span>
+                  <div className="flex items-center gap-2.5 flex-shrink-0">
+                    {hasRemote(server) && (
+                      <Cloud size={11} className="text-[#F59E0B]/60" />
+                    )}
+                    {hasLocal(server) && (
+                      <Monitor size={11} className="text-[#4ADE80]/60" />
+                    )}
+                    {hasAuth(server) && (
+                      <Lock size={11} className="text-[#F87171]/60" />
+                    )}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

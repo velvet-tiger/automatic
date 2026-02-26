@@ -1,0 +1,1050 @@
+[
+  {
+    "slug": "modelcontextprotocol-fetch",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-fetch",
+    "title": "Fetch",
+    "description": "Retrieve and convert web content to markdown for analysis.",
+    "provider": "Anthropic",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcp-server-fetch",
+      "version": null,
+      "transport": "stdio",
+      "command": "uvx mcp-server-fetch"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "microsoft-playwright",
+    "name": "com.pulsemcp.mirror/microsoft-playwright",
+    "title": "Playwright Browser Automation",
+    "description": "Browser automation and testing via Playwright.",
+    "provider": "Microsoft",
+    "classification": "official",
+    "repository_url": "https://github.com/microsoft/playwright-mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@playwright/mcp",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx @playwright/mcp@latest"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "upstash-context7",
+    "name": "io.github.upstash/context7",
+    "title": "Context7",
+    "description": "Up-to-date code docs for any prompt",
+    "provider": "Upstash",
+    "classification": "official",
+    "repository_url": "https://github.com/upstash/context7",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@upstash/context7-mcp",
+      "version": "1.0.31",
+      "transport": "stdio",
+      "command": "npx -y @upstash/context7-mcp"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "CONTEXT7_API_KEY",
+          "description": "API key for authentication",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-filesystem",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-filesystem",
+    "title": "Filesystem",
+    "description": "MCP server providing secure filesystem operations including read, write, directory listing, and file search capabilities.",
+    "provider": "Anthropic",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-filesystem",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-filesystem"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "github",
+    "name": "io.github.github/github-mcp-server",
+    "title": "GitHub",
+    "description": "Connect AI assistants to GitHub - manage repos, issues, PRs, and workflows through natural language.",
+    "provider": "GitHub",
+    "classification": "official",
+    "repository_url": "https://github.com/github/github-mcp-server",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "local": {
+      "registry": "oci",
+      "package": "ghcr.io/github/github-mcp-server:0.31.0",
+      "version": "",
+      "transport": "stdio",
+      "command": "docker run ghcr.io/github/github-mcp-server:0.31.0"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "aws-documentation",
+    "name": "io.github.aws/mcp-proxy-for-aws",
+    "title": "AWS MCP Server",
+    "description": "AWS MCP Server lets AI securely access AWS using docs, API calls, and SOP workflows.",
+    "provider": "AWS",
+    "classification": "official",
+    "repository_url": null,
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcp-proxy-for-aws",
+      "version": "1.1.4",
+      "transport": "stdio",
+      "command": "uvx mcp-proxy-for-aws"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "chrome-devtools",
+    "name": "io.github.ChromeDevTools/chrome-devtools-mcp",
+    "title": "Chrome DevTools MCP",
+    "description": "MCP server for Chrome DevTools",
+    "provider": "Google",
+    "classification": "official",
+    "repository_url": "https://github.com/ChromeDevTools/chrome-devtools-mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "chrome-devtools-mcp",
+      "version": "0.18.1",
+      "transport": "stdio",
+      "command": "npx -y chrome-devtools-mcp"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-sequential-thinking",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-sequential-thinking",
+    "title": "Sequential Thinking",
+    "description": "A tool for dynamic and reflective problem-solving through sequential thinking.",
+    "provider": "Anthropic",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-sequential-thinking",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-sequential-thinking"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-time",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-time",
+    "title": "Time",
+    "description": "Get current time and timezone conversion capabilities.",
+    "provider": "Anthropic",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcp-server-time",
+      "version": null,
+      "transport": "stdio",
+      "command": "uvx mcp-server-time"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "nuget",
+    "name": "com.microsoft/nuget",
+    "title": "NuGet",
+    "description": "A Model Context Protocol (MCP) server for NuGet.",
+    "provider": "Microsoft",
+    "classification": "official",
+    "repository_url": null,
+    "remote": null,
+    "local": {
+      "registry": "nuget",
+      "package": "NuGet.Mcp.Server",
+      "version": "1.1.29",
+      "transport": "stdio",
+      "command": "dotnet tool run NuGet.Mcp.Server"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "ruvnet-claude-flow",
+    "name": "io.github.ruvnet/claude-flow",
+    "title": "Claude Flow",
+    "description": "AI orchestration with hive-mind swarms, neural networks, and 87 MCP tools for enterprise dev.",
+    "provider": "ruvnet",
+    "classification": "community",
+    "repository_url": "https://github.com/ruvnet/claude-flow",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "claude-flow",
+      "version": "2.0.0-alpha.107",
+      "transport": "stdio",
+      "command": "npx -y claude-flow"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "description": "Anthropic API key for Claude AI models",
+          "secret": true
+        },
+        {
+          "name": "CLAUDE_FLOW_MODE",
+          "description": "Operation mode: development, production, or test",
+          "secret": false
+        },
+        {
+          "name": "CLAUDE_FLOW_MEMORY_PATH",
+          "description": "Path for persistent memory storage",
+          "secret": false
+        },
+        {
+          "name": "CLAUDE_FLOW_MAX_AGENTS",
+          "description": "Maximum number of concurrent agents",
+          "secret": false
+        },
+        {
+          "name": "CLAUDE_FLOW_PORT",
+          "description": "MCP server port",
+          "secret": false
+        },
+        {
+          "name": "GITHUB_TOKEN",
+          "description": "GitHub personal access token for repository operations",
+          "secret": true
+        },
+        {
+          "name": "FLOW_NEXUS_API_KEY",
+          "description": "Flow Nexus cloud platform API key",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "genai-toolbox",
+    "name": "io.github.googleapis/genai-toolbox",
+    "title": "MCP Toolbox for Databases",
+    "description": "MCP Toolbox for Databases enables your agent to connect to your database.",
+    "provider": "Google",
+    "classification": "official",
+    "repository_url": "https://github.com/googleapis/genai-toolbox",
+    "remote": null,
+    "local": {
+      "registry": "oci",
+      "package": "us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:0.27.0",
+      "version": "",
+      "transport": "streamable-http",
+      "command": "docker run us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:0.27.0"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "beehiveinnovations-gemini",
+    "name": "com.pulsemcp.mirror/beehiveinnovations-gemini",
+    "title": "Zen",
+    "description": "Give your development workflow access to all state of the art AI models for enhanced code analysis, problem-solving, and collaborative development.",
+    "provider": "Beehive Innovations",
+    "classification": "community",
+    "repository_url": "https://github.com/beehiveinnovations/pal-mcp-server",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "pal-mcp-server",
+      "version": null,
+      "transport": "stdio",
+      "command": "uvx --from git+https://github.com/BeehiveInnovations/pal-mcp-server.git pal-mcp-server"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "GEMINI_API_KEY",
+          "description": "Google Gemini API key for accessing Gemini models",
+          "secret": true
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "description": "OpenAI API key for accessing GPT models",
+          "secret": true
+        },
+        {
+          "name": "OPENROUTER_API_KEY",
+          "description": "OpenRouter API key for accessing multiple models via OpenRouter",
+          "secret": true
+        },
+        {
+          "name": "DISABLED_TOOLS",
+          "description": "Comma-separated list of tools to disable (e.g. analyze,refactor,testgen,secaudit,docgen,tracer)",
+          "secret": false
+        },
+        {
+          "name": "DEFAULT_MODEL",
+          "description": "Default model to use (e.g. auto, pro)",
+          "secret": false
+        }
+      ]
+    }
+  },
+  {
+    "slug": "hangwin-chrome",
+    "name": "com.pulsemcp.mirror/hangwin-chrome",
+    "title": "Chrome Browser Automation",
+    "description": "Browser automation and semantic search capabilities through Chrome extension integration.",
+    "provider": "hangye",
+    "classification": "community",
+    "repository_url": "https://github.com/hangwin/mcp-chrome",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "http://127.0.0.1:12306/mcp"
+    },
+    "local": {
+      "registry": "npm",
+      "package": "mcp-chrome-bridge",
+      "version": null,
+      "transport": "streamable-http",
+      "command": "npm install -g mcp-chrome-bridge"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-memory",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-memory",
+    "title": "Knowledge Graph Memory",
+    "description": "Persistent memory using a local knowledge graph to retain information across conversations.",
+    "provider": "Anthropic",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-memory",
+      "version": "2025.11.25",
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-memory"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "supabase",
+    "name": "com.supabase/mcp",
+    "title": "Supabase",
+    "description": "MCP server for interacting with the Supabase platform",
+    "provider": "Supabase",
+    "classification": "official",
+    "repository_url": "https://github.com/supabase-community/supabase-mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.supabase.com/mcp"
+    },
+    "local": {
+      "registry": "npm",
+      "package": "@supabase/mcp-server-supabase",
+      "version": "0.6.3",
+      "transport": "stdio",
+      "command": "npx -y @supabase/mcp-server-supabase"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "SUPABASE_ACCESS_TOKEN",
+          "description": "Personal access token for Supabase API",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "sooperset-atlassian",
+    "name": "com.pulsemcp.mirror/sooperset-atlassian",
+    "title": "Atlassian Cloud",
+    "description": "Access Confluence pages and Jira issues via Atlassian API.",
+    "provider": "sooperset",
+    "classification": "community",
+    "repository_url": "https://github.com/sooperset/mcp-atlassian",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcp-atlassian",
+      "version": null,
+      "transport": "stdio",
+      "command": "uvx mcp-atlassian"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "JIRA_URL",
+          "description": "Jira instance URL (e.g. https://your-company.atlassian.net)",
+          "secret": false
+        },
+        {
+          "name": "JIRA_USERNAME",
+          "description": "Jira username / email for Cloud authentication",
+          "secret": false
+        },
+        {
+          "name": "JIRA_API_TOKEN",
+          "description": "Jira API token for Cloud authentication",
+          "secret": true
+        },
+        {
+          "name": "CONFLUENCE_URL",
+          "description": "Confluence instance URL (e.g. https://your-company.atlassian.net/wiki)",
+          "secret": false
+        },
+        {
+          "name": "CONFLUENCE_USERNAME",
+          "description": "Confluence username / email for Cloud authentication",
+          "secret": false
+        },
+        {
+          "name": "CONFLUENCE_API_TOKEN",
+          "description": "Confluence API token for Cloud authentication",
+          "secret": true
+        },
+        {
+          "name": "JIRA_PERSONAL_TOKEN",
+          "description": "Jira Personal Access Token for Server/Data Center authentication (alternative to username + API token)",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-github",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-github",
+    "title": "GitHub (Anthropic Reference)",
+    "description": "Manage repositories, issues, and search code via GitHub API.",
+    "provider": "Anthropic",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers-archived",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-github",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-github"
+    },
+    "auth": {
+      "method": "token",
+      "env_vars": [
+        {
+          "name": "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "description": "GitHub Personal Access Token with repo scope for accessing repositories",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "eyaltoledano-task-master",
+    "name": "com.pulsemcp.mirror/eyaltoledano-task-master",
+    "title": "Task Master",
+    "description": "Task management for development workflows with PRD parsing, dependency management, and complexity analysis.",
+    "provider": "Eyal Toledano",
+    "classification": "community",
+    "repository_url": "https://github.com/eyaltoledano/claude-task-master",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "task-master-ai",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx -y task-master-ai"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "description": "Anthropic API key for Claude models",
+          "secret": true
+        },
+        {
+          "name": "PERPLEXITY_API_KEY",
+          "description": "Perplexity API key for research model",
+          "secret": true
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "description": "OpenAI API key for GPT models",
+          "secret": true
+        },
+        {
+          "name": "GOOGLE_API_KEY",
+          "description": "Google API key for Gemini models",
+          "secret": true
+        },
+        {
+          "name": "MISTRAL_API_KEY",
+          "description": "Mistral API key",
+          "secret": true
+        },
+        {
+          "name": "GROQ_API_KEY",
+          "description": "Groq API key",
+          "secret": true
+        },
+        {
+          "name": "OPENROUTER_API_KEY",
+          "description": "OpenRouter API key for accessing multiple models",
+          "secret": true
+        },
+        {
+          "name": "XAI_API_KEY",
+          "description": "xAI API key for Grok models",
+          "secret": true
+        },
+        {
+          "name": "AZURE_OPENAI_API_KEY",
+          "description": "Azure OpenAI API key",
+          "secret": true
+        },
+        {
+          "name": "OLLAMA_API_KEY",
+          "description": "Ollama API key for local models",
+          "secret": true
+        },
+        {
+          "name": "TASK_MASTER_TOOLS",
+          "description": "Tool loading mode: all, standard, core, lean, or comma-separated list of tool names",
+          "secret": false
+        }
+      ]
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-git",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-git",
+    "title": "Git",
+    "description": "Read, search, and manipulate Git repositories including commits, branches, diffs, and history.",
+    "provider": "Anthropic",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcp-server-git",
+      "version": "2026.1.14",
+      "transport": "stdio",
+      "command": "uvx mcp-server-git"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "storybook-addon-mcp",
+    "name": "com.pulsemcp.mirror/storybook-addon-mcp",
+    "title": "Storybook",
+    "description": "Help agents automatically write and test stories for your UI components.",
+    "provider": "Storybook",
+    "classification": "official",
+    "repository_url": "https://github.com/storybookjs/mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@storybook/addon-mcp",
+      "version": "0.0.0",
+      "transport": "stdio",
+      "command": "npx -y @storybook/addon-mcp"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "glips-figma-context",
+    "name": "io.github.GLips/Figma-Context-MCP",
+    "title": "Figma Context",
+    "description": "Give your coding agent access to your Figma data. Implement designs in any framework in one-shot.",
+    "provider": "GLips",
+    "classification": "community",
+    "repository_url": "https://github.com/GLips/Figma-Context-MCP",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "figma-developer-mcp",
+      "version": "0.6.4",
+      "transport": "stdio",
+      "command": "npx -y figma-developer-mcp"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "FIGMA_API_KEY",
+          "description": "Your Figma Personal Access Token, learn more here: https://www.figma.com/developers/api#access-tokens",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "idosal-git-mcp",
+    "name": "com.pulsemcp.mirror/idosal-git-mcp",
+    "title": "GitMCP (GitHub to MCP)",
+    "description": "Transform any GitHub project into a documentation hub. Allows AI tools to access up-to-date documentation and code.",
+    "provider": "Ido Salomon",
+    "classification": "community",
+    "repository_url": "https://github.com/idosal/git-mcp",
+    "remote": {
+      "transport": "sse",
+      "url": "https://gitmcp.io/"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "lauriewired-ghidra",
+    "name": "com.pulsemcp.mirror/lauriewired-ghidra",
+    "title": "Ghidra",
+    "description": "Decompile and analyze binaries in Ghidra.",
+    "provider": "Laurie Wired",
+    "classification": "community",
+    "repository_url": "https://github.com/lauriewired/ghidramcp",
+    "remote": null,
+    "local": {
+      "registry": "github",
+      "package": "lauriewired/ghidramcp",
+      "version": null,
+      "transport": "stdio",
+      "command": "python bridge_mcp_ghidra.py --ghidra-server http://127.0.0.1:8080/"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "czlonkowski-n8n",
+    "name": "com.pulsemcp.mirror/czlonkowski-n8n",
+    "title": "n8n",
+    "description": "Integrates with n8n workflow automation platform for conversational access to 525+ nodes.",
+    "provider": "Romuald Czlonkowski",
+    "classification": "community",
+    "repository_url": "https://github.com/czlonkowski/n8n-mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "n8n-mcp",
+      "version": "0.0.0",
+      "transport": "stdio",
+      "command": "npx -y n8n-mcp"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "agentdeskai-browser-tools",
+    "name": "com.pulsemcp.mirror/agentdeskai-browser-tools",
+    "title": "Browser Tools",
+    "description": "Browser data capture and analysis with console logs, network monitoring, screenshots, and Lighthouse audits.",
+    "provider": "AgentDesk AI",
+    "classification": "community",
+    "repository_url": "https://github.com/agentdeskai/browser-tools-mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@agentdeskai/browser-tools-mcp",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx @agentdeskai/browser-tools-mcp@latest"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-postgres",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-postgres",
+    "title": "PostgreSQL",
+    "description": "Access and analyze Postgres databases with read-only queries.",
+    "provider": "Anthropic",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers-archived",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-postgres",
+      "version": "0.0.0",
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-postgres"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "sonnylazuardi-talk-to-figma",
+    "name": "com.pulsemcp.mirror/sonnylazuardi-talk-to-figma",
+    "title": "Talk to Figma",
+    "description": "Bidirectional communication with Figma designs through a plugin and WebSocket server.",
+    "provider": "Sonny Lazuardi",
+    "classification": "community",
+    "repository_url": "https://github.com/grab/cursor-talk-to-figma-mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "cursor-talk-to-figma-mcp",
+      "version": null,
+      "transport": "stdio",
+      "command": "bunx cursor-talk-to-figma-mcp@latest"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "la-rebelion-labs-registry",
+    "name": "ai.com.mcp/registry",
+    "title": "MCP Registry Server",
+    "description": "Publish and discover MCP servers via the official MCP Registry. Powered by HAPI MCP server.",
+    "provider": "La Rebelion Labs",
+    "classification": "community",
+    "repository_url": "https://github.com/modelcontextprotocol/registry",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://registry.run.mcp.com.ai/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "justinpbarnett-unity",
+    "name": "com.pulsemcp.mirror/justinpbarnett-unity",
+    "title": "Unity",
+    "description": "Allow MCP clients to perform Unity Editor actions.",
+    "provider": "Justin Barnett",
+    "classification": "community",
+    "repository_url": "https://github.com/coplaydev/unity-mcp",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcpforunityserver",
+      "version": null,
+      "transport": "streamable-http",
+      "command": "uvx --from mcpforunityserver mcp-for-unity --transport stdio"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "firecrawl",
+    "name": "io.github.firecrawl/firecrawl-mcp-server",
+    "title": "Firecrawl MCP Server",
+    "description": "MCP server for Firecrawl web scraping, structured data extraction and web search integration.",
+    "provider": "Mendable",
+    "classification": "official",
+    "repository_url": "https://github.com/firecrawl/firecrawl-mcp-server.git",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "firecrawl-mcp",
+      "version": "3.7.4",
+      "transport": "stdio",
+      "command": "npx -y firecrawl-mcp"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "FIRECRAWL_API_KEY",
+          "description": "Your API key for Firecrawl",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "tavily-search",
+    "name": "io.github.tavily-ai/tavily-mcp",
+    "title": "Tavily Search",
+    "description": "MCP server for advanced web search using Tavily",
+    "provider": "Tavily",
+    "classification": "official",
+    "repository_url": "https://github.com/tavily-ai/tavily-mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "tavily-mcp",
+      "version": "0.2.15",
+      "transport": "stdio",
+      "command": "npx -y tavily-mcp"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "TAVILY_API_KEY",
+          "description": "Your Tavily API key from tavily.com",
+          "secret": true
+        },
+        {
+          "name": "DEFAULT_PARAMETERS",
+          "description": "JSON string with default search parameters (e.g., {\"include_images\": true, \"max_results\": 15})",
+          "secret": false
+        }
+      ]
+    }
+  },
+  {
+    "slug": "zapier",
+    "name": "com.pulsemcp.mirror/zapier",
+    "title": "Zapier",
+    "description": "Generate a dynamic MCP server that connects to any of your favorite 8000+ apps on Zapier.",
+    "provider": "Zapier",
+    "classification": "official",
+    "repository_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.zapier.com"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-demo-everything",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-demo-everything",
+    "title": "Demo (Everything)",
+    "description": "Test protocol features and tools for client compatibility.",
+    "provider": "Anthropic",
+    "classification": "reference",
+    "repository_url": null,
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-everything",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-everything"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "mrexodio-ida-pro",
+    "name": "com.pulsemcp.mirror/mrexodio-ida-pro",
+    "title": "IDA Pro",
+    "description": "Automated reverse engineering with IDA Pro.",
+    "provider": "Duncan Ogilvie",
+    "classification": "community",
+    "repository_url": null,
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "ida-pro-mcp",
+      "version": null,
+      "transport": "stdio",
+      "command": "pip install https://github.com/mrexodia/ida-pro-mcp/archive/refs/heads/main.zip"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "search-1",
+    "name": "io.github.airweave-ai/search",
+    "title": "Airweave Search",
+    "description": "MCP server for searching Airweave collections with natural language queries.",
+    "provider": "airweave-ai",
+    "classification": "official",
+    "repository_url": "https://github.com/airweave-ai/airweave",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.airweave.ai/mcp"
+    },
+    "local": {
+      "registry": "npm",
+      "package": "airweave-mcp-search",
+      "version": "0.8.99",
+      "transport": "stdio",
+      "command": "npx -y airweave-mcp-search"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "AIRWEAVE_API_KEY",
+          "description": "Your Airweave API key for authentication",
+          "secret": true
+        },
+        {
+          "name": "AIRWEAVE_COLLECTION",
+          "description": "The Airweave collection to search",
+          "secret": false
+        },
+        {
+          "name": "AIRWEAVE_BASE_URL",
+          "description": "Airweave API base URL (defaults to https://api.airweave.ai)",
+          "secret": false
+        }
+      ]
+    }
+  },
+  {
+    "slug": "klavis-strata",
+    "name": "ai.klavis/strata",
+    "title": "Strata",
+    "description": "MCP server for progressive tool usage at any scale (see https://klavis.ai)",
+    "provider": "Klavis AI",
+    "classification": "official",
+    "repository_url": "https://github.com/Klavis-AI/klavis",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://strata.klavis.ai/mcp/"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "desktop-commander",
+    "name": "io.github.wonderwhy-er/desktop-commander",
+    "title": "Desktop Commander",
+    "description": "MCP server for terminal commands, file operations, and process management",
+    "provider": "Eduard Ruzga",
+    "classification": "official",
+    "repository_url": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@wonderwhy-er/desktop-commander",
+      "version": "0.2.37",
+      "transport": "stdio",
+      "command": "npx -y @wonderwhy-er/desktop-commander"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "webflow",
+    "name": "com.webflow/mcp",
+    "title": "Webflow",
+    "description": "AI-powered design and management for Webflow Sites",
+    "provider": "Webflow",
+    "classification": "official",
+    "repository_url": "https://github.com/webflow/mcp-server",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.webflow.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "praisonai",
+    "name": "io.github.MervinPraison/praisonai",
+    "title": "PraisonAI",
+    "description": "AI Agents Framework with Self Reflection and MCP support",
+    "provider": "Mervin Praison",
+    "classification": "official",
+    "repository_url": "https://github.com/MervinPraison/PraisonAI",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "praisonai",
+      "version": "2.3.42",
+      "transport": "stdio",
+      "command": "uvx praisonai"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  }
+]
