@@ -134,7 +134,7 @@ function App() {
             </div>
             <ul className="space-y-0.5">
               <NavItem id="agents" icon={Bot} label="Agents" />
-              <NavItem id="skills" icon={Code} label="Skills & Prompts" />
+              <NavItem id="skills" icon={Code} label="Skills" />
               <NavItem id="project-templates" icon={Layers} label="Proj Templates" />
               <NavItem id="templates" icon={LayoutTemplate} label="File Templates" />
               <NavItem id="rules" icon={ScrollText} label="Rules" />
@@ -149,8 +149,8 @@ function App() {
               <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
             <ul className="space-y-0.5">
-              <NavItem id="skill-store" icon={Store} label="Skills.sh" />
               <NavItem id="template-marketplace" icon={Layers} label="Templates" />
+              <NavItem id="skill-store" icon={Store} label="Skills.sh" />
               <NavItem id="mcp-marketplace" icon={Server} label="MCP Servers" />
             </ul>
           </div>
