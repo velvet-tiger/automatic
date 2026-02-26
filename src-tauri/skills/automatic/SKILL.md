@@ -6,7 +6,6 @@ Automatic is a desktop application that acts as a **skill registry, memory store
 
 Use the Automatic MCP tools when you need to:
 
-- Retrieve an API key for an LLM provider (Anthropic, OpenAI, Gemini, etc.)
 - Discover which skills are available in the user's skill registry
 - Load a skill's instructions and discover its companion resources
 - Search the community skills.sh registry for relevant skills
@@ -19,18 +18,6 @@ Use the Automatic MCP tools when you need to:
 ## Available MCP Tools
 
 Automatic exposes the following tools via the `nexus` MCP server (configured as `nexus mcp-serve`):
-
-### `automatic_get_credential`
-
-Retrieve an API key stored in Automatic.
-
-```
-provider: string  — e.g. "anthropic", "openai", "gemini"
-```
-
-**When to use:** Before making direct API calls that require a key the user has stored in Automatic. Always prefer reading credentials from Automatic rather than asking the user to paste them.
-
----
 
 ### `automatic_list_skills`
 
@@ -131,15 +118,13 @@ Automatic provides a persistent key-value store for agents to retain context, us
 
 1. **On session start** — call `automatic_list_skills` to see what skills are available. If a skill matches the current task domain, call `automatic_read_skill` to load it and view its companion resources. Optionally call `automatic_search_memories` to retrieve past learnings for the current project.
 
-2. **For credentials** — call `automatic_get_credential` with the provider name instead of asking the user.
+2. **For project context** — call `automatic_list_projects` to find the relevant project, then `automatic_read_project` to load its full configuration.
 
-3. **For project context** — call `automatic_list_projects` to find the relevant project, then `automatic_read_project` to load its full configuration.
+3. **For project setup** — call `automatic_list_mcp_servers` to see registered servers, then `automatic_sync_project` to apply the configuration.
 
-4. **For project setup** — call `automatic_list_mcp_servers` to see registered servers, then `automatic_sync_project` to apply the configuration.
+4. **For skill discovery** — call `automatic_search_skills` to find community skills relevant to the task at hand.
 
-5. **For skill discovery** — call `automatic_search_skills` to find community skills relevant to the task at hand.
-
-6. **Wrapping up a session** — Call `automatic_store_memory` to capture any new project-specific conventions, pitfalls, or setup steps discovered so they aren't lost in future sessions.
+5. **Wrapping up a session** — Call `automatic_store_memory` to capture any new project-specific conventions, pitfalls, or setup steps discovered so they aren't lost in future sessions.
 
 ## Configuration
 

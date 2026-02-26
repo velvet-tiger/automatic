@@ -2,7 +2,7 @@
 
 ## Identity
 
-Automatic is a cross-platform desktop application that serves as a **registry and configuration hub** for AI agent tooling. It does not execute agents itself. Instead, external applications (Claude Code, OpenCode, custom scripts, etc.) connect to Automatic to retrieve credentials, discover skills, read MCP configurations, and sync project configs.
+Automatic is a cross-platform desktop application that serves as a **registry and configuration hub** for AI agent tooling. It does not execute agents itself. Instead, external applications (Claude Code, OpenCode, custom scripts, etc.) connect to Automatic to discover skills, read MCP configurations, and sync project configs.
 
 Automatic exposes its services via an **MCP Server** interface for AI-native tools that already speak MCP (Claude Code, Cursor, etc.).
 
@@ -19,9 +19,8 @@ The desktop UI (Tauri) provides a visual management layer for editing, browsing,
 │  - Manage projects and sync configs             │  and management
 ├─────────────────────────────────────────────────┤
 │  Rust Core (src-tauri/src/core.rs)              │  Shared logic:
-│  - OS keychain access                           │  filesystem, keychain,
-│  - Filesystem operations                        │  validation, data access
-│  - Validation & path safety                     │
+│  - Filesystem operations                        │  filesystem,
+│  - Validation & path safety                     │  validation, data access
 ├─────────────────────────────────────────────────┤
 │  Service Layer                                  │  External-facing API
 │  - MCP Server (src-tauri/src/mcp.rs)            │  that agents
@@ -33,14 +32,13 @@ The desktop UI (Tauri) provides a visual management layer for editing, browsing,
    (via MCP)        (via MCP)      (via MCP)
 ```
 
-The Rust core is shared between the Tauri UI layer and the MCP server. Both call the same internal functions for keychain access, skill reading, etc.
+The Rust core is shared between the Tauri UI layer and the MCP server. Both call the same internal functions for skill reading, project access, etc.
 
 ### Data Flow
 
 Automatic is **passive by default**. It serves data on request:
 
 **Outbound (Automatic serves to external apps):**
-- Credentials: "Give me the API key for Anthropic"
 - Skills: "List available skills" / "Read skill X"
 - MCP config: "What MCP servers should I connect to?"
 - Project configs: "What's the configuration for project Y?"
@@ -58,14 +56,13 @@ src/                  # React/TypeScript frontend (Tauri webview)
   App.css             # Global styles, Tailwind import, custom scrollbar
   Skills.tsx          # Skills list + markdown editor (two-pane view)
   Projects.tsx        # Project CRUD with skills/MCP/provider assignment
-  Providers.tsx       # LLM API key management form
   main.tsx            # React DOM entry point
 
 src-tauri/            # Rust backend
   src/
     main.rs           # Binary entry point: dispatches to Tauri or MCP server
     lib.rs            # Tauri command wrappers + app entry
-    core.rs           # Shared business logic (credentials, skills, projects, MCP config)
+    core.rs           # Shared business logic (skills, projects, MCP config)
     mcp.rs            # MCP server implementation (rmcp SDK, stdio transport, 5 tools)
   Cargo.toml          # Rust dependencies
   capabilities/       # Tauri permission capabilities
@@ -76,7 +73,6 @@ src-tauri/            # Rust backend
 
 | Data | Location | Mechanism |
 |------|----------|-----------|
-| API keys | OS keychain | `keyring` crate, service name `nexus_desktop` |
 | Skills | `~/.agents/skills/<name>/SKILL.md` (primary, agentskills.io standard) + `~/.claude/skills/<name>/SKILL.md` (Claude Code) | Filesystem |
 | Projects | `<project-dir>/.automatic/project.json` (full config, pretty-printed); `~/.automatic/projects/<name>.json` (registry entry pointing to directory) | Filesystem (JSON) |
 | MCP config | `~/Library/Application Support/Claude/claude_desktop_config.json` | Read-only, Mac only |
@@ -89,8 +85,6 @@ Current commands:
 
 | Command | Params | Returns | Purpose |
 |---------|--------|---------|---------|
-| `save_api_key` | `provider, key` | `Result<()>` | Store API key in OS keychain |
-| `get_api_key` | `provider` | `Result<String>` | Retrieve API key from OS keychain |
 | `get_skills` | none | `Result<Vec<SkillEntry>>` | List skills from `~/.agents/skills/` and `~/.claude/skills/` with location flags |
 | `read_skill` | `name` | `Result<String>` | Read `SKILL.md` content (checks `~/.agents/skills/` first, then `~/.claude/skills/`) |
 | `save_skill` | `name, content` | `Result<()>` | Write `SKILL.md` to `~/.agents/skills/` (the standard location) |
@@ -111,7 +105,6 @@ Automatic runs as an MCP server via `nexus mcp-serve`. The server uses the `rmcp
 
 | MCP Tool | Parameters | Description |
 |----------|------------|-------------|
-| `nexus_get_credential` | `provider: String` | Retrieve an API key by provider name |
 | `nexus_list_skills` | none | List all available skill names |
 | `nexus_read_skill` | `name: String` | Read the content of a specific skill |
 | `nexus_list_mcp_servers` | none | Get MCP server configurations |
@@ -145,7 +138,6 @@ An external tool configures this in its MCP settings:
 - All Tauri-facing functions must be `#[tauri::command]` and return `Result<T, String>`.
 - Use `.map_err(|e| e.to_string())` to convert errors for the frontend.
 - Validate all user-provided path components with `is_valid_name()` before any filesystem operation. Never allow path traversal.
-- API keys are stored via the `keyring` crate under the service name `nexus_desktop`.
 - Use the `dirs` crate for resolving home directories. Do not hardcode paths.
 - Skills are stored at `~/.agents/skills/<name>/SKILL.md` (primary, agentskills.io standard) and also scanned from `~/.claude/skills/<name>/SKILL.md` (Claude Code). New skills are saved to `~/.agents/skills/` by default.
 - MCP config is read from `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac). Cross-platform support is pending.
@@ -219,7 +211,6 @@ cargo test           # Run unit tests (from src-tauri/)
 
 ### Implemented
 - Sidebar navigation with Linear-style dark theme
-- LLM Provider key management (save/load from OS keychain)
 - Skills management (list, create, read, edit, delete from `~/.claude/skills/`)
 - Project management (CRUD with skills/MCP/provider assignment)
 - MCP server config reading (read-only, Mac only)
@@ -236,7 +227,7 @@ cargo test           # Run unit tests (from src-tauri/)
 ### Future
 - Remote MCP server (SSE transport) with OAuth 2.1 authentication
 - Integration with auth providers like Prefactor for MCP auth
-- Agent-initiated skill discovery and credential scoping
+- Agent-initiated skill discovery
 
 ## Gotchas
 

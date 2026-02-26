@@ -72,7 +72,7 @@ npm run tauri dev    # Full app with hot reload
 <!-- automatic:rules:start -->
 # Working with the Automatic MCP Service
 
-This project is managed by Automatic, a desktop hub that provides skills, credentials, memory, and MCP server configs to agents via an MCP interface. The Automatic MCP server is always available in this project.
+This project is managed by Automatic, a desktop hub that provides skills, memory, and MCP server configs to agents via an MCP interface. The Automatic MCP server is always available in this project.
 
 ## Session Start
 
@@ -82,7 +82,6 @@ This project is managed by Automatic, a desktop hub that provides skills, creden
 
 ## During Work
 
-- **Credentials** — Call `automatic_get_credential` with the provider name (e.g. "anthropic", "openai", "gemini") instead of asking the user for API keys.
 - **Skills** — Follow loaded skill instructions. Skills may include companion scripts, templates, or reference docs in their directory.
 - **MCP Servers** — Call `automatic_list_mcp_servers` to see what servers are registered. Call `automatic_sync_project` after configuration changes.
 - **Skill Discovery** — Call `automatic_search_skills` to find community skills on skills.sh when you need specialised guidance not covered by installed skills.
