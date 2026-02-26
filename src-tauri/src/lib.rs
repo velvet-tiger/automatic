@@ -886,11 +886,20 @@ fn get_editor_icon(editor_id: &str) -> Result<String, String> {
     core::get_editor_icon(editor_id)
 }
 
+// ── App Updates ───────────────────────────────────────────────────────────────
+
+/// Restart the application to apply a freshly-installed update.
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
 // ── App Entry ────────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|_app| {
@@ -984,6 +993,7 @@ pub fn run() {
             check_installed_editors,
             open_in_editor,
             get_editor_icon,
+            restart_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

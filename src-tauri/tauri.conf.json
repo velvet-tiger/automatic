@@ -21,6 +21,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/velvet-tiger/automatic/releases/latest/download/latest.json"
+      ],
+      "pubkey": "TODO: run `cargo tauri signer generate -w ~/.tauri/automatic.key` and paste the public key here"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
