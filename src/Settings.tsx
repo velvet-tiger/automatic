@@ -45,36 +45,30 @@ export default function Settings() {
             while copying physically duplicates the file.
           </p>
           
-          <div className="flex flex-col gap-3">
-            <label className="flex items-start gap-3 cursor-pointer group">
-              <input 
-                type="radio" 
-                name="skill_sync_mode" 
-                value="symlink" 
-                checked={skillSyncMode === "symlink"}
-                onChange={() => updateSetting("symlink")}
-                className="mt-1 w-4 h-4 bg-[#18191C] border-[#3E4048] rounded-full checked:bg-[#5E6AD2] focus:ring-[#5E6AD2] focus:ring-offset-[#222327]"
-              />
-              <div>
-                <div className="text-[13px] font-medium text-[#E0E2E8] group-hover:text-white transition-colors">Symlink (Recommended)</div>
-                <div className="text-[12px] text-[#C8CAD0]">Creates a reference to the global skill file. Updates apply instantly.</div>
-              </div>
-            </label>
-            
-            <label className="flex items-start gap-3 cursor-pointer group">
-              <input 
-                type="radio" 
-                name="skill_sync_mode" 
-                value="copy" 
-                checked={skillSyncMode === "copy"}
-                onChange={() => updateSetting("copy")}
-                className="mt-1 w-4 h-4 bg-[#18191C] border-[#3E4048] rounded-full checked:bg-[#5E6AD2] focus:ring-[#5E6AD2] focus:ring-offset-[#222327]"
-              />
-              <div>
-                <div className="text-[13px] font-medium text-[#E0E2E8] group-hover:text-white transition-colors">Copy</div>
-                <div className="text-[12px] text-[#C8CAD0]">Creates an independent physical copy of the skill file in the project.</div>
-              </div>
-            </label>
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={() => updateSetting("symlink")}
+              className={`flex flex-col items-start gap-1 p-4 rounded-lg border text-left transition-all ${
+                skillSyncMode === "symlink"
+                  ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
+                  : "border-[#3E4048] bg-[#18191C] hover:border-[#5E5E6A] hover:bg-[#1E1F24]"
+              }`}
+            >
+              <div className="text-[13px] font-medium text-white">Symlink (Recommended)</div>
+              <div className="text-[12px] text-[#C8CAD0]">Creates a reference to the global skill file. Updates apply instantly.</div>
+            </button>
+
+            <button
+              onClick={() => updateSetting("copy")}
+              className={`flex flex-col items-start gap-1 p-4 rounded-lg border text-left transition-all ${
+                skillSyncMode === "copy"
+                  ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
+                  : "border-[#3E4048] bg-[#18191C] hover:border-[#5E5E6A] hover:bg-[#1E1F24]"
+              }`}
+            >
+              <div className="text-[13px] font-medium text-white">Copy</div>
+              <div className="text-[12px] text-[#C8CAD0]">Creates an independent physical copy of the skill file in the project.</div>
+            </button>
           </div>
         </div>
       </div>
