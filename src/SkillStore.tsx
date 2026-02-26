@@ -99,7 +99,7 @@ function renderMarkdown(md: string): React.ReactElement {
         parts.push(
           <code
             key={nextKey()}
-            className="px-1 py-0.5 rounded bg-[#1A1A1E] text-[#5E6AD2] font-mono text-[11px]"
+            className="px-1 py-0.5 rounded bg-[#1A1A1E] text-[#4ADE80] font-mono text-[11px]"
           >
             {token.slice(1, -1)}
           </code>
@@ -332,6 +332,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
   const [updating, setUpdating] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [showDuplicates, setShowDuplicates] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Return to landing when the nav item is clicked again
@@ -372,6 +373,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
     try {
       const res: RemoteSkillResult[] = await invoke("search_remote_skills", { query: q });
       setResults(res);
+      setShowDuplicates(false);
     } catch (err: any) {
       setSearchError(`Search failed: ${err}`);
       setResults([]);
@@ -497,21 +499,21 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
   if (!query.trim() && !selected) {
     return (
       <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-[#222327]">
-        <div className="flex flex-col items-center px-8 pt-14 pb-10 w-full">
-          <div className="w-full max-w-2xl">
+        <div className="flex flex-col px-6 pt-10 pb-10 w-full">
+          <div className="w-full max-w-2xl mx-auto">
             {/* Icon + heading */}
-            <div className="text-center mb-8">
-              <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#5E6AD2]/10 border border-[#5E6AD2]/20 flex items-center justify-center">
-                <Download size={22} className="text-[#5E6AD2]" strokeWidth={1.5} />
+            <div className="text-center mb-6 max-w-lg mx-auto">
+              <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-[#4ADE80]/10 border border-[#4ADE80]/20 flex items-center justify-center">
+                <Download size={20} className="text-[#4ADE80]" strokeWidth={1.5} />
               </div>
-              <h2 className="text-[18px] font-semibold text-[#F8F8FA] mb-2">Skill Store</h2>
-              <p className="text-[13px] text-[#C8CAD0] leading-relaxed max-w-sm mx-auto">
+              <h2 className="text-[18px] font-semibold text-[#F8F8FA] mb-1.5">Skill Store</h2>
+              <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
                 Browse and install agent skills from{" "}
                 <a
                   href="https://skills.sh"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
+                  className="text-[#4ADE80] hover:text-[#6EE7A0] transition-colors"
                 >
                   skills.sh
                 </a>
@@ -520,7 +522,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
             </div>
 
             {/* Big search box */}
-            <div className="relative mb-4">
+            <div className="relative mb-3">
               <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#C8CAD0] pointer-events-none" />
               <input
                 ref={searchInputRef}
@@ -529,12 +531,12 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search for skills…"
                 autoFocus
-                className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-xl pl-11 pr-4 py-3.5 text-[14px] text-[#F8F8FA] placeholder-[#C8CAD0]/60 outline-none transition-colors shadow-sm"
+                className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#4ADE80] rounded-xl pl-11 pr-4 py-3 text-[14px] text-[#F8F8FA] placeholder-[#C8CAD0]/60 outline-none transition-colors shadow-sm"
               />
             </div>
 
             {/* Sample searches */}
-            <div className="flex flex-wrap gap-2 justify-center mb-10">
+            <div className="flex flex-wrap gap-2 justify-center mb-6">
               {SAMPLE_SEARCHES.map((s) => (
                 <button
                   key={s}
@@ -577,7 +579,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] text-[#C8CAD0]/60 truncate">{skill.source}</span>
                         <span className="text-[10px] text-[#C8CAD0]/30">·</span>
-                        <span className="text-[10px] text-[#5E6AD2] flex-shrink-0">
+                        <span className="text-[10px] text-[#4ADE80] flex-shrink-0">
                           {formatInstalls(skill.installs)}
                         </span>
                       </div>
@@ -596,8 +598,15 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
     <div className="flex h-full">
       {/* Left pane — search + results */}
       <div className="w-[264px] flex-shrink-0 border-r border-[#33353A] flex flex-col">
-        {/* Search box */}
+        {/* Back + search box */}
         <div className="p-3 border-b border-[#33353A]">
+          <button
+            onClick={() => { setQuery(""); setSelected(null); setRawContent(""); setPreviewError(null); setResults([]); }}
+            className="flex items-center gap-1 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors mb-2"
+          >
+            <ArrowLeft size={11} />
+            Skill Store
+          </button>
           <div className="relative">
             <Search
               size={13}
@@ -608,7 +617,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search skills.sh…"
-              className="w-full bg-[#2D2E36] border border-[#33353A] rounded-md pl-8 pr-8 py-1.5 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0] focus:outline-none focus:border-[#5E6AD2] transition-colors"
+              className="w-full bg-[#2D2E36] border border-[#33353A] rounded-md pl-8 pr-8 py-1.5 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0] focus:outline-none focus:border-[#4ADE80] transition-colors"
               autoFocus
             />
             {searching && (
@@ -623,48 +632,75 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
 
         {/* Results list */}
         <div className="flex-1 overflow-y-auto custom-scrollbar">
-          {!query.trim() && (
-            <div className="px-3 pt-3 pb-1">
-              <button
-                onClick={() => { setSelected(null); setRawContent(""); setPreviewError(null); }}
-                className="flex items-center gap-1.5 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
-              >
-                ← Browse all skills
-              </button>
-            </div>
-          )}
+
           {results.length === 0 && !searching && query.trim().length >= 2 && !searchError && (
             <div className="p-4 text-center text-[13px] text-[#C8CAD0]">No skills found</div>
           )}
-          {results.map((skill) => {
-            const isActive = selected?.id === skill.id;
-            const alreadyImported = Object.values(registry).some((s) => s.id === skill.id);
+          {(() => {
+            // Tag each result as duplicate or not (first occurrence of a name wins)
+            const seenNames = new Set<string>();
+            const tagged = results.map((skill) => {
+              const isDuplicate = seenNames.has(skill.name);
+              seenNames.add(skill.name);
+              return { skill, isDuplicate };
+            });
+            const duplicateCount = tagged.filter((t) => t.isDuplicate).length;
+            const visible = tagged.filter((t) => !t.isDuplicate || showDuplicates);
+
             return (
-              <button
-                key={skill.id}
-                onClick={() => handleSelect(skill)}
-                className={`w-full text-left px-3 py-2.5 border-b border-[#33353A]/40 transition-colors ${
-                  isActive ? "bg-[#2D2E36]" : "hover:bg-[#2D2E36]/50"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-[13px] font-medium text-[#F8F8FA] leading-snug break-all">
-                    {skill.name}
-                  </span>
-                  {alreadyImported && (
-                    <CheckCircle2 size={12} className="flex-shrink-0 mt-0.5 text-[#4ADE80]" />
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="text-[11px] text-[#C8CAD0] truncate">{skill.source}</span>
-                  <span className="text-[10px] text-[#C8CAD0]/40">·</span>
-                  <span className="text-[11px] text-[#5E6AD2] flex-shrink-0">
-                    {formatInstalls(skill.installs)}
-                  </span>
-                </div>
-              </button>
+              <>
+                {visible.map(({ skill, isDuplicate }) => {
+                  const isActive = selected?.id === skill.id;
+                  const alreadyImported = Object.values(registry).some((s) => s.id === skill.id);
+                  return (
+                    <button
+                      key={skill.id}
+                      onClick={() => handleSelect(skill)}
+                      className={`w-full text-left px-3 py-2.5 border-b border-[#33353A]/40 transition-colors ${
+                        isActive ? "bg-[#2D2E36]" : "hover:bg-[#2D2E36]/50"
+                      } ${isDuplicate ? "opacity-50" : ""}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className={`text-[13px] font-medium leading-snug break-all ${isDuplicate ? "text-[#C8CAD0]" : "text-[#F8F8FA]"}`}>
+                          {skill.name}
+                        </span>
+                        <div className="flex items-center gap-1 flex-shrink-0 mt-0.5">
+                          {isDuplicate && (
+                            <span className="text-[9px] text-[#C8CAD0]/70 bg-[#33353A] rounded px-1 py-[1px] leading-none">
+                              duplicate
+                            </span>
+                          )}
+                          {alreadyImported && (
+                            <CheckCircle2 size={12} className="text-[#4ADE80]" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[11px] text-[#C8CAD0] truncate">{skill.source}</span>
+                        <span className="text-[10px] text-[#C8CAD0]/40">·</span>
+                        <span className="text-[11px] text-[#4ADE80] flex-shrink-0">
+                          {formatInstalls(skill.installs)}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+                {duplicateCount > 0 && (
+                  <button
+                    onClick={() => setShowDuplicates((v) => !v)}
+                    className="w-full text-center px-3 py-2 text-[11px] text-[#C8CAD0]/70 hover:text-[#C8CAD0] transition-colors border-b border-[#33353A]/40"
+                  >
+                    {showDuplicates
+                      ? "Hide duplicates"
+                      : `${duplicateCount} likely duplicate${duplicateCount === 1 ? "" : "s"} hidden`}
+                    <span className="ml-1.5 text-[10px] text-[#C8CAD0]/50">
+                      {showDuplicates ? "▲" : "▼"}
+                    </span>
+                  </button>
+                )}
+              </>
             );
-          })}
+          })()}
         </div>
       </div>
 
@@ -692,7 +728,67 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 Loading SKILL.md…
               </div>
             ) : previewError ? (
-              <p className="p-6 text-[13px] text-red-400">{previewError}</p>
+              <div className="p-8 max-w-lg">
+                {/* Back button */}
+                <button
+                  onClick={() => { setSelected(null); setRawContent(""); setPreviewError(null); }}
+                  className="flex items-center gap-1 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors mb-6"
+                >
+                  <ArrowLeft size={11} />
+                  Back
+                </button>
+
+                <h3 className="text-[15px] font-medium text-[#F8F8FA] mb-2">
+                  Skill not found in repository
+                </h3>
+                <p className="text-[13px] text-[#C8CAD0] leading-relaxed mb-5">
+                  This skill does not conform to any known skill directory structure.
+                  It may have been removed from the repository, or stored in an
+                  unsupported layout.
+                </p>
+
+                {selected && (
+                  <div className="rounded-lg border border-[#33353A] bg-[#2D2E36]/50 p-4 mb-5">
+                    <div className="grid gap-2.5 text-[12px]">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-[#C8CAD0]/60 w-16 flex-shrink-0">Skill</span>
+                        <span className="text-[#F8F8FA] font-medium break-all">{selected.name}</span>
+                      </div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-[#C8CAD0]/60 w-16 flex-shrink-0">Source</span>
+                        <span className="text-[#C8CAD0] break-all">{selected.source}</span>
+                      </div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-[#C8CAD0]/60 w-16 flex-shrink-0">ID</span>
+                        <span className="text-[#C8CAD0]/80 break-all font-mono text-[11px]">{selected.id}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {selected && (
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href={`https://skills.sh/${selected.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] bg-[#33353A] hover:bg-[#3D3F46] rounded-md px-3 py-1.5 transition-colors"
+                    >
+                      <ExternalLink size={11} />
+                      View on skills.sh
+                    </a>
+                    <a
+                      href={`https://github.com/${selected.source}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] bg-[#33353A] hover:bg-[#3D3F46] rounded-md px-3 py-1.5 transition-colors"
+                    >
+                      <Github size={11} />
+                      Browse repository
+                    </a>
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="flex min-h-full">
                 {/* Main content column */}
@@ -741,7 +837,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       <button
                         onClick={updateSkill}
                         disabled={updating || !rawContent}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-[#2D2E36] border border-[#33353A] hover:border-[#5E6AD2] text-[#F8F8FA] disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-[#2D2E36] border border-[#33353A] hover:border-[#4ADE80] text-[#F8F8FA] disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {updating ? (
                           <>
@@ -759,7 +855,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       <button
                         onClick={importSkill}
                         disabled={importing || !rawContent}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-[#4ADE80] hover:bg-[#6EE7A0] text-[#1A1A1E] disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {importing ? (
                           <>
@@ -808,7 +904,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       href={`https://github.com/${selected.source}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 text-[12px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
+                      className="flex items-center gap-1.5 text-[12px] text-[#4ADE80] hover:text-[#6EE7A0] transition-colors"
                     >
                       <Github size={12} className="flex-shrink-0" />
                       <span className="truncate">{selected.source}</span>
@@ -824,7 +920,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       href={`https://skills.sh/${selected.id}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 text-[12px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
+                      className="flex items-center gap-1.5 text-[12px] text-[#4ADE80] hover:text-[#6EE7A0] transition-colors"
                     >
                       <ExternalLink size={12} className="flex-shrink-0" />
                       <span className="truncate">View page</span>

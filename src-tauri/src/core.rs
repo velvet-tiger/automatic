@@ -522,10 +522,9 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
     // ── Step 1: static candidates fired in parallel ───────────────────────────
-    // All six candidate URLs (3 layouts × 2 branch names) are fetched
+    // All candidate URLs (5 layouts × 2 branch names) are fetched
     // concurrently. The first one that returns a matching SKILL.md wins.
     // raw.githubusercontent.com is unauthenticated and not rate-limited.
-    let skill_md_suffix = format!("/{}/SKILL.md", name);
     let static_urls: Vec<String> = ["main", "master"]
         .iter()
         .flat_map(|branch| {
@@ -533,9 +532,16 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
                 "https://raw.githubusercontent.com/{}/{}",
                 source, branch
             );
-            [
+            vec![
+                // Dedicated skill repo layout (e.g. vercel-labs/agent-skills)
                 format!("{}/skills/{}/SKILL.md", base, name),
+                // agentskills.io standard install path (npx skills add)
+                format!("{}/.agents/skills/{}/SKILL.md", base, name),
+                // Claude Code install path
+                format!("{}/.claude/skills/{}/SKILL.md", base, name),
+                // Flat layout
                 format!("{}/{}/SKILL.md", base, name),
+                // Single-skill repo
                 format!("{}/SKILL.md", base),
             ]
         })
@@ -635,13 +641,18 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
     let file_list = String::from_utf8_lossy(&ls_output);
     let raw_base = format!("https://raw.githubusercontent.com/{}/{}", source, branch);
 
-    // Find paths ending with `/<name>/SKILL.md` or exactly `SKILL.md`.
+    // Find ALL SKILL.md files in the tree.  The directory name may differ
+    // from the skills.sh name (e.g. dir "react-best-practices" with
+    // frontmatter `name: vercel-react-best-practices`), so we collect every
+    // SKILL.md and rely on the frontmatter check below to identify the
+    // correct one.
     let mut candidate_paths: Vec<&str> = file_list
         .lines()
-        .filter(|p| p.ends_with(skill_md_suffix.as_str()) || *p == "SKILL.md")
+        .filter(|p| p.ends_with("/SKILL.md") || *p == "SKILL.md")
         .collect();
 
-    // Prefer the path whose parent directory name equals `name` exactly.
+    // Try exact directory-name matches first (fast path), then everything
+    // else.  Within each tier the original tree order is preserved.
     candidate_paths.sort_by_key(|p| {
         let parent = std::path::Path::new(p)
             .parent()
@@ -669,9 +680,19 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
             Ok(t) => t,
             Err(_) => continue,
         };
+        // The frontmatter `name:` field is authoritative when present.
+        // When absent, only accept the file if the directory name matches
+        // the requested skill name (or it's the repo root SKILL.md for a
+        // single-skill repo).  This prevents false positives in multi-skill
+        // repos where a different skill's SKILL.md lacks frontmatter.
+        let dir_matches = std::path::Path::new(path)
+            .parent()
+            .and_then(|d| d.file_name())
+            .and_then(|n| n.to_str())
+            .map_or(false, |p| p == name);
         match extract_frontmatter_name(&content) {
             Some(ref n) if n == name => return Ok(content),
-            None => return Ok(content),
+            None if dir_matches || path == "SKILL.md" => return Ok(content),
             _ => {}
         }
     }
@@ -2092,154 +2113,6 @@ pub fn search_bundled_project_templates(query: &str) -> Result<String, String> {
         .collect();
 
     serde_json::to_string(&filtered).map_err(|e| e.to_string())
-}
-
-// ── Bundled MCP Marketplace ───────────────────────────────────────────────────
-//
-// Curated MCP server definitions compiled into the binary.  Each entry
-// describes a popular MCP server: its transport config, required env vars,
-// and setup notes.  Users can install any entry directly into their local
-// MCP server registry (~/.automatic/mcp_servers/).
-
-/// An environment variable required (or optional) by a marketplace server.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct McpEnvVar {
-    /// The env var key, e.g. "GITHUB_PERSONAL_ACCESS_TOKEN"
-    pub key: String,
-    /// Human-readable label, e.g. "Personal Access Token"
-    pub label: String,
-    /// One-line description shown in the UI
-    pub description: String,
-    /// Whether the value should be masked in the UI
-    #[serde(default)]
-    pub secret: bool,
-    /// Whether the server won't work without this var
-    #[serde(default)]
-    pub required: bool,
-}
-
-/// A marketplace entry for a bundled MCP server.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct McpMarketplaceEntry {
-    /// The name used when saving to the local registry (no spaces/slashes)
-    pub name: String,
-    /// Human-readable name shown in the UI
-    pub display_name: String,
-    /// Description of what the server provides
-    pub description: String,
-    /// Broad category for grouping, e.g. "Developer Tools"
-    pub category: String,
-    /// Searchable tags
-    pub tags: Vec<String>,
-    /// "stdio" or "http"
-    pub transport: String,
-    /// Author / publisher
-    pub author: String,
-    /// The ready-to-save JSON config (matches McpServerConfig shape)
-    pub config: serde_json::Value,
-    /// Environment variables the user needs to fill in
-    pub env_vars: Vec<McpEnvVar>,
-    /// Plain-text setup instructions
-    pub setup_notes: String,
-    /// Link to official docs / GitHub repo
-    pub docs_url: String,
-}
-
-const BUNDLED_MCP_SERVERS: &[(&str, &str)] = &[
-    ("filesystem",   include_str!("../mcp-marketplace/filesystem.json")),
-    ("github",       include_str!("../mcp-marketplace/github.json")),
-    ("postgres",     include_str!("../mcp-marketplace/postgres.json")),
-    ("brave-search", include_str!("../mcp-marketplace/brave-search.json")),
-    ("memory",       include_str!("../mcp-marketplace/memory.json")),
-    ("slack",        include_str!("../mcp-marketplace/slack.json")),
-    ("puppeteer",    include_str!("../mcp-marketplace/puppeteer.json")),
-    ("linear",       include_str!("../mcp-marketplace/linear.json")),
-];
-
-/// Return all bundled MCP marketplace entries as a JSON array.
-pub fn list_mcp_marketplace() -> Result<String, String> {
-    let entries: Result<Vec<McpMarketplaceEntry>, _> = BUNDLED_MCP_SERVERS
-        .iter()
-        .map(|(_, raw)| serde_json::from_str::<McpMarketplaceEntry>(raw))
-        .collect();
-    let entries = entries.map_err(|e| format!("Failed to parse MCP marketplace entry: {}", e))?;
-    serde_json::to_string(&entries).map_err(|e| e.to_string())
-}
-
-/// Return a single bundled MCP marketplace entry by name.
-pub fn read_mcp_marketplace_entry(name: &str) -> Result<String, String> {
-    for (slug, raw) in BUNDLED_MCP_SERVERS {
-        if *slug == name {
-            return Ok(raw.to_string());
-        }
-    }
-    Err(format!("MCP marketplace entry '{}' not found", name))
-}
-
-/// Search bundled MCP marketplace entries by query.
-pub fn search_mcp_marketplace(query: &str) -> Result<String, String> {
-    let q = query.to_lowercase();
-    let entries: Result<Vec<McpMarketplaceEntry>, _> = BUNDLED_MCP_SERVERS
-        .iter()
-        .map(|(_, raw)| serde_json::from_str::<McpMarketplaceEntry>(raw))
-        .collect();
-    let entries = entries.map_err(|e| format!("Failed to parse MCP marketplace entry: {}", e))?;
-
-    if q.trim().is_empty() {
-        return serde_json::to_string(&entries).map_err(|e| e.to_string());
-    }
-
-    let filtered: Vec<&McpMarketplaceEntry> = entries
-        .iter()
-        .filter(|e| {
-            e.name.to_lowercase().contains(&q)
-                || e.display_name.to_lowercase().contains(&q)
-                || e.description.to_lowercase().contains(&q)
-                || e.category.to_lowercase().contains(&q)
-                || e.author.to_lowercase().contains(&q)
-                || e.tags.iter().any(|t| t.to_lowercase().contains(&q))
-        })
-        .collect();
-
-    serde_json::to_string(&filtered).map_err(|e| e.to_string())
-}
-
-/// Install a bundled MCP marketplace entry into the local registry.
-/// The `env_values` map provides user-supplied values for the env vars
-/// declared in the entry (keyed by env var key).
-/// Already-installed servers are overwritten — callers must confirm first.
-pub fn install_mcp_marketplace_entry(
-    name: &str,
-    env_values: &std::collections::HashMap<String, String>,
-) -> Result<(), String> {
-    let raw = read_mcp_marketplace_entry(name)?;
-    let entry: McpMarketplaceEntry =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid MCP entry: {}", e))?;
-
-    // Clone the config and merge in the user-supplied env values
-    let mut config = entry.config.clone();
-
-    if !env_values.is_empty() {
-        if let Some(env_obj) = config.get_mut("env") {
-            if let Some(map) = env_obj.as_object_mut() {
-                for (k, v) in env_values {
-                    map.insert(k.clone(), serde_json::Value::String(v.clone()));
-                }
-            }
-        } else {
-            // env key didn't exist — insert it
-            let env_map: serde_json::Map<String, serde_json::Value> = env_values
-                .iter()
-                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                .collect();
-            if let Some(obj) = config.as_object_mut() {
-                obj.insert("env".to_string(), serde_json::Value::Object(env_map));
-            }
-        }
-    }
-
-    let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    save_mcp_server_config(&entry.name, &json)
 }
 
 // ── Projects ─────────────────────────────────────────────────────────────────
