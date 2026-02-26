@@ -5,7 +5,7 @@ import { McpSelector } from "./McpSelector";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { useCurrentUser } from "./ProfileContext";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, ask } from "@tauri-apps/plugin-dialog";
 
 import {
   Plus,
@@ -943,7 +943,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
   const handleRemove = async (name: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (!confirm(`Remove project "${name}" from Automatic?\n\n(This only removes the project from this app. Your actual project files will NOT be deleted.)`)) return;
+    const confirmed = await ask(`Remove project "${name}" from Automatic?\n\n(This only removes the project from this app. Your actual project files will NOT be deleted.)`, { title: "Remove Project", kind: "warning" });
+    if (!confirmed) return;
     try {
       await invoke("delete_project", { name });
       if (selectedName === name) {
@@ -1596,7 +1597,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               <li key={f.filename}>
                                 <button
                                   onClick={async () => {
-                                    if (projectFileDirty && !confirm("Discard unsaved changes?")) return;
+                                    if (projectFileDirty && !(await ask("Discard unsaved changes?", { title: "Unsaved Changes", kind: "warning" }))) return;
                                     setActiveProjectFile(f.filename);
                                     if (selectedName) await loadProjectFileContent(selectedName, f.filename);
                                   }}
@@ -2508,7 +2509,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       {Object.keys(memories).length > 0 && (
                         <button
                           onClick={async () => {
-                            if (!selectedName || !confirm("Are you sure you want to clear all memory for this project? This cannot be undone.")) return;
+                            if (!selectedName || !(await ask("Are you sure you want to clear all memory for this project? This cannot be undone.", { title: "Clear Memories", kind: "warning" }))) return;
                             try {
                               await invoke("clear_memories", { project: selectedName, confirm: true, pattern: null });
                               await loadMemories(selectedName);
