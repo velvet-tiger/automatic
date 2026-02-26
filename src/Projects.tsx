@@ -289,7 +289,7 @@ function EditorIcon({ id, iconPath }: { id: string; iconPath?: string }) {
         </svg>
       );
     default:
-      return <FolderOpen size={14} className="text-[#8A8C93]" />;
+      return <FolderOpen size={14} className="text-[#C8CAD0]" />;
   }
 }
 
@@ -1070,12 +1070,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         style={{ width: sidebarWidth }}
       >
         <div className="h-11 px-4 border-b border-[#33353A] flex justify-between items-center bg-[#222327]/30">
-          <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+          <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
             Projects
           </span>
           <button
             onClick={startCreate}
-            className="text-[#8A8C93] hover:text-[#E0E1E6] transition-colors p-1 hover:bg-[#2D2E36] rounded"
+            className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded"
             title="Create New Project"
           >
             <Plus size={14} />
@@ -1084,14 +1084,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
           {projects.length === 0 && !isCreating ? (
-            <div className="px-4 py-3 text-[13px] text-[#8A8C93] text-center">
+            <div className="px-4 py-3 text-[13px] text-[#C8CAD0] text-center">
               No projects yet.
             </div>
           ) : (
             <ul className="space-y-0.5 px-2" ref={listRef}>
               {isCreating && (
-                <li className="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] bg-[#2D2E36] text-[#E0E1E6]">
-                  <FolderOpen size={14} className="text-[#8A8C93]" />
+                <li className="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] bg-[#2D2E36] text-[#F8F8FA]">
+                  <FolderOpen size={14} className="text-[#C8CAD0]" />
                   <span className="italic">New Project...</span>
                 </li>
               )}
@@ -1109,29 +1109,29 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
                       onPointerDown={(e) => handleGripDown(idx, e)}
                     >
-                      <GripVertical size={10} className="text-[#8A8C93]/60" />
+                      <GripVertical size={10} className="text-[#C8CAD0]/60" />
                     </div>
                     <button
                       onClick={() => { if (dragIdx === null) selectProject(name); }}
                       className={`w-full flex items-center gap-2.5 pl-4 pr-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
                         selectedName === name && !isCreating
-                          ? "bg-[#2D2E36] text-[#E0E1E6]"
-                          : "text-[#8A8C93] hover:bg-[#2D2E36]/50 hover:text-[#E0E1E6]"
+                          ? "bg-[#2D2E36] text-[#F8F8FA]"
+                          : "text-[#C8CAD0] hover:bg-[#2D2E36]/50 hover:text-[#F8F8FA]"
                       }`}
                     >
                       <FolderOpen
                         size={14}
                         className={
                           selectedName === name && !isCreating
-                            ? "text-[#E0E1E6]"
-                            : "text-[#8A8C93]"
+                            ? "text-[#F8F8FA]"
+                            : "text-[#C8CAD0]"
                         }
                       />
                       <span className="flex-1 text-left truncate">{name}</span>
                     </button>
                     <button
                       onClick={(e) => handleRemove(name, e)}
-                      className="absolute right-2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
+                      className="absolute right-2 p-1 text-[#C8CAD0] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
                       title="Remove Project from Automatic"
                     >
                       <X size={12} />
@@ -1169,7 +1169,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
             {/* Header */}
             <div className="h-11 px-6 border-b border-[#33353A] flex justify-between items-center">
               <div className="flex items-center gap-3">
-                <FolderOpen size={14} className="text-[#8A8C93]" />
+                <FolderOpen size={14} className="text-[#C8CAD0]" />
                 {isCreating ? (
                   <input
                     type="text"
@@ -1177,7 +1177,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#E0E1E6] placeholder-[#8A8C93]/50 w-64"
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#F8F8FA] placeholder-[#C8CAD0]/50 w-64"
                   />
                 ) : isRenaming ? (
                   <input
@@ -1190,11 +1190,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     }}
                     onBlur={handleRename}
                     autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#E0E1E6] placeholder-[#8A8C93]/50 w-64"
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#F8F8FA] placeholder-[#C8CAD0]/50 w-64"
                   />
                 ) : (
                   <h3
-                    className="text-[14px] font-medium text-[#E0E1E6] cursor-text"
+                    className="text-[14px] font-medium text-[#F8F8FA] cursor-text"
                     onDoubleClick={startRename}
                     title="Double-click to rename"
                   >
@@ -1205,7 +1205,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
               <div className="flex items-center gap-2">
                 {syncStatus && (
-                  <span className={`text-[12px] ${syncStatus.startsWith("Sync failed") ? "text-[#FF6B6B]" : syncStatus === "syncing" ? "text-[#8A8C93]" : "text-[#4ADE80]"}`}>
+                  <span className={`text-[12px] ${syncStatus.startsWith("Sync failed") ? "text-[#FF6B6B]" : syncStatus === "syncing" ? "text-[#C8CAD0]" : "text-[#4ADE80]"}`}>
                     {syncStatus === "syncing" ? "Syncing..." : syncStatus}
                   </span>
                 )}
@@ -1214,7 +1214,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <div className="relative mr-1" ref={openInDropdownRef}>
                     <button
                       onClick={() => setOpenInDropdownOpen((v) => !v)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#8A8C93] hover:text-[#E0E1E6] rounded text-[12px] font-medium border border-[#3A3B42] transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium border border-[#3A3B42] transition-colors"
                       title="Open project in an editor"
                     >
                       <FolderOpen size={12} /> Open in
@@ -1226,7 +1226,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           <button
                             key={editor.id}
                             onClick={() => handleOpenInEditor(editor.id)}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-[#E0E1E6] hover:bg-[#2D2E36] transition-colors text-left"
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-[#F8F8FA] hover:bg-[#2D2E36] transition-colors text-left"
                           >
                             <EditorIcon id={editor.id} iconPath={editorIconPaths[editor.id]} />
                             {editor.label}
@@ -1235,7 +1235,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         <div className="border-t border-[#33353A] my-1" />
                         <button
                           onClick={() => handleOpenInEditor("copy_path")}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-[#8A8C93] hover:bg-[#2D2E36] hover:text-[#E0E1E6] transition-colors text-left"
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-[#C8CAD0] hover:bg-[#2D2E36] hover:text-[#F8F8FA] transition-colors text-left"
                         >
                           <Copy size={13} />
                           Copy path
@@ -1247,7 +1247,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {!isCreating && selectedName && (
                   <button
                     onClick={() => handleRemove(selectedName)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#FF6B6B]/10 text-[#8A8C93] hover:text-[#FF6B6B] rounded text-[12px] font-medium border border-[#3A3B42] hover:border-[#FF6B6B]/30 transition-colors mr-1"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#FF6B6B]/10 text-[#C8CAD0] hover:text-[#FF6B6B] rounded text-[12px] font-medium border border-[#3A3B42] hover:border-[#FF6B6B]/30 transition-colors mr-1"
                     title="Remove project from Automatic"
                   >
                     <Trash2 size={12} /> Remove
@@ -1275,7 +1275,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     /* driftReport === null: not yet checked */
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#8A8C93] rounded text-[12px] font-medium border border-[#3A3B42] transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#C8CAD0] rounded text-[12px] font-medium border border-[#3A3B42] transition-colors"
                       title="Sync agent configurations"
                     >
                       <RefreshCw size={12} /> Sync Configs
@@ -1336,8 +1336,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-[#5E6AD2]/10 border border-[#5E6AD2]/30 flex items-center justify-center">
                       <FolderOpen size={24} className="text-[#5E6AD2]" strokeWidth={1.5} />
                     </div>
-                    <h2 className="text-[16px] font-semibold text-[#E0E1E6] mb-1">Where is this project?</h2>
-                    <p className="text-[13px] text-[#8A8C93] leading-relaxed">
+                    <h2 className="text-[16px] font-semibold text-[#F8F8FA] mb-1">Where is this project?</h2>
+                    <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
                       Choose the project directory so Automatic can detect what's already configured and sync agent files.
                     </p>
                   </div>
@@ -1351,7 +1351,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           className={`flex-1 flex items-center justify-between px-3 py-2 bg-[#1A1A1E] border rounded-md text-[13px] transition-colors ${
                             selectedProjectTemplate
                               ? "border-[#5E6AD2]/60 text-[#5E6AD2]"
-                              : "border-[#33353A] hover:border-[#44474F] text-[#8A8C93] hover:text-[#E0E1E6]"
+                              : "border-[#33353A] hover:border-[#44474F] text-[#C8CAD0] hover:text-[#F8F8FA]"
                           }`}
                         >
                           <span className="flex items-center gap-2">
@@ -1374,7 +1374,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               setShowProjectTemplatePicker(false);
                             }}
                             title="Clear template"
-                            className="p-2 text-[#8A8C93] hover:text-[#E0E1E6] hover:bg-[#2D2E36] rounded-md transition-colors flex-shrink-0"
+                            className="p-2 text-[#C8CAD0] hover:text-[#F8F8FA] hover:bg-[#2D2E36] rounded-md transition-colors flex-shrink-0"
                           >
                             <X size={13} />
                           </button>
@@ -1395,23 +1395,23 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 }`}
                               >
                                 <div className="flex-1 min-w-0">
-                                  <div className="text-[13px] font-medium text-[#E0E1E6]">{tmpl.name}</div>
+                                  <div className="text-[13px] font-medium text-[#F8F8FA]">{tmpl.name}</div>
                                   {tmpl.description && (
-                                    <div className="text-[11px] text-[#8A8C93] mt-0.5 truncate">{tmpl.description}</div>
+                                    <div className="text-[11px] text-[#C8CAD0] mt-0.5 truncate">{tmpl.description}</div>
                                   )}
                                   <div className="flex items-center gap-3 mt-1">
                                     {tmpl.agents.length > 0 && (
-                                      <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                      <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
                                         <Bot size={10} /> {tmpl.agents.length} agent{tmpl.agents.length !== 1 ? "s" : ""}
                                       </span>
                                     )}
                                     {tmpl.skills.length > 0 && (
-                                      <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                      <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
                                         <Code size={10} /> {tmpl.skills.length} skill{tmpl.skills.length !== 1 ? "s" : ""}
                                       </span>
                                     )}
                                     {tmpl.mcp_servers.length > 0 && (
-                                      <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                      <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
                                         <Server size={10} /> {tmpl.mcp_servers.length} MCP server{tmpl.mcp_servers.length !== 1 ? "s" : ""}
                                       </span>
                                     )}
@@ -1435,7 +1435,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         value={project.directory}
                         onChange={(e) => updateField("directory", e.target.value)}
                         placeholder="/path/to/your/project"
-                        className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono transition-colors"
+                        className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors"
                       />
                       <button
                         onClick={async () => {
@@ -1507,8 +1507,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   onClick={() => setProjectTab(tab.id)}
                   className={`px-3 py-2 text-[13px] font-medium transition-colors relative ${
                     projectTab === tab.id
-                      ? "text-[#E0E1E6]"
-                      : "text-[#8A8C93] hover:text-[#E0E1E6]"
+                      ? "text-[#F8F8FA]"
+                      : "text-[#C8CAD0] hover:text-[#F8F8FA]"
                   }`}
                 >
                   {tab.label}
@@ -1528,7 +1528,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <div className="flex-1 flex flex-col min-h-0">
                     {/* Mode toggle bar */}
                     <div className="flex items-center gap-3 px-4 py-2.5 border-b border-[#33353A] bg-[#1A1A1E]/30 flex-shrink-0">
-                      <span className="text-[11px] text-[#8A8C93]">Mode:</span>
+                      <span className="text-[11px] text-[#C8CAD0]">Mode:</span>
                       <div className="flex rounded overflow-hidden border border-[#33353A]">
                         <button
                           onClick={async () => {
@@ -1543,7 +1543,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
                             (project.instruction_mode || "per-agent") === "unified"
                               ? "bg-[#5E6AD2] text-white"
-                              : "bg-[#2D2E36] text-[#8A8C93] hover:text-[#E0E1E6]"
+                              : "bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA]"
                           }`}
                         >
                           <Files size={11} />
@@ -1562,7 +1562,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
                             (project.instruction_mode || "per-agent") === "per-agent"
                               ? "bg-[#5E6AD2] text-white"
-                              : "bg-[#2D2E36] text-[#8A8C93] hover:text-[#E0E1E6]"
+                              : "bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA]"
                           }`}
                         >
                           <SplitSquareHorizontal size={11} />
@@ -1570,7 +1570,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         </button>
                       </div>
                       {(project.instruction_mode || "per-agent") === "unified" && projectFiles.length > 0 && projectFiles[0].target_files && (
-                        <span className="text-[10px] text-[#8A8C93]">
+                        <span className="text-[10px] text-[#C8CAD0]">
                           Writes to: {projectFiles[0].target_files.join(", ")}
                         </span>
                       )}
@@ -1581,10 +1581,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     {(project.instruction_mode || "per-agent") === "per-agent" && projectFiles.length > 0 && (
                       <div className="w-52 flex-shrink-0 border-r border-[#33353A] bg-[#1A1A1E]/50 flex flex-col">
                         <div className="h-9 px-3 border-b border-[#33353A] flex items-center justify-between">
-                          <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Files</span>
+                          <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">Files</span>
                           <button
                             onClick={() => setShowTemplatePicker(!showTemplatePicker)}
-                            className="text-[#8A8C93] hover:text-[#E0E1E6] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                            className="text-[#C8CAD0] hover:text-[#F8F8FA] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
                             title="Start from template"
                           >
                             <LayoutTemplate size={12} />
@@ -1602,14 +1602,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   }}
                                   className={`w-full text-left px-2.5 py-1.5 rounded-md text-[13px] font-medium transition-colors flex items-center gap-2 ${
                                     activeProjectFile === f.filename
-                                      ? "bg-[#2D2E36] text-[#E0E1E6]"
-                                      : "text-[#8A8C93] hover:bg-[#2D2E36]/50 hover:text-[#E0E1E6]"
+                                      ? "bg-[#2D2E36] text-[#F8F8FA]"
+                                      : "text-[#C8CAD0] hover:bg-[#2D2E36]/50 hover:text-[#F8F8FA]"
                                   }`}
                                 >
-                                  <FileText size={13} className={activeProjectFile === f.filename ? "text-[#E0E1E6]" : f.exists ? "text-[#8A8C93]" : "text-[#8A8C93]/40"} />
+                                  <FileText size={13} className={activeProjectFile === f.filename ? "text-[#F8F8FA]" : f.exists ? "text-[#C8CAD0]" : "text-[#C8CAD0]/40"} />
                                   <div className="min-w-0">
                                     <div className={`truncate ${!f.exists ? "opacity-50" : ""}`}>{f.filename}</div>
-                                    <div className="text-[10px] text-[#8A8C93] truncate">{f.agents.join(", ")}</div>
+                                    <div className="text-[10px] text-[#C8CAD0] truncate">{f.agents.join(", ")}</div>
                                   </div>
                                 </button>
                               </li>
@@ -1619,13 +1619,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         {/* Template picker (dropdown in sidebar) */}
                         {showTemplatePicker && availableTemplates.length > 0 && (
                           <div className="border-t border-[#33353A] p-2">
-                            <p className="text-[10px] text-[#8A8C93] mb-1.5">Apply template:</p>
+                            <p className="text-[10px] text-[#C8CAD0] mb-1.5">Apply template:</p>
                             <div className="space-y-0.5">
                               {availableTemplates.map((t) => (
                                 <button
                                   key={t}
                                   onClick={() => handleApplyTemplate(t)}
-                                  className="w-full text-left px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors flex items-center gap-1.5"
+                                  className="w-full text-left px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#F8F8FA] rounded transition-colors flex items-center gap-1.5"
                                 >
                                   <LayoutTemplate size={10} />
                                   {t}
@@ -1646,13 +1646,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         // File doesn't exist yet — show create prompt
                         return (
                           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-                            <div className="w-12 h-12 mx-auto mb-4 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#8A8C93]">
+                            <div className="w-12 h-12 mx-auto mb-4 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#C8CAD0]">
                               <FileText size={20} strokeWidth={1.5} />
                             </div>
-                            <h3 className="text-[14px] font-medium text-[#E0E1E6] mb-1">
+                            <h3 className="text-[14px] font-medium text-[#F8F8FA] mb-1">
                               {activeProjectFile}
                             </h3>
-                            <p className="text-[13px] text-[#8A8C93] mb-5 max-w-xs">
+                            <p className="text-[13px] text-[#C8CAD0] mb-5 max-w-xs">
                               This file doesn't exist yet. Create it to provide project instructions for {activeFile?.agents.join(" & ")}.
                             </p>
                             <div className="flex items-center gap-2">
@@ -1669,7 +1669,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               {availableTemplates.length > 0 && (
                                 <button
                                   onClick={() => setShowTemplatePicker(!showTemplatePicker)}
-                                  className="px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors flex items-center gap-1.5"
+                                  className="px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#F8F8FA] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors flex items-center gap-1.5"
                                 >
                                   <LayoutTemplate size={12} /> From Template
                                 </button>
@@ -1682,7 +1682,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     <button
                                       key={t}
                                       onClick={() => handleApplyTemplate(t)}
-                                      className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#E0E1E6] rounded transition-colors flex items-center gap-1.5"
+                                      className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#F8F8FA] rounded transition-colors flex items-center gap-1.5"
                                     >
                                       <LayoutTemplate size={10} />
                                       {t}
@@ -1714,7 +1714,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         <div className="flex-1 flex flex-col min-w-0">
                           {/* Editor toolbar */}
                           <div className="flex items-center justify-between px-4 h-9 bg-[#1A1A1E] border-b border-[#33353A] flex-shrink-0">
-                            <span className="text-[11px] text-[#8A8C93]">
+                            <span className="text-[11px] text-[#C8CAD0]">
                               {activeProjectFile === "_unified"
                                 ? <>{projectFileEditing ? "Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
                                 : <>{activeProjectFile}{!fileExists ? " (new)" : ""}{projectFileEditing ? " — Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
@@ -1724,7 +1724,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               {!projectFileEditing ? (
                                 <button
                                   onClick={() => setProjectFileEditing(true)}
-                                  className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] hover:bg-[#2D2E36] rounded transition-colors"
+                                  className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] hover:bg-[#2D2E36] rounded transition-colors"
                                 >
                                   <Edit2 size={10} /> Edit
                                 </button>
@@ -1742,7 +1742,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                         }
                                       }
                                     }}
-                                    className="px-2 py-0.5 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] hover:bg-[#2D2E36] rounded transition-colors"
+                                    className="px-2 py-0.5 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] hover:bg-[#2D2E36] rounded transition-colors"
                                   >
                                     Cancel
                                   </button>
@@ -1766,7 +1766,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 setProjectFileContent(e.target.value);
                                 setProjectFileDirty(true);
                               }}
-                              className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-[#222327] text-[#E0E1E6] leading-relaxed custom-scrollbar placeholder-[#8A8C93]/30 min-h-0"
+                              className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-[#222327] text-[#F8F8FA] leading-relaxed custom-scrollbar placeholder-[#C8CAD0]/30 min-h-0"
                               placeholder="Write your project instructions here..."
                               spellCheck={false}
                             />
@@ -1774,7 +1774,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#222327] min-h-0">
                               {projectFileContent
                                 ? <MarkdownPreview content={projectFileContent} />
-                                : <span className="block p-4 text-[13px] text-[#8A8C93] italic">Empty file.</span>
+                                : <span className="block p-4 text-[13px] text-[#C8CAD0] italic">Empty file.</span>
                               }
                             </div>
                           )}
@@ -1783,7 +1783,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           <div className="border-t border-[#33353A] bg-[#1A1A1E] flex-shrink-0">
                             <div className="px-4 py-2 flex items-center gap-2">
                               <ScrollText size={12} className="text-[#22D3EE]" />
-                              <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Rules</span>
+                              <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">Rules</span>
                               {currentFileRules.length > 0 && (
                                 <span className="text-[10px] text-[#22D3EE] bg-[#22D3EE]/10 px-1.5 py-0.5 rounded">{currentFileRules.length}</span>
                               )}
@@ -1799,7 +1799,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       className={`px-2.5 py-1 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
                                         isSelected
                                           ? "bg-[#22D3EE]/15 border-[#22D3EE]/40 text-[#22D3EE]"
-                                          : "bg-[#2D2E36] border-[#33353A] text-[#8A8C93] hover:text-[#E0E1E6] hover:border-[#44474F]"
+                                          : "bg-[#2D2E36] border-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] hover:border-[#44474F]"
                                       }`}
                                     >
                                       <ScrollText size={10} />
@@ -1811,7 +1811,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               </div>
                             ) : (
                               <div className="px-4 pb-3">
-                                <span className="text-[11px] text-[#8A8C93]/60 italic">No rules created yet. Create rules in the Rules section to attach them here.</span>
+                                <span className="text-[11px] text-[#C8CAD0]/60 italic">No rules created yet. Create rules in the Rules section to attach them here.</span>
                               </div>
                             )}
                           </div>
@@ -1819,14 +1819,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       );
                     })() : (
                       <div className="flex-1 flex items-center justify-center">
-                        <p className="text-[13px] text-[#8A8C93]/60 italic">No project files configured. Add agent tools on the Agents tab first.</p>
+                        <p className="text-[13px] text-[#C8CAD0]/60 italic">No project files configured. Add agent tools on the Agents tab first.</p>
                       </div>
                     )}
                   </div>
                   </div>
                 ) : (
                   <div className="flex-1 flex items-center justify-center">
-                    <p className="text-[13px] text-[#8A8C93]/60 italic">
+                    <p className="text-[13px] text-[#C8CAD0]/60 italic">
                       Set a project directory and add agent tools on the Details and Agents tabs to manage project files.
                     </p>
                   </div>
@@ -1852,13 +1852,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-[#E0E1E6] leading-none mb-1">
+                              <div className="text-3xl font-semibold text-[#F8F8FA] leading-none mb-1">
                                 {project.agents.length}
                               </div>
-                              <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                              <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
                             </div>
-                            <div className="text-[13px] text-[#8A8C93] mb-1">Agent Tools</div>
-                            <div className="text-[11px] text-[#8A8C93]/60 truncate">
+                            <div className="text-[13px] text-[#C8CAD0] mb-1">Agent Tools</div>
+                            <div className="text-[11px] text-[#C8CAD0]/60 truncate">
                               {project.agents.length === 0
                                 ? "No agents configured"
                                 : project.agents.slice(0, 2).map(a => availableAgents.find(ag => ag.id === a)?.label || a).join(", ") + (project.agents.length > 2 ? ` +${project.agents.length - 2}` : "")}
@@ -1878,13 +1878,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-[#E0E1E6] leading-none mb-1">
+                              <div className="text-3xl font-semibold text-[#F8F8FA] leading-none mb-1">
                                 {project.skills.length + project.local_skills.length}
                               </div>
-                              <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                              <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
                             </div>
-                            <div className="text-[13px] text-[#8A8C93] mb-1">Skills</div>
-                            <div className="text-[11px] text-[#8A8C93]/60 truncate">
+                            <div className="text-[13px] text-[#C8CAD0] mb-1">Skills</div>
+                            <div className="text-[11px] text-[#C8CAD0]/60 truncate">
                               {project.skills.length === 0 && project.local_skills.length === 0
                                 ? "No skills attached"
                                 : `${project.skills.length} global, ${project.local_skills.length} local`}
@@ -1904,13 +1904,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-[#E0E1E6] leading-none mb-1">
+                              <div className="text-3xl font-semibold text-[#F8F8FA] leading-none mb-1">
                                 {project.mcp_servers.length}
                               </div>
-                              <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                              <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
                             </div>
-                            <div className="text-[13px] text-[#8A8C93] mb-1">MCP Servers</div>
-                            <div className="text-[11px] text-[#8A8C93]/60 truncate">
+                            <div className="text-[13px] text-[#C8CAD0] mb-1">MCP Servers</div>
+                            <div className="text-[11px] text-[#C8CAD0]/60 truncate">
                               {project.mcp_servers.length === 0
                                 ? "No servers configured"
                                 : project.mcp_servers.slice(0, 2).join(", ") + (project.mcp_servers.length > 2 ? ` +${project.mcp_servers.length - 2}` : "")}
@@ -1930,13 +1930,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-[#E0E1E6] leading-none mb-1">
+                              <div className="text-3xl font-semibold text-[#F8F8FA] leading-none mb-1">
                                 {Object.keys(memories).length}
                               </div>
-                              <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                              <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
                             </div>
-                            <div className="text-[13px] text-[#8A8C93] mb-1">Memory</div>
-                            <div className="text-[11px] text-[#8A8C93]/60 truncate">
+                            <div className="text-[13px] text-[#C8CAD0] mb-1">Memory</div>
+                            <div className="text-[11px] text-[#C8CAD0]/60 truncate">
                               {Object.keys(memories).length === 0
                                 ? "No memories stored"
                                 : `${Object.keys(memories).length} entr${Object.keys(memories).length === 1 ? "y" : "ies"}`}
@@ -1953,8 +1953,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     <section className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5">
                       <div className="flex items-start justify-between mb-4">
                         <div>
-                          <h3 className="text-[13px] font-semibold text-[#E0E1E6] mb-1">Project Status</h3>
-                          <p className="text-[11px] text-[#8A8C93]">Configuration and sync status</p>
+                          <h3 className="text-[13px] font-semibold text-[#F8F8FA] mb-1">Project Status</h3>
+                          <p className="text-[11px] text-[#C8CAD0]">Configuration and sync status</p>
                         </div>
                         {project.directory && project.agents.length > 0 ? (
                           <CheckCircle2 size={18} className="text-[#4ADE80]" />
@@ -1967,8 +1967,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         {/* Directory Status */}
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <FolderOpen size={13} className="text-[#8A8C93]" />
-                            <span className="text-[12px] text-[#E0E1E6]">Project Directory</span>
+                            <FolderOpen size={13} className="text-[#C8CAD0]" />
+                            <span className="text-[12px] text-[#F8F8FA]">Project Directory</span>
                           </div>
                           {project.directory ? (
                             <div className="flex items-center gap-1.5">
@@ -1991,8 +1991,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         {/* Agents Status */}
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <Bot size={13} className="text-[#8A8C93]" />
-                            <span className="text-[12px] text-[#E0E1E6]">Agent Tools</span>
+                            <Bot size={13} className="text-[#C8CAD0]" />
+                            <span className="text-[12px] text-[#F8F8FA]">Agent Tools</span>
                           </div>
                           {project.agents.length > 0 ? (
                             <div className="flex items-center gap-1.5">
@@ -2015,8 +2015,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         {/* Sync Status */}
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <RefreshCw size={13} className="text-[#8A8C93]" />
-                            <span className="text-[12px] text-[#E0E1E6]">Configuration Sync</span>
+                            <RefreshCw size={13} className="text-[#C8CAD0]" />
+                            <span className="text-[12px] text-[#F8F8FA]">Configuration Sync</span>
                           </div>
                           {project.directory && project.agents.length > 0 ? (
                             <div className="flex items-center gap-1.5">
@@ -2025,8 +2025,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             </div>
                           ) : (
                             <div className="flex items-center gap-1.5">
-                              <AlertCircle size={12} className="text-[#8A8C93]" />
-                              <span className="text-[11px] text-[#8A8C93]">Not available</span>
+                              <AlertCircle size={12} className="text-[#C8CAD0]" />
+                              <span className="text-[11px] text-[#C8CAD0]">Not available</span>
                             </div>
                           )}
                         </div>
@@ -2035,8 +2035,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       {/* Directory Path */}
                       {project.directory && (
                         <div className="mt-4 pt-4 border-t border-[#33353A]">
-                          <div className="text-[10px] text-[#8A8C93] mb-1">Location</div>
-                          <div className="text-[11px] font-mono text-[#E0E1E6] break-all bg-[#222327] px-2 py-1.5 rounded border border-[#33353A]">
+                          <div className="text-[10px] text-[#C8CAD0] mb-1">Location</div>
+                          <div className="text-[11px] font-mono text-[#F8F8FA] break-all bg-[#222327] px-2 py-1.5 rounded border border-[#33353A]">
                             {project.directory}
                           </div>
                         </div>
@@ -2045,7 +2045,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                     {/* Quick Actions */}
                      <section>
-                       <h3 className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-3">Quick Actions</h3>
+                       <h3 className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-3">Quick Actions</h3>
 
                        {/* Apply Project Template */}
                        {availableProjectTemplates.length > 0 && (
@@ -2058,10 +2058,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                <LayoutTemplate size={16} className="text-[#5E6AD2]" />
                              </div>
                              <div className="flex-1 min-w-0">
-                               <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Apply Project Template</div>
-                               <div className="text-[11px] text-[#8A8C93]">Merge agents, skills & servers from a template</div>
+                               <div className="text-[13px] font-medium text-[#F8F8FA] mb-0.5">Apply Project Template</div>
+                               <div className="text-[11px] text-[#C8CAD0]">Merge agents, skills & servers from a template</div>
                              </div>
-                             <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                             <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                            </button>
                            {showProjectTemplatePicker && (
                               <div className="mt-1.5 p-2 bg-[#1A1A1E] border border-[#33353A] rounded-lg space-y-1">
@@ -2078,23 +2078,23 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       }`}
                                     >
                                       <div className="flex-1 min-w-0">
-                                        <div className="text-[13px] font-medium text-[#E0E1E6]">{tmpl.name}</div>
+                                        <div className="text-[13px] font-medium text-[#F8F8FA]">{tmpl.name}</div>
                                         {tmpl.description && (
-                                          <div className="text-[11px] text-[#8A8C93] mt-0.5 truncate">{tmpl.description}</div>
+                                          <div className="text-[11px] text-[#C8CAD0] mt-0.5 truncate">{tmpl.description}</div>
                                         )}
                                         <div className="flex items-center gap-3 mt-1">
                                           {tmpl.agents.length > 0 && (
-                                            <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                            <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
                                               <Bot size={10} /> {tmpl.agents.length} agent{tmpl.agents.length !== 1 ? "s" : ""}
                                             </span>
                                           )}
                                           {tmpl.skills.length > 0 && (
-                                            <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                            <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
                                               <Code size={10} /> {tmpl.skills.length} skill{tmpl.skills.length !== 1 ? "s" : ""}
                                             </span>
                                           )}
                                           {tmpl.mcp_servers.length > 0 && (
-                                            <span className="text-[10px] text-[#8A8C93] flex items-center gap-1">
+                                            <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
                                               <Server size={10} /> {tmpl.mcp_servers.length} MCP server{tmpl.mcp_servers.length !== 1 ? "s" : ""}
                                             </span>
                                           )}
@@ -2109,7 +2109,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                  <div className="mt-1 flex items-center gap-2 px-3 py-1">
                                    <button
                                      onClick={() => setShowProjectTemplatePicker(false)}
-                                     className="text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                                     className="text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
                                    >
                                      Cancel
                                    </button>
@@ -2121,7 +2121,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                            setSelectedProjectTemplate(null);
                                            setShowProjectTemplatePicker(false);
                                          }}
-                                         className="text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                                         className="text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
                                        >
                                          Clear selection
                                        </button>
@@ -2141,8 +2141,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 <FolderOpen size={16} className="text-[#5E6AD2]" />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Open in</div>
-                                <div className="text-[11px] text-[#8A8C93]">
+                                <div className="text-[13px] font-medium text-[#F8F8FA] mb-0.5">Open in</div>
+                                <div className="text-[11px] text-[#C8CAD0]">
                                   {project.directory ? "Choose editor or Finder" : "No directory set"}
                                 </div>
                               </div>
@@ -2154,7 +2154,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     key={editor.id}
                                     onClick={() => handleOpenInEditor(editor.id)}
                                     title={`Open in ${editor.label}`}
-                                    className="flex items-center gap-1.5 px-2 py-1 bg-[#2D2E36] hover:bg-[#3A3B42] border border-[#33353A] hover:border-[#44474F] rounded text-[11px] text-[#E0E1E6] transition-colors"
+                                    className="flex items-center gap-1.5 px-2 py-1 bg-[#2D2E36] hover:bg-[#3A3B42] border border-[#33353A] hover:border-[#44474F] rounded text-[11px] text-[#F8F8FA] transition-colors"
                                   >
                                     <EditorIcon id={editor.id} iconPath={editorIconPaths[editor.id]} />
                                     {editor.label}
@@ -2163,7 +2163,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 <button
                                   onClick={() => handleOpenInEditor("copy_path")}
                                   title="Copy project path"
-                                  className="flex items-center gap-1.5 px-2 py-1 bg-[#2D2E36] hover:bg-[#3A3B42] border border-[#33353A] hover:border-[#44474F] rounded text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                                  className="flex items-center gap-1.5 px-2 py-1 bg-[#2D2E36] hover:bg-[#3A3B42] border border-[#33353A] hover:border-[#44474F] rounded text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
                                 >
                                   <Copy size={11} />
                                   Copy path
@@ -2185,10 +2185,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                              <RotateCcw size={16} className="text-[#4ADE80]" />
                            </div>
                            <div className="flex-1 min-w-0">
-                             <div className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">Force Refresh</div>
-                             <div className="text-[11px] text-[#8A8C93]">Reload project from disk</div>
+                             <div className="text-[13px] font-medium text-[#F8F8FA] mb-0.5">Force Refresh</div>
+                             <div className="text-[11px] text-[#C8CAD0]">Reload project from disk</div>
                            </div>
-                           <ArrowRight size={14} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                           <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                          </button>
                        </div>
                     </section>
@@ -2196,8 +2196,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     {/* Description */}
                     {project.description && (
                       <section className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5">
-                        <h3 className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">Description</h3>
-                        <p className="text-[13px] text-[#E0E1E6] leading-relaxed whitespace-pre-wrap">
+                        <h3 className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">Description</h3>
+                        <p className="text-[13px] text-[#F8F8FA] leading-relaxed whitespace-pre-wrap">
                           {project.description}
                         </p>
                       </section>
@@ -2211,11 +2211,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             <Package size={18} className="text-[#5E6AD2]" />
                           </div>
                           <div>
-                            <h3 className="text-[13px] font-semibold text-[#E0E1E6] mb-2">Complete Setup</h3>
-                            <p className="text-[12px] text-[#8A8C93] mb-3 leading-relaxed">
+                            <h3 className="text-[13px] font-semibold text-[#F8F8FA] mb-2">Complete Setup</h3>
+                            <p className="text-[12px] text-[#C8CAD0] mb-3 leading-relaxed">
                               To start using this project, complete these steps:
                             </p>
-                            <ol className="space-y-2 text-[12px] text-[#E0E1E6]">
+                            <ol className="space-y-2 text-[12px] text-[#F8F8FA]">
                               {!project.directory && (
                                 <li className="flex items-start gap-2">
                                   <div className="w-5 h-5 rounded-full border border-[#5E6AD2] flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -2228,7 +2228,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     >
                                       Set project directory
                                     </button>
-                                    <div className="text-[11px] text-[#8A8C93] mt-0.5">
+                                    <div className="text-[11px] text-[#C8CAD0] mt-0.5">
                                       Choose where agent configs will be synced
                                     </div>
                                   </div>
@@ -2246,24 +2246,24 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     >
                                       Add agent tools
                                     </button>
-                                    <div className="text-[11px] text-[#8A8C93] mt-0.5">
+                                    <div className="text-[11px] text-[#C8CAD0] mt-0.5">
                                       Select which agents will use this project
                                     </div>
                                   </div>
                                 </li>
                               )}
                               <li className="flex items-start gap-2">
-                                <div className="w-5 h-5 rounded-full border border-[#8A8C93]/50 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                  <span className="text-[10px] text-[#8A8C93]">•</span>
+                                <div className="w-5 h-5 rounded-full border border-[#C8CAD0]/50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                  <span className="text-[10px] text-[#C8CAD0]">•</span>
                                 </div>
                                 <div>
                                   <button
                                     onClick={() => setProjectTab("skills")}
-                                    className="text-[#E0E1E6] hover:text-[#5E6AD2] transition-colors"
+                                    className="text-[#F8F8FA] hover:text-[#5E6AD2] transition-colors"
                                   >
                                     Add skills (optional)
                                   </button>
-                                  <div className="text-[11px] text-[#8A8C93] mt-0.5">
+                                  <div className="text-[11px] text-[#C8CAD0] mt-0.5">
                                     Give agents specialized capabilities
                                   </div>
                                 </div>
@@ -2281,7 +2281,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <>
                     {/* Description */}
                     <section>
-                      <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                      <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                         Description
                       </label>
                       <textarea
@@ -2289,13 +2289,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         onChange={(e) => updateField("description", e.target.value)}
                         placeholder="What is this project for?"
                         rows={3}
-                        className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none resize-none transition-colors"
+                        className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none resize-none transition-colors"
                       />
                     </section>
 
                     {/* Directory */}
                     <section>
-                      <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                      <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                         <span className="flex items-center gap-1.5">
                           <FolderOpen size={12} /> Project Directory
                         </span>
@@ -2306,7 +2306,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           value={project.directory}
                           onChange={(e) => updateField("directory", e.target.value)}
                           placeholder="/path/to/your/project"
-                          className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono transition-colors"
+                          className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors"
                         />
                         <button
                           onClick={async () => {
@@ -2319,12 +2319,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               updateField("directory", selected as string);
                             }
                           }}
-                          className="px-3 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors whitespace-nowrap"
+                          className="px-3 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#F8F8FA] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors whitespace-nowrap"
                         >
                           Browse
                         </button>
                       </div>
-                      <p className="mt-1.5 text-[11px] text-[#8A8C93]">
+                      <p className="mt-1.5 text-[11px] text-[#C8CAD0]">
                         Agent configs will be written to this directory when you sync.
                       </p>
                     </section>
@@ -2362,7 +2362,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     {project.local_skills.length > 0 && (
                       <section>
                         <div className="flex items-center justify-between mb-2">
-                          <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5">
+                          <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase flex items-center gap-1.5">
                             <Code size={12} /> Local Skills
                           </label>
                           {project.local_skills.length > 1 && selectedName && (
@@ -2378,26 +2378,26 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   setTimeout(() => setSyncStatus(null), 4000);
                                 }
                               }}
-                              className="flex items-center gap-1 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] px-1.5 py-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                              className="flex items-center gap-1 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] px-1.5 py-0.5 hover:bg-[#2D2E36] rounded transition-colors"
                               title="Copy all local skills to every agent's skill directory"
                             >
                               <ArrowRightLeft size={11} /> Sync Across Agents
                             </button>
                           )}
                         </div>
-                        <p className="text-[11px] text-[#8A8C93] mb-2">
+                        <p className="text-[11px] text-[#C8CAD0] mb-2">
                           These skills exist only in this project directory, not in the global registry.
                         </p>
                         <ul className="space-y-1">
                           {project.local_skills.map((s) => (
                             <li
                               key={s}
-                              className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6]"
+                              className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#F8F8FA]"
                             >
                               <span className="flex items-center gap-2">
-                                <Code size={12} className="text-[#8A8C93]" />
+                                <Code size={12} className="text-[#C8CAD0]" />
                                 {s}
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#8A8C93] border border-[#3A3B42]">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#C8CAD0] border border-[#3A3B42]">
                                   local
                                 </span>
                               </span>
@@ -2415,7 +2415,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       setTimeout(() => setSyncStatus(null), 4000);
                                     }
                                   }}
-                                  className="text-[#8A8C93] hover:text-[#E0E1E6] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                                  className="text-[#C8CAD0] hover:text-[#F8F8FA] p-1 hover:bg-[#2D2E36] rounded transition-colors"
                                   title="Sync to all agents in this project"
                                 >
                                   <ArrowRightLeft size={12} />
@@ -2440,7 +2440,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       setTimeout(() => setSyncStatus(null), 4000);
                                     }
                                   }}
-                                  className="text-[#8A8C93] hover:text-[#4ADE80] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                                  className="text-[#C8CAD0] hover:text-[#4ADE80] p-1 hover:bg-[#2D2E36] rounded transition-colors"
                                   title="Import to global skill registry"
                                 >
                                   <Upload size={12} />
@@ -2464,10 +2464,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     {/* Warp-only: MCP config not available */}
                     {warpOnly && warpNote && (
                       <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-[#1A1A1E] border border-[#44474F] rounded-lg">
-                        <AlertCircle size={15} className="text-[#8A8C93] flex-shrink-0 mt-0.5" />
+                        <AlertCircle size={15} className="text-[#C8CAD0] flex-shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-[13px] font-medium text-[#E0E1E6] mb-0.5">MCP not configurable via Automatic</p>
-                          <p className="text-[12px] text-[#8A8C93] leading-relaxed">{warpNote}</p>
+                          <p className="text-[13px] font-medium text-[#F8F8FA] mb-0.5">MCP not configurable via Automatic</p>
+                          <p className="text-[12px] text-[#C8CAD0] leading-relaxed">{warpNote}</p>
                         </div>
                       </div>
                     )}
@@ -2500,8 +2500,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <section>
                     <div className="flex items-center justify-between mb-4">
                       <div>
-                        <h3 className="text-[14px] font-medium text-[#E0E1E6]">Agent Memory</h3>
-                        <p className="text-[12px] text-[#8A8C93] mt-1">
+                        <h3 className="text-[14px] font-medium text-[#F8F8FA]">Agent Memory</h3>
+                        <p className="text-[12px] text-[#C8CAD0] mt-1">
                           Persistent context and learnings stored by agents working on this project.
                         </p>
                       </div>
@@ -2524,14 +2524,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     </div>
 
                     {loadingMemories ? (
-                      <div className="text-[13px] text-[#8A8C93] text-center py-8">Loading memories...</div>
+                      <div className="text-[13px] text-[#C8CAD0] text-center py-8">Loading memories...</div>
                     ) : Object.keys(memories).length === 0 ? (
                       <div className="text-center py-12 bg-[#1A1A1E] rounded-lg border border-[#33353A] border-dashed">
                         <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#2D2E36] flex items-center justify-center">
-                          <Bot size={20} className="text-[#8A8C93]" />
+                          <Bot size={20} className="text-[#C8CAD0]" />
                         </div>
-                        <h4 className="text-[13px] font-medium text-[#E0E1E6] mb-1">No memories yet</h4>
-                        <p className="text-[12px] text-[#8A8C93] max-w-sm mx-auto">
+                        <h4 className="text-[13px] font-medium text-[#F8F8FA] mb-1">No memories yet</h4>
+                        <p className="text-[12px] text-[#C8CAD0] max-w-sm mx-auto">
                           Agents haven't stored any learnings or context for this project yet.
                         </p>
                       </div>
@@ -2542,14 +2542,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             <div className="flex items-start justify-between gap-4 mb-2">
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 mb-1">
-                                  <h4 className="text-[13px] font-semibold text-[#E0E1E6] font-mono truncate">{key}</h4>
+                                  <h4 className="text-[13px] font-semibold text-[#F8F8FA] font-mono truncate">{key}</h4>
                                   {memory.source && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#8A8C93] border border-[#3A3B42]">
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#C8CAD0] border border-[#3A3B42]">
                                       {memory.source}
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-[11px] text-[#8A8C93]">
+                                <p className="text-[11px] text-[#C8CAD0]">
                                   {new Date(memory.timestamp).toLocaleString()}
                                 </p>
                               </div>
@@ -2563,13 +2563,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     setError(`Failed to delete memory: ${err}`);
                                   }
                                 }}
-                                className="text-[#8A8C93] hover:text-[#FF6B6B] p-1.5 hover:bg-[#33353A] rounded transition-colors opacity-0 group-hover:opacity-100"
+                                className="text-[#C8CAD0] hover:text-[#FF6B6B] p-1.5 hover:bg-[#33353A] rounded transition-colors opacity-0 group-hover:opacity-100"
                                 title="Delete memory"
                               >
                                 <Trash2 size={14} />
                               </button>
                             </div>
-                            <div className="text-[13px] text-[#E0E1E6] whitespace-pre-wrap font-mono bg-[#222327] p-3 rounded border border-[#33353A] max-h-60 overflow-y-auto custom-scrollbar">
+                            <div className="text-[13px] text-[#F8F8FA] whitespace-pre-wrap font-mono bg-[#222327] p-3 rounded border border-[#33353A] max-h-60 overflow-y-auto custom-scrollbar">
                               {memory.value}
                             </div>
                           </div>
@@ -2587,13 +2587,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         ) : (
           /* Empty state */
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#8A8C93]">
+            <div className="w-16 h-16 mx-auto mb-6 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#C8CAD0]">
               <FolderOpen size={24} strokeWidth={1.5} />
             </div>
-            <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">
+            <h2 className="text-lg font-medium text-[#F8F8FA] mb-2">
               No Project Selected
             </h2>
-            <p className="text-[14px] text-[#8A8C93] mb-8 leading-relaxed max-w-sm">
+            <p className="text-[14px] text-[#C8CAD0] mb-8 leading-relaxed max-w-sm">
               Projects group skills and MCP servers into reusable
               configurations. Select one from the sidebar or create a new
               project.

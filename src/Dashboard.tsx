@@ -105,7 +105,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center h-full bg-[#222327]">
-        <div className="flex items-center gap-2 text-[#8A8C93]">
+        <div className="flex items-center gap-2 text-[#C8CAD0]">
           <RefreshCw size={16} className="animate-spin" />
           <span>Loading dashboard...</span>
         </div>
@@ -119,8 +119,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-semibold text-[#E0E1E6] mb-2">Welcome to Automatic</h1>
-          <p className="text-[#8A8C93] text-sm">Manage your AI agent configurations and projects</p>
+          <h1 className="text-2xl font-semibold text-[#F8F8FA] mb-2">Welcome to Automatic</h1>
+          <p className="text-[#C8CAD0] text-sm">Manage your AI agent configurations and projects</p>
         </div>
 
         {error && (
@@ -154,36 +154,36 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         <div className="grid grid-cols-4 gap-4">
           <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 flex flex-col items-center justify-center text-center cursor-pointer hover:border-[#44474F] transition-colors" onClick={() => onNavigate("projects")}>
             <FolderOpen size={24} className="text-[#3B82F6] mb-2" />
-            <div className="text-2xl font-semibold text-[#E0E1E6] mb-1">{projects.length}</div>
-            <div className="text-xs text-[#8A8C93] uppercase tracking-wider font-medium">Projects</div>
+            <div className="text-2xl font-semibold text-[#F8F8FA] mb-1">{projects.length}</div>
+            <div className="text-xs text-[#C8CAD0] uppercase tracking-wider font-medium">Projects</div>
           </div>
           <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 flex flex-col items-center justify-center text-center cursor-pointer hover:border-[#44474F] transition-colors" onClick={() => onNavigate("agents")}>
             <Bot size={24} className="text-[#818CF8] mb-2" />
-            <div className="text-2xl font-semibold text-[#E0E1E6] mb-1">
+            <div className="text-2xl font-semibold text-[#F8F8FA] mb-1">
                {new Set(projects.flatMap(p => p.agents)).size}
             </div>
-            <div className="text-xs text-[#8A8C93] uppercase tracking-wider font-medium">Active Agents</div>
+            <div className="text-xs text-[#C8CAD0] uppercase tracking-wider font-medium">Active Agents</div>
           </div>
           <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 flex flex-col items-center justify-center text-center cursor-pointer hover:border-[#44474F] transition-colors" onClick={() => onNavigate("skills")}>
             <Code size={24} className="text-[#4ADE80] mb-2" />
-            <div className="text-2xl font-semibold text-[#E0E1E6] mb-1">
+            <div className="text-2xl font-semibold text-[#F8F8FA] mb-1">
                {new Set(projects.flatMap(p => p.skills)).size}
             </div>
-            <div className="text-xs text-[#8A8C93] uppercase tracking-wider font-medium">Skills In Use</div>
+            <div className="text-xs text-[#C8CAD0] uppercase tracking-wider font-medium">Skills In Use</div>
           </div>
           <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 flex flex-col items-center justify-center text-center cursor-pointer hover:border-[#44474F] transition-colors" onClick={() => onNavigate("mcp")}>
             <Server size={24} className="text-[#F59E0B] mb-2" />
-            <div className="text-2xl font-semibold text-[#E0E1E6] mb-1">
+            <div className="text-2xl font-semibold text-[#F8F8FA] mb-1">
                {new Set(projects.flatMap(p => p.mcp_servers)).size}
             </div>
-            <div className="text-xs text-[#8A8C93] uppercase tracking-wider font-medium">MCP Servers</div>
+            <div className="text-xs text-[#C8CAD0] uppercase tracking-wider font-medium">MCP Servers</div>
           </div>
         </div>
 
         {/* Projects List */}
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-medium text-[#E0E1E6]">Recent Projects</h2>
+            <h2 className="text-lg font-medium text-[#F8F8FA]">Recent Projects</h2>
             <button 
               onClick={() => onNavigate("projects")}
               className="text-sm text-[#3B82F6] hover:text-[#60A5FA] flex items-center gap-1 transition-colors"
@@ -194,11 +194,11 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
 
           {projects.length === 0 ? (
             <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-16 flex flex-col items-center justify-center text-center">
-              <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-[#3B82F6]/10 border border-[#3B82F6]/20 flex items-center justify-center text-[#8A8C93]">
+              <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-[#3B82F6]/10 border border-[#3B82F6]/20 flex items-center justify-center text-[#C8CAD0]">
                 <FolderOpen size={24} className="text-[#3B82F6]" strokeWidth={1.5} />
               </div>
-              <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">No projects yet</h2>
-              <p className="text-[14px] text-[#8A8C93] mb-8 leading-relaxed max-w-sm mx-auto">
+              <h2 className="text-lg font-medium text-[#F8F8FA] mb-2">No projects yet</h2>
+              <p className="text-[14px] text-[#C8CAD0] mb-8 leading-relaxed max-w-sm mx-auto">
                 Create your first project to start managing agent configurations.
               </p>
               <button 
@@ -229,7 +229,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-2">
                         <FolderOpen size={16} className={isDrifted ? "text-[#F59E0B]" : "text-[#3B82F6]"} />
-                        <h3 className={`font-medium text-[#E0E1E6] transition-colors ${
+                        <h3 className={`font-medium text-[#F8F8FA] transition-colors ${
                           isDrifted ? "group-hover:text-[#F59E0B]" : "group-hover:text-[#3B82F6]"
                         }`}>{project.name}</h3>
                       </div>
@@ -251,7 +251,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                     </div>
                     
                     {project.description && (
-                      <p className="text-sm text-[#8A8C93] mb-4 line-clamp-2">{project.description}</p>
+                      <p className="text-sm text-[#C8CAD0] mb-4 line-clamp-2">{project.description}</p>
                     )}
 
                     {/* Drift detail — which agents are affected */}
@@ -267,15 +267,15 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                     )}
                     
                     <div className="flex items-center gap-4 mt-auto pt-2 border-t border-[#33353A]/50">
-                      <div className="flex items-center gap-1.5 text-xs text-[#8A8C93]">
+                      <div className="flex items-center gap-1.5 text-xs text-[#C8CAD0]">
                         <Bot size={12} />
                         <span>{project.agents.length}</span>
                       </div>
-                      <div className="flex items-center gap-1.5 text-xs text-[#8A8C93]">
+                      <div className="flex items-center gap-1.5 text-xs text-[#C8CAD0]">
                         <Code size={12} />
                         <span>{project.skills.length + project.local_skills.length}</span>
                       </div>
-                      <div className="flex items-center gap-1.5 text-xs text-[#8A8C93]">
+                      <div className="flex items-center gap-1.5 text-xs text-[#C8CAD0]">
                         <Server size={12} />
                         <span>{project.mcp_servers.length}</span>
                       </div>

@@ -44,7 +44,7 @@ const CATEGORY_COLOURS: Record<string, { bg: string; text: string; dot: string }
 };
 
 function categoryStyle(cat: string) {
-  return CATEGORY_COLOURS[cat] ?? { bg: "bg-[#8A8C93]/15", text: "text-[#8A8C93]", dot: "bg-[#8A8C93]" };
+  return CATEGORY_COLOURS[cat] ?? { bg: "bg-[#C8CAD0]/15", text: "text-[#C8CAD0]", dot: "bg-[#C8CAD0]" };
 }
 
 // ── Card ─────────────────────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ function TemplateCard({
         <div className="flex items-center gap-2.5 min-w-0">
           <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-0.5 ${style.dot}`} />
           <div className="min-w-0">
-            <div className="text-[14px] font-semibold text-[#E0E1E6] leading-snug truncate">
+            <div className="text-[14px] font-semibold text-[#F8F8FA] leading-snug truncate">
               {template.display_name}
             </div>
             <span className={`text-[10px] font-medium ${style.text}`}>
@@ -81,31 +81,31 @@ function TemplateCard({
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
           {imported && <CheckCircle2 size={13} className="text-[#4ADE80]" />}
-          <ArrowRight size={13} className="text-[#33353A] group-hover:text-[#8A8C93] transition-colors" />
+          <ArrowRight size={13} className="text-[#33353A] group-hover:text-[#C8CAD0] transition-colors" />
         </div>
       </div>
 
       {/* Description */}
-      <p className="text-[12px] text-[#8A8C93] leading-relaxed line-clamp-3 flex-1">
+      <p className="text-[12px] text-[#C8CAD0] leading-relaxed line-clamp-3 flex-1">
         {template.description}
       </p>
 
       {/* Content pills */}
       <div className="flex flex-wrap gap-1.5 mt-3">
         {template.skills.length > 0 && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[10px] text-[#8A8C93]">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[10px] text-[#C8CAD0]">
             <Code size={10} />
             {template.skills.length} skill{template.skills.length !== 1 ? "s" : ""}
           </span>
         )}
         {template.mcp_servers.length > 0 && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[10px] text-[#8A8C93]">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[10px] text-[#C8CAD0]">
             <Server size={10} />
             {template.mcp_servers.length} MCP
           </span>
         )}
         {hasInstruction && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[10px] text-[#8A8C93]">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[10px] text-[#C8CAD0]">
             <FileText size={10} />
             Instructions
           </span>
@@ -115,12 +115,12 @@ function TemplateCard({
       {/* Tags */}
       <div className="flex flex-wrap gap-1 mt-2.5">
         {template.tags.slice(0, 4).map((tag) => (
-          <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#8A8C93]/70">
+          <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#C8CAD0]/70">
             {tag}
           </span>
         ))}
         {template.tags.length > 4 && (
-          <span className="text-[10px] text-[#8A8C93]/40">+{template.tags.length - 4}</span>
+          <span className="text-[10px] text-[#C8CAD0]/40">+{template.tags.length - 4}</span>
         )}
       </div>
     </button>
@@ -154,7 +154,7 @@ function TemplateDetail({
         <div className="flex items-center gap-3">
           <button
             onClick={onClose}
-            className="flex items-center gap-1.5 text-[12px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+            className="flex items-center gap-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
           >
             <ArrowLeft size={13} />
             Back
@@ -162,7 +162,7 @@ function TemplateDetail({
           <span className="text-[#33353A]">/</span>
           <div className="flex items-center gap-2.5">
             <span className={`w-2 h-2 rounded-full ${style.dot}`} />
-            <span className="text-[14px] font-semibold text-[#E0E1E6]">{template.display_name}</span>
+            <span className="text-[14px] font-semibold text-[#F8F8FA]">{template.display_name}</span>
             <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${style.bg} ${style.text}`}>
               {template.category}
             </span>
@@ -196,7 +196,7 @@ function TemplateDetail({
         <div className="max-w-3xl mx-auto px-8 py-8 space-y-8">
 
           {/* Description */}
-          <p className="text-[14px] text-[#C0C1C6] leading-relaxed pb-8 border-b border-[#33353A]">
+          <p className="text-[14px] text-[#E5E6EA] leading-relaxed pb-8 border-b border-[#33353A]">
             {template.description}
           </p>
 
@@ -206,18 +206,18 @@ function TemplateDetail({
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <FileText size={13} className="text-[#5E6AD2]" />
-                <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+                <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
                   Project Instructions
                 </span>
               </div>
               {instruction ? (
                 <div className="bg-[#111114] border border-[#33353A] rounded-lg px-4 py-3 overflow-x-auto">
-                  <pre className="text-[11px] text-[#C0C1C6] font-mono leading-relaxed whitespace-pre-wrap">
+                  <pre className="text-[11px] text-[#E5E6EA] font-mono leading-relaxed whitespace-pre-wrap">
                     {instruction}
                   </pre>
                 </div>
               ) : (
-                <p className="text-[12px] text-[#8A8C93]/50 italic">No instructions included.</p>
+                <p className="text-[12px] text-[#C8CAD0]/50 italic">No instructions included.</p>
               )}
             </div>
 
@@ -229,14 +229,14 @@ function TemplateDetail({
                 <div>
                   <div className="flex items-center gap-2 mb-2.5">
                     <Code size={12} className="text-[#5E6AD2]" />
-                    <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Skills</span>
+                    <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">Skills</span>
                     <span className="text-[10px] bg-[#5E6AD2]/15 text-[#5E6AD2] px-1.5 py-0.5 rounded">
                       {template.skills.length}
                     </span>
                   </div>
                   <div className="space-y-1.5">
                     {template.skills.map((s) => (
-                      <div key={s} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#1A1A1E] border border-[#33353A] text-[12px] text-[#E0E1E6]">
+                      <div key={s} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#1A1A1E] border border-[#33353A] text-[12px] text-[#F8F8FA]">
                         <Code size={10} className="text-[#5E6AD2] flex-shrink-0" />
                         <span className="truncate">{s}</span>
                       </div>
@@ -250,14 +250,14 @@ function TemplateDetail({
                 <div>
                   <div className="flex items-center gap-2 mb-2.5">
                     <Server size={12} className="text-[#F59E0B]" />
-                    <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">MCP Servers</span>
+                    <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">MCP Servers</span>
                     <span className="text-[10px] bg-[#F59E0B]/15 text-[#F59E0B] px-1.5 py-0.5 rounded">
                       {template.mcp_servers.length}
                     </span>
                   </div>
                   <div className="space-y-1.5">
                     {template.mcp_servers.map((s) => (
-                      <div key={s} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#1A1A1E] border border-[#33353A] text-[12px] text-[#E0E1E6]">
+                      <div key={s} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#1A1A1E] border border-[#33353A] text-[12px] text-[#F8F8FA]">
                         <Server size={10} className="text-[#F59E0B] flex-shrink-0" />
                         <span className="truncate">{s}</span>
                       </div>
@@ -270,12 +270,12 @@ function TemplateDetail({
               {template.tags.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2.5">
-                    <Tag size={12} className="text-[#8A8C93]" />
-                    <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Tags</span>
+                    <Tag size={12} className="text-[#C8CAD0]" />
+                    <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">Tags</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {template.tags.map((tag) => (
-                      <span key={tag} className="text-[11px] px-2 py-0.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[#8A8C93]">
+                      <span key={tag} className="text-[11px] px-2 py-0.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[#C8CAD0]">
                         {tag}
                       </span>
                     ))}
@@ -285,10 +285,10 @@ function TemplateDetail({
 
               {/* What import does */}
               <div className="p-3.5 rounded-lg bg-[#1A1A1E] border border-[#33353A]">
-                <div className="text-[10px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                <div className="text-[10px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                   What Import Does
                 </div>
-                <ul className="space-y-1.5 text-[11px] text-[#8A8C93]">
+                <ul className="space-y-1.5 text-[11px] text-[#C8CAD0]">
                   <li className="flex items-start gap-1.5">
                     <FolderOpen size={10} className="text-[#5E6AD2] flex-shrink-0 mt-0.5" />
                     Adds an editable copy to your Project Templates
@@ -424,8 +424,8 @@ export default function TemplateMarketplace({ resetKey }: { resetKey?: number })
             <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#5E6AD2]/10 border border-[#5E6AD2]/20 flex items-center justify-center">
               <FolderOpen size={22} className="text-[#5E6AD2]" strokeWidth={1.5} />
             </div>
-            <h2 className="text-[20px] font-semibold text-[#E0E1E6] mb-2">Template Marketplace</h2>
-            <p className="text-[13px] text-[#8A8C93] leading-relaxed max-w-md mx-auto">
+            <h2 className="text-[20px] font-semibold text-[#F8F8FA] mb-2">Template Marketplace</h2>
+            <p className="text-[13px] text-[#C8CAD0] leading-relaxed max-w-md mx-auto">
               Pre-built project configurations for common stacks. Import a template to add it to
               your Project Templates library, then apply it to any project.
             </p>
@@ -433,19 +433,19 @@ export default function TemplateMarketplace({ resetKey }: { resetKey?: number })
 
           {/* Search */}
           <div className="relative mb-8">
-            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8A8C93] pointer-events-none" />
+            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#C8CAD0] pointer-events-none" />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by name, category, or tag…"
               autoFocus
-              className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-xl pl-11 pr-10 py-3.5 text-[14px] text-[#E0E1E6] placeholder-[#8A8C93]/60 outline-none transition-colors shadow-sm"
+              className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-xl pl-11 pr-10 py-3.5 text-[14px] text-[#F8F8FA] placeholder-[#C8CAD0]/60 outline-none transition-colors shadow-sm"
             />
             {query && (
               <button
                 onClick={() => setQuery("")}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
               >
                 <X size={14} />
               </button>
@@ -455,15 +455,15 @@ export default function TemplateMarketplace({ resetKey }: { resetKey?: number })
           {/* Results */}
           {loading ? (
             <div className="flex items-center justify-center py-16">
-              <Loader2 size={20} className="animate-spin text-[#8A8C93]" />
+              <Loader2 size={20} className="animate-spin text-[#C8CAD0]" />
             </div>
           ) : results.length === 0 ? (
             <div className="text-center py-16">
               <div className="w-12 h-12 rounded-full border-2 border-dashed border-[#33353A] flex items-center justify-center mx-auto mb-4">
-                <Search size={18} className="text-[#8A8C93]" />
+                <Search size={18} className="text-[#C8CAD0]" />
               </div>
-              <h3 className="text-[14px] font-medium text-[#E0E1E6] mb-1">No templates found</h3>
-              <p className="text-[13px] text-[#8A8C93]">Try a different search term</p>
+              <h3 className="text-[14px] font-medium text-[#F8F8FA] mb-1">No templates found</h3>
+              <p className="text-[13px] text-[#C8CAD0]">Try a different search term</p>
               <button onClick={() => setQuery("")} className="mt-4 text-[12px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors">
                 Clear search
               </button>
@@ -471,7 +471,7 @@ export default function TemplateMarketplace({ resetKey }: { resetKey?: number })
           ) : (
             <>
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+                <h3 className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
                   {query.trim() ? `${results.length} result${results.length !== 1 ? "s" : ""}` : "Featured Templates"}
                 </h3>
                 {!query.trim() && importedNames.size > 0 && (

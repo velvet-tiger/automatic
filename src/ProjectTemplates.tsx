@@ -523,12 +523,12 @@ export default function ProjectTemplates() {
         style={{ width: sidebarWidth }}
       >
         <div className="h-11 px-4 border-b border-[#33353A] flex justify-between items-center">
-          <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+          <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
             Templates
           </span>
           <button
             onClick={startCreate}
-            className="text-[#8A8C93] hover:text-[#E0E1E6] transition-colors p-1 hover:bg-[#2D2E36] rounded"
+            className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded"
             title="Create New Template"
           >
             <Plus size={14} />
@@ -539,9 +539,9 @@ export default function ProjectTemplates() {
           {templates.length === 0 && !isCreating ? (
             <div className="px-4 py-8 text-center">
               <div className="w-10 h-10 mx-auto mb-3 rounded-full border border-dashed border-[#44474F] flex items-center justify-center">
-                <LayoutTemplate size={16} className="text-[#8A8C93]" strokeWidth={1.5} />
+                <LayoutTemplate size={16} className="text-[#C8CAD0]" strokeWidth={1.5} />
               </div>
-              <p className="text-[12px] text-[#8A8C93]">No templates yet.</p>
+              <p className="text-[12px] text-[#C8CAD0]">No templates yet.</p>
               <button
                 onClick={startCreate}
                 className="mt-3 text-[12px] text-[#5E6AD2] hover:text-[#6B78E3] transition-colors"
@@ -556,7 +556,7 @@ export default function ProjectTemplates() {
                   <div className="w-9 h-9 rounded-lg bg-[#5E6AD2]/15 flex items-center justify-center flex-shrink-0">
                     <LayoutTemplate size={16} className="text-[#5E6AD2]" />
                   </div>
-                  <span className="text-[13px] text-[#E0E1E6] italic">New Template...</span>
+                  <span className="text-[13px] text-[#F8F8FA] italic">New Template...</span>
                 </li>
               )}
               {templates.map((name) => {
@@ -577,19 +577,19 @@ export default function ProjectTemplates() {
                       onClick={() => { if (!isCreating) selectTemplate(name); }}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
                         isActive
-                          ? "bg-[#2D2E36] text-[#E0E1E6]"
-                          : "text-[#8A8C93] hover:bg-[#2D2E36]/60 hover:text-[#E0E1E6]"
+                          ? "bg-[#2D2E36] text-[#F8F8FA]"
+                          : "text-[#C8CAD0] hover:bg-[#2D2E36]/60 hover:text-[#F8F8FA]"
                       }`}
                     >
                       <div className={`w-9 h-9 rounded-lg ${accent.bg} flex items-center justify-center flex-shrink-0`}>
                         <LayoutTemplate size={16} className={accent.icon} />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className={`text-[13px] font-medium truncate ${isActive ? "text-[#E0E1E6]" : "text-[#C8CAD0]"}`}>
+                        <div className={`text-[13px] font-medium truncate ${isActive ? "text-[#F8F8FA]" : "text-[#E8E9ED]"}`}>
                           {name}
                         </div>
                         {parts.length > 0 && (
-                          <div className="text-[11px] text-[#8A8C93] mt-0.5">
+                          <div className="text-[11px] text-[#C8CAD0] mt-0.5">
                             {parts.join(" · ")}
                           </div>
                         )}
@@ -605,7 +605,7 @@ export default function ProjectTemplates() {
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); setConfirmDelete(null); }}
-                          className="p-0.5 text-[#8A8C93] hover:text-[#E0E1E6] hover:bg-[#33353A] rounded transition-colors"
+                          className="p-0.5 text-[#C8CAD0] hover:text-[#F8F8FA] hover:bg-[#33353A] rounded transition-colors"
                         >
                           <X size={11} />
                         </button>
@@ -613,7 +613,7 @@ export default function ProjectTemplates() {
                     ) : (
                       <button
                         onClick={(e) => handleDelete(name, e)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#C8CAD0] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
                         title="Delete template"
                       >
                         <X size={12} />
@@ -654,7 +654,7 @@ export default function ProjectTemplates() {
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#E0E1E6] placeholder-[#8A8C93]/50 w-64"
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#F8F8FA] placeholder-[#C8CAD0]/50 w-64"
                   />
                 ) : isRenaming ? (
                   <input
@@ -667,11 +667,11 @@ export default function ProjectTemplates() {
                     }}
                     onBlur={handleRename}
                     autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#E0E1E6] placeholder-[#8A8C93]/50 w-64"
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#F8F8FA] placeholder-[#C8CAD0]/50 w-64"
                   />
                 ) : (
                   <h3
-                    className="text-[14px] font-medium text-[#E0E1E6] cursor-text"
+                    className="text-[14px] font-medium text-[#F8F8FA] cursor-text"
                     onDoubleClick={startRename}
                     title="Double-click to rename"
                   >
@@ -682,7 +682,7 @@ export default function ProjectTemplates() {
 
               <div className="flex items-center gap-2">
                 {saveStatus && (
-                  <span className={`text-[12px] ${saveStatus === "saving" ? "text-[#8A8C93]" : "text-[#4ADE80]"}`}>
+                  <span className={`text-[12px] ${saveStatus === "saving" ? "text-[#C8CAD0]" : "text-[#4ADE80]"}`}>
                     {saveStatus === "saving" ? "Saving..." : saveStatus}
                   </span>
                 )}
@@ -693,7 +693,7 @@ export default function ProjectTemplates() {
                   <>
                     <button
                       onClick={handleDuplicate}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#8A8C93] hover:text-[#E0E1E6] rounded text-[12px] font-medium border border-[#3A3B42] transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium border border-[#3A3B42] transition-colors"
                     >
                       <Copy size={12} /> Duplicate
                     </button>
@@ -709,21 +709,21 @@ export default function ProjectTemplates() {
                       {showApplyPicker && (
                         <div className="absolute right-0 top-full mt-1 w-56 bg-[#1A1A1E] border border-[#33353A] rounded-lg shadow-xl z-20 overflow-hidden">
                           {allProjects.length === 0 ? (
-                            <div className="px-3 py-4 text-[12px] text-[#8A8C93] text-center">
+                            <div className="px-3 py-4 text-[12px] text-[#C8CAD0] text-center">
                               No projects yet
                             </div>
                           ) : (
                             <>
                               {unappliedProjects.length > 0 && (
                                 <div>
-                                  <div className="px-3 pt-2.5 pb-1 text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider">
+                                  <div className="px-3 pt-2.5 pb-1 text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider">
                                     Apply to
                                   </div>
                                   {unappliedProjects.map((p) => (
                                     <button
                                       key={p.name}
                                       onClick={() => applyToProject(p.name)}
-                                      className="w-full text-left px-3 py-2 text-[13px] text-[#E0E1E6] hover:bg-[#2D2E36] transition-colors"
+                                      className="w-full text-left px-3 py-2 text-[13px] text-[#F8F8FA] hover:bg-[#2D2E36] transition-colors"
                                     >
                                       {p.name}
                                     </button>
@@ -732,14 +732,14 @@ export default function ProjectTemplates() {
                               )}
                               {appliedProjects.length > 0 && (
                                 <div className={unappliedProjects.length > 0 ? "border-t border-[#33353A]" : ""}>
-                                  <div className="px-3 pt-2.5 pb-1 text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider">
+                                  <div className="px-3 pt-2.5 pb-1 text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider">
                                     Already applied
                                   </div>
                                   {appliedProjects.map((p) => (
                                     <button
                                       key={p.name}
                                       onClick={() => applyToProject(p.name)}
-                                      className="w-full text-left px-3 py-2 text-[13px] text-[#8A8C93] hover:bg-[#2D2E36] hover:text-[#E0E1E6] transition-colors flex items-center justify-between"
+                                      className="w-full text-left px-3 py-2 text-[13px] text-[#C8CAD0] hover:bg-[#2D2E36] hover:text-[#F8F8FA] transition-colors flex items-center justify-between"
                                     >
                                       <span>{p.name}</span>
                                       <Check size={11} className="text-[#4ADE80]" />
@@ -752,7 +752,7 @@ export default function ProjectTemplates() {
                           <div className="border-t border-[#33353A]">
                             <button
                               onClick={() => setShowApplyPicker(false)}
-                              className="w-full px-3 py-2 text-[12px] text-[#8A8C93] hover:text-[#E0E1E6] text-left transition-colors"
+                              className="w-full px-3 py-2 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] text-left transition-colors"
                             >
                               Cancel
                             </button>
@@ -781,7 +781,7 @@ export default function ProjectTemplates() {
                 {/* Description */}
                 {(template.description || isCreating || dirty) && (
                   <div>
-                    <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                    <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                       Description
                     </label>
                     <textarea
@@ -789,7 +789,7 @@ export default function ProjectTemplates() {
                       onChange={(e) => updateField("description", e.target.value)}
                       placeholder="What is this template for? What kind of projects should use it?"
                       rows={2}
-                      className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none resize-none transition-colors"
+                      className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none resize-none transition-colors"
                     />
                   </div>
                 )}
@@ -823,7 +823,7 @@ export default function ProjectTemplates() {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <Files size={13} className="text-[#5E6AD2]" />
-                      <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+                      <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
                         Unified Project Instruction
                       </span>
                       {template.unified_instruction && template.unified_instruction.trim() && (
@@ -834,7 +834,7 @@ export default function ProjectTemplates() {
                       {availableFileTemplates.length > 0 && (
                         <button
                           onClick={(e) => { e.stopPropagation(); setShowUnifiedTemplatePicker(!showUnifiedTemplatePicker); }}
-                          className="text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] flex items-center gap-1 transition-colors px-1.5 py-0.5 hover:bg-[#2D2E36] rounded"
+                          className="text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] flex items-center gap-1 transition-colors px-1.5 py-0.5 hover:bg-[#2D2E36] rounded"
                           title="Load from file template"
                         >
                           <LayoutTemplate size={11} /> Template
@@ -850,7 +850,7 @@ export default function ProjectTemplates() {
                       ) : (
                         <button
                           onClick={() => setUnifiedEditing(false)}
-                          className="text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                          className="text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
                         >
                           Done
                         </button>
@@ -861,7 +861,7 @@ export default function ProjectTemplates() {
                   {/* Template picker dropdown */}
                   {showUnifiedTemplatePicker && (
                     <div className="mb-2 p-2 bg-[#1A1A1E] border border-[#33353A] rounded-lg" onClick={(e) => e.stopPropagation()}>
-                      <p className="text-[10px] text-[#8A8C93] mb-1.5 px-1">Load from file template:</p>
+                      <p className="text-[10px] text-[#C8CAD0] mb-1.5 px-1">Load from file template:</p>
                       <div className="space-y-0.5 max-h-32 overflow-y-auto custom-scrollbar">
                         {availableFileTemplates.map((ft) => (
                           <button
@@ -877,13 +877,13 @@ export default function ProjectTemplates() {
                             className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-[#2D2E36] rounded text-left transition-colors"
                           >
                             <LayoutTemplate size={11} className="text-[#8B5CF6] shrink-0" />
-                            <span className="text-[12px] text-[#E0E1E6]">{ft}</span>
+                            <span className="text-[12px] text-[#F8F8FA]">{ft}</span>
                           </button>
                         ))}
                       </div>
                       <button
                         onClick={() => setShowUnifiedTemplatePicker(false)}
-                        className="mt-1.5 w-full text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors text-left px-1"
+                        className="mt-1.5 w-full text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors text-left px-1"
                       >
                         Cancel
                       </button>
@@ -896,7 +896,7 @@ export default function ProjectTemplates() {
                       onChange={(e) => updateField("unified_instruction", e.target.value)}
                       placeholder="Write project instructions here. This becomes the single unified instruction file (CLAUDE.md / AGENTS.md etc.) when applied to a project."
                       rows={10}
-                      className="w-full bg-[#111114] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[12px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none resize-y transition-colors font-mono leading-relaxed"
+                      className="w-full bg-[#111114] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[12px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none resize-y transition-colors font-mono leading-relaxed"
                       onClick={(e) => e.stopPropagation()}
                     />
                   ) : (
@@ -905,11 +905,11 @@ export default function ProjectTemplates() {
                       onClick={() => setUnifiedEditing(true)}
                     >
                       {template.unified_instruction && template.unified_instruction.trim() ? (
-                        <pre className="text-[12px] text-[#E0E1E6] font-mono whitespace-pre-wrap line-clamp-4 leading-relaxed">
+                        <pre className="text-[12px] text-[#F8F8FA] font-mono whitespace-pre-wrap line-clamp-4 leading-relaxed">
                           {template.unified_instruction}
                         </pre>
                       ) : (
-                        <span className="text-[12px] text-[#8A8C93]/50 italic">
+                        <span className="text-[12px] text-[#C8CAD0]/50 italic">
                           No unified instruction yet. Click Edit to write one or load from a template.
                         </span>
                       )}
@@ -920,7 +920,7 @@ export default function ProjectTemplates() {
                   <div className="mt-3 pt-3 border-t border-[#33353A]">
                     <div className="flex items-center gap-2 mb-2">
                       <ScrollText size={12} className="text-[#22D3EE]" />
-                      <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Rules</span>
+                      <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">Rules</span>
                       {(template.unified_rules || []).length > 0 && (
                         <span className="text-[10px] text-[#22D3EE] bg-[#22D3EE]/10 px-1.5 py-0.5 rounded">
                           {(template.unified_rules || []).length}
@@ -944,7 +944,7 @@ export default function ProjectTemplates() {
                               className={`px-2.5 py-1 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
                                 isSelected
                                   ? "bg-[#22D3EE]/15 border-[#22D3EE]/40 text-[#22D3EE]"
-                                  : "bg-[#2D2E36] border-[#33353A] text-[#8A8C93] hover:text-[#E0E1E6] hover:border-[#44474F]"
+                                  : "bg-[#2D2E36] border-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] hover:border-[#44474F]"
                               }`}
                             >
                               <ScrollText size={10} />
@@ -955,7 +955,7 @@ export default function ProjectTemplates() {
                         })}
                       </div>
                     ) : (
-                      <p className="text-[11px] text-[#8A8C93]/50 italic">
+                      <p className="text-[11px] text-[#C8CAD0]/50 italic">
                         No rules created yet. Create rules in the Rules section to attach them here.
                       </p>
                     )}
@@ -967,7 +967,7 @@ export default function ProjectTemplates() {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <FileText size={13} className="text-[#5E6AD2]" />
-                      <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+                      <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
                         Project Files
                       </span>
                     </div>
@@ -980,7 +980,7 @@ export default function ProjectTemplates() {
                   </div>
 
                   {template.project_files.length === 0 && !addingFile && (
-                    <p className="text-[12px] text-[#8A8C93]/50 italic pl-1">No project files configured.</p>
+                    <p className="text-[12px] text-[#C8CAD0]/50 italic pl-1">No project files configured.</p>
                   )}
 
                   <div className="space-y-2">
@@ -1000,20 +1000,20 @@ export default function ProjectTemplates() {
                               className="flex-1 min-w-0 text-left flex items-center gap-1.5"
                               onClick={() => setExpandedFile(isExpanded ? null : pf.filename)}
                             >
-                              <span className="text-[13px] font-medium text-[#E0E1E6] font-mono">{pf.filename}</span>
+                              <span className="text-[13px] font-medium text-[#F8F8FA] font-mono">{pf.filename}</span>
                               {pf.content && (
-                                <span className="text-[11px] text-[#8A8C93]">
+                                <span className="text-[11px] text-[#C8CAD0]">
                                   · {pf.content.split("\n").length} line{pf.content.split("\n").length !== 1 ? "s" : ""}
                                 </span>
                               )}
                               <ChevronRight
                                 size={12}
-                                className={`text-[#8A8C93] ml-auto transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                                className={`text-[#C8CAD0] ml-auto transition-transform ${isExpanded ? "rotate-90" : ""}`}
                               />
                             </button>
                             <button
                               onClick={() => removeProjectFile(idx)}
-                              className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-[#33353A] rounded flex-shrink-0"
+                              className="text-[#C8CAD0] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-[#33353A] rounded flex-shrink-0"
                             >
                               <X size={12} />
                             </button>
@@ -1027,7 +1027,7 @@ export default function ProjectTemplates() {
                                 onChange={(e) => updateProjectFileContent(pf.filename, e.target.value)}
                                 placeholder={`Content for ${pf.filename}...`}
                                 rows={10}
-                                className="w-full bg-[#111114] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[12px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none resize-y transition-colors font-mono leading-relaxed"
+                                className="w-full bg-[#111114] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[12px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none resize-y transition-colors font-mono leading-relaxed"
                                 onClick={(e) => e.stopPropagation()}
                               />
                             </div>
@@ -1040,7 +1040,7 @@ export default function ProjectTemplates() {
                   {/* Add file picker */}
                   {addingFile && (
                     <div className="mt-2 p-3 bg-[#1A1A1E] border border-[#33353A] rounded-lg">
-                      <p className="text-[11px] text-[#8A8C93] mb-3 px-1">Choose a file to add:</p>
+                      <p className="text-[11px] text-[#C8CAD0] mb-3 px-1">Choose a file to add:</p>
 
                       {/* Known project files */}
                       {KNOWN_PROJECT_FILES.filter(
@@ -1056,8 +1056,8 @@ export default function ProjectTemplates() {
                                 className="w-full flex items-center gap-2.5 px-2 py-1.5 hover:bg-[#2D2E36] rounded-md text-left transition-colors"
                               >
                                 <FileText size={12} className="text-[#5E6AD2] shrink-0" />
-                                <span className="text-[13px] text-[#E0E1E6] font-mono font-medium">{kf.label}</span>
-                                <span className="text-[11px] text-[#8A8C93]">{kf.hint}</span>
+                                <span className="text-[13px] text-[#F8F8FA] font-mono font-medium">{kf.label}</span>
+                                <span className="text-[11px] text-[#C8CAD0]">{kf.hint}</span>
                               </button>
                             ))}
                         </div>
@@ -1066,7 +1066,7 @@ export default function ProjectTemplates() {
                       {/* From file templates */}
                       {availableFileTemplates.length > 0 && (
                         <>
-                          <p className="text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider px-1 mb-1.5">
+                          <p className="text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider px-1 mb-1.5">
                             From file template
                           </p>
                           <div className="space-y-0.5 mb-3 max-h-32 overflow-y-auto custom-scrollbar">
@@ -1077,8 +1077,8 @@ export default function ProjectTemplates() {
                                 className="w-full flex items-center gap-2.5 px-2 py-1.5 hover:bg-[#2D2E36] rounded-md text-left transition-colors"
                               >
                                 <LayoutTemplate size={12} className="text-[#8B5CF6] shrink-0" />
-                                <span className="text-[13px] text-[#E0E1E6]">{t}</span>
-                                <span className="text-[11px] text-[#8A8C93] ml-auto">→ CLAUDE.md</span>
+                                <span className="text-[13px] text-[#F8F8FA]">{t}</span>
+                                <span className="text-[11px] text-[#C8CAD0] ml-auto">→ CLAUDE.md</span>
                               </button>
                             ))}
                           </div>
@@ -1100,7 +1100,7 @@ export default function ProjectTemplates() {
                             if (e.key === "Escape") { setAddingFile(false); setCustomFilename(""); }
                           }}
                           placeholder="Custom filename, e.g. README.md"
-                          className="flex-1 bg-[#111114] border border-[#33353A] focus:border-[#5E6AD2] rounded px-2.5 py-1.5 text-[12px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono"
+                          className="flex-1 bg-[#111114] border border-[#33353A] focus:border-[#5E6AD2] rounded px-2.5 py-1.5 text-[12px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono"
                           autoFocus
                         />
                         <button
@@ -1118,7 +1118,7 @@ export default function ProjectTemplates() {
                         </button>
                         <button
                           onClick={() => { setAddingFile(false); setCustomFilename(""); }}
-                          className="px-2 py-1.5 text-[12px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                          className="px-2 py-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
                         >
                           Cancel
                         </button>
@@ -1130,14 +1130,14 @@ export default function ProjectTemplates() {
                 {/* Applied to */}
                 {!isCreating && appliedProjects.length > 0 && (
                   <div>
-                    <div className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-3">
+                    <div className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-3">
                       Applied to
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {appliedProjects.map((p) => (
                         <span
                           key={p.name}
-                          className="px-2.5 py-1 bg-[#2D2E36] border border-[#3A3B42] rounded-md text-[12px] text-[#C8CAD0] font-medium"
+                          className="px-2.5 py-1 bg-[#2D2E36] border border-[#3A3B42] rounded-md text-[12px] text-[#E8E9ED] font-medium"
                         >
                           {p.name}
                         </span>
@@ -1149,12 +1149,12 @@ export default function ProjectTemplates() {
                 {/* Delete */}
                 {!isCreating && selectedName && !dirty && (
                   <div className="pt-2 border-t border-[#33353A] flex items-center justify-between">
-                    <p className="text-[11px] text-[#8A8C93]/60">
+                    <p className="text-[11px] text-[#C8CAD0]/60">
                       Deleting this template will not affect projects that used it.
                     </p>
                     {confirmDelete === selectedName ? (
                       <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-[#8A8C93]">Are you sure?</span>
+                        <span className="text-[11px] text-[#C8CAD0]">Are you sure?</span>
                         <button
                           onClick={() => handleDelete(selectedName)}
                           className="px-2.5 py-1 text-[12px] font-medium text-white bg-[#FF6B6B] hover:bg-[#ff5252] rounded transition-colors"
@@ -1163,7 +1163,7 @@ export default function ProjectTemplates() {
                         </button>
                         <button
                           onClick={() => setConfirmDelete(null)}
-                          className="px-2.5 py-1 text-[12px] text-[#8A8C93] hover:text-[#E0E1E6] bg-[#2D2E36] hover:bg-[#33353A] rounded transition-colors"
+                          className="px-2.5 py-1 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] bg-[#2D2E36] hover:bg-[#33353A] rounded transition-colors"
                         >
                           Cancel
                         </button>
@@ -1171,7 +1171,7 @@ export default function ProjectTemplates() {
                     ) : (
                       <button
                         onClick={() => handleDelete(selectedName)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-[#8A8C93] hover:text-[#FF6B6B] text-[12px] transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-[#C8CAD0] hover:text-[#FF6B6B] text-[12px] transition-colors"
                       >
                         <Trash2 size={12} /> Delete
                       </button>
@@ -1184,11 +1184,11 @@ export default function ProjectTemplates() {
         ) : (
           /* Empty state */
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-14 h-14 mx-auto mb-4 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#8A8C93]">
+            <div className="w-14 h-14 mx-auto mb-4 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#C8CAD0]">
               <LayoutTemplate size={24} strokeWidth={1.5} />
             </div>
-            <h2 className="text-[16px] font-semibold text-[#E0E1E6] mb-2">No template selected</h2>
-            <p className="text-[13px] text-[#8A8C93] max-w-sm leading-relaxed mb-6">
+            <h2 className="text-[16px] font-semibold text-[#F8F8FA] mb-2">No template selected</h2>
+            <p className="text-[13px] text-[#C8CAD0] max-w-sm leading-relaxed mb-6">
               Project Templates capture agents, skills, MCP servers, and project files
               that can be applied to new or existing projects.
             </p>

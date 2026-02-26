@@ -12,6 +12,7 @@ import {
   Globe,
   ToggleLeft,
   ToggleRight,
+  AlertTriangle,
 } from "lucide-react";
 import { ICONS } from "./icons";
 
@@ -114,13 +115,13 @@ function cleanConfig(config: McpServerConfig): Record<string, unknown> {
 // ── Reusable field components ──────────────────────────────────────────────
 
 const inputClass =
-  "w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono transition-colors";
+  "w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors";
 
 const smallInputClass =
-  "flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-1.5 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono transition-colors";
+  "flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-1.5 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors";
 
 const addBtnClass =
-  "px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors disabled:opacity-30 disabled:cursor-not-allowed";
+  "px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#F8F8FA] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors disabled:opacity-30 disabled:cursor-not-allowed";
 
 function KvList({
   entries,
@@ -140,13 +141,13 @@ function KvList({
           className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] font-mono"
         >
           <span className="truncate">
-            <span className={colorKey ? "text-[#8C98F2]" : "text-[#E0E1E6]"}>{key}</span>
-            <span className="text-[#8A8C93] mx-1">=</span>
-            <span className="text-[#E0E1E6]">{val}</span>
+            <span className={colorKey ? "text-[#8C98F2]" : "text-[#F8F8FA]"}>{key}</span>
+            <span className="text-[#C8CAD0] mx-1">=</span>
+            <span className="text-[#F8F8FA]">{val}</span>
           </span>
           <button
             onClick={() => onRemove(key)}
-            className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all flex-shrink-0 ml-2"
+            className="text-[#C8CAD0] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all flex-shrink-0 ml-2"
           >
             <Trash2 size={12} />
           </button>
@@ -158,6 +159,12 @@ function KvList({
 
 // ── Main component ─────────────────────────────────────────────────────────
 
+interface Project {
+  name: string;
+  agents: string[];
+  mcp_servers: string[];
+}
+
 export default function McpServers() {
   const [servers, setServers] = useState<string[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
@@ -167,6 +174,7 @@ export default function McpServers() {
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [opencodeWarning, setOpencodeWarning] = useState<string[]>([]);
 
   // Inline add state
   const [newArg, setNewArg] = useState("");
@@ -177,6 +185,7 @@ export default function McpServers() {
 
   useEffect(() => {
     loadServers();
+    checkOpencodeProjects();
   }, []);
 
   const loadServers = async () => {
@@ -186,6 +195,28 @@ export default function McpServers() {
       setError(null);
     } catch (err: any) {
       setError(`Failed to load servers: ${err}`);
+    }
+  };
+
+  const checkOpencodeProjects = async () => {
+    try {
+      const projectNames: string[] = await invoke("list_projects");
+      const affectedProjects: string[] = [];
+
+      for (const name of projectNames) {
+        const raw: string = await invoke("read_project", { name });
+        const project: Project = JSON.parse(raw);
+        
+        // Check if project uses OpenCode and has MCP servers configured
+        if (project.agents.includes("opencode") && project.mcp_servers.length > 0) {
+          affectedProjects.push(project.name);
+        }
+      }
+
+      setOpencodeWarning(affectedProjects);
+    } catch (err: any) {
+      // Silently fail - warning is non-critical
+      console.error("Failed to check OpenCode projects:", err);
     }
   };
 
@@ -338,20 +369,20 @@ export default function McpServers() {
       {/* Left sidebar */}
       <div className="w-64 flex-shrink-0 flex flex-col border-r border-[#33353A] bg-[#1A1A1E]/50">
         <div className="h-11 px-4 border-b border-[#33353A] flex justify-between items-center bg-[#222327]/30">
-          <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+          <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
             MCP Servers
           </span>
           <div className="flex items-center gap-1">
             <button
               onClick={handleImport}
-              className="text-[#8A8C93] hover:text-[#E0E1E6] transition-colors p-1 hover:bg-[#2D2E36] rounded"
+              className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded"
               title="Import from Claude Desktop"
             >
               <Download size={14} />
             </button>
             <button
               onClick={startCreate}
-              className="text-[#8A8C93] hover:text-[#E0E1E6] transition-colors p-1 hover:bg-[#2D2E36] rounded"
+              className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded"
               title="Add MCP Server"
             >
               <Plus size={14} />
@@ -365,7 +396,7 @@ export default function McpServers() {
               importStatus.startsWith("Import failed")
                 ? "text-[#FF6B6B]"
                 : importStatus === "importing"
-                  ? "text-[#8A8C93]"
+                  ? "text-[#C8CAD0]"
                   : "text-[#4ADE80]"
             }`}
           >
@@ -376,7 +407,7 @@ export default function McpServers() {
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
           {servers.length === 0 && !isCreating ? (
             <div className="px-4 py-6 text-center">
-              <p className="text-[13px] text-[#8A8C93] mb-3">No servers configured.</p>
+              <p className="text-[13px] text-[#C8CAD0] mb-3">No servers configured.</p>
               <button
                 onClick={handleImport}
                 className="text-[12px] text-[#5E6AD2] hover:text-[#8C98F2] transition-colors"
@@ -391,7 +422,7 @@ export default function McpServers() {
                   <div className={ICONS.mcp.iconBox}>
                     <Server size={15} className={ICONS.mcp.iconColor} />
                   </div>
-                  <span className="text-[13px] text-[#E0E1E6] italic">New Server...</span>
+                  <span className="text-[13px] text-[#F8F8FA] italic">New Server...</span>
                 </li>
               )}
               {servers.map((name) => {
@@ -402,20 +433,20 @@ export default function McpServers() {
                       onClick={() => selectServer(name)}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
                         isActive
-                          ? "bg-[#2D2E36] text-[#E0E1E6]"
-                          : "text-[#8A8C93] hover:bg-[#2D2E36]/60 hover:text-[#E0E1E6]"
+                          ? "bg-[#2D2E36] text-[#F8F8FA]"
+                          : "text-[#C8CAD0] hover:bg-[#2D2E36]/60 hover:text-[#F8F8FA]"
                       }`}
                     >
                       <div className={ICONS.mcp.iconBox}>
                         <Server size={15} className={ICONS.mcp.iconColor} />
                       </div>
-                      <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-[#E0E1E6]" : "text-[#C8CAD0]"}`}>
+                      <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-[#F8F8FA]" : "text-[#E8E9ED]"}`}>
                         {name}
                       </span>
                     </button>
                     <button
                       onClick={(e) => handleDelete(name, e)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#C8CAD0] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
                       title="Delete Server"
                     >
                       <X size={12} />
@@ -439,6 +470,23 @@ export default function McpServers() {
           </div>
         )}
 
+        {opencodeWarning.length > 0 && (
+          <div className="bg-amber-500/10 text-amber-400 p-3 text-[13px] border-b border-amber-500/20 flex items-start gap-3">
+            <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="font-medium mb-1">MCP Access Issue with OpenCode</div>
+              <div className="text-[12px] text-amber-300/90 leading-relaxed">
+                The following project{opencodeWarning.length > 1 ? 's are' : ' is'} using OpenCode with MCP servers configured: <span className="font-medium">{opencodeWarning.join(", ")}</span>. 
+                MCP server access is currently broken in Claude when using OpenCode. 
+                MCP servers will be written to opencode.json but may not function correctly until this issue is resolved.
+              </div>
+            </div>
+            <button onClick={() => setOpencodeWarning([])} className="text-amber-300 hover:text-amber-200">
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
         {config ? (
           <div className="flex-1 flex flex-col h-full">
             {/* Header */}
@@ -452,10 +500,10 @@ export default function McpServers() {
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#E0E1E6] placeholder-[#8A8C93]/50 w-64"
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#F8F8FA] placeholder-[#C8CAD0]/50 w-64"
                   />
                 ) : (
-                  <h3 className="text-[14px] font-medium text-[#E0E1E6]">{selectedName}</h3>
+                  <h3 className="text-[14px] font-medium text-[#F8F8FA]">{selectedName}</h3>
                 )}
               </div>
 
@@ -478,13 +526,13 @@ export default function McpServers() {
                 {/* Transport Type + Enabled */}
                 <section>
                   <div className="flex items-center justify-between mb-2">
-                    <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+                    <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
                       Type
                     </label>
                     <button
                       onClick={() => updateConfig({ enabled: !config.enabled })}
                       className={`flex items-center gap-1.5 text-[12px] transition-colors ${
-                        config.enabled !== false ? "text-[#4ADE80]" : "text-[#8A8C93]"
+                        config.enabled !== false ? "text-[#4ADE80]" : "text-[#C8CAD0]"
                       }`}
                       title={config.enabled !== false ? "Enabled — click to disable" : "Disabled — click to enable"}
                     >
@@ -498,7 +546,7 @@ export default function McpServers() {
                       className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                         isStdio
                           ? "bg-[#5E6AD2] border-[#5E6AD2] text-white"
-                          : "bg-[#1A1A1E] border-[#33353A] text-[#8A8C93] hover:border-[#44474F] hover:text-[#E0E1E6]"
+                          : "bg-[#1A1A1E] border-[#33353A] text-[#C8CAD0] hover:border-[#44474F] hover:text-[#F8F8FA]"
                       }`}
                     >
                       Local
@@ -508,13 +556,13 @@ export default function McpServers() {
                       className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                         !isStdio
                           ? "bg-[#5E6AD2] border-[#5E6AD2] text-white"
-                          : "bg-[#1A1A1E] border-[#33353A] text-[#8A8C93] hover:border-[#44474F] hover:text-[#E0E1E6]"
+                          : "bg-[#1A1A1E] border-[#33353A] text-[#C8CAD0] hover:border-[#44474F] hover:text-[#F8F8FA]"
                       }`}
                     >
                       Remote
                     </button>
                   </div>
-                  <p className="mt-1.5 text-[11px] text-[#8A8C93]">
+                  <p className="mt-1.5 text-[11px] text-[#C8CAD0]">
                     {isStdio
                       ? "Launches a local process and communicates via stdin/stdout."
                       : "Connects to a remote MCP server over HTTP."}
@@ -524,7 +572,7 @@ export default function McpServers() {
                 {/* HTTP vs SSE sub-option for remote */}
                 {!isStdio && (
                   <section>
-                    <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                    <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                       Transport Protocol
                     </label>
                     <div className="flex gap-1.5">
@@ -532,8 +580,8 @@ export default function McpServers() {
                         onClick={() => setTransport("http")}
                         className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                           config.type === "http"
-                            ? "bg-[#2D2E36] border-[#44474F] text-[#E0E1E6]"
-                            : "bg-[#1A1A1E] border-[#33353A] text-[#8A8C93] hover:border-[#44474F] hover:text-[#E0E1E6]"
+                            ? "bg-[#2D2E36] border-[#44474F] text-[#F8F8FA]"
+                            : "bg-[#1A1A1E] border-[#33353A] text-[#C8CAD0] hover:border-[#44474F] hover:text-[#F8F8FA]"
                         }`}
                       >
                         Streamable HTTP
@@ -542,8 +590,8 @@ export default function McpServers() {
                         onClick={() => setTransport("sse")}
                         className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                           config.type === "sse"
-                            ? "bg-[#2D2E36] border-[#44474F] text-[#E0E1E6]"
-                            : "bg-[#1A1A1E] border-[#33353A] text-[#8A8C93] hover:border-[#44474F] hover:text-[#E0E1E6]"
+                            ? "bg-[#2D2E36] border-[#44474F] text-[#F8F8FA]"
+                            : "bg-[#1A1A1E] border-[#33353A] text-[#C8CAD0] hover:border-[#44474F] hover:text-[#F8F8FA]"
                         }`}
                       >
                         SSE (legacy)
@@ -556,7 +604,7 @@ export default function McpServers() {
                 {isStdio && (
                   <>
                     <section>
-                      <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                      <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                         <span className="flex items-center gap-1.5">
                           <Terminal size={12} /> Command
                         </span>
@@ -571,7 +619,7 @@ export default function McpServers() {
                     </section>
 
                     <section>
-                      <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                      <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                         Arguments
                       </label>
                       {(config.args || []).length > 0 && (
@@ -579,12 +627,12 @@ export default function McpServers() {
                           {(config.args || []).map((arg, i) => (
                             <li
                               key={i}
-                              className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#E0E1E6] font-mono"
+                              className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#F8F8FA] font-mono"
                             >
                               <span className="truncate">{arg}</span>
                               <button
                                 onClick={() => removeArg(i)}
-                                className="text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all flex-shrink-0 ml-2"
+                                className="text-[#C8CAD0] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all flex-shrink-0 ml-2"
                               >
                                 <Trash2 size={12} />
                               </button>
@@ -613,7 +661,7 @@ export default function McpServers() {
                     </section>
 
                     <section>
-                      <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                      <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                         Working Directory
                       </label>
                       <input
@@ -626,7 +674,7 @@ export default function McpServers() {
                     </section>
 
                     <section>
-                      <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                      <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                         <span className="flex items-center gap-1.5">
                           <Variable size={12} /> Environment Variables
                         </span>
@@ -642,7 +690,7 @@ export default function McpServers() {
                           value={newEnvKey}
                           onChange={(e) => setNewEnvKey(e.target.value)}
                           placeholder="KEY"
-                          className="w-40 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-1.5 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono transition-colors"
+                          className="w-40 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-1.5 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors"
                         />
                         <input
                           type="text"
@@ -669,7 +717,7 @@ export default function McpServers() {
                 {!isStdio && (
                   <>
                     <section>
-                      <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                      <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                         <span className="flex items-center gap-1.5">
                           <Globe size={12} /> URL
                         </span>
@@ -688,7 +736,7 @@ export default function McpServers() {
                     </section>
 
                     <section>
-                      <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                      <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                         HTTP Headers
                       </label>
                       <KvList
@@ -702,7 +750,7 @@ export default function McpServers() {
                           value={newHeaderKey}
                           onChange={(e) => setNewHeaderKey(e.target.value)}
                           placeholder="Header-Name"
-                          className="w-48 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-1.5 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono transition-colors"
+                          className="w-48 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-1.5 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors"
                         />
                         <input
                           type="text"
@@ -729,12 +777,12 @@ export default function McpServers() {
 
                     {/* OAuth Authentication */}
                     <section>
-                      <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                      <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                         OAuth Authentication (Optional)
                       </label>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-[11px] text-[#8A8C93] mb-1">Client ID</label>
+                          <label className="block text-[11px] text-[#C8CAD0] mb-1">Client ID</label>
                           <input
                             type="text"
                             value={config.oauth?.clientId || ""}
@@ -744,7 +792,7 @@ export default function McpServers() {
                           />
                         </div>
                         <div>
-                          <label className="block text-[11px] text-[#8A8C93] mb-1">Client Secret</label>
+                          <label className="block text-[11px] text-[#C8CAD0] mb-1">Client Secret</label>
                           <input
                             type="password"
                             value={config.oauth?.clientSecret || ""}
@@ -754,7 +802,7 @@ export default function McpServers() {
                           />
                         </div>
                         <div>
-                          <label className="block text-[11px] text-[#8A8C93] mb-1">Scope</label>
+                          <label className="block text-[11px] text-[#C8CAD0] mb-1">Scope</label>
                           <input
                             type="text"
                             value={config.oauth?.scope || ""}
@@ -764,7 +812,7 @@ export default function McpServers() {
                           />
                         </div>
                         <div>
-                          <label className="block text-[11px] text-[#8A8C93] mb-1">Callback Port</label>
+                          <label className="block text-[11px] text-[#C8CAD0] mb-1">Callback Port</label>
                           <input
                             type="number"
                             value={config.oauth?.callbackPort || ""}
@@ -780,7 +828,7 @@ export default function McpServers() {
 
                 {/* ── Timeout (common) ────────────────────────────────────── */}
                 <section>
-                  <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-2">
+                  <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
                     Timeout (ms)
                   </label>
                   <input
@@ -792,7 +840,7 @@ export default function McpServers() {
                       })
                     }
                     placeholder="Optional — e.g. 5000"
-                    className="w-48 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93]/40 outline-none font-mono transition-colors"
+                    className="w-48 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors"
                   />
                 </section>
               </div>
@@ -804,8 +852,8 @@ export default function McpServers() {
             <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-[#F59E0B]/10 border border-[#F59E0B]/20 flex items-center justify-center">
               <Server size={24} className={ICONS.mcp.iconColor} strokeWidth={1.5} />
             </div>
-            <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">MCP Servers</h2>
-            <p className="text-[14px] text-[#8A8C93] mb-8 leading-relaxed max-w-sm">
+            <h2 className="text-lg font-medium text-[#F8F8FA] mb-2">MCP Servers</h2>
+            <p className="text-[14px] text-[#C8CAD0] mb-8 leading-relaxed max-w-sm">
               Configure Model Context Protocol servers that give your agents access to filesystems,
               databases, and developer tools. Add them here, then assign them to projects.
             </p>
@@ -818,7 +866,7 @@ export default function McpServers() {
               </button>
               <button
                 onClick={handleImport}
-                className="px-4 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#E0E1E6] text-[13px] font-medium rounded border border-[#3A3B42] transition-colors"
+                className="px-4 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#F8F8FA] text-[13px] font-medium rounded border border-[#3A3B42] transition-colors"
               >
                 Import from Claude Desktop
               </button>

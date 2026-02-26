@@ -65,14 +65,14 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
       {/* Left sidebar - agent list */}
       <div className="w-64 flex-shrink-0 flex flex-col border-r border-[#33353A] bg-[#1A1A1E]/50">
         <div className="h-11 px-4 border-b border-[#33353A] flex items-center bg-[#222327]/30">
-          <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+          <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
             Agents
           </span>
         </div>
 
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
           {agents.length === 0 ? (
-            <div className="px-4 py-3 text-[13px] text-[#8A8C93] text-center">
+            <div className="px-4 py-3 text-[13px] text-[#C8CAD0] text-center">
               No agents registered.
             </div>
           ) : (
@@ -85,19 +85,19 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
                       onClick={() => selectAgent(agent.id)}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
                         isActive
-                          ? "bg-[#2D2E36] text-[#E0E1E6]"
-                          : "text-[#8A8C93] hover:bg-[#2D2E36]/60 hover:text-[#E0E1E6]"
+                          ? "bg-[#2D2E36] text-[#F8F8FA]"
+                          : "text-[#C8CAD0] hover:bg-[#2D2E36]/60 hover:text-[#F8F8FA]"
                       }`}
                     >
                       <div className={ICONS.agent.iconBox}>
                         <Bot size={15} className={ICONS.agent.iconColor} />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className={`text-[13px] font-medium truncate ${isActive ? "text-[#E0E1E6]" : "text-[#C8CAD0]"}`}>
+                        <div className={`text-[13px] font-medium truncate ${isActive ? "text-[#F8F8FA]" : "text-[#E8E9ED]"}`}>
                           {agent.label}
                         </div>
                         {agent.projects.length > 0 && (
-                          <div className="text-[11px] text-[#8A8C93] mt-0.5">
+                          <div className="text-[11px] text-[#C8CAD0] mt-0.5">
                             {agent.projects.length} project{agent.projects.length !== 1 ? "s" : ""}
                           </div>
                         )}
@@ -127,7 +127,7 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
             {/* Header */}
             <div className="h-11 px-6 border-b border-[#33353A] flex items-center gap-3">
               <Bot size={14} className={ICONS.agent.iconColor} />
-              <h3 className="text-[14px] font-medium text-[#E0E1E6]">
+              <h3 className="text-[14px] font-medium text-[#F8F8FA]">
                 {selected.label}
               </h3>
             </div>
@@ -137,17 +137,17 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
               <div className="max-w-2xl space-y-8">
                 {/* Agent Info */}
                 <section>
-                  <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-3">
+                  <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-3">
                     Details
                   </label>
                   <div className="space-y-3">
                     <div className="flex items-start gap-3 px-3 py-2.5 bg-[#1A1A1E] rounded-md border border-[#33353A]">
-                      <span className="text-[11px] text-[#8A8C93] w-24 flex-shrink-0 pt-0.5">Config File</span>
-                      <span className="text-[13px] text-[#E0E1E6] font-mono">{selected.description}</span>
+                      <span className="text-[11px] text-[#C8CAD0] w-24 flex-shrink-0 pt-0.5">Config File</span>
+                      <span className="text-[13px] text-[#F8F8FA] font-mono">{selected.description}</span>
                     </div>
                     <div className="flex items-start gap-3 px-3 py-2.5 bg-[#1A1A1E] rounded-md border border-[#33353A]">
-                      <span className="text-[11px] text-[#8A8C93] w-24 flex-shrink-0 pt-0.5">Project Instructions</span>
-                      <span className="text-[13px] text-[#E0E1E6] font-mono">{selected.project_file}</span>
+                      <span className="text-[11px] text-[#C8CAD0] w-24 flex-shrink-0 pt-0.5">Project Instructions</span>
+                      <span className="text-[13px] text-[#F8F8FA] font-mono">{selected.project_file}</span>
                     </div>
                   </div>
                 </section>
@@ -155,14 +155,14 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
                 {/* Limitations */}
                 {selected.mcp_note && (
                   <section>
-                    <label className="block text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-3">
+                    <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-3">
                       Limitations
                     </label>
                     <div className="flex items-start gap-3 px-3 py-3 bg-[#1A1A1E] rounded-md border border-[#44474F]">
-                      <AlertCircle size={14} className="text-[#8A8C93] flex-shrink-0 mt-0.5" />
+                      <AlertCircle size={14} className="text-[#C8CAD0] flex-shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-[13px] font-medium text-[#E0E1E6] mb-1">MCP configuration</p>
-                        <p className="text-[12px] text-[#8A8C93] leading-relaxed">{selected.mcp_note}</p>
+                        <p className="text-[13px] font-medium text-[#F8F8FA] mb-1">MCP configuration</p>
+                        <p className="text-[12px] text-[#C8CAD0] leading-relaxed">{selected.mcp_note}</p>
                       </div>
                     </div>
                   </section>
@@ -170,11 +170,11 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
 
                 {/* Projects */}
                 <section>
-                  <label className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase flex items-center gap-1.5 mb-3">
+                  <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase flex items-center gap-1.5 mb-3">
                     <FolderOpen size={12} className={ICONS.project.iconColor} /> Projects Using This Agent
                   </label>
                   {selected.projects.length === 0 ? (
-                    <p className="text-[13px] text-[#8A8C93]/60 italic">
+                    <p className="text-[13px] text-[#C8CAD0]/60 italic">
                       No projects are using {selected.label} yet. Add it to a project in the Projects tab.
                     </p>
                   ) : (
@@ -189,15 +189,15 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
                               <FolderOpen size={15} className={ICONS.project.iconColor} />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="text-[13px] font-medium text-[#E0E1E6]">{p.name}</div>
+                              <div className="text-[13px] font-medium text-[#F8F8FA]">{p.name}</div>
                               {p.directory && (
-                                <div className="text-[11px] text-[#8A8C93] font-mono truncate mt-0.5">
+                                <div className="text-[11px] text-[#C8CAD0] font-mono truncate mt-0.5">
                                   {p.directory}
                                 </div>
                               )}
                             </div>
                             {onNavigateToProject && (
-                              <ArrowRight size={13} className="text-[#8A8C93] opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity" />
+                              <ArrowRight size={13} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity" />
                             )}
                           </button>
                         </li>
@@ -214,10 +214,10 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
             <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-[#5E6AD2]/10 border border-[#5E6AD2]/20 flex items-center justify-center">
               <Bot size={24} className={ICONS.agent.iconColor} strokeWidth={1.5} />
             </div>
-            <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">
+            <h2 className="text-lg font-medium text-[#F8F8FA] mb-2">
               Agents
             </h2>
-            <p className="text-[14px] text-[#8A8C93] mb-4 leading-relaxed max-w-sm">
+            <p className="text-[14px] text-[#C8CAD0] mb-4 leading-relaxed max-w-sm">
               Agents are the coding tools that Automatic syncs configurations to.
               Select one from the sidebar to see which projects use it.
             </p>

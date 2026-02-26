@@ -87,10 +87,10 @@ function SkillPreview({ content }: { content: string }) {
       {(displayName || description) && (
         <div className="px-8 pt-6 pb-0">
           {displayName && (
-            <h1 className="text-[20px] font-semibold text-[#E0E1E6] mb-2 leading-tight">{displayName}</h1>
+            <h1 className="text-[20px] font-semibold text-[#F8F8FA] mb-2 leading-tight">{displayName}</h1>
           )}
           {description && (
-            <p className="text-[13px] text-[#8A8C93] leading-relaxed mb-6 pb-5 border-b border-[#33353A]">{description}</p>
+            <p className="text-[13px] text-[#C8CAD0] leading-relaxed mb-6 pb-5 border-b border-[#33353A]">{description}</p>
           )}
         </div>
       )}
@@ -252,7 +252,7 @@ export default function Skills() {
         {/* Header */}
         <div className="px-4 pt-4 pb-3 border-b border-[#33353A]">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">
+            <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
               Skills
             </span>
             <div className="flex items-center gap-1">
@@ -260,7 +260,7 @@ export default function Skills() {
                 <button
                   onClick={handleSyncAll}
                   disabled={syncingAll}
-                  className="text-[#8A8C93] hover:text-[#E0E1E6] transition-colors p-1 hover:bg-[#2D2E36] rounded disabled:opacity-50"
+                  className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded disabled:opacity-50"
                   title={`Sync all (${unsyncedCount} unsynced)`}
                 >
                   <RefreshCw size={13} className={syncingAll ? "animate-spin" : ""} />
@@ -268,7 +268,7 @@ export default function Skills() {
               )}
               <button
                 onClick={startCreateNew}
-                className="text-[#8A8C93] hover:text-[#E0E1E6] transition-colors p-1 hover:bg-[#2D2E36] rounded"
+                className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded"
                 title="New Skill"
               >
                 <Plus size={14} />
@@ -284,8 +284,8 @@ export default function Skills() {
                 onClick={() => setFilter(f)}
                 className={`flex-1 py-1 rounded text-[11px] font-medium transition-colors ${
                   filter === f
-                    ? "bg-[#2D2E36] text-[#E0E1E6]"
-                    : "text-[#8A8C93] hover:text-[#E0E1E6]"
+                    ? "bg-[#2D2E36] text-[#F8F8FA]"
+                    : "text-[#C8CAD0] hover:text-[#F8F8FA]"
                 }`}
               >
                 {f === "all" ? `All ${skills.length}` : f === "remote" ? `Remote ${remoteCount}` : `Local ${localCount}`}
@@ -295,18 +295,18 @@ export default function Skills() {
 
           {/* Search */}
           <div className="relative">
-            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#8A8C93] pointer-events-none" />
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#C8CAD0] pointer-events-none" />
             <input
               type="text"
               placeholder="Search skills…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full pl-7 pr-7 py-1.5 rounded bg-[#2D2E36] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] outline-none text-[12px] text-[#E0E1E6] placeholder-[#8A8C93]/60 transition-colors"
+              className="w-full pl-7 pr-7 py-1.5 rounded bg-[#2D2E36] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] outline-none text-[12px] text-[#F8F8FA] placeholder-[#C8CAD0]/60 transition-colors"
             />
             {search && (
               <button
                 onClick={() => setSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
               >
                 <X size={11} />
               </button>
@@ -318,16 +318,16 @@ export default function Skills() {
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
           {filteredSkills.length === 0 && !isCreating ? (
             <div className="px-4 py-6 text-center">
-              <p className="text-[13px] text-[#8A8C93]">
+              <p className="text-[13px] text-[#C8CAD0]">
                 {searchLower ? `No skills match "${search}".` : "No skills found."}
               </p>
             </div>
           ) : (
             <ul className="space-y-px px-2">
               {isCreating && (
-                <li className="flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] bg-[#2D2E36] text-[#E0E1E6]">
+                <li className="flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] bg-[#2D2E36] text-[#F8F8FA]">
                   <Code size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
-                  <span className="italic text-[#8A8C93]">New Skill…</span>
+                  <span className="italic text-[#C8CAD0]">New Skill…</span>
                 </li>
               )}
               {filteredSkills.map(skill => {
@@ -345,7 +345,7 @@ export default function Skills() {
                     >
                       {/* Top row: name + action buttons */}
                       <div className="flex items-center gap-2">
-                        <span className={`flex-1 text-[13px] font-medium truncate min-w-0 ${isSelected ? "text-[#E0E1E6]" : "text-[#C0C1C6] group-hover:text-[#E0E1E6]"}`}>
+                        <span className={`flex-1 text-[13px] font-medium truncate min-w-0 ${isSelected ? "text-[#F8F8FA]" : "text-[#E5E6EA] group-hover:text-[#F8F8FA]"}`}>
                           {skill.name}
                         </span>
                         {/* Hover actions */}
@@ -354,7 +354,7 @@ export default function Skills() {
                             <span
                               role="button"
                               onClick={(e) => handleSyncSkill(skill.name, e)}
-                              className="p-0.5 text-[#8A8C93] hover:text-[#5E6AD2] rounded transition-colors"
+                              className="p-0.5 text-[#C8CAD0] hover:text-[#5E6AD2] rounded transition-colors"
                               title="Sync to both locations"
                             >
                               <RefreshCw size={11} className={syncingSkill === skill.name ? "animate-spin" : ""} />
@@ -363,7 +363,7 @@ export default function Skills() {
                           <span
                             role="button"
                             onClick={(e) => handleDelete(skill.name, e)}
-                            className="p-0.5 text-[#8A8C93] hover:text-[#FF6B6B] rounded transition-colors"
+                            className="p-0.5 text-[#C8CAD0] hover:text-[#FF6B6B] rounded transition-colors"
                             title="Delete"
                           >
                             <X size={11} />
@@ -379,12 +379,12 @@ export default function Skills() {
                             <span className="truncate max-w-[120px]">{skill.source!.source}</span>
                           </span>
                         ) : (
-                          <span className="flex items-center gap-1 text-[10px] text-[#8A8C93]">
+                          <span className="flex items-center gap-1 text-[10px] text-[#C8CAD0]">
                             <HardDrive size={9} />
                             <span>local</span>
                           </span>
                         )}
-                        <span className="text-[10px] text-[#8A8C93]/30">·</span>
+                        <span className="text-[10px] text-[#C8CAD0]/30">·</span>
                         {skill.in_agents && (
                           <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-[#5E6AD2]/20 text-[#8B93E6] leading-none" title="~/.agents/skills/">A</span>
                         )}
@@ -433,11 +433,11 @@ export default function Skills() {
                     value={newSkillName}
                     onChange={(e) => { setNewSkillName(e.target.value); setSelectedSkill(e.target.value); }}
                     autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#E0E1E6] placeholder-[#8A8C93]/50 w-64"
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#F8F8FA] placeholder-[#C8CAD0]/50 w-64"
                   />
                 ) : (
                   <>
-                    <h3 className="text-[14px] font-medium text-[#E0E1E6] truncate">{selectedSkill}</h3>
+                    <h3 className="text-[14px] font-medium text-[#F8F8FA] truncate">{selectedSkill}</h3>
                     {selectedEntry?.source && (
                       <>
                         <span className="text-[#33353A]">/</span>
@@ -445,7 +445,7 @@ export default function Skills() {
                           href={`https://github.com/${selectedEntry.source.source}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors truncate"
+                          className="flex items-center gap-1 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors truncate"
                           onClick={e => e.stopPropagation()}
                         >
                           <Github size={11} />
@@ -461,7 +461,7 @@ export default function Skills() {
                 {!isCreating && !isEditing && (
                   <button
                     onClick={() => setIsEditing(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#2D2E36] text-[#8A8C93] hover:text-[#E0E1E6] rounded text-[12px] font-medium transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium transition-colors"
                   >
                     <Edit2 size={12} /> Edit
                   </button>
@@ -471,7 +471,7 @@ export default function Skills() {
                     {!isCreating && (
                       <button
                         onClick={() => { setIsEditing(false); loadSkillContent(selectedSkill!); }}
-                        className="px-3 py-1.5 hover:bg-[#2D2E36] text-[#8A8C93] hover:text-[#E0E1E6] rounded text-[12px] font-medium transition-colors"
+                        className="px-3 py-1.5 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium transition-colors"
                       >
                         Cancel
                       </button>
@@ -494,7 +494,7 @@ export default function Skills() {
                 <textarea
                   value={skillContent}
                   onChange={(e) => setSkillContent(e.target.value)}
-                  className="w-full h-full p-6 resize-none outline-none font-mono text-[13px] bg-[#222327] text-[#E0E1E6] leading-relaxed custom-scrollbar placeholder-[#8A8C93]/30"
+                  className="w-full h-full p-6 resize-none outline-none font-mono text-[13px] bg-[#222327] text-[#F8F8FA] leading-relaxed custom-scrollbar placeholder-[#C8CAD0]/30"
                   placeholder="Write your skill instructions here in Markdown…"
                   spellCheck={false}
                 />
@@ -505,7 +505,7 @@ export default function Skills() {
                 </div>
               ) : (
                 <div className="h-full flex items-center justify-center">
-                  <span className="text-[13px] text-[#8A8C93] italic">This skill is empty. Click Edit to add instructions.</span>
+                  <span className="text-[13px] text-[#C8CAD0] italic">This skill is empty. Click Edit to add instructions.</span>
                 </div>
               )}
             </div>
@@ -515,8 +515,8 @@ export default function Skills() {
             <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#4ADE80]/10 border border-[#4ADE80]/20 flex items-center justify-center">
               <Code size={22} className={ICONS.skill.iconColor} strokeWidth={1.5} />
             </div>
-            <h2 className="text-[15px] font-medium text-[#E0E1E6] mb-2">No skill selected</h2>
-            <p className="text-[13px] text-[#8A8C93] leading-relaxed max-w-xs">
+            <h2 className="text-[15px] font-medium text-[#F8F8FA] mb-2">No skill selected</h2>
+            <p className="text-[13px] text-[#C8CAD0] leading-relaxed max-w-xs">
               Select a skill to view its contents, or create a new one.
             </p>
           </div>

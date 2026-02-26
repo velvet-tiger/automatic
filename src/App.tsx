@@ -57,14 +57,14 @@ function App() {
         onClick={() => handleTabClick(id)}
         className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
           isActive 
-            ? "bg-[#2D2E36] text-[#E0E1E6]" 
-            : "text-[#8A8C93] hover:bg-[#2D2E36] hover:text-[#E0E1E6]"
+            ? "bg-[#2D2E36] text-[#F8F8FA]" 
+            : "text-[#C8CAD0] hover:bg-[#2D2E36] hover:text-[#F8F8FA]"
         }`}
       >
-        <Icon size={14} className={isActive ? "text-[#E0E1E6]" : "text-[#8A8C93]"} />
+        <Icon size={14} className={isActive ? "text-[#F8F8FA]" : "text-[#C8CAD0]"} />
         <span className="flex-1 text-left">{label}</span>
         {count && (
-          <span className="text-[11px] bg-[#2D2E36] text-[#8A8C93] px-1.5 rounded-sm">
+          <span className="text-[11px] bg-[#2D2E36] text-[#C8CAD0] px-1.5 rounded-sm">
             {count}
           </span>
         )}
@@ -74,7 +74,7 @@ function App() {
 
   return (
     <ProfileProvider>
-    <div className="relative flex h-screen w-screen overflow-hidden bg-[#222327] text-[#e0e1e6] selection:bg-[#5E6AD2]/30">
+    <div className="relative flex h-screen w-screen overflow-hidden bg-[#222327] text-[#fafafa] selection:bg-[#5E6AD2]/30">
       {/* Sign-in overlay when not authenticated */}
       <SignedOut>
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#222327]/80 backdrop-blur-sm">
@@ -117,7 +117,7 @@ function App() {
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-3 custom-scrollbar">
           <div className="mb-6">
-            <div className="px-3 pb-1.5 text-[11px] font-semibold text-[#8A8C93] tracking-wider flex items-center justify-between group cursor-pointer hover:text-[#E0E1E6]">
+            <div className="px-3 pb-1.5 text-[11px] font-semibold text-[#C8CAD0] tracking-wider flex items-center justify-between group cursor-pointer hover:text-[#F8F8FA]">
               <span>Workspace</span>
               <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
@@ -128,7 +128,7 @@ function App() {
           </div>
 
           <div className="mb-6">
-            <div className="px-3 pb-1.5 text-[11px] font-semibold text-[#8A8C93] tracking-wider flex items-center justify-between group cursor-pointer hover:text-[#E0E1E6]">
+            <div className="px-3 pb-1.5 text-[11px] font-semibold text-[#C8CAD0] tracking-wider flex items-center justify-between group cursor-pointer hover:text-[#F8F8FA]">
               <span>Configuration</span>
               <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
@@ -144,7 +144,7 @@ function App() {
           </div>
 
           <div className="mb-6">
-            <div className="px-3 pb-1.5 text-[11px] font-semibold text-[#8A8C93] tracking-wider flex items-center justify-between group cursor-pointer hover:text-[#E0E1E6]">
+            <div className="px-3 pb-1.5 text-[11px] font-semibold text-[#C8CAD0] tracking-wider flex items-center justify-between group cursor-pointer hover:text-[#F8F8FA]">
               <span>Marketplace</span>
               <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
@@ -179,7 +179,7 @@ function App() {
       <main className="flex-1 flex flex-col min-w-0">
         {/* Top Header */}
         <header className="h-11 border-b border-[#33353A] flex items-center justify-between px-4 bg-[#222327]">
-          <span className="text-[13px] text-[#E0E1E6] capitalize">{activeTab.replace(/-/g, ' ')}</span>
+          <span className="text-[13px] text-[#F8F8FA] capitalize">{activeTab.replace(/-/g, ' ')}</span>
           {activeTab === "skills" && (
             <button
               onClick={() => setActiveTab("skill-store")}

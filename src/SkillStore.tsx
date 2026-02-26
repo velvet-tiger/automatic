@@ -106,13 +106,13 @@ function renderMarkdown(md: string): React.ReactElement {
         );
       } else if (token.startsWith("**") || token.startsWith("__")) {
         parts.push(
-          <strong key={nextKey()} className="font-semibold text-[#E0E1E6]">
+          <strong key={nextKey()} className="font-semibold text-[#F8F8FA]">
             {token.slice(2, -2)}
           </strong>
         );
       } else {
         parts.push(
-          <em key={nextKey()} className="italic text-[#C0C1C6]">
+          <em key={nextKey()} className="italic text-[#E5E6EA]">
             {token.slice(1, -1)}
           </em>
         );
@@ -138,10 +138,10 @@ function renderMarkdown(md: string): React.ReactElement {
       elements.push(
         <pre
           key={nextKey()}
-          className="mt-2 mb-4 bg-[#1A1A1E] border border-[#33353A] rounded-md px-4 py-3 font-mono text-[11px] text-[#C0C1C6] leading-relaxed overflow-x-auto whitespace-pre"
+          className="mt-2 mb-4 bg-[#1A1A1E] border border-[#33353A] rounded-md px-4 py-3 font-mono text-[11px] text-[#E5E6EA] leading-relaxed overflow-x-auto whitespace-pre"
         >
           {lang && (
-            <span className="block text-[10px] text-[#8A8C93] mb-2 uppercase tracking-wider">
+            <span className="block text-[10px] text-[#C8CAD0] mb-2 uppercase tracking-wider">
               {lang}
             </span>
           )}
@@ -155,7 +155,7 @@ function renderMarkdown(md: string): React.ReactElement {
     // H1
     if (line.startsWith("# ")) {
       elements.push(
-        <h1 key={nextKey()} className="text-[18px] font-semibold text-[#E0E1E6] mt-5 mb-2">
+        <h1 key={nextKey()} className="text-[18px] font-semibold text-[#F8F8FA] mt-5 mb-2">
           {inlineFormat(line.slice(2))}
         </h1>
       );
@@ -168,7 +168,7 @@ function renderMarkdown(md: string): React.ReactElement {
       elements.push(
         <h2
           key={nextKey()}
-          className="text-[14px] font-semibold text-[#E0E1E6] mt-5 mb-2 pb-1.5 border-b border-[#33353A]"
+          className="text-[14px] font-semibold text-[#F8F8FA] mt-5 mb-2 pb-1.5 border-b border-[#33353A]"
         >
           {inlineFormat(line.slice(3))}
         </h2>
@@ -180,7 +180,7 @@ function renderMarkdown(md: string): React.ReactElement {
     // H3
     if (line.startsWith("### ")) {
       elements.push(
-        <h3 key={nextKey()} className="text-[13px] font-semibold text-[#E0E1E6] mt-4 mb-1.5">
+        <h3 key={nextKey()} className="text-[13px] font-semibold text-[#F8F8FA] mt-4 mb-1.5">
           {inlineFormat(line.slice(4))}
         </h3>
       );
@@ -193,8 +193,8 @@ function renderMarkdown(md: string): React.ReactElement {
       const items: React.ReactElement[] = [];
       while (i < lines.length && /^[-*] /.test(lines[i]!)) {
         items.push(
-          <li key={nextKey()} className="flex gap-2 text-[13px] text-[#C0C1C6] leading-relaxed">
-            <span className="mt-1.5 w-1 h-1 rounded-full bg-[#8A8C93] flex-shrink-0" />
+          <li key={nextKey()} className="flex gap-2 text-[13px] text-[#E5E6EA] leading-relaxed">
+            <span className="mt-1.5 w-1 h-1 rounded-full bg-[#C8CAD0] flex-shrink-0" />
             <span>{inlineFormat(lines[i]!.replace(/^[-*] /, ""))}</span>
           </li>
         );
@@ -214,8 +214,8 @@ function renderMarkdown(md: string): React.ReactElement {
       let n = 1;
       while (i < lines.length && /^\d+\. /.test(lines[i]!)) {
         items.push(
-          <li key={nextKey()} className="flex gap-2.5 text-[13px] text-[#C0C1C6] leading-relaxed">
-            <span className="flex-shrink-0 text-[11px] text-[#8A8C93] font-mono w-4 text-right mt-0.5">
+          <li key={nextKey()} className="flex gap-2.5 text-[13px] text-[#E5E6EA] leading-relaxed">
+            <span className="flex-shrink-0 text-[11px] text-[#C8CAD0] font-mono w-4 text-right mt-0.5">
               {n}.
             </span>
             <span>{inlineFormat(lines[i]!.replace(/^\d+\. /, ""))}</span>
@@ -258,7 +258,7 @@ function renderMarkdown(md: string): React.ReactElement {
                 {headers.map((h, hi) => (
                   <th
                     key={hi}
-                    className="text-left px-3 py-2 text-[#E0E1E6] font-semibold border-b border-[#33353A] bg-[#1A1A1E] whitespace-nowrap"
+                    className="text-left px-3 py-2 text-[#F8F8FA] font-semibold border-b border-[#33353A] bg-[#1A1A1E] whitespace-nowrap"
                   >
                     {inlineFormat(h)}
                   </th>
@@ -271,7 +271,7 @@ function renderMarkdown(md: string): React.ReactElement {
                   {cells.map((cell, ci) => (
                     <td
                       key={ci}
-                      className="px-3 py-2 text-[#C0C1C6] border-b border-[#33353A]/40 align-top"
+                      className="px-3 py-2 text-[#E5E6EA] border-b border-[#33353A]/40 align-top"
                     >
                       {inlineFormat(cell)}
                     </td>
@@ -300,7 +300,7 @@ function renderMarkdown(md: string): React.ReactElement {
 
     // Paragraph
     elements.push(
-      <p key={nextKey()} className="text-[13px] text-[#C0C1C6] leading-relaxed my-2">
+      <p key={nextKey()} className="text-[13px] text-[#E5E6EA] leading-relaxed my-2">
         {inlineFormat(line)}
       </p>
     );
@@ -504,8 +504,8 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
               <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#5E6AD2]/10 border border-[#5E6AD2]/20 flex items-center justify-center">
                 <Download size={22} className="text-[#5E6AD2]" strokeWidth={1.5} />
               </div>
-              <h2 className="text-[18px] font-semibold text-[#E0E1E6] mb-2">Skill Store</h2>
-              <p className="text-[13px] text-[#8A8C93] leading-relaxed max-w-sm mx-auto">
+              <h2 className="text-[18px] font-semibold text-[#F8F8FA] mb-2">Skill Store</h2>
+              <p className="text-[13px] text-[#C8CAD0] leading-relaxed max-w-sm mx-auto">
                 Browse and install agent skills from{" "}
                 <a
                   href="https://skills.sh"
@@ -521,7 +521,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
 
             {/* Big search box */}
             <div className="relative mb-4">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8A8C93] pointer-events-none" />
+              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#C8CAD0] pointer-events-none" />
               <input
                 ref={searchInputRef}
                 type="text"
@@ -529,7 +529,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search for skills…"
                 autoFocus
-                className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-xl pl-11 pr-4 py-3.5 text-[14px] text-[#E0E1E6] placeholder-[#8A8C93]/60 outline-none transition-colors shadow-sm"
+                className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-xl pl-11 pr-4 py-3.5 text-[14px] text-[#F8F8FA] placeholder-[#C8CAD0]/60 outline-none transition-colors shadow-sm"
               />
             </div>
 
@@ -539,7 +539,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 <button
                   key={s}
                   onClick={() => setQuery(s)}
-                  className="px-3 py-1.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[12px] text-[#8A8C93] hover:text-[#E0E1E6] hover:border-[#44474F] transition-colors"
+                  className="px-3 py-1.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] hover:border-[#44474F] transition-colors"
                 >
                   {s}
                 </button>
@@ -548,7 +548,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
 
             {/* Featured skills */}
             <div>
-              <h3 className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase mb-3">
+              <h3 className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-3">
                 Featured
               </h3>
               <div className="grid grid-cols-2 gap-3">
@@ -561,22 +561,22 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       className="group text-left p-4 rounded-xl bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] hover:bg-[#1E1F24] transition-colors"
                     >
                       <div className="flex items-start justify-between gap-2 mb-2">
-                        <span className="text-[13px] font-medium text-[#E0E1E6] leading-snug">
+                        <span className="text-[13px] font-medium text-[#F8F8FA] leading-snug">
                           {skill.displayName}
                         </span>
                         <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
                           {alreadyImported && (
                             <CheckCircle2 size={12} className="text-[#4ADE80]" />
                           )}
-                          <ArrowRight size={12} className="text-[#33353A] group-hover:text-[#8A8C93] transition-colors" />
+                          <ArrowRight size={12} className="text-[#33353A] group-hover:text-[#C8CAD0] transition-colors" />
                         </div>
                       </div>
-                      <p className="text-[12px] text-[#8A8C93] leading-relaxed mb-3 line-clamp-2">
+                      <p className="text-[12px] text-[#C8CAD0] leading-relaxed mb-3 line-clamp-2">
                         {skill.description}
                       </p>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-[#8A8C93]/60 truncate">{skill.source}</span>
-                        <span className="text-[10px] text-[#8A8C93]/30">·</span>
+                        <span className="text-[10px] text-[#C8CAD0]/60 truncate">{skill.source}</span>
+                        <span className="text-[10px] text-[#C8CAD0]/30">·</span>
                         <span className="text-[10px] text-[#5E6AD2] flex-shrink-0">
                           {formatInstalls(skill.installs)}
                         </span>
@@ -601,20 +601,20 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
           <div className="relative">
             <Search
               size={13}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#8A8C93] pointer-events-none"
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#C8CAD0] pointer-events-none"
             />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search skills.sh…"
-              className="w-full bg-[#2D2E36] border border-[#33353A] rounded-md pl-8 pr-8 py-1.5 text-[13px] text-[#E0E1E6] placeholder-[#8A8C93] focus:outline-none focus:border-[#5E6AD2] transition-colors"
+              className="w-full bg-[#2D2E36] border border-[#33353A] rounded-md pl-8 pr-8 py-1.5 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0] focus:outline-none focus:border-[#5E6AD2] transition-colors"
               autoFocus
             />
             {searching && (
               <Loader2
                 size={13}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8A8C93] animate-spin"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#C8CAD0] animate-spin"
               />
             )}
           </div>
@@ -627,14 +627,14 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
             <div className="px-3 pt-3 pb-1">
               <button
                 onClick={() => { setSelected(null); setRawContent(""); setPreviewError(null); }}
-                className="flex items-center gap-1.5 text-[11px] text-[#8A8C93] hover:text-[#E0E1E6] transition-colors"
+                className="flex items-center gap-1.5 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
               >
                 ← Browse all skills
               </button>
             </div>
           )}
           {results.length === 0 && !searching && query.trim().length >= 2 && !searchError && (
-            <div className="p-4 text-center text-[13px] text-[#8A8C93]">No skills found</div>
+            <div className="p-4 text-center text-[13px] text-[#C8CAD0]">No skills found</div>
           )}
           {results.map((skill) => {
             const isActive = selected?.id === skill.id;
@@ -648,7 +648,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <span className="text-[13px] font-medium text-[#E0E1E6] leading-snug break-all">
+                  <span className="text-[13px] font-medium text-[#F8F8FA] leading-snug break-all">
                     {skill.name}
                   </span>
                   {alreadyImported && (
@@ -656,8 +656,8 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                   )}
                 </div>
                 <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="text-[11px] text-[#8A8C93] truncate">{skill.source}</span>
-                  <span className="text-[10px] text-[#8A8C93]/40">·</span>
+                  <span className="text-[11px] text-[#C8CAD0] truncate">{skill.source}</span>
+                  <span className="text-[10px] text-[#C8CAD0]/40">·</span>
                   <span className="text-[11px] text-[#5E6AD2] flex-shrink-0">
                     {formatInstalls(skill.installs)}
                   </span>
@@ -674,12 +674,12 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <div className="w-12 h-12 rounded-full border-2 border-dashed border-[#33353A] flex items-center justify-center mx-auto mb-4">
-                <Download size={18} className="text-[#8A8C93]" />
+                <Download size={18} className="text-[#C8CAD0]" />
               </div>
-              <h3 className="text-[14px] font-medium text-[#E0E1E6] mb-1">
+              <h3 className="text-[14px] font-medium text-[#F8F8FA] mb-1">
                 Select a skill to preview
               </h3>
-              <p className="text-[13px] text-[#8A8C93]">
+              <p className="text-[13px] text-[#C8CAD0]">
                 Search above and click a result
               </p>
             </div>
@@ -687,7 +687,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
         ) : (
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             {loadingPreview ? (
-              <div className="flex items-center gap-2 p-6 text-[13px] text-[#8A8C93]">
+              <div className="flex items-center gap-2 p-6 text-[13px] text-[#C8CAD0]">
                 <Loader2 size={14} className="animate-spin" />
                 Loading SKILL.md…
               </div>
@@ -698,10 +698,10 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 {/* Main content column */}
                 <div className="flex-1 min-w-0 px-8 py-6">
                   {/* Breadcrumb */}
-                  <div className="flex items-center gap-1.5 text-[11px] text-[#8A8C93] mb-4">
+                  <div className="flex items-center gap-1.5 text-[11px] text-[#C8CAD0] mb-4">
                     <button
                       onClick={() => { setSelected(null); setRawContent(""); setPreviewError(null); }}
-                      className="flex items-center gap-1 hover:text-[#E0E1E6] transition-colors"
+                      className="flex items-center gap-1 hover:text-[#F8F8FA] transition-colors"
                     >
                       <ArrowLeft size={11} />
                       Back
@@ -711,7 +711,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       href="https://skills.sh"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="hover:text-[#E0E1E6] transition-colors"
+                      className="hover:text-[#F8F8FA] transition-colors"
                     >
                       skills
                     </a>
@@ -720,28 +720,28 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       href={`https://github.com/${selected.source}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="hover:text-[#E0E1E6] transition-colors"
+                      className="hover:text-[#F8F8FA] transition-colors"
                     >
                       {selected.source}
                     </a>
                     <span>/</span>
-                    <span className="text-[#E0E1E6]">{selected.name}</span>
+                    <span className="text-[#F8F8FA]">{selected.name}</span>
                   </div>
 
                   {/* Title + install command */}
-                  <h1 className="text-[22px] font-semibold text-[#E0E1E6] mb-3 leading-tight">
+                  <h1 className="text-[22px] font-semibold text-[#F8F8FA] mb-3 leading-tight">
                     {displayName}
                   </h1>
 
                   <div className="flex items-center gap-2 mb-5">
-                    <code className="flex-1 bg-[#1A1A1E] border border-[#33353A] rounded-md px-3 py-2 font-mono text-[11px] text-[#8A8C93] truncate">
+                    <code className="flex-1 bg-[#1A1A1E] border border-[#33353A] rounded-md px-3 py-2 font-mono text-[11px] text-[#C8CAD0] truncate">
                       $ npx skills add {selected.source} --skill {selected.name}
                     </code>
                     {isImported ? (
                       <button
                         onClick={updateSkill}
                         disabled={updating || !rawContent}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-[#2D2E36] border border-[#33353A] hover:border-[#5E6AD2] text-[#E0E1E6] disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-[#2D2E36] border border-[#33353A] hover:border-[#5E6AD2] text-[#F8F8FA] disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {updating ? (
                           <>
@@ -778,7 +778,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
 
                   {/* Description from frontmatter */}
                   {description && (
-                    <p className="text-[13px] text-[#8A8C93] leading-relaxed mb-6 pb-6 border-b border-[#33353A]">
+                    <p className="text-[13px] text-[#C8CAD0] leading-relaxed mb-6 pb-6 border-b border-[#33353A]">
                       {description}
                     </p>
                   )}
@@ -791,17 +791,17 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 <div className="w-[180px] flex-shrink-0 border-l border-[#33353A] px-5 py-6 space-y-6">
                   {/* Installs */}
                   <div>
-                    <div className="text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider mb-1">
+                    <div className="text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-1">
                       Weekly Installs
                     </div>
-                    <div className="text-[20px] font-semibold text-[#E0E1E6]">
+                    <div className="text-[20px] font-semibold text-[#F8F8FA]">
                       {formatInstalls(selected.installs)}
                     </div>
                   </div>
 
                   {/* Repository */}
                   <div>
-                    <div className="text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider mb-1.5">
+                    <div className="text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-1.5">
                       Repository
                     </div>
                     <a
@@ -817,7 +817,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
 
                   {/* skills.sh page */}
                   <div>
-                    <div className="text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider mb-1.5">
+                    <div className="text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-1.5">
                       skills.sh
                     </div>
                     <a
@@ -834,11 +834,11 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                   {/* Skill name from frontmatter if different */}
                   {meta.name && meta.name !== selected.name && (
                     <div>
-                      <div className="text-[10px] font-semibold text-[#8A8C93] uppercase tracking-wider mb-1">
+                      <div className="text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-1">
                         Skill ID
                       </div>
-                      <div className="flex items-center gap-1.5 text-[12px] text-[#C0C1C6]">
-                        <Package size={12} className="flex-shrink-0 text-[#8A8C93]" />
+                      <div className="flex items-center gap-1.5 text-[12px] text-[#E5E6EA]">
+                        <Package size={12} className="flex-shrink-0 text-[#C8CAD0]" />
                         <span className="truncate">{selected.name}</span>
                       </div>
                     </div>

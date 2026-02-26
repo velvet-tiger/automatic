@@ -39,7 +39,7 @@ export default function Settings() {
         
         <div className="mb-8">
           <h3 className="text-sm font-medium mb-2 text-white">Skill Sync Mode</h3>
-          <p className="text-[13px] text-[#8A8C93] mb-4 leading-relaxed">
+          <p className="text-[13px] text-[#C8CAD0] mb-4 leading-relaxed">
             Choose how skills are applied to your project agent directories. 
             Symlinking ensures updates to skills are immediately reflected without needing a re-sync, 
             while copying physically duplicates the file.
@@ -57,7 +57,7 @@ export default function Settings() {
               />
               <div>
                 <div className="text-[13px] font-medium text-[#E0E2E8] group-hover:text-white transition-colors">Symlink (Recommended)</div>
-                <div className="text-[12px] text-[#8A8C93]">Creates a reference to the global skill file. Updates apply instantly.</div>
+                <div className="text-[12px] text-[#C8CAD0]">Creates a reference to the global skill file. Updates apply instantly.</div>
               </div>
             </label>
             
@@ -72,7 +72,7 @@ export default function Settings() {
               />
               <div>
                 <div className="text-[13px] font-medium text-[#E0E2E8] group-hover:text-white transition-colors">Copy</div>
-                <div className="text-[12px] text-[#8A8C93]">Creates an independent physical copy of the skill file in the project.</div>
+                <div className="text-[12px] text-[#C8CAD0]">Creates an independent physical copy of the skill file in the project.</div>
               </div>
             </label>
           </div>

@@ -86,10 +86,10 @@ export default function Templates() {
       {/* Left Sidebar - Template List */}
       <div className="w-64 flex-shrink-0 flex flex-col border-r border-[#33353A] bg-[#1A1A1E]/50">
         <div className="h-11 px-4 border-b border-[#33353A] flex justify-between items-center bg-[#222327]/30">
-          <span className="text-[11px] font-semibold text-[#8A8C93] tracking-wider uppercase">Templates</span>
+          <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">Templates</span>
           <button
             onClick={startCreateNew}
-            className="text-[#8A8C93] hover:text-[#E0E1E6] transition-colors p-1 hover:bg-[#2D2E36] rounded"
+            className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded"
             title="Create New Template"
           >
             <Plus size={14} />
@@ -98,7 +98,7 @@ export default function Templates() {
 
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
           {templates.length === 0 && !isCreating ? (
-            <div className="px-4 py-3 text-[13px] text-[#8A8C93] text-center">No templates yet.</div>
+            <div className="px-4 py-3 text-[13px] text-[#C8CAD0] text-center">No templates yet.</div>
           ) : (
             <ul className="space-y-1 px-2">
               {isCreating && (
@@ -106,7 +106,7 @@ export default function Templates() {
                   <div className={ICONS.fileTemplate.iconBox}>
                     <LayoutTemplate size={15} className={ICONS.fileTemplate.iconColor} />
                   </div>
-                  <span className="text-[13px] text-[#E0E1E6] italic">New Template...</span>
+                  <span className="text-[13px] text-[#F8F8FA] italic">New Template...</span>
                 </li>
               )}
               {templates.map(name => {
@@ -117,20 +117,20 @@ export default function Templates() {
                       onClick={() => loadTemplateContent(name)}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
                         isActive
-                          ? "bg-[#2D2E36] text-[#E0E1E6]"
-                          : "text-[#8A8C93] hover:bg-[#2D2E36]/60 hover:text-[#E0E1E6]"
+                          ? "bg-[#2D2E36] text-[#F8F8FA]"
+                          : "text-[#C8CAD0] hover:bg-[#2D2E36]/60 hover:text-[#F8F8FA]"
                       }`}
                     >
                       <div className={ICONS.fileTemplate.iconBox}>
                         <LayoutTemplate size={15} className={ICONS.fileTemplate.iconColor} />
                       </div>
-                      <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-[#E0E1E6]" : "text-[#C8CAD0]"}`}>
+                      <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-[#F8F8FA]" : "text-[#E8E9ED]"}`}>
                         {name}
                       </span>
                     </button>
                     <button
                       onClick={(e) => handleDelete(name, e)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#8A8C93] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#C8CAD0] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
                       title="Delete Template"
                     >
                       <X size={12} />
@@ -165,10 +165,10 @@ export default function Templates() {
                     value={newTemplateName}
                     onChange={(e) => setNewTemplateName(e.target.value)}
                     autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#E0E1E6] placeholder-[#8A8C93]/50 w-64"
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#F8F8FA] placeholder-[#C8CAD0]/50 w-64"
                   />
                 ) : (
-                  <h3 className="text-[14px] font-medium text-[#E0E1E6]">{selectedTemplate}</h3>
+                  <h3 className="text-[14px] font-medium text-[#F8F8FA]">{selectedTemplate}</h3>
                 )}
               </div>
 
@@ -176,7 +176,7 @@ export default function Templates() {
                 {!isEditing ? (
                   <button
                     onClick={() => setIsEditing(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#2D2E36] text-[#8A8C93] hover:text-[#E0E1E6] rounded text-[12px] font-medium transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium transition-colors"
                   >
                     <Edit2 size={12} /> Edit
                   </button>
@@ -188,7 +188,7 @@ export default function Templates() {
                           setIsEditing(false);
                           loadTemplateContent(selectedTemplate!);
                         }}
-                        className="px-3 py-1.5 hover:bg-[#2D2E36] text-[#8A8C93] hover:text-[#E0E1E6] rounded text-[12px] font-medium transition-colors"
+                        className="px-3 py-1.5 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium transition-colors"
                       >
                         Cancel
                       </button>
@@ -211,13 +211,13 @@ export default function Templates() {
                 <textarea
                   value={templateContent}
                   onChange={(e) => setTemplateContent(e.target.value)}
-                  className="absolute inset-0 w-full h-full p-6 resize-none outline-none font-mono text-[13px] bg-[#222327] text-[#E0E1E6] leading-relaxed custom-scrollbar placeholder-[#8A8C93]/30"
+                  className="absolute inset-0 w-full h-full p-6 resize-none outline-none font-mono text-[13px] bg-[#222327] text-[#F8F8FA] leading-relaxed custom-scrollbar placeholder-[#C8CAD0]/30"
                   placeholder="Write your project file template here in Markdown..."
                   spellCheck={false}
                 />
               ) : (
-                <div className="absolute inset-0 overflow-y-auto p-6 font-mono text-[13px] whitespace-pre-wrap text-[#E0E1E6] leading-relaxed custom-scrollbar">
-                  {templateContent || <span className="text-[#8A8C93] italic">This template is empty. Click edit to add content.</span>}
+                <div className="absolute inset-0 overflow-y-auto p-6 font-mono text-[13px] whitespace-pre-wrap text-[#F8F8FA] leading-relaxed custom-scrollbar">
+                  {templateContent || <span className="text-[#C8CAD0] italic">This template is empty. Click edit to add content.</span>}
                 </div>
               )}
             </div>
@@ -227,8 +227,8 @@ export default function Templates() {
             <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-[#8B5CF6]/10 border border-[#8B5CF6]/20 flex items-center justify-center">
               <LayoutTemplate size={24} className={ICONS.fileTemplate.iconColor} strokeWidth={1.5} />
             </div>
-            <h2 className="text-lg font-medium text-[#E0E1E6] mb-2">No Template Selected</h2>
-            <p className="text-[14px] text-[#8A8C93] mb-8 leading-relaxed max-w-sm">
+            <h2 className="text-lg font-medium text-[#F8F8FA] mb-2">No Template Selected</h2>
+            <p className="text-[14px] text-[#C8CAD0] mb-8 leading-relaxed max-w-sm">
               Templates are reusable starting points for project files like CLAUDE.md or AGENTS.md. Create one to quickly initialize new projects.
             </p>
             <button
