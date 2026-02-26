@@ -10,6 +10,7 @@ import {
   ArrowRight,
   CheckCircle2,
   Layers,
+  Sparkles,
 } from "lucide-react";
 
 interface Project {
@@ -181,35 +182,105 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </div>
         </div>
 
-        {/* Projects List */}
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-medium text-[#F8F8FA]">Recent Projects</h2>
-            <button 
-              onClick={() => onNavigate("projects")}
-              className="text-sm text-[#3B82F6] hover:text-[#60A5FA] flex items-center gap-1 transition-colors"
-            >
-              View all <ArrowRight size={14} />
-            </button>
-          </div>
-
-          {projects.length === 0 ? (
-            <div className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-16 flex flex-col items-center justify-center text-center">
-              <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-[#3B82F6]/10 border border-[#3B82F6]/20 flex items-center justify-center text-[#C8CAD0]">
-                <FolderOpen size={24} className="text-[#3B82F6]" strokeWidth={1.5} />
-              </div>
-              <h2 className="text-lg font-medium text-[#F8F8FA] mb-2">No projects yet</h2>
-              <p className="text-[14px] text-[#C8CAD0] mb-8 leading-relaxed max-w-sm mx-auto">
-                Create your first project to start managing agent configurations.
-              </p>
-              <button 
+        {/* Getting Started — shown only when there are no projects */}
+        {projects.length === 0 && (
+          <div>
+            <div className="flex items-center gap-2.5 mb-4">
+              <Sparkles size={16} className="text-[#5E6AD2]" />
+              <h2 className="text-lg font-medium text-[#F8F8FA]">Getting started</h2>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {/* Step 1 */}
+              <button
                 onClick={() => onNavigate("projects")}
-                className="px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors mx-auto"
+                className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 text-left hover:border-[#3B82F6]/50 transition-all group flex flex-col gap-3"
               >
-                Go to Projects
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full bg-[#3B82F6]/10 border border-[#3B82F6]/20 flex items-center justify-center shrink-0">
+                    <span className="text-[11px] font-semibold text-[#3B82F6]">1</span>
+                  </div>
+                  <h3 className="font-medium text-[#F8F8FA] group-hover:text-[#3B82F6] transition-colors">Create a project</h3>
+                </div>
+                <p className="text-[13px] text-[#C8CAD0] leading-relaxed pl-10">
+                  Link a directory to an agent configuration so your tools are always in sync.
+                </p>
+                <div className="flex items-center gap-1 text-[12px] font-medium text-[#3B82F6] pl-10 group-hover:gap-2 transition-all">
+                  Go to Projects <ArrowRight size={13} />
+                </div>
+              </button>
+
+              {/* Step 2 */}
+              <button
+                onClick={() => onNavigate("project-templates")}
+                className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 text-left hover:border-[#818CF8]/50 transition-all group flex flex-col gap-3"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full bg-[#818CF8]/10 border border-[#818CF8]/20 flex items-center justify-center shrink-0">
+                    <span className="text-[11px] font-semibold text-[#818CF8]">2</span>
+                  </div>
+                  <h3 className="font-medium text-[#F8F8FA] group-hover:text-[#818CF8] transition-colors">Browse project templates</h3>
+                </div>
+                <p className="text-[13px] text-[#C8CAD0] leading-relaxed pl-10">
+                  Start from a pre-built project template to hit the ground running with a proven setup.
+                </p>
+                <div className="flex items-center gap-1 text-[12px] font-medium text-[#818CF8] pl-10 group-hover:gap-2 transition-all">
+                  Browse Templates <ArrowRight size={13} />
+                </div>
+              </button>
+
+              {/* Step 3 */}
+              <button
+                onClick={() => onNavigate("skill-store")}
+                className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 text-left hover:border-[#4ADE80]/50 transition-all group flex flex-col gap-3"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full bg-[#4ADE80]/10 border border-[#4ADE80]/20 flex items-center justify-center shrink-0">
+                    <span className="text-[11px] font-semibold text-[#4ADE80]">3</span>
+                  </div>
+                  <h3 className="font-medium text-[#F8F8FA] group-hover:text-[#4ADE80] transition-colors">Install skills</h3>
+                </div>
+                <p className="text-[13px] text-[#C8CAD0] leading-relaxed pl-10">
+                  Browse the community skill store and load specialised capabilities into your agents.
+                </p>
+                <div className="flex items-center gap-1 text-[12px] font-medium text-[#4ADE80] pl-10 group-hover:gap-2 transition-all">
+                  Browse Skills <ArrowRight size={13} />
+                </div>
+              </button>
+
+              {/* Step 4 */}
+              <button
+                onClick={() => onNavigate("mcp-marketplace")}
+                className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 text-left hover:border-[#F59E0B]/50 transition-all group flex flex-col gap-3"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full bg-[#F59E0B]/10 border border-[#F59E0B]/20 flex items-center justify-center shrink-0">
+                    <span className="text-[11px] font-semibold text-[#F59E0B]">4</span>
+                  </div>
+                  <h3 className="font-medium text-[#F8F8FA] group-hover:text-[#F59E0B] transition-colors">Connect MCP servers</h3>
+                </div>
+                <p className="text-[13px] text-[#C8CAD0] leading-relaxed pl-10">
+                  Extend your agents with powerful integrations from the MCP server marketplace.
+                </p>
+                <div className="flex items-center gap-1 text-[12px] font-medium text-[#F59E0B] pl-10 group-hover:gap-2 transition-all">
+                  Browse Servers <ArrowRight size={13} />
+                </div>
               </button>
             </div>
-          ) : (
+          </div>
+        )}
+
+        {/* Recent Projects — shown only when projects exist */}
+        {projects.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-medium text-[#F8F8FA]">Recent Projects</h2>
+              <button 
+                onClick={() => onNavigate("projects")}
+                className="text-sm text-[#3B82F6] hover:text-[#60A5FA] flex items-center gap-1 transition-colors"
+              >
+                View all <ArrowRight size={14} />
+              </button>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               {projects.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()).slice(0, 6).map(project => {
                 const drift = driftMap[project.name];
@@ -285,8 +356,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                 );
               })}
             </div>
-           )}
-         </div>
+          </div>
+        )}
 
         {/* Marketplace Section */}
         <div>
