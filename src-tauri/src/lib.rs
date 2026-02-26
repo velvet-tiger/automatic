@@ -151,26 +151,6 @@ fn get_project_templates() -> Result<Vec<String>, String> {
     core::list_project_templates()
 }
 
-// ── MCP Marketplace (bundled) ─────────────────────────────────────────────────
-
-#[tauri::command]
-fn list_mcp_marketplace() -> Result<String, String> {
-    core::list_mcp_marketplace()
-}
-
-#[tauri::command]
-fn search_mcp_marketplace(query: &str) -> Result<String, String> {
-    core::search_mcp_marketplace(query)
-}
-
-#[tauri::command]
-fn install_mcp_marketplace_entry(
-    name: &str,
-    env_values: std::collections::HashMap<String, String>,
-) -> Result<(), String> {
-    core::install_mcp_marketplace_entry(name, &env_values)
-}
-
 // ── Template Marketplace (bundled) ────────────────────────────────────────────
 
 #[tauri::command]
@@ -885,9 +865,7 @@ pub fn run() {
             save_mcp_server_config,
             delete_mcp_server_config,
             import_mcp_servers,
-            list_mcp_marketplace,
-            search_mcp_marketplace,
-            install_mcp_marketplace_entry,
+
             get_projects,
             read_project,
             autodetect_project_dependencies,
