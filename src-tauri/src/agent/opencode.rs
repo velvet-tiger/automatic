@@ -112,7 +112,7 @@ impl Agent for OpenCode {
             oc_servers.insert(name.clone(), Value::Object(server));
         }
 
-        let output = json!({ "mcp": Value::Object(oc_servers) });
+        let output = json!({ "$schema": "https://opencode.ai/config.json", "mcp": Value::Object(oc_servers) });
         let path = dir.join("opencode.json");
         let content =
             serde_json::to_string_pretty(&output).map_err(|e| format!("JSON error: {}", e))?;
@@ -242,6 +242,10 @@ mod tests {
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
         assert_eq!(
+            parsed["$schema"].as_str().unwrap(),
+            "https://opencode.ai/config.json"
+        );
+        assert_eq!(
             parsed["mcp"]["automatic"]["type"].as_str().unwrap(),
             "local"
         );
@@ -263,6 +267,10 @@ mod tests {
         let content = fs::read_to_string(dir.path().join("opencode.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
+        assert_eq!(
+            parsed["$schema"].as_str().unwrap(),
+            "https://opencode.ai/config.json"
+        );
         assert_eq!(
             parsed["mcp"]["remote-api"]["type"].as_str().unwrap(),
             "remote"
