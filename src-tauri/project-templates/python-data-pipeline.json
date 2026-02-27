@@ -5,7 +5,7 @@
   "description": "A structured Python project for building ETL and data transformation pipelines. Includes Pydantic data models, async processing with asyncio, DuckDB for local analytics, pytest with fixtures, and pre-commit hooks for code quality.",
   "category": "Data & Analytics",
   "tags": ["python", "etl", "data", "pydantic", "duckdb", "async", "pytest"],
-  "skills": [],
+  "skills": ["python-pro"],
   "mcp_servers": [],
   "providers": [],
   "agents": [],

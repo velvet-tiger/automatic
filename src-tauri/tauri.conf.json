@@ -26,7 +26,7 @@
       "endpoints": [
         "https://github.com/velvet-tiger/automatic/releases/latest/download/latest.json"
       ],
-      "pubkey": "TODO: run `cargo tauri signer generate -w ~/.tauri/automatic.key` and paste the public key here"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM3RTI0M0EzREFFRjQwNEIKUldSTFFPL2FvMFBpTjJzaUdydUQrTHFzcW9vdnB4MDkwZ2txSEl1dnlnQ29XSDZ4OUl4RVZZdEYK"
     }
   },
   "bundle": {
