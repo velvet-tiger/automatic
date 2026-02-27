@@ -45,7 +45,7 @@ interface SkillResources {
 
 const SIDEBAR_MIN = 240;
 const SIDEBAR_MAX = 480;
-const SIDEBAR_DEFAULT = 300;
+const SIDEBAR_DEFAULT = 340;
 
 // ── Frontmatter parser (same as SkillStore) ──────────────────────────────────
 
@@ -555,8 +555,10 @@ export default function Skills() {
           ) : (
             <ul className="space-y-px px-2">
               {isCreating && (
-                <li className="flex items-center gap-2.5 px-3 py-2.5 rounded-md text-[13px] bg-[#2D2E36] text-[#F8F8FA]">
-                  <Plus size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
+                <li className="flex items-center gap-3 px-3 py-2.5 rounded-md text-[13px] bg-[#2D2E36] text-[#F8F8FA]">
+                  <div className={ICONS.skill.iconBox}>
+                    <Code size={15} className={ICONS.skill.iconColor} />
+                  </div>
                   <span className={newSkillName ? "text-[#F8F8FA] font-medium" : "italic text-[#C8CAD0]"}>
                     {newSkillName || "New Skill…"}
                   </span>
@@ -571,10 +573,14 @@ export default function Skills() {
                   <li key={skill.name} className="group">
                     <button
                       onClick={() => loadSkillContent(skill.name)}
-                      className={`w-full text-left px-3 py-2.5 rounded-md transition-colors ${
+                      className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors ${
                         isSelected ? "bg-[#2D2E36]" : "hover:bg-[#2D2E36]/50"
                       }`}
                     >
+                      <div className={ICONS.skill.iconBox}>
+                        <Code size={15} className={ICONS.skill.iconColor} />
+                      </div>
+                      <div className="flex-1 min-w-0">
                       {/* Top row: name + action buttons */}
                       <div className="flex items-center gap-2">
                         <span className={`flex-1 text-[13px] font-medium truncate min-w-0 ${isSelected ? "text-[#F8F8FA]" : "text-[#E5E6EA] group-hover:text-[#F8F8FA]"}`}>
@@ -633,6 +639,7 @@ export default function Skills() {
                             </svg>
                           </span>
                         )}
+                      </div>
                       </div>
                     </button>
                   </li>

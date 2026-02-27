@@ -873,8 +873,8 @@ export default function ProjectTemplates() {
                               }}
                               className={`px-2.5 py-1 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
                                 isSelected
-                                  ? "bg-[#22D3EE]/15 border-[#22D3EE]/40 text-[#22D3EE]"
-                                  : "bg-[#2D2E36] border-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] hover:border-[#44474F]"
+                                ? "bg-[#22D3EE]/8 border-[#22D3EE]/25 text-[#22D3EE]/75"
+                                : "bg-[#2D2E36] border-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] hover:border-[#44474F]"
                               }`}
                             >
                               <ScrollText size={10} />
