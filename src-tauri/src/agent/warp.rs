@@ -54,6 +54,16 @@ impl Agent for Warp {
         )
     }
 
+    // ── Cleanup ─────────────────────────────────────────────────────────
+
+    /// `WARP.md` is the Automatic-managed project rules file for Warp.
+    /// Returning it here ensures it is deleted when Warp is removed from a
+    /// project, which also prevents `detect_in` from re-adding Warp on the
+    /// next autodetect pass.
+    fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join("WARP.md")]
+    }
+
     // ── Config writing ──────────────────────────────────────────────────
 
     /// Warp does not expose a writable project-level MCP config file.
@@ -142,6 +152,27 @@ mod tests {
     #[test]
     fn test_mcp_note_is_some() {
         assert!(Warp.mcp_note().is_some());
+    }
+
+    #[test]
+    fn test_owned_config_paths_includes_warp_md() {
+        let dir = tempdir().unwrap();
+        let paths = Warp.owned_config_paths(dir.path());
+        assert_eq!(paths, vec![dir.path().join("WARP.md")]);
+    }
+
+    #[test]
+    fn test_cleanup_removes_warp_md() {
+        let dir = tempdir().unwrap();
+        let warp_md = dir.path().join("WARP.md");
+        fs::write(&warp_md, "# Warp context\n").unwrap();
+        assert!(warp_md.exists());
+
+        // cleanup_mcp_config uses the default impl which deletes owned_config_paths
+        use super::super::Agent as _;
+        let removed = Warp.cleanup_mcp_config(dir.path());
+        assert_eq!(removed, vec![warp_md.display().to_string()]);
+        assert!(!warp_md.exists(), "WARP.md should have been deleted");
     }
 
     #[test]
