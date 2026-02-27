@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ProfileProvider } from "./ProfileContext";
 import { useCurrentUser } from "./ProfileContext";
-import { initAnalytics, trackNavigation } from "./analytics";
+import { initAnalytics, setAnalyticsEnabled, trackNavigation } from "./analytics";
 import Dashboard from "./Dashboard";
 import Skills from "./Skills";
 import SkillStore from "./SkillStore";
@@ -16,7 +16,8 @@ import Settings from "./Settings";
 import TemplateMarketplace from "./TemplateMarketplace";
 import McpMarketplace from "./McpMarketplace";
 import TechMeshBackground from "./TechMeshBackground";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText } from "lucide-react";
+import FirstRunWizard from "./FirstRunWizard";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles } from "lucide-react";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
 
@@ -60,6 +61,29 @@ function App() {
   const [skillStoreResetKey, setSkillStoreResetKey] = useState(0);
   const [templateMarketplaceResetKey, setTemplateMarketplaceResetKey] = useState(0);
   const [mcpMarketplaceResetKey, setMcpMarketplaceResetKey] = useState(0);
+
+  // ── First-run wizard ────────────────────────────────────────────────────
+  // null = still loading, true = must show, false = already completed
+  const [showWizard, setShowWizard] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    async function checkWizard() {
+      try {
+        const settings: any = await invoke("read_settings");
+        setShowWizard(!(settings?.wizard_completed ?? false));
+      } catch {
+        // If we can't read settings, show the wizard to be safe.
+        setShowWizard(true);
+      }
+    }
+    checkWizard();
+  }, []);
+
+  const handleWizardComplete = (answers: { analyticsEnabled: boolean }) => {
+    // Apply analytics preference immediately so the runtime flag is in sync.
+    setAnalyticsEnabled(answers.analyticsEnabled);
+    setShowWizard(false);
+  };
 
   useEffect(() => {
     localStorage.setItem("nexus.activeTab", activeTab);
@@ -109,7 +133,15 @@ function App() {
   return (
     <ProfileProvider>
     <AnalyticsBootstrap />
-    <div className="relative flex h-screen w-screen overflow-hidden bg-[#222327] text-[#fafafa] selection:bg-[#5E6AD2]/30">
+    {/* First-run wizard — rendered as a full-screen overlay; main UI is
+        mounted but hidden so that tabs retain their state after completion. */}
+    {showWizard === true && (
+      <FirstRunWizard onComplete={handleWizardComplete} />
+    )}
+    <div
+      className="relative flex h-screen w-screen overflow-hidden bg-[#222327] text-[#fafafa] selection:bg-[#5E6AD2]/30"
+      aria-hidden={showWizard === true}
+    >
       {/* Sidebar */}
       <aside className="w-[180px] flex-shrink-0 bg-[#1A1A1E] border-r border-[#33353A] flex flex-col">
         {/* Workspace Header */}
@@ -163,6 +195,16 @@ function App() {
 
         </nav>
 
+        {/* Sidebar footer — setup wizard trigger */}
+        <div className="px-3 py-3 border-t border-[#33353A]/60">
+          <button
+            onClick={() => setShowWizard(true)}
+            className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] font-medium text-[#C8CAD0] hover:bg-[#2D2E36] hover:text-[#F8F8FA] transition-colors"
+          >
+            <Sparkles size={14} className="text-[#C8CAD0]" />
+            <span className="flex-1 text-left">Setup wizard</span>
+          </button>
+        </div>
       </aside>
 
       {/* Main Content */}

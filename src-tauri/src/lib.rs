@@ -46,6 +46,13 @@ fn write_settings(settings: core::Settings) -> Result<(), String> {
     core::write_settings(&settings)
 }
 
+// ── Newsletter ────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn subscribe_newsletter(email: String) -> Result<(), String> {
+    core::subscribe_newsletter(&email).await
+}
+
 // ── Agents ───────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -1011,6 +1018,7 @@ pub fn run() {
             open_in_editor,
             get_editor_icon,
             restart_app,
+            subscribe_newsletter,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

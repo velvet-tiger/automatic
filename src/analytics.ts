@@ -61,6 +61,24 @@ export function initAnalytics(userId: string, enabled: boolean): void {
 }
 
 /**
+ * Set onboarding user properties on the Amplitude identity.
+ * Uses `set` (not `setOnce`) so re-running the wizard updates the values.
+ * No-op when analytics are disabled or not yet initialized.
+ */
+export function identifyOnboarding(onboarding: {
+  role: string;
+  aiUsage: string;
+  agents: string[];
+}): void {
+  if (!shouldTrack()) return;
+  const identifyEvent = new amplitude.Identify();
+  identifyEvent.set("onboarding_role", onboarding.role);
+  identifyEvent.set("onboarding_ai_usage", onboarding.aiUsage);
+  identifyEvent.set("onboarding_agents", onboarding.agents);
+  amplitude.identify(identifyEvent);
+}
+
+/**
  * Update the opt-out flag at runtime (e.g. when user toggles the setting).
  * If analytics were previously initialized but the user opts out, Amplitude's
  * opt-out flag is set which stops all future uploads.
