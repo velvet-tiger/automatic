@@ -814,19 +814,20 @@ export default function McpMarketplace({
                 onClick={() => handleSelect(server)}
                 className="group flex flex-col text-left p-5 rounded-xl bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] hover:bg-[#1E1F24] transition-colors"
               >
-                {/* Title row */}
-                <div className="flex items-center gap-2.5 mb-1.5">
-                  <McpServerIcon server={server} size={28} />
-                  <span className="text-[14px] font-medium text-[#F8F8FA] leading-snug truncate flex-1">
-                    {server.title}
-                  </span>
-                  {installedServers.has(configName(server)) && (
-                    <CheckCircle2 size={14} className="text-[#4ADE80] flex-shrink-0" />
-                  )}
-                </div>
-                {/* Badge */}
-                <div className="flex items-center gap-2 mb-2">
-                  {classificationBadge(server.classification)}
+                {/* Header: icon + title + badge */}
+                <div className="flex gap-3 mb-3">
+                  <McpServerIcon server={server} size={36} />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="text-[14px] font-medium text-[#F8F8FA] leading-snug truncate">
+                        {server.title}
+                      </span>
+                      {installedServers.has(configName(server)) && (
+                        <CheckCircle2 size={13} className="text-[#4ADE80] flex-shrink-0" />
+                      )}
+                    </div>
+                    {classificationBadge(server.classification)}
+                  </div>
                 </div>
                 {/* Description */}
                 <p className="text-[12px] text-[#C8CAD0] leading-relaxed line-clamp-3 flex-1">
