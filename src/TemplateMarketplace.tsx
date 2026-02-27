@@ -13,6 +13,8 @@ import {
   ArrowLeft,
   X,
   FileText,
+  AlertTriangle,
+  PackagePlus,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -30,6 +32,20 @@ interface BundledProjectTemplate {
   project_files: { filename: string; content: string }[];
   unified_instruction?: string;
   unified_rules?: string[];
+  /** Optional icon filename (e.g. "nextjs.svg") served from /template-icons/ */
+  icon?: string;
+}
+
+interface SkillDependencyStatus {
+  name: string;
+  installed: boolean;
+  /** True when the skill is shipped with the app and will be installed automatically on import. */
+  bundled: boolean;
+}
+
+interface TemplateDependencyReport {
+  skills: SkillDependencyStatus[];
+  missing_mcp_servers: string[];
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -45,6 +61,124 @@ const CATEGORY_COLOURS: Record<string, { bg: string; text: string; dot: string }
 
 function categoryStyle(cat: string) {
   return CATEGORY_COLOURS[cat] ?? { bg: "bg-[#5E6AD2]/15", text: "text-[#5E6AD2]", dot: "bg-[#5E6AD2]" };
+}
+
+// ── Template Icon ─────────────────────────────────────────────────────────────
+
+/**
+ * Renders the template's icon (png or svg from /template-icons/) if present,
+ * or falls back to the first letter of the display name on a coloured background.
+ */
+function TemplateIcon({
+  template,
+  size,
+}: {
+  template: BundledProjectTemplate;
+  /** Square size in pixels */
+  size: number;
+}) {
+  const [imgError, setImgError] = useState(false);
+  const style = categoryStyle(template.category);
+
+  if (template.icon && !imgError) {
+    return (
+      <img
+        src={`/template-icons/${template.icon}`}
+        alt={template.display_name}
+        width={size}
+        height={size}
+        onError={() => setImgError(true)}
+        className="flex-shrink-0 rounded-md object-contain"
+        style={{ width: size, height: size }}
+        draggable={false}
+      />
+    );
+  }
+
+  // Fallback: first letter on a tinted background
+  const letter = template.display_name.charAt(0).toUpperCase();
+  const fontSize = Math.round(size * 0.45);
+  return (
+    <div
+      className={`flex-shrink-0 rounded-md flex items-center justify-center font-semibold ${style.bg} ${style.text}`}
+      style={{ width: size, height: size, fontSize }}
+      aria-hidden="true"
+    >
+      {letter}
+    </div>
+  );
+}
+
+// ── Dependency Panel ──────────────────────────────────────────────────────────
+
+function DependencyPanel({ report }: { report: TemplateDependencyReport }) {
+  const missingSkills = report.skills.filter((s) => !s.installed);
+  const hasMissing = missingSkills.length > 0 || report.missing_mcp_servers.length > 0;
+
+  if (!hasMissing) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[12px] text-emerald-400">
+        <CheckCircle2 size={13} className="flex-shrink-0" />
+        All dependencies installed
+      </div>
+    );
+  }
+
+  // All skills required by bundled templates are themselves bundled, so
+  // missing ones will be installed automatically when the template is imported.
+  const willAutoInstall = missingSkills.filter((s) => s.bundled);
+  const needsManual = missingSkills.filter((s) => !s.bundled);
+
+  return (
+    <div className="rounded-lg border border-[#5E6AD2]/25 bg-[#5E6AD2]/5 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#5E6AD2]/20">
+        <PackagePlus size={12} className="text-[#5E6AD2] flex-shrink-0" />
+        <span className="text-[11px] font-semibold text-[#5E6AD2] tracking-wider uppercase">
+          Skills not yet installed
+        </span>
+        <span className="ml-auto text-[10px] text-[#5E6AD2]/60">
+          {missingSkills.length} missing
+        </span>
+      </div>
+
+      <div className="px-3 py-2.5 space-y-1.5">
+        {missingSkills.map((s) => (
+          <div key={s.name} className="flex items-center gap-2 text-[11px]">
+            <Code size={10} className="text-[#5E6AD2]/70 flex-shrink-0" />
+            <span className="font-mono text-[#F8F8FA]">{s.name}</span>
+            {s.bundled ? (
+              <span className="text-[10px] text-[#5E6AD2]/70 ml-auto flex-shrink-0 flex items-center gap-1">
+                <PackagePlus size={9} />
+                bundled
+              </span>
+            ) : (
+              <span className="text-[10px] text-[#C8CAD0]/40 ml-auto flex-shrink-0 italic">
+                install manually
+              </span>
+            )}
+          </div>
+        ))}
+
+        {report.missing_mcp_servers.map((s) => (
+          <div key={s} className="flex items-center gap-2 text-[11px]">
+            <Server size={10} className="text-amber-400/70 flex-shrink-0" />
+            <span className="font-mono text-[#F8F8FA]">{s}</span>
+            <span className="text-[10px] text-[#C8CAD0]/40 ml-auto flex-shrink-0 italic">
+              add manually
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {willAutoInstall.length > 0 && (
+        <div className="px-3 pb-2.5 text-[10px] text-[#5E6AD2]/70">
+          {willAutoInstall.length} bundled skill{willAutoInstall.length !== 1 ? "s" : ""} will be installed automatically when you import this template.
+          {needsManual.length > 0 && ` ${needsManual.length} must be installed manually.`}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Card ─────────────────────────────────────────────────────────────────────
@@ -69,7 +203,7 @@ function TemplateCard({
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5 min-w-0">
-          <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-0.5 ${style.dot}`} />
+          <TemplateIcon template={template} size={28} />
           <div className="min-w-0">
             <div className="text-[14px] font-semibold text-[#F8F8FA] leading-snug truncate">
               {template.display_name}
@@ -147,6 +281,34 @@ function TemplateDetail({
   const style = categoryStyle(template.category);
   const instruction = template.unified_instruction?.trim() ?? "";
 
+  // Dependency check state
+  const [depReport, setDepReport] = useState<TemplateDependencyReport | null>(null);
+  const [depLoading, setDepLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDepReport(null);
+
+    if (template.skills.length === 0 && template.mcp_servers.length === 0) {
+      setDepReport({ skills: [], missing_mcp_servers: [] });
+      return;
+    }
+
+    setDepLoading(true);
+    (async () => {
+      try {
+        const raw: string = await invoke("check_template_dependencies", { name: template.name });
+        if (!cancelled) setDepReport(JSON.parse(raw));
+      } catch (err) {
+        console.error("Dependency check failed:", err);
+      } finally {
+        if (!cancelled) setDepLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [template.name]);
+
   return (
     <div className="flex h-full flex-col bg-[#222327]">
       {/* Header */}
@@ -161,7 +323,7 @@ function TemplateDetail({
           </button>
           <span className="text-[#33353A]">/</span>
           <div className="flex items-center gap-2.5">
-            <span className={`w-2 h-2 rounded-full ${style.dot}`} />
+            <TemplateIcon template={template} size={22} />
             <span className="text-[14px] font-semibold text-[#F8F8FA]">{template.display_name}</span>
             <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${style.bg} ${style.text}`}>
               {template.category}
@@ -224,6 +386,24 @@ function TemplateDetail({
             {/* Right — metadata sidebar */}
             <div className="space-y-6">
 
+              {/* Dependency status */}
+              {(template.skills.length > 0 || template.mcp_servers.length > 0) && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <PackagePlus size={12} className="text-[#C8CAD0]" />
+                    <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">Dependencies</span>
+                  </div>
+                  {depLoading ? (
+                    <div className="flex items-center gap-2 text-[11px] text-[#C8CAD0]/60">
+                      <Loader2 size={11} className="animate-spin" />
+                      Checking…
+                    </div>
+                  ) : depReport ? (
+                    <DependencyPanel report={depReport} />
+                  ) : null}
+                </div>
+              )}
+
               {/* Skills */}
               {template.skills.length > 0 && (
                 <div>
@@ -235,12 +415,22 @@ function TemplateDetail({
                     </span>
                   </div>
                   <div className="space-y-1.5">
-                    {template.skills.map((s) => (
-                      <div key={s} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#1A1A1E] border border-[#33353A] text-[12px] text-[#F8F8FA]">
-                        <Code size={10} className="text-[#5E6AD2] flex-shrink-0" />
-                        <span className="truncate">{s}</span>
-                      </div>
-                    ))}
+                    {template.skills.map((s) => {
+                      const status = depReport?.skills.find((d) => d.name === s);
+                      const isInstalled = status?.installed ?? null;
+                      return (
+                        <div key={s} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#1A1A1E] border border-[#33353A] text-[12px] text-[#F8F8FA]">
+                          <Code size={10} className="text-[#5E6AD2] flex-shrink-0" />
+                          <span className="truncate flex-1">{s}</span>
+                          {isInstalled === true && (
+                            <CheckCircle2 size={10} className="text-emerald-400 flex-shrink-0" />
+                          )}
+                          {isInstalled === false && (
+                            <AlertTriangle size={10} className="text-amber-400 flex-shrink-0" />
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -256,12 +446,21 @@ function TemplateDetail({
                     </span>
                   </div>
                   <div className="space-y-1.5">
-                    {template.mcp_servers.map((s) => (
-                      <div key={s} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#1A1A1E] border border-[#33353A] text-[12px] text-[#F8F8FA]">
-                        <Server size={10} className="text-[#F59E0B] flex-shrink-0" />
-                        <span className="truncate">{s}</span>
-                      </div>
-                    ))}
+                    {template.mcp_servers.map((s) => {
+                      const isMissing = depReport?.missing_mcp_servers.includes(s) ?? null;
+                      return (
+                        <div key={s} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[#1A1A1E] border border-[#33353A] text-[12px] text-[#F8F8FA]">
+                          <Server size={10} className="text-[#F59E0B] flex-shrink-0" />
+                          <span className="truncate flex-1">{s}</span>
+                          {isMissing === false && (
+                            <CheckCircle2 size={10} className="text-emerald-400 flex-shrink-0" />
+                          )}
+                          {isMissing === true && (
+                            <AlertTriangle size={10} className="text-amber-400 flex-shrink-0" />
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

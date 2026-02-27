@@ -94,6 +94,29 @@ pub struct ClearMemoriesParams {
     pub confirm: bool,
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Verify that `project` is a registered project name.
+/// Returns `Ok(())` on success, or an `Err` with a helpful message listing
+/// the valid project names so the agent can self-correct immediately.
+fn validate_project(project: &str) -> Result<(), String> {
+    let known = crate::core::list_projects().unwrap_or_default();
+    if known.iter().any(|p| p == project) {
+        Ok(())
+    } else {
+        let list = if known.is_empty() {
+            "no projects registered yet".to_string()
+        } else {
+            known.join(", ")
+        };
+        Err(format!(
+            "Unknown project '{}'. Valid project names are: {}. \
+             Call automatic_list_projects to confirm the correct name before retrying.",
+            project, list
+        ))
+    }
+}
+
 // ── MCP Server Handler ──────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -326,6 +349,9 @@ impl NexusMcpServer {
         &self,
         params: Parameters<StoreMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
         match crate::memory::store_memory(
             &params.0.project,
             &params.0.key,
@@ -348,6 +374,9 @@ impl NexusMcpServer {
         &self,
         params: Parameters<GetMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
         match crate::memory::get_memory(&params.0.project, &params.0.key) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -365,6 +394,9 @@ impl NexusMcpServer {
         &self,
         params: Parameters<ListMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
         match crate::memory::list_memories(&params.0.project, params.0.pattern.as_deref()) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -382,6 +414,9 @@ impl NexusMcpServer {
         &self,
         params: Parameters<SearchMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
         match crate::memory::search_memories(&params.0.project, &params.0.query) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -399,6 +434,9 @@ impl NexusMcpServer {
         &self,
         params: Parameters<DeleteMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
         match crate::memory::delete_memory(&params.0.project, &params.0.key) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -416,6 +454,9 @@ impl NexusMcpServer {
         &self,
         params: Parameters<ClearMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
         match crate::memory::clear_memories(&params.0.project, params.0.pattern.as_deref(), params.0.confirm) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(

@@ -1097,6 +1097,12 @@ pub fn install_default_skills() -> Result<(), String> {
     Ok(())
 }
 
+/// Return the set of skill names that are shipped with the app (i.e. present
+/// in DEFAULT_SKILLS).
+pub fn bundled_skill_names() -> Vec<&'static str> {
+    DEFAULT_SKILLS.iter().map(|(name, _)| *name).collect()
+}
+
 /// Built-in templates shipped with the app.  Each entry is (name, content).
 /// These are written to `~/.automatic/templates/` on first run (or when missing),
 /// but never overwrite a file that already exists — user edits are preserved.
@@ -2103,6 +2109,11 @@ pub struct BundledProjectTemplate {
     pub unified_instruction: String,
     #[serde(default)]
     pub unified_rules: Vec<String>,
+    /// Optional icon filename (png or svg) relative to the template-icons asset
+    /// directory, e.g. "nextjs.svg". Served at /template-icons/<icon> in the
+    /// frontend. When absent the UI falls back to the first letter of the name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// All bundled marketplace templates, compiled in at build time.
@@ -2206,6 +2217,73 @@ pub fn search_bundled_project_templates(query: &str) -> Result<String, String> {
 
     serde_json::to_string(&filtered).map_err(|e| e.to_string())
 }
+
+// ── Template Dependency Checking ─────────────────────────────────────────────
+
+/// The status of a single skill dependency for a template.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkillDependencyStatus {
+    /// Skill name as listed in the template (e.g. "vercel-react-best-practices").
+    pub name: String,
+    /// Whether the skill is currently installed locally.
+    pub installed: bool,
+    /// Whether the skill is shipped with the app and can be installed without
+    /// a network call.  If `true` and `installed` is `false`, importing the
+    /// template will install it automatically.
+    pub bundled: bool,
+}
+
+/// Dependency check result for a template.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TemplateDependencyReport {
+    /// Dependency status for every skill the template requires.
+    pub skills: Vec<SkillDependencyStatus>,
+    /// MCP server names required by the template that are not configured locally.
+    pub missing_mcp_servers: Vec<String>,
+}
+
+/// Check which skills and MCP servers a bundled template requires are missing
+/// locally.  Bundled skills (shipped with the app) are flagged as installable
+/// without a network call — no skills.sh lookup is performed.
+pub fn check_template_dependencies(template_name: &str) -> Result<String, String> {
+    let raw = read_bundled_project_template(template_name)?;
+    let bundled: BundledProjectTemplate =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid template JSON: {}", e))?;
+
+    let installed_names: std::collections::HashSet<String> =
+        list_skill_names().unwrap_or_default().into_iter().collect();
+
+    let installed_mcp: std::collections::HashSet<String> =
+        list_mcp_server_configs().unwrap_or_default().into_iter().collect();
+
+    let bundled_names: std::collections::HashSet<&str> =
+        bundled_skill_names().into_iter().collect();
+
+    let skill_statuses: Vec<SkillDependencyStatus> = bundled
+        .skills
+        .iter()
+        .map(|skill_name| SkillDependencyStatus {
+            name: skill_name.clone(),
+            installed: installed_names.contains(skill_name.as_str()),
+            bundled: bundled_names.contains(skill_name.as_str()),
+        })
+        .collect();
+
+    let missing_mcp_servers: Vec<String> = bundled
+        .mcp_servers
+        .into_iter()
+        .filter(|s| !installed_mcp.contains(s.as_str()))
+        .collect();
+
+    let report = TemplateDependencyReport {
+        skills: skill_statuses,
+        missing_mcp_servers,
+    };
+
+    serde_json::to_string(&report).map_err(|e| e.to_string())
+}
+
+
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 //
