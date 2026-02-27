@@ -26,6 +26,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <ErrorBoundary>
       <ClerkProvider
         publishableKey={PUBLISHABLE_KEY}
+        allowedRedirectOrigins={["tauri://localhost", "https://tauri.localhost"]}
         appearance={{
           baseTheme: dark,
           variables: {
