@@ -42,8 +42,26 @@ impl Agent for Antigravity {
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
-    fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
-        vec![dir.join(".antigravity").join("mcp.json")]
+    /// `detect_in` matches the `.antigravity/` directory itself, so we must
+    /// remove the whole directory on cleanup — not just `mcp.json` inside it —
+    /// otherwise the empty dir re-triggers detection on the next autodetect.
+    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+        let ag_dir = dir.join(".antigravity");
+        if ag_dir.exists() {
+            if fs::remove_dir_all(&ag_dir).is_ok() {
+                return vec![ag_dir.display().to_string()];
+            }
+        }
+        vec![]
+    }
+
+    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
+        let ag_dir = dir.join(".antigravity");
+        if ag_dir.exists() {
+            vec![ag_dir.display().to_string()]
+        } else {
+            vec![]
+        }
     }
 
     // ── Config writing ──────────────────────────────────────────────────
@@ -161,6 +179,30 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join(".antigravity")).unwrap();
         assert!(Antigravity.detect_in(dir.path()));
+    }
+
+    #[test]
+    fn test_cleanup_removes_antigravity_dir() {
+        let dir = tempdir().unwrap();
+        let ag_dir = dir.path().join(".antigravity");
+        fs::create_dir_all(&ag_dir).unwrap();
+        fs::write(ag_dir.join("mcp.json"), "{}").unwrap();
+        assert!(ag_dir.exists());
+
+        let removed = Antigravity.cleanup_mcp_config(dir.path());
+        assert_eq!(removed, vec![ag_dir.display().to_string()]);
+        assert!(!ag_dir.exists(), ".antigravity/ should be deleted");
+    }
+
+    #[test]
+    fn test_cleanup_preview_antigravity_dir() {
+        let dir = tempdir().unwrap();
+        assert!(Antigravity.cleanup_mcp_preview(dir.path()).is_empty());
+
+        let ag_dir = dir.path().join(".antigravity");
+        fs::create_dir_all(&ag_dir).unwrap();
+        let preview = Antigravity.cleanup_mcp_preview(dir.path());
+        assert_eq!(preview, vec![ag_dir.display().to_string()]);
     }
 
     #[test]

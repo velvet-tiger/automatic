@@ -43,8 +43,26 @@ impl Agent for Goose {
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
-    fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
-        vec![dir.join(".goose").join("mcp.json")]
+    /// `detect_in` matches the `.goose/` directory itself, so we must remove
+    /// the whole directory on cleanup — not just `mcp.json` inside it —
+    /// otherwise the empty dir re-triggers detection on the next autodetect.
+    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+        let goose_dir = dir.join(".goose");
+        if goose_dir.exists() {
+            if fs::remove_dir_all(&goose_dir).is_ok() {
+                return vec![goose_dir.display().to_string()];
+            }
+        }
+        vec![]
+    }
+
+    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
+        let goose_dir = dir.join(".goose");
+        if goose_dir.exists() {
+            vec![goose_dir.display().to_string()]
+        } else {
+            vec![]
+        }
     }
 
     // ── Config writing ──────────────────────────────────────────────────
@@ -145,6 +163,30 @@ mod tests {
 
         fs::write(dir.path().join(".goosehints"), "").unwrap();
         assert!(Goose.detect_in(dir.path()));
+    }
+
+    #[test]
+    fn test_cleanup_removes_goose_dir() {
+        let dir = tempdir().unwrap();
+        let goose_dir = dir.path().join(".goose");
+        fs::create_dir_all(&goose_dir).unwrap();
+        fs::write(goose_dir.join("mcp.json"), "{}").unwrap();
+        assert!(goose_dir.exists());
+
+        let removed = Goose.cleanup_mcp_config(dir.path());
+        assert_eq!(removed, vec![goose_dir.display().to_string()]);
+        assert!(!goose_dir.exists(), ".goose/ should be deleted");
+    }
+
+    #[test]
+    fn test_cleanup_preview_goose_dir() {
+        let dir = tempdir().unwrap();
+        assert!(Goose.cleanup_mcp_preview(dir.path()).is_empty());
+
+        let goose_dir = dir.path().join(".goose");
+        fs::create_dir_all(&goose_dir).unwrap();
+        let preview = Goose.cleanup_mcp_preview(dir.path());
+        assert_eq!(preview, vec![goose_dir.display().to_string()]);
     }
 
     #[test]
