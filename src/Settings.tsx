@@ -199,15 +199,15 @@ export default function Settings() {
                 className={`flex items-center gap-2.5 px-2.5 py-2 rounded-md text-left transition-colors w-full ${
                   isActive
                     ? "bg-[#2E3038] text-white"
-                    : "text-[#9B9EA8] hover:bg-[#2A2B30] hover:text-[#E0E2E8]"
+                    : "text-[#C8CAD0] hover:bg-[#2A2B30] hover:text-white"
                 }`}
               >
-                <span className={isActive ? "text-[#5E6AD2]" : "text-[#6B6E7A]"}>
+                <span className={isActive ? "text-[#5E6AD2]" : "text-[#9B9EA8]"}>
                   {page.icon}
                 </span>
                 <div className="flex flex-col min-w-0">
                   <span className="text-[13px] font-medium leading-tight">{page.label}</span>
-                  <span className="text-[11px] text-[#6B6E7A] leading-tight truncate">
+                  <span className="text-[11px] text-[#9B9EA8] leading-tight truncate">
                     {page.description}
                   </span>
                 </div>
