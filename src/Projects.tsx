@@ -98,6 +98,75 @@ const SIDEBAR_MIN = 160;
 const SIDEBAR_MAX = 400;
 const SIDEBAR_DEFAULT = 192; // w-48 equivalent
 
+// ── Skill frontmatter helpers (shared with Skills.tsx logic) ─────────────────
+
+interface LocalSkillFrontmatter {
+  name?: string;
+  description?: string;
+  [key: string]: string | undefined;
+}
+
+function parseLocalSkillFrontmatter(raw: string): { meta: LocalSkillFrontmatter; body: string } {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return { meta: {}, body: raw };
+
+  const meta: LocalSkillFrontmatter = {};
+  const lines = match[1]!.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1) { i++; continue; }
+    const key = line.slice(0, colonIdx).trim();
+    const rest = line.slice(colonIdx + 1).trim();
+    if (!key) { i++; continue; }
+    if (rest === ">" || rest === ">-" || rest === "|" || rest === "|-") {
+      i++;
+      const blockLines: string[] = [];
+      while (i < lines.length && (lines[i]!.startsWith(" ") || lines[i]!.startsWith("\t"))) {
+        blockLines.push(lines[i]!.trim());
+        i++;
+      }
+      meta[key] = blockLines.join(rest.startsWith("|") ? "\n" : " ");
+    } else {
+      meta[key] = rest.replace(/^["']|["']$/g, "");
+      i++;
+    }
+  }
+  return { meta, body: match[2]!.trimStart() };
+}
+
+const LOCAL_SKILL_XML_TAG_RE = /<[^>]+>/;
+const LOCAL_SKILL_RESERVED_WORDS = ["anthropic", "claude"];
+const LOCAL_SKILL_NAME_CHARSET_RE = /^[a-z0-9-]*$/;
+
+function validateLocalSkillName(value: string): string | null {
+  if (!value) return "Name is required.";
+  if (value.length > 64) return "Name must be 64 characters or fewer.";
+  if (!LOCAL_SKILL_NAME_CHARSET_RE.test(value)) return "Name may only contain lowercase letters, numbers, and hyphens.";
+  if (LOCAL_SKILL_XML_TAG_RE.test(value)) return "Name must not contain XML tags.";
+  for (const word of LOCAL_SKILL_RESERVED_WORDS) {
+    if (value === word || value.startsWith(word + "-") || value.endsWith("-" + word) || value.includes("-" + word + "-")) {
+      return `Name must not contain the reserved word "${word}".`;
+    }
+  }
+  return null;
+}
+
+function validateLocalSkillDescription(value: string): string | null {
+  if (!value.trim()) return "Description is required.";
+  if (value.length > 1024) return "Description must be 1024 characters or fewer.";
+  if (LOCAL_SKILL_XML_TAG_RE.test(value)) return "Description must not contain XML tags.";
+  return null;
+}
+
+function buildLocalSkillFrontmatter(name: string, description: string): string {
+  const safeDesc = description.includes(":") ? `"${description.replace(/"/g, '\\"')}"` : description;
+  return `---\nname: ${name}\ndescription: ${safeDesc}\n---\n`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function emptyProject(name: string): Project {
   return {
     name,
@@ -394,6 +463,16 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [editingMemoryValue, setEditingMemoryValue] = useState<string>("");
   const [savingMemory, setSavingMemory] = useState(false);
   const [copiedMemoryKey, setCopiedMemoryKey] = useState<string | null>(null);
+
+  // Local skill editing state
+  const [localSkillEditing, setLocalSkillEditing] = useState<string | null>(null); // skill name being edited
+  const [localSkillContent, setLocalSkillContent] = useState(""); // raw SKILL.md content
+  const [localSkillEditName, setLocalSkillEditName] = useState("");
+  const [localSkillEditDescription, setLocalSkillEditDescription] = useState("");
+  const [localSkillEditBody, setLocalSkillEditBody] = useState("");
+  const [localSkillFieldErrors, setLocalSkillFieldErrors] = useState<{ name: string | null; description: string | null }>({ name: null, description: null });
+  const [localSkillIsEditing, setLocalSkillIsEditing] = useState(false);
+  const [localSkillSaving, setLocalSkillSaving] = useState(false);
 
   // Editor detection state
   interface EditorInfo { id: string; label: string; installed: boolean; }
@@ -2497,60 +2576,286 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           {project.local_skills.map((s) => (
                             <li
                               key={s}
-                              className="group flex items-center justify-between px-3 py-1.5 bg-[#1A1A1E] rounded-md border border-[#33353A] text-[13px] text-[#F8F8FA]"
+                              className={`group flex flex-col bg-[#1A1A1E] rounded-md border text-[13px] transition-colors ${
+                                localSkillEditing === s ? "border-[#5E6AD2]/50" : "border-[#33353A]"
+                              }`}
                             >
-                              <span className="flex items-center gap-2">
-                                <Code size={12} className="text-[#C8CAD0]" />
-                                {s}
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#C8CAD0] border border-[#3A3B42]">
-                                  local
-                                </span>
-                              </span>
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                              {/* Row: name + action buttons */}
+                              <div className="flex items-center justify-between px-3 py-1.5">
                                 <button
                                   onClick={async () => {
                                     if (!selectedName) return;
+                                    if (localSkillEditing === s) {
+                                      // Collapse if already open and not actively editing
+                                      if (!localSkillIsEditing) {
+                                        setLocalSkillEditing(null);
+                                        setLocalSkillContent("");
+                                      }
+                                      return;
+                                    }
+                                    // Load and expand
                                     try {
-                                      setSyncStatus("syncing");
-                                      await invoke("sync_local_skills", { name: selectedName });
-                                      setSyncStatus(`Synced "${s}" across agents`);
-                                      setTimeout(() => setSyncStatus(null), 4000);
+                                      const content: string = await invoke("read_local_skill", { name: selectedName, skillName: s });
+                                      const { meta, body } = parseLocalSkillFrontmatter(content);
+                                      setLocalSkillEditing(s);
+                                      setLocalSkillContent(content);
+                                      setLocalSkillEditName(meta.name ?? s);
+                                      setLocalSkillEditDescription(meta.description ?? "");
+                                      setLocalSkillEditBody(body);
+                                      setLocalSkillFieldErrors({ name: null, description: null });
+                                      setLocalSkillIsEditing(false);
                                     } catch (err: any) {
-                                      setSyncStatus(`Sync failed: ${err}`);
+                                      setSyncStatus(`Failed to read skill: ${err}`);
                                       setTimeout(() => setSyncStatus(null), 4000);
                                     }
                                   }}
-                                  className="text-[#C8CAD0] hover:text-[#F8F8FA] p-1 hover:bg-[#2D2E36] rounded transition-colors"
-                                  title="Sync to all agents in this project"
+                                  className="flex items-center gap-2 flex-1 text-left text-[#F8F8FA] hover:text-white"
                                 >
-                                  <ArrowRightLeft size={12} />
+                                  <Code size={12} className="text-[#C8CAD0]" />
+                                  <span>{s}</span>
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#C8CAD0] border border-[#3A3B42]">
+                                    local
+                                  </span>
+                                  {/* Chevron */}
+                                  <svg
+                                    width="10" height="10" viewBox="0 0 10 10" fill="currentColor"
+                                    className={`ml-auto text-[#C8CAD0]/40 transition-transform ${localSkillEditing === s ? "rotate-90" : ""}`}
+                                  >
+                                    <path d="M3 2l4 3-4 3V2z"/>
+                                  </svg>
                                 </button>
-                                <button
-                                  onClick={async () => {
-                                    if (!selectedName) return;
-                                    try {
-                                      setSyncStatus("syncing");
-                                      const result: string = await invoke("import_local_skill", { name: selectedName, skillName: s });
-                                      const updated = JSON.parse(result);
-                                      setProject({
-                                        ...project,
-                                        skills: updated.skills || project.skills,
-                                        local_skills: updated.local_skills || [],
-                                      });
-                                      await loadAvailableSkills();
-                                      setSyncStatus(`Imported "${s}" to global registry`);
-                                      setTimeout(() => setSyncStatus(null), 4000);
-                                    } catch (err: any) {
-                                      setSyncStatus(`Import failed: ${err}`);
-                                      setTimeout(() => setSyncStatus(null), 4000);
-                                    }
-                                  }}
-                                  className="text-[#C8CAD0] hover:text-[#4ADE80] p-1 hover:bg-[#2D2E36] rounded transition-colors"
-                                  title="Import to global skill registry"
-                                >
-                                  <Upload size={12} />
-                                </button>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all ml-2">
+                                  <button
+                                    onClick={async () => {
+                                      if (!selectedName) return;
+                                      // Load and switch directly to edit mode
+                                      try {
+                                        const content: string = await invoke("read_local_skill", { name: selectedName, skillName: s });
+                                        const { meta, body } = parseLocalSkillFrontmatter(content);
+                                        setLocalSkillEditing(s);
+                                        setLocalSkillContent(content);
+                                        setLocalSkillEditName(meta.name ?? s);
+                                        setLocalSkillEditDescription(meta.description ?? "");
+                                        setLocalSkillEditBody(body);
+                                        setLocalSkillFieldErrors({ name: null, description: null });
+                                        setLocalSkillIsEditing(true);
+                                      } catch (err: any) {
+                                        setSyncStatus(`Failed to read skill: ${err}`);
+                                        setTimeout(() => setSyncStatus(null), 4000);
+                                      }
+                                    }}
+                                    className="text-[#C8CAD0] hover:text-[#F8F8FA] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                                    title="Edit skill"
+                                  >
+                                    <Edit2 size={12} />
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      if (!selectedName) return;
+                                      try {
+                                        setSyncStatus("syncing");
+                                        await invoke("sync_local_skills", { name: selectedName });
+                                        setSyncStatus(`Synced "${s}" across agents`);
+                                        setTimeout(() => setSyncStatus(null), 4000);
+                                      } catch (err: any) {
+                                        setSyncStatus(`Sync failed: ${err}`);
+                                        setTimeout(() => setSyncStatus(null), 4000);
+                                      }
+                                    }}
+                                    className="text-[#C8CAD0] hover:text-[#F8F8FA] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                                    title="Sync to all agents in this project"
+                                  >
+                                    <ArrowRightLeft size={12} />
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      if (!selectedName) return;
+                                      try {
+                                        setSyncStatus("syncing");
+                                        const result: string = await invoke("import_local_skill", { name: selectedName, skillName: s });
+                                        const updated = JSON.parse(result);
+                                        setProject({
+                                          ...project,
+                                          skills: updated.skills || project.skills,
+                                          local_skills: updated.local_skills || [],
+                                        });
+                                        if (localSkillEditing === s) {
+                                          setLocalSkillEditing(null);
+                                          setLocalSkillContent("");
+                                        }
+                                        await loadAvailableSkills();
+                                        setSyncStatus(`Imported "${s}" to global registry`);
+                                        setTimeout(() => setSyncStatus(null), 4000);
+                                      } catch (err: any) {
+                                        setSyncStatus(`Import failed: ${err}`);
+                                        setTimeout(() => setSyncStatus(null), 4000);
+                                      }
+                                    }}
+                                    className="text-[#C8CAD0] hover:text-[#4ADE80] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                                    title="Import to global skill registry"
+                                  >
+                                    <Upload size={12} />
+                                  </button>
+                                </div>
                               </div>
+
+                              {/* Expanded editor panel */}
+                              {localSkillEditing === s && (
+                                <div className="border-t border-[#33353A] px-3 pt-3 pb-3 space-y-3">
+
+                                  {/* Editor header */}
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase flex items-center gap-1.5">
+                                      <FileText size={11} /> Edit Skill
+                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                      {localSkillIsEditing ? (
+                                        <>
+                                          <button
+                                            onClick={() => {
+                                              // Revert to last loaded content
+                                              const { meta, body } = parseLocalSkillFrontmatter(localSkillContent);
+                                              setLocalSkillEditName(meta.name ?? s);
+                                              setLocalSkillEditDescription(meta.description ?? "");
+                                              setLocalSkillEditBody(body);
+                                              setLocalSkillFieldErrors({ name: null, description: null });
+                                              setLocalSkillIsEditing(false);
+                                            }}
+                                            className="px-2 py-1 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[11px] font-medium transition-colors"
+                                          >
+                                            Cancel
+                                          </button>
+                                          <button
+                                            disabled={localSkillSaving}
+                                            onClick={async () => {
+                                              if (!selectedName) return;
+                                              const nameErr = validateLocalSkillName(localSkillEditName);
+                                              const descErr = validateLocalSkillDescription(localSkillEditDescription);
+                                              setLocalSkillFieldErrors({ name: nameErr, description: descErr });
+                                              if (nameErr || descErr) return;
+                                              const finalContent = buildLocalSkillFrontmatter(localSkillEditName, localSkillEditDescription) + "\n" + localSkillEditBody;
+                                              setLocalSkillSaving(true);
+                                              try {
+                                                await invoke("save_local_skill", { name: selectedName, skillName: s, content: finalContent });
+                                                setLocalSkillContent(finalContent);
+                                                setLocalSkillIsEditing(false);
+                                                setSyncStatus(`Saved "${s}"`);
+                                                setTimeout(() => setSyncStatus(null), 3000);
+                                              } catch (err: any) {
+                                                setSyncStatus(`Save failed: ${err}`);
+                                                setTimeout(() => setSyncStatus(null), 4000);
+                                              } finally {
+                                                setLocalSkillSaving(false);
+                                              }
+                                            }}
+                                            className="flex items-center gap-1 px-2 py-1 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+                                          >
+                                            <Check size={11} /> Save
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <button
+                                          onClick={() => setLocalSkillIsEditing(true)}
+                                          className="flex items-center gap-1 px-2 py-1 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[11px] font-medium transition-colors"
+                                        >
+                                          <Edit2 size={11} /> Edit
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {localSkillIsEditing ? (
+                                    /* Edit form */
+                                    <div className="space-y-3">
+                                      {/* Name field */}
+                                      <div>
+                                        <div className="flex items-baseline justify-between mb-1">
+                                          <label className="text-[10px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                                            Name <span className="text-red-400 ml-0.5">*</span>
+                                          </label>
+                                          <span className={`text-[10px] tabular-nums ${localSkillEditName.length > 58 ? (localSkillEditName.length > 64 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                                            {localSkillEditName.length}/64
+                                          </span>
+                                        </div>
+                                        <input
+                                          type="text"
+                                          value={localSkillEditName}
+                                          onChange={(e) => {
+                                            const raw = e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+                                            setLocalSkillEditName(raw);
+                                            setLocalSkillFieldErrors(prev => ({ ...prev, name: validateLocalSkillName(raw) }));
+                                          }}
+                                          maxLength={64}
+                                          className={`w-full px-2.5 py-1.5 rounded-md bg-[#2D2E36] border outline-none text-[12px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 font-mono transition-colors ${
+                                            localSkillFieldErrors.name ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                                          }`}
+                                          spellCheck={false}
+                                        />
+                                        {localSkillFieldErrors.name && (
+                                          <p className="mt-1 text-[10px] text-red-400">{localSkillFieldErrors.name}</p>
+                                        )}
+                                      </div>
+
+                                      {/* Description field */}
+                                      <div>
+                                        <div className="flex items-baseline justify-between mb-1">
+                                          <label className="text-[10px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                                            Description <span className="text-red-400 ml-0.5">*</span>
+                                          </label>
+                                          <span className={`text-[10px] tabular-nums ${localSkillEditDescription.length > 900 ? (localSkillEditDescription.length > 1024 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                                            {localSkillEditDescription.length}/1024
+                                          </span>
+                                        </div>
+                                        <textarea
+                                          value={localSkillEditDescription}
+                                          onChange={(e) => {
+                                            setLocalSkillEditDescription(e.target.value);
+                                            setLocalSkillFieldErrors(prev => ({ ...prev, description: validateLocalSkillDescription(e.target.value) }));
+                                          }}
+                                          rows={2}
+                                          maxLength={1024}
+                                          className={`w-full px-2.5 py-1.5 rounded-md bg-[#2D2E36] border outline-none text-[12px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 resize-none transition-colors leading-relaxed ${
+                                            localSkillFieldErrors.description ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                                          }`}
+                                          spellCheck={false}
+                                        />
+                                        {localSkillFieldErrors.description && (
+                                          <p className="mt-1 text-[10px] text-red-400">{localSkillFieldErrors.description}</p>
+                                        )}
+                                      </div>
+
+                                      {/* Body field */}
+                                      <div>
+                                        <label className="text-[10px] font-semibold text-[#C8CAD0] tracking-wider uppercase block mb-1">
+                                          Body
+                                        </label>
+                                        <textarea
+                                          value={localSkillEditBody}
+                                          onChange={(e) => setLocalSkillEditBody(e.target.value)}
+                                          rows={12}
+                                          className="w-full px-2.5 py-1.5 rounded-md bg-[#2D2E36] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] outline-none text-[12px] text-[#F8F8FA] font-mono resize-y transition-colors leading-relaxed custom-scrollbar"
+                                          spellCheck={false}
+                                        />
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    /* Preview */
+                                    <div className="rounded-md bg-[#2D2E36]/40 border border-[#33353A] px-3 py-2.5">
+                                      {localSkillEditName && (
+                                        <p className="text-[13px] font-medium text-[#F8F8FA] mb-1">{localSkillEditName}</p>
+                                      )}
+                                      {localSkillEditDescription && (
+                                        <p className="text-[12px] text-[#C8CAD0] leading-relaxed mb-2">{localSkillEditDescription}</p>
+                                      )}
+                                      {localSkillEditBody ? (
+                                        <MarkdownPreview content={localSkillEditBody} />
+                                      ) : (
+                                        <p className="text-[12px] text-[#C8CAD0] italic">No body content. Click Edit to add instructions.</p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </li>
                           ))}
                         </ul>

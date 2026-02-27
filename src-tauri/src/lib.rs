@@ -178,6 +178,14 @@ fn search_bundled_project_templates(query: &str) -> Result<String, String> {
     core::search_bundled_project_templates(query)
 }
 
+/// Check which skills / MCP servers a bundled template requires are missing
+/// locally.  Bundled skills are flagged as installable without a network call.
+#[tauri::command]
+fn check_template_dependencies(name: String) -> Result<String, String> {
+    core::check_template_dependencies(&name)
+}
+
+
 #[tauri::command]
 fn read_project_template(name: &str) -> Result<String, String> {
     core::read_project_template(name)
@@ -771,6 +779,28 @@ fn sync_local_skills(name: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
 }
 
+/// Read the SKILL.md content of a local skill from the project directory.
+/// Returns the raw file content as a string.
+#[tauri::command]
+fn read_local_skill(name: &str, skill_name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    sync::read_local_skill(&project, skill_name)
+}
+
+/// Save new content for a local skill, writing it to all agent directories
+/// where the skill already exists (or creating it if absent).
+/// Returns the list of files written as JSON.
+#[tauri::command]
+fn save_local_skill(name: &str, skill_name: &str, content: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let written = sync::save_local_skill(&project, skill_name, content)?;
+    serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
+}
+
 // ── Skills Store ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -940,6 +970,7 @@ pub fn run() {
             read_bundled_project_template,
             import_bundled_project_template,
             search_bundled_project_templates,
+            check_template_dependencies,
             get_project_file_info,
             read_project_file,
             save_project_file,
@@ -961,6 +992,8 @@ pub fn run() {
             check_project_drift,
             import_local_skill,
             sync_local_skills,
+            read_local_skill,
+            save_local_skill,
             install_plugin_marketplace,
             get_sessions,
             search_remote_skills,

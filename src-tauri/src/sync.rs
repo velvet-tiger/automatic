@@ -766,7 +766,7 @@ fn clean_project_file(dir: &PathBuf, filename: &str) -> Result<Option<String>, S
 // ── Local-skill operations ───────────────────────────────────────────────────
 
 /// Read a local skill's content from whichever agent directory contains it.
-fn read_local_skill(project: &Project, skill_name: &str) -> Result<String, String> {
+pub fn read_local_skill(project: &Project, skill_name: &str) -> Result<String, String> {
     let dir = PathBuf::from(&project.directory);
 
     for agent_id in &project.agents {
@@ -784,6 +784,68 @@ fn read_local_skill(project: &Project, skill_name: &str) -> Result<String, Strin
         "Local skill '{}' not found in any agent directory",
         skill_name
     ))
+}
+
+/// Write new content to a local skill's SKILL.md in every agent directory
+/// where it already exists (or in the first available agent's skill dir if
+/// none exists yet).  Returns the list of files written.
+pub fn save_local_skill(
+    project: &Project,
+    skill_name: &str,
+    content: &str,
+) -> Result<Vec<String>, String> {
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+    let dir = PathBuf::from(&project.directory);
+    if !dir.exists() {
+        return Err(format!("Directory '{}' does not exist", project.directory));
+    }
+
+    let mut written: Vec<String> = Vec::new();
+
+    // Write into every agent directory that already has a copy of this skill,
+    // so all copies stay in sync.
+    let mut found_any = false;
+    for agent_id in &project.agents {
+        if let Some(a) = agent::from_id(agent_id) {
+            for skill_dir in a.skill_dirs(&dir) {
+                let target_dir = skill_dir.join(skill_name);
+                let target_file = target_dir.join("SKILL.md");
+                if target_file.exists() {
+                    found_any = true;
+                    fs::write(&target_file, content)
+                        .map_err(|e| format!("Failed to write skill: {}", e))?;
+                    written.push(target_file.display().to_string());
+                }
+            }
+        }
+    }
+
+    // If no existing copy was found, create one in the first available agent
+    // skill directory so the skill materialises on disk.
+    if !found_any {
+        'outer: for agent_id in &project.agents {
+            if let Some(a) = agent::from_id(agent_id) {
+                for skill_dir in a.skill_dirs(&dir) {
+                    let target_dir = skill_dir.join(skill_name);
+                    fs::create_dir_all(&target_dir)
+                        .map_err(|e| format!("Failed to create dir: {}", e))?;
+                    let target_file = target_dir.join("SKILL.md");
+                    fs::write(&target_file, content)
+                        .map_err(|e| format!("Failed to write skill: {}", e))?;
+                    written.push(target_file.display().to_string());
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    if written.is_empty() {
+        return Err("No agent skill directories found for this project".into());
+    }
+
+    Ok(written)
 }
 
 /// Copy a local skill into the global registry and promote it to a normal
