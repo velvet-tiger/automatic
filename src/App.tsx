@@ -13,6 +13,7 @@ import Agents from "./Agents";
 import Settings from "./Settings";
 import TemplateMarketplace from "./TemplateMarketplace";
 import McpMarketplace from "./McpMarketplace";
+import TechMeshBackground from "./TechMeshBackground";
 import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText } from "lucide-react";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
@@ -199,7 +200,8 @@ function App() {
         {/* Content Area */}
         <div className="flex-1 overflow-hidden flex flex-col">
           {activeTab === "dashboard" && (
-            <div className="flex-1 h-full">
+            <div className="relative flex-1 h-full">
+              <TechMeshBackground />
               <Dashboard onNavigate={setActiveTab} />
             </div>
           )}

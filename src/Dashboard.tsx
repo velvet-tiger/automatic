@@ -116,7 +116,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-[#222327]">
+    <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-transparent">
       <div className="max-w-5xl mx-auto space-y-8">
         
         {/* Header */}
@@ -163,7 +163,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               {/* Step 1 */}
               <button
                 onClick={() => onNavigate("projects")}
-                className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 text-left hover:border-[#3B82F6]/50 transition-all group flex flex-col gap-3"
+                className="bg-black border border-[#33353A] rounded-lg p-5 text-left hover:border-[#3B82F6]/50 transition-all group flex flex-col gap-3"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-7 h-7 rounded-full bg-[#3B82F6]/10 border border-[#3B82F6]/20 flex items-center justify-center shrink-0">
@@ -182,7 +182,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               {/* Step 2 */}
               <button
                 onClick={() => onNavigate("project-templates")}
-                className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 text-left hover:border-[#818CF8]/50 transition-all group flex flex-col gap-3"
+                className="bg-black border border-[#33353A] rounded-lg p-5 text-left hover:border-[#818CF8]/50 transition-all group flex flex-col gap-3"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-7 h-7 rounded-full bg-[#818CF8]/10 border border-[#818CF8]/20 flex items-center justify-center shrink-0">
@@ -201,7 +201,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               {/* Step 3 */}
               <button
                 onClick={() => onNavigate("skill-store")}
-                className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 text-left hover:border-[#4ADE80]/50 transition-all group flex flex-col gap-3"
+                className="bg-black border border-[#33353A] rounded-lg p-5 text-left hover:border-[#4ADE80]/50 transition-all group flex flex-col gap-3"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-7 h-7 rounded-full bg-[#4ADE80]/10 border border-[#4ADE80]/20 flex items-center justify-center shrink-0">
@@ -220,7 +220,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               {/* Step 4 */}
               <button
                 onClick={() => onNavigate("mcp-marketplace")}
-                className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 text-left hover:border-[#F59E0B]/50 transition-all group flex flex-col gap-3"
+                className="bg-black border border-[#33353A] rounded-lg p-5 text-left hover:border-[#F59E0B]/50 transition-all group flex flex-col gap-3"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-7 h-7 rounded-full bg-[#F59E0B]/10 border border-[#F59E0B]/20 flex items-center justify-center shrink-0">
@@ -262,7 +262,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                   <div 
                     key={project.name}
                     onClick={() => handleProjectClick(project.name)}
-                    className={`bg-[#1A1A1E] border rounded-lg p-5 cursor-pointer transition-all group ${
+                    className={`bg-black border rounded-lg p-5 cursor-pointer transition-all group ${
                       isDrifted
                         ? "border-[#F59E0B]/40 hover:border-[#F59E0B]/70"
                         : "border-[#33353A] hover:border-[#3B82F6]/50"
@@ -336,7 +336,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             {/* Skills Marketplace */}
             <button
               onClick={() => onNavigate("skill-store")}
-              className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-6 text-left hover:border-[#4ADE80]/50 hover:bg-[#222327] transition-all group flex flex-col justify-between"
+              className="bg-black border border-[#33353A] rounded-lg p-6 text-left hover:border-[#4ADE80]/50 hover:bg-black transition-all group flex flex-col justify-between"
             >
               <div>
                 <div className="flex items-center gap-3 mb-4">
@@ -355,7 +355,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             {/* Templates Marketplace */}
             <button
               onClick={() => onNavigate("template-marketplace")}
-              className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-6 text-left hover:border-[#818CF8]/50 hover:bg-[#222327] transition-all group flex flex-col justify-between"
+              className="bg-black border border-[#33353A] rounded-lg p-6 text-left hover:border-[#818CF8]/50 hover:bg-black transition-all group flex flex-col justify-between"
             >
               <div>
                 <div className="flex items-center gap-3 mb-4">
@@ -374,7 +374,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             {/* MCP Servers Marketplace */}
             <button
               onClick={() => onNavigate("mcp-marketplace")}
-              className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-6 text-left hover:border-[#F59E0B]/50 hover:bg-[#222327] transition-all group flex flex-col justify-between"
+              className="bg-black border border-[#33353A] rounded-lg p-6 text-left hover:border-[#F59E0B]/50 hover:bg-black transition-all group flex flex-col justify-between"
             >
               <div>
                 <div className="flex items-center gap-3 mb-4">
