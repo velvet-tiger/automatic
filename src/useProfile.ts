@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useUser } from "@clerk/clerk-react";
 import { invoke } from "@tauri-apps/api/core";
 
 export interface UserProfile {
@@ -12,49 +11,39 @@ export interface UserProfile {
 }
 
 /**
- * Extracts the Clerk user identity and persists it locally via the Tauri
- * backend.  On each authenticated session mount the profile is synced so
- * that display name / email / avatar changes propagate.
+ * Reads the locally stored user profile from the Tauri backend.
  *
- * Returns the current local profile (or null while loading / signed out).
- * Also exposes the Clerk user ID directly for convenience when tagging
- * content with `created_by`.
+ * Authentication has been removed from the desktop app. The profile model
+ * is preserved for future web-service authorisation — `clerk_id` will be
+ * populated once a web service issues a token and syncs the profile.
+ *
+ * Returns the current local profile (or null while loading / not yet set).
+ * Also exposes `userId` (the stored `clerk_id`) for tagging content with
+ * `created_by`.
  */
 export function useProfile() {
-  const { isLoaded, isSignedIn, user } = useUser();
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || !user) return;
-
-    const syncProfile = async () => {
-      const profileData: UserProfile = {
-        clerk_id: user.id,
-        email: user.primaryEmailAddress?.emailAddress ?? "",
-        display_name:
-          user.fullName ?? user.username ?? user.firstName ?? "",
-        avatar_url: user.imageUrl ?? null,
-        // created_at / updated_at are managed by the backend
-        created_at: "",
-        updated_at: "",
-      };
-
+    const loadProfile = async () => {
       try {
-        await invoke("save_profile", { profile: profileData });
         const saved: UserProfile | null = await invoke("read_profile");
         setProfile(saved);
       } catch (e) {
-        console.error("[useProfile] Failed to sync profile:", e);
+        console.error("[useProfile] Failed to read profile:", e);
+      } finally {
+        setIsLoaded(true);
       }
     };
 
-    syncProfile();
-  }, [isLoaded, isSignedIn, user?.id, user?.primaryEmailAddress?.emailAddress, user?.fullName, user?.imageUrl]);
+    loadProfile();
+  }, []);
 
   return {
     profile,
-    /** Shorthand: the Clerk user ID, or null if not yet loaded. */
+    /** The stored user ID (clerk_id), or null if no profile has been saved yet. */
     userId: profile?.clerk_id ?? null,
-    isLoaded: isLoaded && profile !== null,
+    isLoaded,
   };
 }

@@ -14,8 +14,7 @@ const ProfileContext = createContext<ProfileContextValue>({
 });
 
 /**
- * Provides the authenticated user's profile to the entire component tree.
- * Must be rendered inside Clerk's `<SignedIn>` boundary so useUser() works.
+ * Provides the locally stored user profile to the entire component tree.
  */
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const value = useProfile();
@@ -26,7 +25,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
 /**
  * Returns the current user's profile context.
- * - `userId` is the Clerk user ID (or null if not loaded / signed out).
+ * - `userId` is the stored user ID (or null if no profile has been set up yet).
  * - Use `userId` when setting `created_by` on projects, memory, etc.
  */
 export function useCurrentUser() {
