@@ -122,10 +122,10 @@ function App() {
             </div>
             <ul className="space-y-0.5">
               <NavItem id="agents" icon={Bot} label="Agents" />
-              <NavItem id="skills" icon={Code} label="Skills" />
               <NavItem id="project-templates" icon={Layers} label="Proj Templates" />
               <NavItem id="templates" icon={LayoutTemplate} label="File Templates" />
               <NavItem id="rules" icon={ScrollText} label="Rules" />
+              <NavItem id="skills" icon={Code} label="Skills" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
               <NavItem id="settings" icon={SettingsIcon} label="Settings" />
             </ul>
