@@ -344,6 +344,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [dirty, setDirty] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  // Wizard state (used while isCreating === true)
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const [wizardDiscovering, setWizardDiscovering] = useState(false);
+  const [wizardDiscoveredAgents, setWizardDiscoveredAgents] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameName, setRenameName] = useState("");
@@ -969,6 +973,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     setNewName("");
     setSelectedProjectTemplate(null);
     setShowProjectTemplatePicker(false);
+    setWizardStep(1);
+    setWizardDiscoveredAgents([]);
+    setWizardDiscovering(false);
   };
 
   const startRename = () => {
@@ -1384,70 +1391,238 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
               </div>
             )}
 
-            {/* ── New project setup screen ─────────────────────────── */}
+            {/* ── New project wizard (3 steps) ─────────────────────── */}
             {isCreating && (
               <div className="flex-1 flex flex-col items-center justify-center p-8">
                 <div className="w-full max-w-md">
-                  <div className="mb-8 text-center">
-                    <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-[#5E6AD2]/10 border border-[#5E6AD2]/30 flex items-center justify-center">
-                      <FolderOpen size={24} className="text-[#5E6AD2]" strokeWidth={1.5} />
-                    </div>
-                    <h2 className="text-[16px] font-semibold text-[#F8F8FA] mb-1">Where is this project?</h2>
-                    <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
-                      Choose the project directory so Automatic can detect what's already configured and sync agent files.
-                    </p>
+
+                  {/* Step indicator */}
+                  <div className="flex items-center justify-center gap-2 mb-8">
+                    {([1, 2, 3] as const).map((s) => (
+                      <div key={s} className="flex items-center gap-2">
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold transition-colors ${
+                          wizardStep === s
+                            ? "bg-[#5E6AD2] text-white"
+                            : wizardStep > s
+                            ? "bg-[#5E6AD2]/30 text-[#5E6AD2]"
+                            : "bg-[#2D2E36] text-[#C8CAD0]"
+                        }`}>
+                          {wizardStep > s ? <Check size={11} /> : s}
+                        </div>
+                        {s < 3 && (
+                          <div className={`w-8 h-px ${wizardStep > s ? "bg-[#5E6AD2]/50" : "bg-[#33353A]"}`} />
+                        )}
+                      </div>
+                    ))}
                   </div>
 
-                  {/* Project Template picker */}
-                  {availableProjectTemplates.length > 0 && (
-                    <div className="mb-5">
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => setShowProjectTemplatePicker(!showProjectTemplatePicker)}
-                          className={`flex-1 flex items-center justify-between px-3 py-2 bg-[#1A1A1E] border rounded-md text-[13px] transition-colors ${
-                            selectedProjectTemplate
-                              ? "border-[#5E6AD2]/60 text-[#5E6AD2]"
-                              : "border-[#33353A] hover:border-[#44474F] text-[#C8CAD0] hover:text-[#F8F8FA]"
-                          }`}
-                        >
-                          <span className="flex items-center gap-2">
-                            {selectedProjectTemplate ? (
-                              <Check size={13} />
-                            ) : (
-                              <LayoutTemplate size={13} />
-                            )}
-                            {selectedProjectTemplate
-                              ? `Template: ${selectedProjectTemplate}`
-                              : "Start from a project template (optional)"}
-                          </span>
-                          <span className="text-[11px]">{showProjectTemplatePicker ? "▲" : "▼"}</span>
-                        </button>
-                        {selectedProjectTemplate && (
+                  {/* ── Step 1: Directory ──────────────────────────────── */}
+                  {wizardStep === 1 && (
+                    <>
+                      <div className="mb-8 text-center">
+                        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-[#5E6AD2]/10 border border-[#5E6AD2]/30 flex items-center justify-center">
+                          <FolderOpen size={24} className="text-[#5E6AD2]" strokeWidth={1.5} />
+                        </div>
+                        <h2 className="text-[16px] font-semibold text-[#F8F8FA] mb-1">Where is this project?</h2>
+                        <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
+                          Choose an existing project directory — Automatic will scan it and detect your agents automatically.
+                        </p>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={project.directory}
+                            onChange={(e) => updateField("directory", e.target.value)}
+                            placeholder="/path/to/your/project"
+                            className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors"
+                          />
                           <button
-                            onClick={() => {
-                              setProject({ ...emptyProject(""), directory: project.directory });
-                              setSelectedProjectTemplate(null);
-                              setShowProjectTemplatePicker(false);
+                            onClick={async () => {
+                              const selected = await open({
+                                directory: true,
+                                multiple: false,
+                                title: "Select project directory",
+                              });
+                              if (!selected) return;
+                              const dir = selected as string;
+                              const folderName = dir.split("/").filter(Boolean).pop() ?? "";
+                              const name = newName.trim() || folderName;
+                              setNewName(name);
+                              updateField("directory", dir);
                             }}
-                            title="Clear template"
-                            className="p-2 text-[#C8CAD0] hover:text-[#F8F8FA] hover:bg-[#2D2E36] rounded-md transition-colors flex-shrink-0"
+                            className="px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors whitespace-nowrap"
                           >
-                            <X size={13} />
+                            Browse
+                          </button>
+                        </div>
+
+                        {project.directory && (
+                          <button
+                            disabled={wizardDiscovering}
+                            onClick={async () => {
+                              const dir = project.directory.trim();
+                              if (!dir) return;
+                              const folderName = dir.split("/").filter(Boolean).pop() ?? "";
+                              const name = newName.trim() || folderName;
+                              setNewName(name);
+                              setWizardDiscovering(true);
+                              setError(null);
+                              try {
+                                // Save minimal stub so autodetect can read it back
+                                const stub = { ...emptyProject(name), directory: dir, name };
+                                if (userId && !stub.created_by) stub.created_by = userId;
+                                await invoke("save_project", { name, data: JSON.stringify(stub, null, 2) });
+                                // Run read-only autodetection
+                                const raw: string = await invoke("autodetect_project_dependencies", { name });
+                                const detected = JSON.parse(raw) as Project;
+                                // Pre-fill wizard project with discovered agents/skills/servers
+                                setProject({
+                                  ...stub,
+                                  agents: detected.agents,
+                                  skills: detected.skills,
+                                  local_skills: detected.local_skills,
+                                  mcp_servers: detected.mcp_servers,
+                                });
+                                setWizardDiscoveredAgents(detected.agents);
+                                setWizardStep(2);
+                              } catch (err: any) {
+                                setError(`Autodetect failed: ${err}`);
+                              } finally {
+                                setWizardDiscovering(false);
+                              }
+                            }}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#5E6AD2] hover:bg-[#6B78E3] disabled:opacity-50 disabled:cursor-not-allowed text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+                          >
+                            {wizardDiscovering ? (
+                              <><RefreshCw size={13} className="animate-spin" /> Scanning…</>
+                            ) : (
+                              <><ArrowRight size={13} /> Continue</>
+                            )}
                           </button>
                         )}
                       </div>
-                      {showProjectTemplatePicker && (
-                        <div className="mt-1.5 p-2 bg-[#1A1A1E] border border-[#33353A] rounded-md space-y-1">
+                    </>
+                  )}
+
+                  {/* ── Step 2: Agents ────────────────────────────────── */}
+                  {wizardStep === 2 && (
+                    <>
+                      <div className="mb-6 text-center">
+                        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-[#5E6AD2]/10 border border-[#5E6AD2]/30 flex items-center justify-center">
+                          <Bot size={24} className="text-[#5E6AD2]" strokeWidth={1.5} />
+                        </div>
+                        <h2 className="text-[16px] font-semibold text-[#F8F8FA] mb-1">Which agents are you using?</h2>
+                        <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
+                          {wizardDiscoveredAgents.length > 0
+                            ? `We detected ${wizardDiscoveredAgents.length} agent${wizardDiscoveredAgents.length !== 1 ? "s" : ""} in this directory. Add or remove as needed.`
+                            : "No agents were detected. Add the ones you use."}
+                        </p>
+                      </div>
+
+                      {/* Agent toggle list */}
+                      <div className="space-y-2 mb-4 max-h-56 overflow-y-auto custom-scrollbar">
+                        {project.agents.map((id, idx) => {
+                          const info = availableAgents.find((a) => a.id === id);
+                          const isDiscovered = wizardDiscoveredAgents.includes(id);
+                          return (
+                            <div
+                              key={id}
+                              className="flex items-center gap-3 px-3 py-2.5 bg-[#1A1A1E] border border-[#33353A] rounded-lg"
+                            >
+                              <AgentIcon agentId={id} size={18} />
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[13px] font-medium text-[#F8F8FA]">{info?.label ?? id}</div>
+                                {isDiscovered && (
+                                  <div className="text-[10px] text-[#5E6AD2] mt-0.5">Detected in directory</div>
+                                )}
+                              </div>
+                              <button
+                                onClick={() => removeItem("agents", idx)}
+                                className="p-1 text-[#C8CAD0] hover:text-[#FF6B6B] hover:bg-[#33353A] rounded transition-colors"
+                                title="Remove"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                          );
+                        })}
+                        {project.agents.length === 0 && (
+                          <p className="text-[12px] text-[#C8CAD0]/50 italic px-1">No agents selected.</p>
+                        )}
+                      </div>
+
+                      {/* Add more agents inline */}
+                      {(() => {
+                        const unaddedAgents = availableAgents.filter((a) => !project.agents.includes(a.id));
+                        return unaddedAgents.length > 0 ? (
+                          <div className="mt-1">
+                            <div className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">Add agent</div>
+                            <div className="space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
+                              {unaddedAgents.map((a) => (
+                                <button
+                                  key={a.id}
+                                  onClick={() => addItem("agents", a.id)}
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 bg-[#1A1A1E] hover:bg-[#2D2E36] border border-[#33353A] hover:border-[#44474F] rounded-md text-left transition-colors"
+                                >
+                                  <AgentIcon agentId={a.id} size={14} />
+                                  <div className="flex-1 min-w-0">
+                                    <span className="text-[13px] text-[#F8F8FA] font-medium">{a.label}</span>
+                                    {a.description && (
+                                      <span className="text-[11px] text-[#C8CAD0] ml-2">{a.description}</span>
+                                    )}
+                                  </div>
+                                  <Plus size={11} className="text-[#5E6AD2] flex-shrink-0" />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null;
+                      })()}
+
+                      <div className="flex gap-2 mt-6">
+                        <button
+                          onClick={() => setWizardStep(1)}
+                          className="flex-1 px-4 py-2.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] text-[13px] font-medium rounded transition-colors"
+                        >
+                          Back
+                        </button>
+                        <button
+                          onClick={() => setWizardStep(3)}
+                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+                        >
+                          <ArrowRight size={13} /> Continue
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {/* ── Step 3: Template ──────────────────────────────── */}
+                  {wizardStep === 3 && (
+                    <>
+                      <div className="mb-6 text-center">
+                        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-[#5E6AD2]/10 border border-[#5E6AD2]/30 flex items-center justify-center">
+                          <LayoutTemplate size={24} className="text-[#5E6AD2]" strokeWidth={1.5} />
+                        </div>
+                        <h2 className="text-[16px] font-semibold text-[#F8F8FA] mb-1">Apply a template</h2>
+                        <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
+                          Optionally start from a project template to pre-configure skills, MCP servers, and instructions.
+                        </p>
+                      </div>
+
+                      {availableProjectTemplates.length > 0 ? (
+                        <div className="space-y-1 max-h-56 overflow-y-auto custom-scrollbar mb-5">
                           {availableProjectTemplates.map((tmpl) => {
                             const isSelected = selectedProjectTemplate === tmpl.name;
                             return (
                               <button
                                 key={tmpl.name}
                                 onClick={() => applyProjectTemplate(tmpl)}
-                                className={`w-full text-left px-3 py-2 rounded-md transition-colors flex items-start gap-2 ${
+                                className={`w-full text-left px-3 py-2.5 rounded-md transition-colors flex items-start gap-2 border ${
                                   isSelected
-                                    ? "bg-[#5E6AD2]/15 border border-[#5E6AD2]/40"
-                                    : "hover:bg-[#2D2E36] border border-transparent"
+                                    ? "bg-[#5E6AD2]/15 border-[#5E6AD2]/40"
+                                    : "bg-[#1A1A1E] border-[#33353A] hover:border-[#44474F] hover:bg-[#2D2E36]"
                                 }`}
                               >
                                 <div className="flex-1 min-w-0">
@@ -1458,17 +1633,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   <div className="flex items-center gap-3 mt-1">
                                     {tmpl.agents.length > 0 && (
                                       <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
-                                        <Bot size={10} /> {tmpl.agents.length} agent{tmpl.agents.length !== 1 ? "s" : ""}
+                                        <Bot size={10} /> {tmpl.agents.length}
                                       </span>
                                     )}
                                     {tmpl.skills.length > 0 && (
                                       <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
-                                        <Code size={10} /> {tmpl.skills.length} skill{tmpl.skills.length !== 1 ? "s" : ""}
+                                        <Code size={10} /> {tmpl.skills.length}
                                       </span>
                                     )}
                                     {tmpl.mcp_servers.length > 0 && (
                                       <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
-                                        <Server size={10} /> {tmpl.mcp_servers.length} MCP server{tmpl.mcp_servers.length !== 1 ? "s" : ""}
+                                        <Server size={10} /> {tmpl.mcp_servers.length}
                                       </span>
                                     )}
                                   </div>
@@ -1480,68 +1655,42 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             );
                           })}
                         </div>
+                      ) : (
+                        <div className="mb-5 px-3 py-4 bg-[#1A1A1E] border border-[#33353A] rounded-md text-center">
+                          <p className="text-[12px] text-[#C8CAD0]/60 italic">No project templates configured.</p>
+                        </div>
                       )}
-                    </div>
+
+                      {selectedProjectTemplate && (
+                        <button
+                          onClick={() => {
+                            setProject((p) => p ? { ...p, agents: p.agents } : p);
+                            setSelectedProjectTemplate(null);
+                            setShowProjectTemplatePicker(false);
+                          }}
+                          className="flex items-center gap-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] mb-4 transition-colors"
+                        >
+                          <X size={11} /> Clear template
+                        </button>
+                      )}
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setWizardStep(2)}
+                          className="flex-1 px-4 py-2.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] text-[13px] font-medium rounded transition-colors"
+                        >
+                          Back
+                        </button>
+                        <button
+                          onClick={handleSave}
+                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+                        >
+                          <Check size={13} /> Create Project
+                        </button>
+                      </div>
+                    </>
                   )}
 
-                  <div className="space-y-3">
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={project.directory}
-                        onChange={(e) => updateField("directory", e.target.value)}
-                        placeholder="/path/to/your/project"
-                        className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors"
-                      />
-                      <button
-                        onClick={async () => {
-                          const selected = await open({
-                            directory: true,
-                            multiple: false,
-                            title: "Select project directory",
-                          });
-                          if (!selected) return;
-                          const dir = selected as string;
-                          // Derive name from folder if not already entered
-                          const folderName = dir.split("/").filter(Boolean).pop() ?? "";
-                          const name = newName.trim() || folderName;
-                          setNewName(name);
-                          updateField("directory", dir);
-                          // Auto-save then autodetect
-                          try {
-                            setSyncStatus("syncing");
-                            const toSave = { ...project, directory: dir, name, updated_at: new Date().toISOString() };
-                            if (userId && !toSave.created_by) {
-                              toSave.created_by = userId;
-                            }
-                            await invoke("save_project", { name, data: JSON.stringify(toSave, null, 2) });
-                            setSelectedName(name);
-                            localStorage.setItem(LAST_PROJECT_KEY, name);
-                            setIsCreating(false);
-                            await loadProjects();
-                            await reloadProject(name);
-                            setSyncStatus("Saved");
-                            setTimeout(() => setSyncStatus(null), 3000);
-                          } catch (err: any) {
-                            setSyncStatus(null);
-                            setError(`Failed to save project: ${err}`);
-                          }
-                        }}
-                        className="px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors whitespace-nowrap"
-                      >
-                        Browse
-                      </button>
-                    </div>
-
-                    {project.directory && (
-                      <button
-                        onClick={handleSave}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors"
-                      >
-                        <Check size={14} /> Create Project
-                      </button>
-                    )}
-                  </div>
                 </div>
               </div>
             )}
