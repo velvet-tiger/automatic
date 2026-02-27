@@ -11,8 +11,6 @@ import {
   LayoutTemplate,
   Copy,
   ChevronDown,
-  FileText,
-  ChevronRight,
   ScrollText,
   Edit2,
   Files,
@@ -66,14 +64,6 @@ function templateAccent(t: ProjectTemplate): { bg: string; icon: string } {
   return { bg: "bg-[#5E6AD2]/15", icon: "text-[#5E6AD2]" };
 }
 
-// Known project file names and which agents use them
-const KNOWN_PROJECT_FILES = [
-  { filename: "CLAUDE.md", label: "CLAUDE.md", hint: "Claude Code" },
-  { filename: "AGENTS.md", label: "AGENTS.md", hint: "Claude Code / Codex" },
-  { filename: ".cursorrules", label: ".cursorrules", hint: "Cursor" },
-  { filename: ".windsurfrules", label: ".windsurfrules", hint: "Windsurf" },
-  { filename: ".github/copilot-instructions.md", label: "copilot-instructions.md", hint: "GitHub Copilot" },
-];
 
 export default function ProjectTemplates() {
   const [templates, setTemplates] = useState<string[]>([]);
@@ -105,13 +95,6 @@ export default function ProjectTemplates() {
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [showApplyPicker, setShowApplyPicker] = useState(false);
   const [applyStatus, setApplyStatus] = useState<string | null>(null);
-
-  // Inline-add state
-  const [addingFile, setAddingFile] = useState(false);
-  const [customFilename, setCustomFilename] = useState("");
-
-  // Expanded project file (for inline content editing)
-  const [expandedFile, setExpandedFile] = useState<string | null>(null);
 
   // Inline delete confirmation — holds the name awaiting confirmation
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -265,7 +248,6 @@ export default function ProjectTemplates() {
       setShowApplyPicker(false);
       setApplyStatus(null);
       setConfirmDelete(null);
-      setExpandedFile(null);
     } catch (err: any) {
       setError(`Failed to read project template: ${err}`);
     }
@@ -458,42 +440,6 @@ export default function ProjectTemplates() {
   const removeItem = (key: ListField, idx: number) => {
     if (!template) return;
     updateField(key, template[key].filter((_, i) => i !== idx));
-  };
-
-  // Project file helpers
-  const addProjectFile = (filename: string, content: string = "") => {
-    if (!template || !filename.trim()) return;
-    if (template.project_files.some((f) => f.filename === filename.trim())) return;
-    const updated = [...template.project_files, { filename: filename.trim(), content }];
-    updateField("project_files", updated);
-    setExpandedFile(filename.trim());
-  };
-
-  const removeProjectFile = (idx: number) => {
-    if (!template) return;
-    const removed = template.project_files[idx];
-    if (expandedFile === removed.filename) setExpandedFile(null);
-    updateField("project_files", template.project_files.filter((_, i) => i !== idx));
-  };
-
-  const updateProjectFileContent = (filename: string, content: string) => {
-    if (!template) return;
-    const updated = template.project_files.map((f) =>
-      f.filename === filename ? { ...f, content } : f
-    );
-    updateField("project_files", updated);
-  };
-
-  // Add project file from a file template
-  const addFromFileTemplate = async (templateName: string, filename: string) => {
-    try {
-      const content: string = await invoke("read_template", { name: templateName });
-      addProjectFile(filename, content);
-    } catch {
-      addProjectFile(filename, "");
-    }
-    setAddingFile(false);
-    setCustomFilename("");
   };
 
   // Projects that have had this template applied (superset match)
@@ -802,22 +748,6 @@ export default function ProjectTemplates() {
                   onRemove={(idx) => removeItem("agents", idx)}
                 />
 
-                {/* Skills */}
-                <SkillSelector
-                  skills={template.skills}
-                  availableSkills={availableSkills}
-                  onAdd={(s) => addItem("skills", s)}
-                  onRemove={(idx) => removeItem("skills", idx)}
-                />
-
-                {/* MCP Servers */}
-                <McpSelector
-                  servers={template.mcp_servers}
-                  availableServers={availableMcpServers}
-                  onAdd={(s) => addItem("mcp_servers", s)}
-                  onRemove={(idx) => removeItem("mcp_servers", idx)}
-                />
-
                 {/* Unified Project Instruction */}
                 <div>
                   <div className="flex items-center justify-between mb-3">
@@ -962,170 +892,21 @@ export default function ProjectTemplates() {
                   </div>
                 </div>
 
-                {/* Project Files */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <FileText size={13} className="text-[#5E6AD2]" />
-                      <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
-                        Project Files
-                      </span>
-                    </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setAddingFile(true); setCustomFilename(""); }}
-                      className="text-[11px] text-[#5E6AD2] hover:text-[#6B78E3] flex items-center gap-1 transition-colors"
-                    >
-                      <Plus size={12} /> Add
-                    </button>
-                  </div>
+                {/* Skills */}
+                <SkillSelector
+                  skills={template.skills}
+                  availableSkills={availableSkills}
+                  onAdd={(s) => addItem("skills", s)}
+                  onRemove={(idx) => removeItem("skills", idx)}
+                />
 
-                  {template.project_files.length === 0 && !addingFile && (
-                    <p className="text-[12px] text-[#C8CAD0]/50 italic pl-1">No project files configured.</p>
-                  )}
-
-                  <div className="space-y-2">
-                    {template.project_files.map((pf, idx) => {
-                      const isExpanded = expandedFile === pf.filename;
-                      return (
-                        <div
-                          key={pf.filename}
-                          className="bg-[#1A1A1E] border border-[#33353A] rounded-lg overflow-hidden group"
-                        >
-                          {/* File row */}
-                          <div className="flex items-center gap-3 px-3 py-3">
-                            <div className="w-8 h-8 rounded-md bg-[#5E6AD2]/15 flex items-center justify-center flex-shrink-0">
-                              <FileText size={15} className="text-[#5E6AD2]" />
-                            </div>
-                            <button
-                              className="flex-1 min-w-0 text-left flex items-center gap-1.5"
-                              onClick={() => setExpandedFile(isExpanded ? null : pf.filename)}
-                            >
-                              <span className="text-[13px] font-medium text-[#F8F8FA] font-mono">{pf.filename}</span>
-                              {pf.content && (
-                                <span className="text-[11px] text-[#C8CAD0]">
-                                  · {pf.content.split("\n").length} line{pf.content.split("\n").length !== 1 ? "s" : ""}
-                                </span>
-                              )}
-                              <ChevronRight
-                                size={12}
-                                className={`text-[#C8CAD0] ml-auto transition-transform ${isExpanded ? "rotate-90" : ""}`}
-                              />
-                            </button>
-                            <button
-                              onClick={() => removeProjectFile(idx)}
-                              className="text-[#C8CAD0] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-[#33353A] rounded flex-shrink-0"
-                            >
-                              <X size={12} />
-                            </button>
-                          </div>
-
-                          {/* Expanded content editor */}
-                          {isExpanded && (
-                            <div className="border-t border-[#33353A] px-3 pb-3 pt-2">
-                              <textarea
-                                value={pf.content}
-                                onChange={(e) => updateProjectFileContent(pf.filename, e.target.value)}
-                                placeholder={`Content for ${pf.filename}...`}
-                                rows={10}
-                                className="w-full bg-[#111114] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[12px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none resize-y transition-colors font-mono leading-relaxed"
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Add file picker */}
-                  {addingFile && (
-                    <div className="mt-2 p-3 bg-[#1A1A1E] border border-[#33353A] rounded-lg">
-                      <p className="text-[11px] text-[#C8CAD0] mb-3 px-1">Choose a file to add:</p>
-
-                      {/* Known project files */}
-                      {KNOWN_PROJECT_FILES.filter(
-                        (kf) => !template.project_files.some((f) => f.filename === kf.filename)
-                      ).length > 0 && (
-                        <div className="space-y-0.5 mb-3">
-                          {KNOWN_PROJECT_FILES
-                            .filter((kf) => !template.project_files.some((f) => f.filename === kf.filename))
-                            .map((kf) => (
-                              <button
-                                key={kf.filename}
-                                onClick={() => { addProjectFile(kf.filename, ""); setAddingFile(false); }}
-                                className="w-full flex items-center gap-2.5 px-2 py-1.5 hover:bg-[#2D2E36] rounded-md text-left transition-colors"
-                              >
-                                <FileText size={12} className="text-[#5E6AD2] shrink-0" />
-                                <span className="text-[13px] text-[#F8F8FA] font-mono font-medium">{kf.label}</span>
-                                <span className="text-[11px] text-[#C8CAD0]">{kf.hint}</span>
-                              </button>
-                            ))}
-                        </div>
-                      )}
-
-                      {/* From file templates */}
-                      {availableFileTemplates.length > 0 && (
-                        <>
-                          <p className="text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider px-1 mb-1.5">
-                            From file template
-                          </p>
-                          <div className="space-y-0.5 mb-3 max-h-32 overflow-y-auto custom-scrollbar">
-                            {availableFileTemplates.map((t) => (
-                              <button
-                                key={t}
-                                onClick={() => addFromFileTemplate(t, "CLAUDE.md")}
-                                className="w-full flex items-center gap-2.5 px-2 py-1.5 hover:bg-[#2D2E36] rounded-md text-left transition-colors"
-                              >
-                                <LayoutTemplate size={12} className="text-[#8B5CF6] shrink-0" />
-                                <span className="text-[13px] text-[#F8F8FA]">{t}</span>
-                                <span className="text-[11px] text-[#C8CAD0] ml-auto">→ CLAUDE.md</span>
-                              </button>
-                            ))}
-                          </div>
-                        </>
-                      )}
-
-                      {/* Custom filename */}
-                      <div className="flex items-center gap-2 pt-2 border-t border-[#33353A]">
-                        <input
-                          type="text"
-                          value={customFilename}
-                          onChange={(e) => setCustomFilename(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && customFilename.trim()) {
-                              addProjectFile(customFilename.trim(), "");
-                              setAddingFile(false);
-                              setCustomFilename("");
-                            }
-                            if (e.key === "Escape") { setAddingFile(false); setCustomFilename(""); }
-                          }}
-                          placeholder="Custom filename, e.g. README.md"
-                          className="flex-1 bg-[#111114] border border-[#33353A] focus:border-[#5E6AD2] rounded px-2.5 py-1.5 text-[12px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono"
-                          autoFocus
-                        />
-                        <button
-                          onClick={() => {
-                            if (customFilename.trim()) {
-                              addProjectFile(customFilename.trim(), "");
-                              setCustomFilename("");
-                            }
-                            setAddingFile(false);
-                          }}
-                          disabled={!customFilename.trim()}
-                          className="px-2.5 py-1.5 text-[12px] bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                        >
-                          Add
-                        </button>
-                        <button
-                          onClick={() => { setAddingFile(false); setCustomFilename(""); }}
-                          className="px-2 py-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                {/* MCP Servers */}
+                <McpSelector
+                  servers={template.mcp_servers}
+                  availableServers={availableMcpServers}
+                  onAdd={(s) => addItem("mcp_servers", s)}
+                  onRemove={(idx) => removeItem("mcp_servers", idx)}
+                />
 
                 {/* Applied to */}
                 {!isCreating && appliedProjects.length > 0 && (
