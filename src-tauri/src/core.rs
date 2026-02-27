@@ -981,6 +981,23 @@ pub fn save_profile(profile: &UserProfile) -> Result<(), String> {
 
 // ── Settings (~/.automatic/settings.json) ────────────────────────────────────
 
+/// Onboarding answers captured by the first-run wizard.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct OnboardingData {
+    /// The user's primary development role (e.g. "fullstack", "backend").
+    #[serde(default)]
+    pub role: String,
+    /// How the user incorporates AI into their workflow (e.g. "full_agentic").
+    #[serde(default)]
+    pub ai_usage: String,
+    /// Agent IDs the user selected during onboarding.
+    #[serde(default)]
+    pub agents: Vec<String>,
+    /// Email address provided for newsletter subscription (empty if skipped).
+    #[serde(default)]
+    pub email: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub skill_sync_mode: String,
@@ -988,6 +1005,16 @@ pub struct Settings {
     /// Defaults to true; can be disabled in Settings.
     #[serde(default = "default_analytics_enabled")]
     pub analytics_enabled: bool,
+    /// Set to true once the first-run wizard has been completed.
+    /// If false (or absent), the wizard is shown on next launch.
+    #[serde(default)]
+    pub wizard_completed: bool,
+    /// Answers collected during the first-run wizard.
+    #[serde(default)]
+    pub onboarding: OnboardingData,
+    /// Agent IDs that are automatically pre-selected when creating a new project.
+    #[serde(default)]
+    pub default_agents: Vec<String>,
 }
 
 fn default_analytics_enabled() -> bool {
@@ -999,6 +1026,9 @@ impl Default for Settings {
         Self {
             skill_sync_mode: "symlink".to_string(),
             analytics_enabled: true,
+            wizard_completed: false,
+            onboarding: OnboardingData::default(),
+            default_agents: Vec::new(),
         }
     }
 }
@@ -1023,6 +1053,84 @@ pub fn write_settings(settings: &Settings) -> Result<(), String> {
     }
     let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
     fs::write(&path, raw).map_err(|e| e.to_string())
+}
+
+// ── Newsletter subscription (Attio) ──────────────────────────────────────────
+//
+// Flow:
+//   1. Assert (upsert) a Person record matched on email_addresses.
+//   2. Assert a list entry on the "automatic-updates" list for that person.
+//
+// The Attio API key is stored in the system keychain under the provider name
+// "attio" using the same save_api_key / get_api_key mechanism used elsewhere.
+
+/// Subscribe an email address to the Automatic newsletter via Attio.
+/// Returns `Ok(())` on success, or a human-readable error string.
+pub async fn subscribe_newsletter(email: &str) -> Result<(), String> {
+    let api_key = option_env!("ATTIO_API_KEY")
+        .ok_or("Newsletter subscription is not configured in this build")?;
+
+    let client = reqwest::Client::new();
+    let auth = format!("Bearer {}", api_key);
+
+    // ── Step 1: assert person ─────────────────────────────────────────────────
+    let person_body = serde_json::json!({
+        "data": {
+            "email_addresses": [{ "email_address": email }]
+        }
+    });
+
+    let person_resp = client
+        .put("https://api.attio.com/v2/objects/people/records")
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .query(&[("matching_attribute", "email_addresses")])
+        .json(&person_body)
+        .send()
+        .await
+        .map_err(|e| format!("Attio request failed: {e}"))?;
+
+    if !person_resp.status().is_success() {
+        let status = person_resp.status();
+        let body = person_resp.text().await.unwrap_or_default();
+        return Err(format!("Attio person upsert failed ({status}): {body}"));
+    }
+
+    let person_json: serde_json::Value = person_resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Attio person response: {e}"))?;
+
+    let record_id = person_json
+        .pointer("/data/id/record_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Attio response missing record_id".to_string())?
+        .to_string();
+
+    // ── Step 2: assert list entry ─────────────────────────────────────────────
+    let entry_body = serde_json::json!({
+        "data": {
+            "parent_record_id": record_id,
+            "parent_object": "people"
+        }
+    });
+
+    let entry_resp = client
+        .put("https://api.attio.com/v2/lists/automatic-updates/entries")
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .json(&entry_body)
+        .send()
+        .await
+        .map_err(|e| format!("Attio list entry request failed: {e}"))?;
+
+    if !entry_resp.status().is_success() {
+        let status = entry_resp.status();
+        let body = entry_resp.text().await.unwrap_or_default();
+        return Err(format!("Attio list entry upsert failed ({status}): {body}"));
+    }
+
+    Ok(())
 }
 
 // ── Templates ────────────────────────────────────────────────────────────────

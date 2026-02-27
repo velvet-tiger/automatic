@@ -1273,10 +1273,18 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
-  const startCreate = () => {
+  const startCreate = async () => {
     setSelectedName(null);
     localStorage.removeItem(LAST_PROJECT_KEY);
-    setProject(emptyProject(""));
+    // Pre-populate agents from the "Default Agents" setting
+    let defaultAgents: string[] = [];
+    try {
+      const raw: any = await invoke("read_settings");
+      defaultAgents = raw.default_agents ?? [];
+    } catch {
+      // Non-fatal — proceed with empty agents if settings can't be read
+    }
+    setProject({ ...emptyProject(""), agents: defaultAgents });
     setDirty(true);
     setIsCreating(true);
     setNewName("");
@@ -1805,10 +1813,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 // Run read-only autodetection
                                 const raw: string = await invoke("autodetect_project_dependencies", { name });
                                 const detected = JSON.parse(raw) as Project;
+                                // Merge default agents (already set on project from startCreate)
+                                // with autodetected agents so neither source is lost.
+                                const mergedAgents = [
+                                  ...new Set([...(project?.agents ?? []), ...detected.agents]),
+                                ];
                                 // Pre-fill wizard project with discovered agents/skills/servers
                                 setProject({
                                   ...stub,
-                                  agents: detected.agents,
+                                  agents: mergedAgents,
                                   skills: detected.skills,
                                   local_skills: detected.local_skills,
                                   mcp_servers: detected.mcp_servers,
