@@ -390,6 +390,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   // Memory state
   const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
   const [loadingMemories, setLoadingMemories] = useState(false);
+  const [editingMemoryKey, setEditingMemoryKey] = useState<string | null>(null);
+  const [editingMemoryValue, setEditingMemoryValue] = useState<string>("");
+  const [savingMemory, setSavingMemory] = useState(false);
+  const [copiedMemoryKey, setCopiedMemoryKey] = useState<string | null>(null);
 
   // Editor detection state
   interface EditorInfo { id: string; label: string; installed: boolean; }
@@ -2002,7 +2006,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       onClick={() => handleToggleRule(rule.id)}
                                       className={`px-2.5 py-1 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
                                         isSelected
-                                          ? "bg-[#22D3EE]/15 border-[#22D3EE]/40 text-[#22D3EE]"
+                                          ? "bg-[#22D3EE]/8 border-[#22D3EE]/25 text-[#22D3EE]/75"
                                           : "bg-[#2D2E36] border-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] hover:border-[#44474F]"
                                       }`}
                                     >
@@ -2638,7 +2642,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {Object.entries(memories).map(([key, memory]) => (
+                        {Object.entries(memories).map(([key, memory]) => {
+                          const isEditing = editingMemoryKey === key;
+                          const isCopied = copiedMemoryKey === key;
+                          return (
                           <div key={key} className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-4 group">
                             <div className="flex items-start justify-between gap-4 mb-2">
                               <div className="min-w-0 flex-1">
@@ -2654,27 +2661,108 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   {new Date(memory.timestamp).toLocaleString()}
                                 </p>
                               </div>
-                              <button
-                                onClick={async () => {
-                                  if (!selectedName) return;
-                                  try {
-                                    await invoke("delete_memory", { project: selectedName, key });
-                                    await loadMemories(selectedName);
-                                  } catch (err: any) {
-                                    setError(`Failed to delete memory: ${err}`);
-                                  }
-                                }}
-                                className="text-[#C8CAD0] hover:text-[#FF6B6B] p-1.5 hover:bg-[#33353A] rounded transition-colors opacity-0 group-hover:opacity-100"
-                                title="Delete memory"
-                              >
-                                <Trash2 size={14} />
-                              </button>
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(memory.value);
+                                    setCopiedMemoryKey(key);
+                                    setTimeout(() => setCopiedMemoryKey(null), 1500);
+                                  }}
+                                  className="text-[#C8CAD0] hover:text-[#F8F8FA] p-1.5 hover:bg-[#33353A] rounded transition-colors"
+                                  title="Copy value"
+                                >
+                                  {isCopied ? <Check size={14} className="text-[#4CAF50]" /> : <Copy size={14} />}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (isEditing) {
+                                      setEditingMemoryKey(null);
+                                      setEditingMemoryValue("");
+                                    } else {
+                                      setEditingMemoryKey(key);
+                                      setEditingMemoryValue(memory.value);
+                                    }
+                                  }}
+                                  className={`p-1.5 rounded transition-colors ${isEditing ? "text-[#5E6AD2] bg-[#5E6AD2]/10 hover:bg-[#5E6AD2]/20" : "text-[#C8CAD0] hover:text-[#F8F8FA] hover:bg-[#33353A]"}`}
+                                  title={isEditing ? "Cancel edit" : "Edit memory"}
+                                >
+                                  <Edit2 size={14} />
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    if (!selectedName) return;
+                                    try {
+                                      await invoke("delete_memory", { project: selectedName, key });
+                                      if (editingMemoryKey === key) {
+                                        setEditingMemoryKey(null);
+                                        setEditingMemoryValue("");
+                                      }
+                                      await loadMemories(selectedName);
+                                    } catch (err: any) {
+                                      setError(`Failed to delete memory: ${err}`);
+                                    }
+                                  }}
+                                  className="text-[#C8CAD0] hover:text-[#FF6B6B] p-1.5 hover:bg-[#33353A] rounded transition-colors"
+                                  title="Delete memory"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </div>
-                            <div className="text-[13px] text-[#F8F8FA] whitespace-pre-wrap font-mono bg-[#222327] p-3 rounded border border-[#33353A] max-h-60 overflow-y-auto custom-scrollbar">
-                              {memory.value}
-                            </div>
+                            {isEditing ? (
+                              <div className="space-y-2">
+                                <textarea
+                                  value={editingMemoryValue}
+                                  onChange={(e) => setEditingMemoryValue(e.target.value)}
+                                  className="w-full text-[13px] text-[#F8F8FA] font-mono bg-[#222327] p-3 rounded border border-[#5E6AD2] resize-none focus:outline-none focus:ring-1 focus:ring-[#5E6AD2] custom-scrollbar"
+                                  rows={Math.min(Math.max(editingMemoryValue.split("\n").length + 1, 4), 15)}
+                                  autoFocus
+                                />
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    onClick={() => {
+                                      setEditingMemoryKey(null);
+                                      setEditingMemoryValue("");
+                                    }}
+                                    className="px-3 py-1 text-[12px] font-medium text-[#C8CAD0] hover:text-[#F8F8FA] bg-[#2D2E36] hover:bg-[#33353A] rounded transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    disabled={savingMemory || editingMemoryValue.trim() === ""}
+                                    onClick={async () => {
+                                      if (!selectedName) return;
+                                      try {
+                                        setSavingMemory(true);
+                                        await invoke("store_memory", {
+                                          project: selectedName,
+                                          key,
+                                          value: editingMemoryValue,
+                                          source: memory.source ?? null,
+                                        });
+                                        setEditingMemoryKey(null);
+                                        setEditingMemoryValue("");
+                                        await loadMemories(selectedName);
+                                      } catch (err: any) {
+                                        setError(`Failed to save memory: ${err}`);
+                                      } finally {
+                                        setSavingMemory(false);
+                                      }
+                                    }}
+                                    className="px-3 py-1 text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded transition-colors"
+                                  >
+                                    {savingMemory ? "Saving..." : "Save"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-[13px] text-[#F8F8FA] whitespace-pre-wrap font-mono bg-[#222327] p-3 rounded border border-[#33353A] max-h-60 overflow-y-auto custom-scrollbar">
+                                {memory.value}
+                              </div>
+                            )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </section>
