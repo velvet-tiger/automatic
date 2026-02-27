@@ -26,6 +26,21 @@ interface SkillEntry {
   in_agents: boolean;
   in_claude: boolean;
   source?: SkillSource;
+  has_resources: boolean;
+}
+
+interface ResourceFile {
+  path: string;
+}
+
+interface ResourceDir {
+  name: string;
+  files: ResourceFile[];
+}
+
+interface SkillResources {
+  dirs: ResourceDir[];
+  root_files: ResourceFile[];
 }
 
 const SIDEBAR_MIN = 240;
@@ -75,29 +90,193 @@ function parseFrontmatter(raw: string): { meta: Frontmatter; body: string } {
   return { meta, body: match[2]!.trimStart() };
 }
 
-// ── Skill preview — frontmatter header + shared markdown body renderer ────────
+// ── Skill preview — frontmatter header + companion resources + markdown body ──
 
-function SkillPreview({ content }: { content: string }) {
+interface SkillPreviewProps {
+  content: string;
+  source?: SkillSource;
+  resources?: SkillResources | null;
+}
+
+function SkillPreview({ content, source, resources }: SkillPreviewProps) {
   const { meta, body } = parseFrontmatter(content);
   const displayName = meta.name || "";
   const description = meta.description || "";
 
+  const hasResources =
+    resources && (resources.dirs.length > 0 || resources.root_files.length > 0);
+
+  // Track which directories are expanded
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+  const toggleDir = (name: string) =>
+    setExpandedDirs(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+
+  // Collapse all when skill changes
+  useEffect(() => { setExpandedDirs(new Set()); }, [content]);
+
   return (
     <div>
-      {(displayName || description) && (
-        <div className="px-8 pt-6 pb-0">
-          {displayName && (
-            <h1 className="text-[20px] font-semibold text-[#F8F8FA] mb-2 leading-tight">{displayName}</h1>
-          )}
-          {description && (
-            <p className="text-[13px] text-[#C8CAD0] leading-relaxed mb-6 pb-5 border-b border-[#33353A]">{description}</p>
-          )}
-        </div>
-      )}
+      {/* ── Metadata header ───────────────────────────────────────────── */}
+      <div className="px-8 pt-6 pb-0">
+        {displayName && (
+          <h1 className="text-[20px] font-semibold text-[#F8F8FA] mb-2 leading-tight">{displayName}</h1>
+        )}
+        {description && (
+          <p className="text-[13px] text-[#C8CAD0] leading-relaxed mb-4">{description}</p>
+        )}
+
+        {/* Source link (remote skills only) */}
+        {source && (
+          <div className="mb-4">
+            <a
+              href={`https://github.com/${source.source}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-[12px] text-[#E5E6EA] hover:text-white transition-colors"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" className="opacity-70">
+                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+              </svg>
+              {source.source}
+            </a>
+          </div>
+        )}
+
+        {/* Companion resources */}
+        {hasResources && (
+          <div className="mb-5 rounded-lg border border-[#33353A] overflow-hidden">
+            <div className="px-3 py-2 bg-[#2D2E36]/40 border-b border-[#33353A]">
+              <p className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                Additional Resources
+              </p>
+            </div>
+
+            <div className="divide-y divide-[#33353A]">
+              {/* Directories — clickable to expand */}
+              {resources!.dirs.map(dir => {
+                const isOpen = expandedDirs.has(dir.name);
+                return (
+                  <div key={dir.name}>
+                    <button
+                      onClick={() => toggleDir(dir.name)}
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#2D2E36]/60 transition-colors text-left"
+                    >
+                      {/* Chevron */}
+                      <svg
+                        width="10" height="10" viewBox="0 0 10 10" fill="currentColor"
+                        className={`shrink-0 text-[#C8CAD0]/50 transition-transform ${isOpen ? "rotate-90" : ""}`}
+                      >
+                        <path d="M3 2l4 3-4 3V2z"/>
+                      </svg>
+                      {/* Folder icon */}
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-[#8B93E6]">
+                        <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
+                      </svg>
+                      <span className="text-[12px] font-mono text-[#C8CAD0]">{dir.name}/</span>
+                      <span className="text-[11px] text-[#C8CAD0]/40 ml-auto">{dir.files.length} {dir.files.length === 1 ? "file" : "files"}</span>
+                    </button>
+
+                    {isOpen && (
+                      <div className="bg-[#1A1A1E]/40 border-t border-[#33353A]/50">
+                        {dir.files.map(f => (
+                          <div key={f.path} className="flex items-center gap-2 pl-9 pr-3 py-1.5">
+                            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-[#C8CAD0]/40">
+                              <path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25V1.75z"/>
+                            </svg>
+                            <span className="text-[12px] font-mono text-[#C8CAD0]/70">{f.path}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Root-level files */}
+              {resources!.root_files.map(f => (
+                <div key={f.path} className="flex items-center gap-2 px-3 py-2">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-[#C8CAD0]/40 ml-[22px]">
+                    <path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25V1.75z"/>
+                  </svg>
+                  <span className="text-[12px] font-mono text-[#C8CAD0]/70">{f.path}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(displayName || description || source || hasResources) && (
+          <div className="border-b border-[#33353A] mb-0" />
+        )}
+      </div>
+
       <MarkdownPreview content={body} />
     </div>
   );
 }
+
+// ── Frontmatter field validation ─────────────────────────────────────────────
+
+const XML_TAG_RE = /<[^>]+>/;
+const RESERVED_WORDS = ["anthropic", "claude"];
+const NAME_CHARSET_RE = /^[a-z0-9-]*$/;
+
+interface FieldError {
+  name: string | null;
+  description: string | null;
+}
+
+function validateSkillName(value: string): string | null {
+  if (!value) return "Name is required.";
+  if (value.length > 64) return "Name must be 64 characters or fewer.";
+  if (!NAME_CHARSET_RE.test(value)) return "Name may only contain lowercase letters, numbers, and hyphens.";
+  if (XML_TAG_RE.test(value)) return "Name must not contain XML tags.";
+  for (const word of RESERVED_WORDS) {
+    if (value === word || value.startsWith(word + "-") || value.endsWith("-" + word) || value.includes("-" + word + "-")) {
+      return `Name must not contain the reserved word "${word}".`;
+    }
+  }
+  return null;
+}
+
+function validateSkillDescription(value: string): string | null {
+  if (!value.trim()) return "Description is required.";
+  if (value.length > 1024) return "Description must be 1024 characters or fewer.";
+  if (XML_TAG_RE.test(value)) return "Description must not contain XML tags.";
+  return null;
+}
+
+/** Build the YAML frontmatter block from name + description. */
+function buildFrontmatter(name: string, description: string): string {
+  // Wrap description in quotes if it contains a colon, to be safe YAML
+  const safeDesc = description.includes(":") ? `"${description.replace(/"/g, '\\"')}"` : description;
+  return `---\nname: ${name}\ndescription: ${safeDesc}\n---\n`;
+}
+
+
+// ── Default template for new skills ──────────────────────────────────────────
+
+/** Body content (no frontmatter) pre-filled when creating a new skill. */
+const DEFAULT_SKILL_BODY = `# My Skill
+
+## When to use this skill
+
+Describe the scenarios where this skill should be activated.
+
+## Instructions
+
+Write your skill instructions here. These will be loaded by agents when the skill is active.
+
+### Key behaviors
+
+- Behavior one
+- Behavior two
+- Behavior three
+`;
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
@@ -107,6 +286,7 @@ export default function Skills() {
   const [skillContent, setSkillContent] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [newSkillName, setNewSkillName] = useState("");
+  const [newSkillDescription, setNewSkillDescription] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [filter, setFilter] = useState<"all" | "remote" | "local">("all");
   const [search, setSearch] = useState("");
@@ -115,6 +295,16 @@ export default function Skills() {
   const [syncingAll, setSyncingAll] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const isDragging = useRef(false);
+
+  // Companion resources for the selected skill
+  const [skillResources, setSkillResources] = useState<SkillResources | null>(null);
+
+  // Frontmatter field state for the edit panel (existing skills)
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<FieldError>({ name: null, description: null });
+  // Body content without frontmatter, for the split editor
+  const [editBody, setEditBody] = useState("");
 
   useEffect(() => { loadSkills(); }, []);
 
@@ -158,9 +348,19 @@ export default function Skills() {
 
   const loadSkillContent = async (name: string) => {
     try {
-      const content: string = await invoke("read_skill", { name });
+      const [content, resources] = await Promise.all([
+        invoke<string>("read_skill", { name }),
+        invoke<SkillResources>("get_skill_resources", { name }),
+      ]);
       setSelectedSkill(name);
       setSkillContent(content);
+      setSkillResources(resources);
+      // Parse frontmatter into edit fields
+      const { meta, body } = parseFrontmatter(content);
+      setEditName(meta.name ?? name);
+      setEditDescription(meta.description ?? "");
+      setEditBody(body);
+      setFieldErrors({ name: null, description: null });
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
@@ -170,14 +370,40 @@ export default function Skills() {
   };
 
   const handleSave = async () => {
-    if (!selectedSkill) return;
-    try {
-      await invoke("save_skill", { name: selectedSkill, content: skillContent });
-      setIsEditing(false);
-      if (isCreating) { setIsCreating(false); await loadSkills(); }
-      setError(null);
-    } catch (err: any) {
-      setError(`Failed to save skill: ${err}`);
+    if (isCreating) {
+      // Validate create form fields
+      const nameErr = validateSkillName(newSkillName);
+      const descErr = validateSkillDescription(newSkillDescription);
+      setFieldErrors({ name: nameErr, description: descErr });
+      if (nameErr || descErr) return;
+
+      const content = buildFrontmatter(newSkillName, newSkillDescription) + "\n" + editBody;
+      try {
+        await invoke("save_skill", { name: newSkillName, content });
+        setIsCreating(false);
+        setIsEditing(false);
+        await loadSkills();
+        await loadSkillContent(newSkillName);
+        setError(null);
+      } catch (err: any) {
+        setError(`Failed to save skill: ${err}`);
+      }
+    } else {
+      // Validate edit form fields
+      const nameErr = validateSkillName(editName);
+      const descErr = validateSkillDescription(editDescription);
+      setFieldErrors({ name: nameErr, description: descErr });
+      if (nameErr || descErr) return;
+
+      const finalContent = buildFrontmatter(editName, editDescription) + "\n" + editBody;
+      try {
+        await invoke("save_skill", { name: selectedSkill!, content: finalContent });
+        setSkillContent(finalContent);
+        setIsEditing(false);
+        setError(null);
+      } catch (err: any) {
+        setError(`Failed to save skill: ${err}`);
+      }
     }
   };
 
@@ -218,10 +444,14 @@ export default function Skills() {
 
   const startCreateNew = () => {
     setSelectedSkill(null);
+    setNewSkillName("");
+    setNewSkillDescription("");
+    setEditBody(DEFAULT_SKILL_BODY);
     setSkillContent("");
+    setSkillResources(null);
+    setFieldErrors({ name: null, description: null });
     setIsCreating(true);
     setIsEditing(true);
-    setNewSkillName("");
   };
 
   // ── Derived ───────────────────────────────────────────────────────────────
@@ -325,9 +555,11 @@ export default function Skills() {
           ) : (
             <ul className="space-y-px px-2">
               {isCreating && (
-                <li className="flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] bg-[#2D2E36] text-[#F8F8FA]">
-                  <Code size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
-                  <span className="italic text-[#C8CAD0]">New Skill…</span>
+                <li className="flex items-center gap-2.5 px-3 py-2.5 rounded-md text-[13px] bg-[#2D2E36] text-[#F8F8FA]">
+                  <Plus size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
+                  <span className={newSkillName ? "text-[#F8F8FA] font-medium" : "italic text-[#C8CAD0]"}>
+                    {newSkillName || "New Skill…"}
+                  </span>
                 </li>
               )}
               {filteredSkills.map(skill => {
@@ -394,6 +626,13 @@ export default function Skills() {
                         {!synced && (
                           <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-[#F59E0B]/15 text-[#F59E0B] leading-none" title="Not synced to both locations">!</span>
                         )}
+                        {skill.has_resources && (
+                          <span title="Has additional resources">
+                            <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" className="text-[#C8CAD0]/40">
+                              <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
+                            </svg>
+                          </span>
+                        )}
                       </div>
                     </button>
                   </li>
@@ -419,46 +658,155 @@ export default function Skills() {
           </div>
         )}
 
-        {(selectedSkill || isCreating) ? (
+        {isCreating ? (
+          /* ── New Skill Form ─────────────────────────────────────────────── */
+          <div className="flex-1 flex flex-col h-full min-h-0">
+
+            {/* Header */}
+            <div className="h-11 px-5 border-b border-[#33353A] flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <Plus size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
+                <span className="text-[14px] font-medium text-[#F8F8FA]">New Skill</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => {
+                    setIsCreating(false);
+                    setIsEditing(false);
+                    setSelectedSkill(null);
+                    setSkillContent("");
+                    setNewSkillName("");
+                    setNewSkillDescription("");
+                    setFieldErrors({ name: null, description: null });
+                  }}
+                  className="px-3 py-1.5 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded text-[12px] font-medium transition-colors"
+                >
+                  <Check size={12} /> Create Skill
+                </button>
+              </div>
+            </div>
+
+            {/* Frontmatter fields */}
+            <div className="px-6 pt-5 pb-4 border-b border-[#33353A] shrink-0 space-y-4">
+
+              {/* name */}
+              <div>
+                <div className="flex items-baseline justify-between mb-1.5">
+                  <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                    Name <span className="text-red-400 ml-0.5">*</span>
+                  </label>
+                  <span className={`text-[11px] tabular-nums ${newSkillName.length > 58 ? (newSkillName.length > 64 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                    {newSkillName.length}/64
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="my-skill-name"
+                  value={newSkillName}
+                  onChange={(e) => {
+                    const raw = e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+                    setNewSkillName(raw);
+                    setSelectedSkill(raw || null);
+                    setFieldErrors(prev => ({ ...prev, name: validateSkillName(raw) }));
+                  }}
+                  autoFocus
+                  maxLength={64}
+                  className={`w-full px-3 py-2 rounded-md bg-[#2D2E36] border outline-none text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 font-mono transition-colors ${
+                    fieldErrors.name ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                  }`}
+                  spellCheck={false}
+                />
+                {fieldErrors.name ? (
+                  <p className="mt-1.5 text-[11px] text-red-400">{fieldErrors.name}</p>
+                ) : (
+                  <p className="mt-1.5 text-[11px] text-[#C8CAD0]/50">
+                    Lowercase letters, digits, and hyphens only. Becomes the directory name under <code className="font-mono">~/.agents/skills/</code>.
+                  </p>
+                )}
+              </div>
+
+              {/* description */}
+              <div>
+                <div className="flex items-baseline justify-between mb-1.5">
+                  <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                    Description <span className="text-red-400 ml-0.5">*</span>
+                  </label>
+                  <span className={`text-[11px] tabular-nums ${newSkillDescription.length > 900 ? (newSkillDescription.length > 1024 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                    {newSkillDescription.length}/1024
+                  </span>
+                </div>
+                <textarea
+                  placeholder="A concise description of what this skill does and when to use it."
+                  value={newSkillDescription}
+                  onChange={(e) => {
+                    setNewSkillDescription(e.target.value);
+                    setFieldErrors(prev => ({ ...prev, description: validateSkillDescription(e.target.value) }));
+                  }}
+                  rows={3}
+                  maxLength={1024}
+                  className={`w-full px-3 py-2 rounded-md bg-[#2D2E36] border outline-none text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 resize-none transition-colors leading-relaxed ${
+                    fieldErrors.description ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                  }`}
+                  spellCheck={false}
+                />
+                {fieldErrors.description && (
+                  <p className="mt-1 text-[11px] text-red-400">{fieldErrors.description}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Body editor */}
+            <div className="flex-1 min-h-0 flex flex-col">
+              <div className="px-6 pt-3 pb-2 shrink-0">
+                <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                  Body
+                </label>
+              </div>
+              <textarea
+                value={editBody}
+                onChange={(e) => setEditBody(e.target.value)}
+                className="flex-1 px-6 pb-6 resize-none outline-none font-mono text-[13px] bg-[#222327] text-[#F8F8FA] leading-relaxed custom-scrollbar"
+                spellCheck={false}
+              />
+            </div>
+          </div>
+
+        ) : selectedSkill ? (
+          /* ── Existing Skill View/Edit ────────────────────────────────────── */
           <div className="flex-1 flex flex-col h-full min-h-0">
 
             {/* Header */}
             <div className="h-11 px-5 border-b border-[#33353A] flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
                 <FileText size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
-                {isCreating ? (
-                  <input
-                    type="text"
-                    placeholder="skill-name (lowercase, hyphens)"
-                    value={newSkillName}
-                    onChange={(e) => { setNewSkillName(e.target.value); setSelectedSkill(e.target.value); }}
-                    autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#F8F8FA] placeholder-[#C8CAD0]/50 w-64"
-                  />
-                ) : (
-                  <>
-                    <h3 className="text-[14px] font-medium text-[#F8F8FA] truncate">{selectedSkill}</h3>
-                    {selectedEntry?.source && (
-                      <>
-                        <span className="text-[#33353A]">/</span>
-                        <a
-                          href={`https://github.com/${selectedEntry.source.source}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors truncate"
-                          onClick={e => e.stopPropagation()}
-                        >
-                          <Github size={11} />
-                          {selectedEntry.source.source}
-                        </a>
-                      </>
-                    )}
-                  </>
-                )}
+                <>
+                  <h3 className="text-[14px] font-medium text-[#F8F8FA] truncate">{selectedSkill}</h3>
+                  {selectedEntry?.source && (
+                    <>
+                      <span className="text-[#33353A]">/</span>
+                      <a
+                        href={`https://github.com/${selectedEntry.source.source}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors truncate"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <Github size={11} />
+                        {selectedEntry.source.source}
+                      </a>
+                    </>
+                  )}
+                </>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
-                {!isCreating && !isEditing && (
+                {!isEditing && (
                   <button
                     onClick={() => setIsEditing(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium transition-colors"
@@ -468,18 +816,15 @@ export default function Skills() {
                 )}
                 {isEditing && (
                   <>
-                    {!isCreating && (
-                      <button
-                        onClick={() => { setIsEditing(false); loadSkillContent(selectedSkill!); }}
-                        className="px-3 py-1.5 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    )}
+                    <button
+                      onClick={() => { setIsEditing(false); loadSkillContent(selectedSkill!); }}
+                      className="px-3 py-1.5 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium transition-colors"
+                    >
+                      Cancel
+                    </button>
                     <button
                       onClick={handleSave}
-                      disabled={isCreating && !newSkillName.trim()}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded text-[12px] font-medium transition-colors"
                     >
                       <Check size={12} /> Save
                     </button>
@@ -489,19 +834,95 @@ export default function Skills() {
             </div>
 
             {/* Body */}
-            <div className="flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
               {isEditing ? (
-                <textarea
-                  value={skillContent}
-                  onChange={(e) => setSkillContent(e.target.value)}
-                  className="w-full h-full p-6 resize-none outline-none font-mono text-[13px] bg-[#222327] text-[#F8F8FA] leading-relaxed custom-scrollbar placeholder-[#C8CAD0]/30"
-                  placeholder="Write your skill instructions here in Markdown…"
-                  spellCheck={false}
-                />
+                <>
+                  {/* Frontmatter fields */}
+                  <div className="px-6 pt-5 pb-4 border-b border-[#33353A] shrink-0 space-y-4">
+
+                    {/* name */}
+                    <div>
+                      <div className="flex items-baseline justify-between mb-1.5">
+                        <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                          Name <span className="text-red-400 ml-0.5">*</span>
+                        </label>
+                        <span className={`text-[11px] tabular-nums ${editName.length > 58 ? (editName.length > 64 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                          {editName.length}/64
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="my-skill-name"
+                        value={editName}
+                        onChange={(e) => {
+                          const raw = e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+                          setEditName(raw);
+                          setFieldErrors(prev => ({ ...prev, name: validateSkillName(raw) }));
+                        }}
+                        maxLength={64}
+                        className={`w-full px-3 py-2 rounded-md bg-[#2D2E36] border outline-none text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 font-mono transition-colors ${
+                          fieldErrors.name ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                        }`}
+                        spellCheck={false}
+                      />
+                      {fieldErrors.name && (
+                        <p className="mt-1.5 text-[11px] text-red-400">{fieldErrors.name}</p>
+                      )}
+                    </div>
+
+                    {/* description */}
+                    <div>
+                      <div className="flex items-baseline justify-between mb-1.5">
+                        <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                          Description <span className="text-red-400 ml-0.5">*</span>
+                        </label>
+                        <span className={`text-[11px] tabular-nums ${editDescription.length > 900 ? (editDescription.length > 1024 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                          {editDescription.length}/1024
+                        </span>
+                      </div>
+                      <textarea
+                        placeholder="A concise description of what this skill does and when to use it."
+                        value={editDescription}
+                        onChange={(e) => {
+                          setEditDescription(e.target.value);
+                          setFieldErrors(prev => ({ ...prev, description: validateSkillDescription(e.target.value) }));
+                        }}
+                        rows={3}
+                        maxLength={1024}
+                        className={`w-full px-3 py-2 rounded-md bg-[#2D2E36] border outline-none text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 resize-none transition-colors leading-relaxed ${
+                          fieldErrors.description ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                        }`}
+                        spellCheck={false}
+                      />
+                      {fieldErrors.description && (
+                        <p className="mt-1 text-[11px] text-red-400">{fieldErrors.description}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Body textarea */}
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    <div className="px-6 pt-3 pb-2 shrink-0">
+                      <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                        Body
+                      </label>
+                    </div>
+                    <textarea
+                      value={editBody}
+                      onChange={(e) => setEditBody(e.target.value)}
+                      className="flex-1 px-6 pb-6 resize-none outline-none font-mono text-[13px] bg-[#222327] text-[#F8F8FA] leading-relaxed custom-scrollbar"
+                      spellCheck={false}
+                    />
+                  </div>
+                </>
               ) : skillContent ? (
                 /* Rich preview for all skills */
                 <div className="h-full overflow-y-auto custom-scrollbar">
-                  <SkillPreview content={skillContent} />
+                  <SkillPreview
+                    content={skillContent}
+                    source={selectedEntry?.source}
+                    resources={skillResources}
+                  />
                 </div>
               ) : (
                 <div className="h-full flex items-center justify-center">
@@ -515,10 +936,21 @@ export default function Skills() {
             <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#4ADE80]/10 border border-[#4ADE80]/20 flex items-center justify-center">
               <Code size={22} className={ICONS.skill.iconColor} strokeWidth={1.5} />
             </div>
-            <h2 className="text-[15px] font-medium text-[#F8F8FA] mb-2">No skill selected</h2>
-            <p className="text-[13px] text-[#C8CAD0] leading-relaxed max-w-xs">
-              Select a skill to view its contents, or create a new one.
+            <h2 className="text-[15px] font-medium text-[#F8F8FA] mb-2">
+              {skills.length === 0 ? "No skills yet" : "No skill selected"}
+            </h2>
+            <p className="text-[13px] text-[#C8CAD0] leading-relaxed max-w-xs mb-6">
+              {skills.length === 0
+                ? "Skills are reusable instruction sets that agents load on demand. Create your first skill to get started."
+                : "Select a skill from the list to view its contents, or create a new one."}
             </p>
+            <button
+              onClick={startCreateNew}
+              className="flex items-center gap-2 px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded-lg text-[13px] font-medium transition-colors"
+            >
+              <Plus size={14} />
+              New Skill
+            </button>
           </div>
         )}
       </div>

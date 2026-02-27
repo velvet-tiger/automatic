@@ -49,6 +49,9 @@ pub struct SkillEntry {
     /// Remote origin from ~/.automatic/skills.json, if this was imported from skills.sh
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<SkillSource>,
+    /// True if the skill directory contains any files or subdirectories besides SKILL.md
+    #[serde(default)]
+    pub has_resources: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -108,6 +111,18 @@ pub fn get_api_key(provider: &str) -> Result<String, String> {
 
 // ── Skills ───────────────────────────────────────────────────────────────────
 
+/// Return true if a skill directory contains anything besides SKILL.md.
+fn skill_has_resources(skill_dir: &PathBuf) -> bool {
+    let Ok(entries) = fs::read_dir(skill_dir) else { return false };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let name = entry.file_name();
+        if name != "SKILL.md" {
+            return true;
+        }
+    }
+    false
+}
+
 /// Scan a single skills directory and return the set of valid skill names.
 fn scan_skills_dir(dir: &PathBuf) -> Result<std::collections::HashSet<String>, String> {
     let mut names = std::collections::HashSet::new();
@@ -152,11 +167,24 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
 
     let entries = all_names
         .into_iter()
-        .map(|name| SkillEntry {
-            in_agents: agents_names.contains(&name),
-            in_claude: claude_names.contains(&name),
-            source: registry.get(&name).cloned(),
-            name,
+        .map(|name| {
+            // Check for resources in the canonical location (agents first, then claude)
+            let has_resources = {
+                let agents_dir = agents_dir.join(&name);
+                let claude_dir = claude_dir.join(&name);
+                if agents_dir.exists() {
+                    skill_has_resources(&agents_dir)
+                } else {
+                    skill_has_resources(&claude_dir)
+                }
+            };
+            SkillEntry {
+                in_agents: agents_names.contains(&name),
+                in_claude: claude_names.contains(&name),
+                source: registry.get(&name).cloned(),
+                has_resources,
+                name,
+            }
         })
         .collect();
 
@@ -188,19 +216,119 @@ pub fn read_skill(name: &str) -> Result<String, String> {
     Ok("".to_string())
 }
 
-/// Companion file entry discovered in a skill directory
+/// A single companion resource entry returned to the frontend.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResourceFile {
+    /// Path relative to the skill directory, e.g. "scripts/init.py" or "LICENSE.txt"
+    pub path: String,
+}
+
+/// Grouped companion resources for a skill directory.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SkillResources {
+    /// Directories found at the top level (each may contain files)
+    pub dirs: Vec<ResourceDir>,
+    /// Loose files at the root of the skill directory (not SKILL.md)
+    pub root_files: Vec<ResourceFile>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResourceDir {
+    /// Directory name relative to the skill root, e.g. "scripts"
+    pub name: String,
+    /// Files inside (non-recursive)
+    pub files: Vec<ResourceFile>,
+}
+
+/// List all companion resources for a skill: every subdirectory and its
+/// files, plus any root-level files other than SKILL.md.
+/// Returns an empty SkillResources if the skill does not exist.
+pub fn list_skill_resources(name: &str) -> Result<SkillResources, String> {
+    if !is_valid_name(name) {
+        return Err("Invalid skill name".into());
+    }
+
+    let skill_dir = match get_skill_dir(name)? {
+        Some(d) => d,
+        None => return Ok(SkillResources::default()),
+    };
+
+    let mut result = SkillResources::default();
+
+    let entries = match fs::read_dir(&skill_dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(result),
+    };
+
+    // Collect and sort entries for deterministic output
+    let mut dirs: Vec<String> = Vec::new();
+    let mut root_files: Vec<String> = Vec::new();
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let file_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        if path.is_dir() {
+            dirs.push(file_name);
+        } else if file_name != "SKILL.md" {
+            root_files.push(file_name);
+        }
+    }
+
+    dirs.sort();
+    root_files.sort();
+
+    // Root-level files
+    result.root_files = root_files
+        .into_iter()
+        .map(|name| ResourceFile { path: name })
+        .collect();
+
+    // Subdirectories
+    for dir_name in dirs {
+        let dir_path = skill_dir.join(&dir_name);
+        let mut files: Vec<String> = Vec::new();
+
+        if let Ok(dir_entries) = fs::read_dir(&dir_path) {
+            for entry in dir_entries.filter_map(|e| e.ok()) {
+                let p = entry.path();
+                if p.is_file() {
+                    if let Some(fname) = p.file_name().and_then(|n| n.to_str()) {
+                        files.push(fname.to_string());
+                    }
+                }
+            }
+        }
+        files.sort();
+
+        result.dirs.push(ResourceDir {
+            name: dir_name,
+            files: files
+                .into_iter()
+                .map(|f| ResourceFile { path: f })
+                .collect(),
+        });
+    }
+
+    Ok(result)
+}
+
+// ── Legacy internal helpers (used by read_skill for in-content rendering) ─────
+
+/// Companion file entry — internal only.
 #[derive(Debug)]
 struct CompanionFile {
     relative_path: String,
     is_dir: bool,
 }
 
-/// Discover companion files and directories in a skill folder.
-/// Looks for common subdirectories: scripts/, references/, docs/, assets/, examples/
+/// Discover companion files inside known subdirectories only.
 fn discover_companion_files(skill_dir: &std::path::Path) -> Vec<CompanionFile> {
     let mut companions = Vec::new();
 
-    // Common companion directory names for Claude/Codex skills
     let known_dirs = [
         "scripts",
         "references",
@@ -213,13 +341,11 @@ fn discover_companion_files(skill_dir: &std::path::Path) -> Vec<CompanionFile> {
     for dir_name in &known_dirs {
         let dir_path = skill_dir.join(dir_name);
         if dir_path.is_dir() {
-            // Add the directory itself
             companions.push(CompanionFile {
                 relative_path: dir_name.to_string(),
                 is_dir: true,
             });
 
-            // List files in the directory (non-recursive for now)
             if let Ok(entries) = std::fs::read_dir(&dir_path) {
                 for entry in entries.filter_map(|e| e.ok()) {
                     if let Ok(file_type) = entry.file_type() {

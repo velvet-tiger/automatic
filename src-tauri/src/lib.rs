@@ -137,6 +137,11 @@ fn sync_all_skills() -> Result<Vec<String>, String> {
     core::sync_all_skills()
 }
 
+#[tauri::command]
+fn get_skill_resources(name: &str) -> Result<core::SkillResources, String> {
+    core::list_skill_resources(name)
+}
+
 // ── Templates ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -938,6 +943,7 @@ pub fn run() {
             delete_skill,
             sync_skill,
             sync_all_skills,
+            get_skill_resources,
             get_templates,
             read_template,
             save_template,
