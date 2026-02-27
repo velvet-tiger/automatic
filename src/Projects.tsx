@@ -63,6 +63,10 @@ interface AgentInfo {
 interface DriftedFile {
   path: string;
   reason: "missing" | "modified" | "stale" | "unreadable";
+  /** Content Automatic would generate. Present only when reason === "modified". */
+  expected?: string;
+  /** Content currently on disk. Present only when reason === "modified". */
+  actual?: string;
 }
 
 interface AgentDrift {
@@ -362,6 +366,205 @@ function EditorIcon({ id, iconPath }: { id: string; iconPath?: string }) {
   }
 }
 
+// ── DriftDiffModal ────────────────────────────────────────────────────────────
+
+interface DiffLine {
+  type: "same" | "added" | "removed";
+  content: string;
+  lineNo: { a: number | null; b: number | null };
+}
+
+/** Compute a simple line-level diff between two text strings.
+ *  Uses a greedy longest-common-subsequence approach suitable for config files. */
+function computeLineDiff(expected: string, actual: string): DiffLine[] {
+  const aLines = expected.split("\n");
+  const bLines = actual.split("\n");
+
+  // Build LCS table
+  const m = aLines.length;
+  const n = bLines.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      if (aLines[i] === bLines[j]) {
+        dp[i]![j] = 1 + dp[i + 1]![j + 1]!;
+      } else {
+        dp[i]![j] = Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+      }
+    }
+  }
+
+  const result: DiffLine[] = [];
+  let i = 0, j = 0;
+  let lineA = 1, lineB = 1;
+
+  while (i < m || j < n) {
+    if (i < m && j < n && aLines[i] === bLines[j]) {
+      result.push({ type: "same", content: aLines[i]!, lineNo: { a: lineA++, b: lineB++ } });
+      i++; j++;
+    } else if (j < n && (i >= m || dp[i]![j + 1]! >= dp[i + 1]![j]!)) {
+      result.push({ type: "added", content: bLines[j]!, lineNo: { a: null, b: lineB++ } });
+      j++;
+    } else {
+      result.push({ type: "removed", content: aLines[i]!, lineNo: { a: lineA++, b: null } });
+      i++;
+    }
+  }
+
+  return result;
+}
+
+interface DriftDiffModalProps {
+  file: DriftedFile;
+  agentLabel: string;
+  onClose: () => void;
+}
+
+function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
+  const diffLines = file.expected != null && file.actual != null
+    ? computeLineDiff(file.expected, file.actual)
+    : null;
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(0,0,0,0.6)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="flex flex-col bg-[#16161A] border border-[#33353A] rounded-xl shadow-2xl overflow-hidden"
+        style={{ width: "min(900px, 90vw)", maxHeight: "80vh" }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-[#2A2B32] flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] font-medium text-[#F59E0B]/70 uppercase tracking-wider">{agentLabel}</span>
+            <span className="text-[#44474F]">/</span>
+            <span className="text-[13px] font-mono text-[#F8F8FA]">{file.path}</span>
+            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded uppercase tracking-wider ${
+              file.reason === "modified"
+                ? "bg-[#F59E0B]/15 text-[#F59E0B]"
+                : file.reason === "missing"
+                ? "bg-[#FF6B6B]/15 text-[#FF6B6B]"
+                : file.reason === "stale"
+                ? "bg-[#8B8D99]/15 text-[#8B8D99]"
+                : "bg-[#8B8D99]/15 text-[#8B8D99]"
+            }`}>{file.reason}</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-[#8B8D99] hover:text-[#F8F8FA] transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Legend */}
+        {diffLines && (
+          <div className="flex items-center gap-4 px-5 py-2 border-b border-[#2A2B32] flex-shrink-0 bg-[#1A1A1E]">
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-sm bg-[#4ADE80]/20 border border-[#4ADE80]/40" />
+              <span className="text-[11px] text-[#8B8D99]">On disk (current)</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-sm bg-[#FF6B6B]/20 border border-[#FF6B6B]/40" />
+              <span className="text-[11px] text-[#8B8D99]">Automatic would generate (expected)</span>
+            </div>
+          </div>
+        )}
+
+        {/* Diff body */}
+        <div className="overflow-auto flex-1 font-mono text-[12px]">
+          {diffLines ? (
+            <table className="w-full border-collapse">
+              <tbody>
+                {diffLines.map((line, idx) => (
+                  <tr
+                    key={idx}
+                    className={
+                      line.type === "added"
+                        ? "bg-[#4ADE80]/10 hover:bg-[#4ADE80]/15"
+                        : line.type === "removed"
+                        ? "bg-[#FF6B6B]/10 hover:bg-[#FF6B6B]/15"
+                        : "hover:bg-[#1E1E24]"
+                    }
+                  >
+                    {/* Line number: expected (a) */}
+                    <td className="select-none text-right text-[#44474F] px-3 py-0.5 w-12 border-r border-[#2A2B32] min-w-[3rem]">
+                      {line.lineNo.a ?? ""}
+                    </td>
+                    {/* Line number: actual (b) */}
+                    <td className="select-none text-right text-[#44474F] px-3 py-0.5 w-12 border-r border-[#2A2B32] min-w-[3rem]">
+                      {line.lineNo.b ?? ""}
+                    </td>
+                    {/* Sign */}
+                    <td className={`select-none px-2 py-0.5 w-5 text-center font-bold ${
+                      line.type === "added" ? "text-[#4ADE80]" : line.type === "removed" ? "text-[#FF6B6B]" : "text-[#44474F]"
+                    }`}>
+                      {line.type === "added" ? "+" : line.type === "removed" ? "−" : " "}
+                    </td>
+                    {/* Content */}
+                    <td className={`px-3 py-0.5 whitespace-pre ${
+                      line.type === "added"
+                        ? "text-[#4ADE80]"
+                        : line.type === "removed"
+                        ? "text-[#FF6B6B]"
+                        : "text-[#C8CAD0]"
+                    }`}>
+                      {line.content}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            /* Non-modified reasons: nothing to diff — show a descriptive message */
+            <div className="flex flex-col items-center justify-center h-full py-16 text-[#8B8D99]">
+              {file.reason === "missing" && (
+                <>
+                  <p className="text-[13px] font-medium text-[#F8F8FA] mb-2">File is missing on disk</p>
+                  <p className="text-[12px]">Automatic would create this file. Sync the project to resolve.</p>
+                </>
+              )}
+              {file.reason === "stale" && (
+                <>
+                  <p className="text-[13px] font-medium text-[#F8F8FA] mb-2">Stale directory</p>
+                  <p className="text-[12px]">This skill directory exists on disk but is no longer in the project config.</p>
+                  <p className="text-[12px] mt-1">Sync the project to remove it.</p>
+                </>
+              )}
+              {file.reason === "unreadable" && (
+                <>
+                  <p className="text-[13px] font-medium text-[#F8F8FA] mb-2">File could not be read</p>
+                  <p className="text-[12px]">Check file permissions and try again.</p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[#2A2B32] flex-shrink-0">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
 export default function Projects({ initialProject = null, onInitialProjectConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const LAST_PROJECT_KEY = "nexus.projects.selected";
@@ -433,6 +636,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   // null = unknown/not yet checked, DriftReport = result of last check
   const [driftReport, setDriftReport] = useState<DriftReport | null>(null);
   const driftCheckInFlight = useRef(false);
+
+  // Drift diff modal state — null when closed
+  const [driftDiffFile, setDriftDiffFile] = useState<{ file: DriftedFile; agentLabel: string } | null>(null);
 
   // Project template state
   const [availableProjectTemplates, setAvailableProjectTemplates] = useState<ProjectTemplate[]>([]);
@@ -1209,6 +1415,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   };
 
   return (
+    <>
     <div className="flex h-full w-full bg-[#222327]">
       {/* Left sidebar - project list */}
       <div
@@ -1455,17 +1662,22 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     Sync now
                   </button>
                 </div>
-                {/* Detail: which agents/files have drifted */}
+                {/* Detail: which agents/files have drifted — click any file to view the diff */}
                 <div className="px-6 pb-3 space-y-1.5">
                   {driftReport.agents.map((agentDrift) => (
                     <div key={agentDrift.agent_id}>
                       <div className="text-[11px] font-semibold text-[#F59E0B]/80 mb-0.5">{agentDrift.agent_label}</div>
-                      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                      <div className="flex flex-wrap gap-x-2 gap-y-1">
                         {agentDrift.files.map((f, i) => (
-                          <span key={i} className="text-[11px] font-mono text-[#F59E0B]/60">
+                          <button
+                            key={i}
+                            onClick={() => setDriftDiffFile({ file: f, agentLabel: agentDrift.agent_label })}
+                            className="flex items-center gap-1 text-[11px] font-mono text-[#F59E0B]/70 hover:text-[#F59E0B] bg-[#F59E0B]/5 hover:bg-[#F59E0B]/15 border border-[#F59E0B]/20 hover:border-[#F59E0B]/40 rounded px-1.5 py-0.5 transition-colors"
+                            title="View diff"
+                          >
                             {f.path}
-                            <span className="text-[#F59E0B]/40 ml-1 font-sans">({f.reason})</span>
-                          </span>
+                            <span className="text-[#F59E0B]/50 font-sans ml-0.5">({f.reason})</span>
+                          </button>
                         ))}
                       </div>
                     </div>
@@ -3102,5 +3314,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         )}
       </div>
     </div>
+
+    {/* ── Drift diff modal ─────────────────────────────────────────────── */}
+    {driftDiffFile && (
+      <DriftDiffModal
+        file={driftDiffFile.file}
+        agentLabel={driftDiffFile.agentLabel}
+        onClose={() => setDriftDiffFile(null)}
+      />
+    )}
+    </>
   );
 }

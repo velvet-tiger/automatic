@@ -14,8 +14,14 @@ use crate::core::Project;
 pub struct DriftedFile {
     /// Relative path from the project directory (e.g. `.mcp.json`).
     pub path: String,
-    /// Short description of why it's drifted.
+    /// Short description of why it's drifted: "missing", "modified", "stale", "unreadable".
     pub reason: String,
+    /// The content Automatic would generate. Present only for "modified" files.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    /// The content currently on disk. Present only for "modified" files.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual: Option<String>,
 }
 
 /// Per-agent drift report returned by [`check_project_drift`].
@@ -179,6 +185,8 @@ fn collect_mcp_drift(
             out.push(DriftedFile {
                 path: filename,
                 reason: "missing".into(),
+                expected: None,
+                actual: None,
             });
             continue;
         }
@@ -193,6 +201,8 @@ fn collect_mcp_drift(
                 out.push(DriftedFile {
                     path: filename,
                     reason: "unreadable".into(),
+                    expected: None,
+                    actual: None,
                 });
                 continue;
             }
@@ -201,6 +211,8 @@ fn collect_mcp_drift(
             out.push(DriftedFile {
                 path: filename,
                 reason: "modified".into(),
+                expected: Some(expected),
+                actual: Some(actual),
             });
         }
     }
@@ -259,6 +271,8 @@ fn collect_skills_drift(
                         out.push(DriftedFile {
                             path: rel_path,
                             reason: "missing".into(),
+                            expected: None,
+                            actual: None,
                         });
                         continue;
                     }
@@ -273,6 +287,8 @@ fn collect_skills_drift(
                             out.push(DriftedFile {
                                 path: rel_path,
                                 reason: "unreadable".into(),
+                                expected: None,
+                                actual: None,
                             });
                             continue;
                         }
@@ -281,6 +297,8 @@ fn collect_skills_drift(
                         out.push(DriftedFile {
                             path: rel_path,
                             reason: "modified".into(),
+                            expected: Some(expected),
+                            actual: Some(actual),
                         });
                     }
                 }
@@ -306,6 +324,8 @@ fn collect_skills_drift(
                             out.push(DriftedFile {
                                 path: format!("{}/{}", relative.display(), name),
                                 reason: "stale".into(),
+                                expected: None,
+                                actual: None,
                             });
                         }
                     }
