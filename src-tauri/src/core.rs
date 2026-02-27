@@ -1582,40 +1582,6 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Import MCP servers from Claude Desktop config into the Nexus registry.
-/// Returns the list of server names that were imported.
-pub fn import_mcp_servers_from_claude() -> Result<Vec<String>, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    let config_path = home.join("Library/Application Support/Claude/claude_desktop_config.json");
-
-    if !config_path.exists() {
-        return Err("Claude Desktop config not found".into());
-    }
-
-    let raw = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid JSON: {}", e))?;
-
-    let servers = parsed
-        .get("mcpServers")
-        .and_then(|v| v.as_object())
-        .ok_or("No mcpServers found in Claude Desktop config")?;
-
-    let mut imported = Vec::new();
-
-    for (name, config) in servers {
-        if !is_valid_name(name) {
-            continue;
-        }
-        let data =
-            serde_json::to_string_pretty(config).map_err(|e| format!("JSON error: {}", e))?;
-        save_mcp_server_config(name, &data)?;
-        imported.push(name.clone());
-    }
-
-    Ok(imported)
-}
-
 /// Read raw Claude Desktop config (kept for backward compatibility).
 pub fn list_mcp_servers() -> Result<String, String> {
     let home = dirs::home_dir().ok_or("Could not find home directory")?;

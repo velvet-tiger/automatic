@@ -410,15 +410,6 @@ fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-fn import_mcp_servers() -> Result<String, String> {
-    let imported = core::import_mcp_servers_from_claude()?;
-    if !imported.is_empty() {
-        sync_projects_referencing_mcp_servers(&imported);
-    }
-    serde_json::to_string(&imported).map_err(|e| e.to_string())
-}
-
 // ── Projects ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -646,18 +637,6 @@ fn sync_projects_referencing_skill(skill_name: &str) {
 fn sync_projects_referencing_mcp_server(server_name: &str) {
     with_each_project_mut(|project_name, project| {
         if project.mcp_servers.iter().any(|server| server == server_name) {
-            sync_project_if_configured(project_name, project);
-        }
-    });
-}
-
-fn sync_projects_referencing_mcp_servers(server_names: &[String]) {
-    with_each_project_mut(|project_name, project| {
-        if project
-            .mcp_servers
-            .iter()
-            .any(|server| server_names.iter().any(|name| name == server))
-        {
             sync_project_if_configured(project_name, project);
         }
     });
@@ -969,7 +948,6 @@ pub fn run() {
             read_mcp_server_config,
             save_mcp_server_config,
             delete_mcp_server_config,
-            import_mcp_servers,
 
             get_projects,
             read_project,

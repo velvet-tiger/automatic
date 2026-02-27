@@ -6,7 +6,6 @@ import {
   Server,
   Check,
   Trash2,
-  Download,
   Terminal,
   Variable,
   Globe,
@@ -173,7 +172,6 @@ export default function McpServers() {
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [importStatus, setImportStatus] = useState<string | null>(null);
   const [opencodeWarning, setOpencodeWarning] = useState<string[]>([]);
 
   // Inline add state
@@ -295,24 +293,6 @@ export default function McpServers() {
     resetInlineState();
   };
 
-  const handleImport = async () => {
-    try {
-      setImportStatus("importing");
-      const raw: string = await invoke("import_mcp_servers");
-      const imported: string[] = JSON.parse(raw);
-      if (imported.length === 0) {
-        setImportStatus("No new servers found");
-      } else {
-        setImportStatus(`Imported ${imported.length} server${imported.length !== 1 ? "s" : ""}`);
-        await loadServers();
-      }
-      setTimeout(() => setImportStatus(null), 4000);
-    } catch (err: any) {
-      setImportStatus(`Import failed: ${err}`);
-      setTimeout(() => setImportStatus(null), 5000);
-    }
-  };
-
   const addArg = () => {
     if (!config || !newArg) return;
     updateConfig({ args: [...(config.args || []), newArg] });
@@ -374,13 +354,6 @@ export default function McpServers() {
           </span>
           <div className="flex items-center gap-1">
             <button
-              onClick={handleImport}
-              className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded"
-              title="Import from Claude Desktop"
-            >
-              <Download size={14} />
-            </button>
-            <button
               onClick={startCreate}
               className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded"
               title="Add MCP Server"
@@ -390,30 +363,10 @@ export default function McpServers() {
           </div>
         </div>
 
-        {importStatus && (
-          <div
-            className={`px-4 py-2 text-[11px] border-b border-[#33353A] ${
-              importStatus.startsWith("Import failed")
-                ? "text-[#FF6B6B]"
-                : importStatus === "importing"
-                  ? "text-[#C8CAD0]"
-                  : "text-[#4ADE80]"
-            }`}
-          >
-            {importStatus === "importing" ? "Importing..." : importStatus}
-          </div>
-        )}
-
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
           {servers.length === 0 && !isCreating ? (
             <div className="px-4 py-6 text-center">
-              <p className="text-[13px] text-[#C8CAD0] mb-3">No servers configured.</p>
-              <button
-                onClick={handleImport}
-                className="text-[12px] text-[#5E6AD2] hover:text-[#8C98F2] transition-colors"
-              >
-                Import from Claude Desktop
-              </button>
+              <p className="text-[13px] text-[#C8CAD0]">No servers configured.</p>
             </div>
           ) : (
             <ul className="space-y-1 px-2">
@@ -863,12 +816,6 @@ export default function McpServers() {
                 className="px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors"
               >
                 Add MCP Server
-              </button>
-              <button
-                onClick={handleImport}
-                className="px-4 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#F8F8FA] text-[13px] font-medium rounded border border-[#3A3B42] transition-colors"
-              >
-                Import from Claude Desktop
               </button>
             </div>
           </div>
