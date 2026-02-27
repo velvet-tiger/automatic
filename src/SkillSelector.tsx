@@ -63,9 +63,9 @@ export function SkillSelector({
         {availableSkills.length > 0 && (
           <button
             onClick={(e) => { e.stopPropagation(); setAdding(true); }}
-            className="text-[11px] text-[#5E6AD2] hover:text-[#6B78E3] flex items-center gap-1 transition-colors"
+            className="text-[11px] text-[#9BA8FF] hover:text-white flex items-center gap-1 px-2 py-1 rounded border border-[#5E6AD2]/50 hover:border-[#5E6AD2] hover:bg-[#5E6AD2]/15 transition-all"
           >
-            <Plus size={12} /> Add
+            <Plus size={11} /> Add
           </button>
         )}
       </div>
