@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { SkillSelector } from "./SkillSelector";
 import { AgentSelector } from "./AgentSelector";
+import { AgentIcon } from "./AgentIcon";
 import { McpSelector } from "./McpSelector";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { useCurrentUser } from "./ProfileContext";
@@ -1911,12 +1912,20 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               </div>
                               <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
                             </div>
-                            <div className="text-[13px] text-[#C8CAD0] mb-1">Agent Tools</div>
-                            <div className="text-[11px] text-[#C8CAD0]/60 truncate">
-                              {project.agents.length === 0
-                                ? "No agents configured"
-                                : project.agents.slice(0, 2).map(a => availableAgents.find(ag => ag.id === a)?.label || a).join(", ") + (project.agents.length > 2 ? ` +${project.agents.length - 2}` : "")}
-                            </div>
+                             <div className="text-[13px] text-[#C8CAD0] mb-1">Agent Tools</div>
+                             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                               {project.agents.length === 0
+                                 ? <span className="text-[11px] text-[#C8CAD0]/60">No agents configured</span>
+                                 : <>
+                                     {project.agents.slice(0, 4).map(a => (
+                                       <AgentIcon key={a} agentId={a} size={16} className="text-[#C8CAD0]" />
+                                     ))}
+                                     {project.agents.length > 4 && (
+                                       <span className="text-[11px] text-[#C8CAD0]/60">+{project.agents.length - 4}</span>
+                                     )}
+                                   </>
+                               }
+                             </div>
                           </div>
                           <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors shrink-0">
                             <Bot size={18} className="text-[#5E6AD2]" />
