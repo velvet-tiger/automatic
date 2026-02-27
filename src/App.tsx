@@ -1,5 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { ProfileProvider } from "./ProfileContext";
+import { useCurrentUser } from "./ProfileContext";
+import { initAnalytics, trackNavigation } from "./analytics";
 import Dashboard from "./Dashboard";
 import Skills from "./Skills";
 import SkillStore from "./SkillStore";
@@ -16,6 +19,35 @@ import TechMeshBackground from "./TechMeshBackground";
 import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText } from "lucide-react";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
+
+/**
+ * Bootstraps Amplitude analytics once the user profile and settings are loaded.
+ * Rendered inside ProfileProvider so it can access useCurrentUser().
+ */
+function AnalyticsBootstrap() {
+  const { userId, isLoaded } = useCurrentUser();
+  const initialised = useRef(false);
+
+  useEffect(() => {
+    if (!isLoaded || initialised.current) return;
+    initialised.current = true;
+
+    async function boot() {
+      try {
+        const settings: any = await invoke("read_settings");
+        const enabled: boolean = settings?.analytics_enabled ?? true;
+        initAnalytics(userId ?? "anonymous", enabled);
+      } catch (e) {
+        console.error("[analytics] Failed to read settings for analytics init:", e);
+        initAnalytics(userId ?? "anonymous", false);
+      }
+    }
+
+    boot();
+  }, [isLoaded, userId]);
+
+  return null;
+}
 
 function App() {
   const [activeTab, setActiveTab] = useState(() => {
@@ -49,6 +81,7 @@ function App() {
       MARKETPLACE_TABS[id]!();
     }
     setActiveTab(id);
+    trackNavigation(id);
   };
 
   const NavItem = ({ id, icon: Icon, label, count }: any) => {
@@ -75,6 +108,7 @@ function App() {
 
   return (
     <ProfileProvider>
+    <AnalyticsBootstrap />
     <div className="relative flex h-screen w-screen overflow-hidden bg-[#222327] text-[#fafafa] selection:bg-[#5E6AD2]/30">
       {/* Sidebar */}
       <aside className="w-[180px] flex-shrink-0 bg-[#1A1A1E] border-r border-[#33353A] flex flex-col">

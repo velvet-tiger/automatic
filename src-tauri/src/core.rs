@@ -984,12 +984,21 @@ pub fn save_profile(profile: &UserProfile) -> Result<(), String> {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub skill_sync_mode: String,
+    /// Whether the user has opted in to anonymous analytics.
+    /// Defaults to true; can be disabled in Settings.
+    #[serde(default = "default_analytics_enabled")]
+    pub analytics_enabled: bool,
+}
+
+fn default_analytics_enabled() -> bool {
+    true
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             skill_sync_mode: "symlink".to_string(),
+            analytics_enabled: true,
         }
     }
 }

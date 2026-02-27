@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { trackMcpServerCreated, trackMcpServerUpdated, trackMcpServerDeleted } from "./analytics";
 import {
   Plus,
   X,
@@ -256,6 +257,11 @@ export default function McpServers() {
         name,
         data: JSON.stringify(cleanConfig(config)),
       });
+      if (isCreating) {
+        trackMcpServerCreated(name);
+      } else {
+        trackMcpServerUpdated(name);
+      }
       setDirty(false);
       setSelectedName(name);
       if (isCreating) {
@@ -272,6 +278,7 @@ export default function McpServers() {
     e.stopPropagation();
     try {
       await invoke("delete_mcp_server_config", { name });
+      trackMcpServerDeleted(name);
       if (selectedName === name) {
         setSelectedName(null);
         setConfig(null);

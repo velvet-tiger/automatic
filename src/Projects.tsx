@@ -7,6 +7,18 @@ import { MarkdownPreview } from "./MarkdownPreview";
 import { useCurrentUser } from "./ProfileContext";
 import { invoke } from "@tauri-apps/api/core";
 import { open, ask } from "@tauri-apps/plugin-dialog";
+import {
+  trackProjectCreated,
+  trackProjectUpdated,
+  trackProjectDeleted,
+  trackProjectSynced,
+  trackProjectAgentAdded,
+  trackProjectAgentRemoved,
+  trackProjectSkillAdded,
+  trackProjectSkillRemoved,
+  trackProjectMcpServerAdded,
+  trackProjectMcpServerRemoved,
+} from "./analytics";
 
 import {
   Plus,
@@ -1191,8 +1203,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setSelectedName(name);
       localStorage.setItem(LAST_PROJECT_KEY, name);
       if (isCreating) {
+        trackProjectCreated(name);
         setIsCreating(false);
         await loadProjects();
+      } else {
+        trackProjectUpdated(name, {
+          agent_count: toSave.agents.length,
+          skill_count: toSave.skills.length,
+          mcp_count: (toSave.mcp_servers ?? []).length,
+        });
       }
       setError(null);
 
@@ -1240,6 +1259,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     if (!confirmed) return;
     try {
       await invoke("delete_project", { name });
+      trackProjectDeleted(name);
       if (selectedName === name) {
         setSelectedName(null);
         localStorage.removeItem(LAST_PROJECT_KEY);
@@ -1313,11 +1333,22 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     if (!project || !item.trim()) return;
     if (project[key].includes(item.trim())) return;
     updateField(key, [...project[key], item.trim()]);
+    const pName = isCreating ? newName.trim() : (selectedName ?? "");
+    if (key === "agents") trackProjectAgentAdded(pName, item.trim());
+    else if (key === "skills") trackProjectSkillAdded(pName, item.trim());
+    else if (key === "mcp_servers") trackProjectMcpServerAdded(pName, item.trim());
   };
 
   const removeItem = (key: ListField, idx: number) => {
     if (!project) return;
+    const removed = project[key][idx];
     updateField(key, project[key].filter((_, i) => i !== idx));
+    const pName = isCreating ? newName.trim() : (selectedName ?? "");
+    if (removed) {
+      if (key === "agents") trackProjectAgentRemoved(pName, removed);
+      else if (key === "skills") trackProjectSkillRemoved(pName, removed);
+      else if (key === "mcp_servers") trackProjectMcpServerRemoved(pName, removed);
+    }
   };
 
   /**
@@ -1368,6 +1399,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
     try {
       await invoke("remove_agent_from_project", { name, agentId });
+      trackProjectAgentRemoved(name, agentId);
       await reloadProject(name);
       setDirty(false);
     } catch (err: any) {
@@ -1390,6 +1422,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setSyncStatus("syncing");
       const result: string = await invoke("sync_project", { name });
       const files: string[] = JSON.parse(result);
+      trackProjectSynced(name);
       setSyncStatus(`Synced ${files.length} config${files.length !== 1 ? "s" : ""}`);
       setDriftReport({ drifted: false, agents: [] });
     } catch (err: any) {

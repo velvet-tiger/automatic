@@ -2,6 +2,13 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  trackSkillCreated,
+  trackSkillUpdated,
+  trackSkillDeleted,
+  trackSkillSynced,
+  trackAllSkillsSynced,
+} from "./analytics";
+import {
   Plus,
   X,
   Edit2,
@@ -380,6 +387,7 @@ export default function Skills() {
       const content = buildFrontmatter(newSkillName, newSkillDescription) + "\n" + editBody;
       try {
         await invoke("save_skill", { name: newSkillName, content });
+        trackSkillCreated(newSkillName, "local");
         setIsCreating(false);
         setIsEditing(false);
         await loadSkills();
@@ -398,6 +406,7 @@ export default function Skills() {
       const finalContent = buildFrontmatter(editName, editDescription) + "\n" + editBody;
       try {
         await invoke("save_skill", { name: selectedSkill!, content: finalContent });
+        trackSkillUpdated(selectedSkill!);
         setSkillContent(finalContent);
         setIsEditing(false);
         setError(null);
@@ -411,6 +420,7 @@ export default function Skills() {
     e.stopPropagation();
     try {
       await invoke("delete_skill", { name });
+      trackSkillDeleted(name);
       if (selectedSkill === name) { setSelectedSkill(null); setSkillContent(""); setIsEditing(false); }
       await loadSkills();
       setError(null);
@@ -424,6 +434,7 @@ export default function Skills() {
     setSyncingSkill(name);
     try {
       await invoke("sync_skill", { name });
+      trackSkillSynced(name);
       await loadSkills();
       setError(null);
     } catch (err: any) {
@@ -436,6 +447,7 @@ export default function Skills() {
     try {
       await invoke("sync_all_skills");
       await loadSkills();
+      trackAllSkillsSynced(skills.length);
       setError(null);
     } catch (err: any) {
       setError(`Failed to sync skills: ${err}`);

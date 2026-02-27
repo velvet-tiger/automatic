@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
+import {
+  setAnalyticsEnabled,
+  trackSettingChanged,
+  trackUpdateChecked,
+  trackUpdateInstalled,
+} from "./analytics";
 
 type UpdateStatus =
   | "idle"
@@ -12,8 +18,16 @@ type UpdateStatus =
   | "installed"
   | "error";
 
+interface AppSettings {
+  skill_sync_mode: string;
+  analytics_enabled: boolean;
+}
+
 export default function Settings() {
-  const [skillSyncMode, setSkillSyncMode] = useState<string>("symlink");
+  const [settings, setSettings] = useState<AppSettings>({
+    skill_sync_mode: "symlink",
+    analytics_enabled: true,
+  });
   const [loading, setLoading] = useState(true);
 
   // Update state
@@ -29,8 +43,11 @@ export default function Settings() {
   useEffect(() => {
     async function loadSettings() {
       try {
-        const settings: any = await invoke("read_settings");
-        setSkillSyncMode(settings.skill_sync_mode);
+        const raw: any = await invoke("read_settings");
+        setSettings({
+          skill_sync_mode: raw.skill_sync_mode ?? "symlink",
+          analytics_enabled: raw.analytics_enabled ?? true,
+        });
       } catch (e) {
         console.error("Failed to read settings", e);
       } finally {
@@ -43,13 +60,31 @@ export default function Settings() {
       .catch(() => {});
   }, []);
 
-  async function updateSetting(mode: string) {
-    setSkillSyncMode(mode);
+  async function persistSettings(updated: AppSettings) {
     try {
-      await invoke("write_settings", { settings: { skill_sync_mode: mode } });
+      await invoke("write_settings", { settings: updated });
     } catch (e) {
       console.error("Failed to write settings", e);
     }
+  }
+
+  async function updateSkillSyncMode(mode: string) {
+    const updated = { ...settings, skill_sync_mode: mode };
+    setSettings(updated);
+    trackSettingChanged("skill_sync_mode", mode);
+    await persistSettings(updated);
+  }
+
+  async function updateAnalyticsEnabled(enabled: boolean) {
+    const updated = { ...settings, analytics_enabled: enabled };
+    setSettings(updated);
+    // Update the analytics runtime flag immediately
+    setAnalyticsEnabled(enabled);
+    // Only track this if they are re-enabling (opt-out would suppress the event anyway)
+    if (enabled) {
+      trackSettingChanged("analytics_enabled", enabled);
+    }
+    await persistSettings(updated);
   }
 
   async function checkForUpdates() {
@@ -66,12 +101,15 @@ export default function Settings() {
           notes: update.body ?? undefined,
         });
         setUpdateStatus("available");
+        trackUpdateChecked("available");
       } else {
         setUpdateStatus("up-to-date");
+        trackUpdateChecked("not_available");
       }
     } catch (e) {
       setUpdateError(String(e));
       setUpdateStatus("error");
+      trackUpdateChecked("error");
     }
   }
 
@@ -81,6 +119,7 @@ export default function Settings() {
     try {
       await pendingUpdate.downloadAndInstall();
       setUpdateStatus("installed");
+      trackUpdateInstalled(pendingUpdate.version);
     } catch (e) {
       setUpdateError(String(e));
       setUpdateStatus("error");
@@ -112,9 +151,9 @@ export default function Settings() {
 
           <div className="flex flex-col gap-2">
             <button
-              onClick={() => updateSetting("symlink")}
+              onClick={() => updateSkillSyncMode("symlink")}
               className={`flex flex-col items-start gap-1 p-4 rounded-lg border text-left transition-all ${
-                skillSyncMode === "symlink"
+                settings.skill_sync_mode === "symlink"
                   ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
                   : "border-[#3E4048] bg-[#18191C] hover:border-[#5E5E6A] hover:bg-[#1E1F24]"
               }`}
@@ -129,9 +168,9 @@ export default function Settings() {
             </button>
 
             <button
-              onClick={() => updateSetting("copy")}
+              onClick={() => updateSkillSyncMode("copy")}
               className={`flex flex-col items-start gap-1 p-4 rounded-lg border text-left transition-all ${
-                skillSyncMode === "copy"
+                settings.skill_sync_mode === "copy"
                   ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
                   : "border-[#3E4048] bg-[#18191C] hover:border-[#5E5E6A] hover:bg-[#1E1F24]"
               }`}
@@ -143,6 +182,49 @@ export default function Settings() {
               </div>
             </button>
           </div>
+        </div>
+
+        {/* ── Analytics ───────────────────────────────────────────── */}
+        <div className="mb-8">
+          <h3 className="text-sm font-medium mb-2 text-white">Analytics</h3>
+          <p className="text-[13px] text-[#C8CAD0] mb-4 leading-relaxed">
+            Help us improve Automatic by sharing anonymous usage data. No
+            personal information, file contents, or project names are ever
+            collected. Analytics are always disabled during local development.
+          </p>
+
+          <button
+            onClick={() => updateAnalyticsEnabled(!settings.analytics_enabled)}
+            className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all ${
+              settings.analytics_enabled
+                ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
+                : "border-[#3E4048] bg-[#18191C] hover:border-[#5E5E6A] hover:bg-[#1E1F24]"
+            }`}
+          >
+            <div>
+              <div className="text-[13px] font-medium text-white">
+                Anonymous usage analytics
+              </div>
+              <div className="text-[12px] text-[#C8CAD0]">
+                {settings.analytics_enabled
+                  ? "Enabled — thank you for helping improve Automatic"
+                  : "Disabled"}
+              </div>
+            </div>
+
+            {/* Toggle pill */}
+            <div
+              className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors ${
+                settings.analytics_enabled ? "bg-[#5E6AD2]" : "bg-[#3E4048]"
+              }`}
+            >
+              <div
+                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                  settings.analytics_enabled ? "left-5" : "left-0.5"
+                }`}
+              />
+            </div>
+          </button>
         </div>
 
         {/* ── App Updates ─────────────────────────────────────────── */}

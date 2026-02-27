@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { trackSkillInstalled, trackSkillUpdated } from "./analytics";
 import {
   Search,
   Download,
@@ -432,6 +433,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
         source: selected.source,
         id: selected.id,
       });
+      trackSkillInstalled(selected.name, selected.source);
       // Update local registry mirror
       setRegistry((prev) => ({
         ...prev,
@@ -463,6 +465,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
         source: selected.source,
         id: selected.id,
       });
+      trackSkillUpdated(selected.name);
       setRawContent(fresh);
     } catch (err: any) {
       setPreviewError(`Update failed: ${err}`);
