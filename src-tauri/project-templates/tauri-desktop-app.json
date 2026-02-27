@@ -1,6 +1,7 @@
 {
   "name": "tauri-desktop-app",
   "display_name": "Tauri Desktop App",
+  "icon": "tauri.app",
   "description": "Cross-platform desktop application template using Tauri 2, React, TypeScript, and Tailwind CSS. Features a sidebar navigation shell, OS keychain integration, filesystem access, and a Rust backend with Tauri command wrappers following the Automatic architecture pattern.",
   "category": "Desktop App",
   "tags": ["tauri", "rust", "react", "typescript", "desktop", "cross-platform"],

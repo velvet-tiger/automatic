@@ -65,9 +65,21 @@ function categoryStyle(cat: string) {
 
 // ── Template Icon ─────────────────────────────────────────────────────────────
 
+const BRANDFETCH_CLIENT_ID = import.meta.env.VITE_BRANDFETCH_CLIENT_ID as string | undefined;
+
 /**
- * Renders the template's icon (png or svg from /template-icons/) if present,
- * or falls back to the first letter of the display name on a coloured background.
+ * Build a Brandfetch CDN URL for a brand domain.
+ * Uses type=icon (social/app icon), dark theme, lettermark fallback.
+ * Size is capped at 64px — these are small UI icons.
+ */
+function brandfetchUrl(domain: string, px: number): string {
+  const s = Math.min(px * 2, 64); // 2× for retina, max 64
+  return `https://cdn.brandfetch.io/${encodeURIComponent(domain)}/w/${s}/h/${s}/theme/dark/fallback/lettermark/type/icon?c=${BRANDFETCH_CLIENT_ID ?? ""}`;
+}
+
+/**
+ * Renders the template's brand icon via Brandfetch CDN if the template has an
+ * `icon` domain set, with a letter-avatar fallback on load error or if absent.
  */
 function TemplateIcon({
   template,
@@ -80,10 +92,10 @@ function TemplateIcon({
   const [imgError, setImgError] = useState(false);
   const style = categoryStyle(template.category);
 
-  if (template.icon && !imgError) {
+  if (template.icon && BRANDFETCH_CLIENT_ID && !imgError) {
     return (
       <img
-        src={`/template-icons/${template.icon}`}
+        src={brandfetchUrl(template.icon, size)}
         alt={template.display_name}
         width={size}
         height={size}
@@ -203,7 +215,7 @@ function TemplateCard({
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5 min-w-0">
-          <TemplateIcon template={template} size={28} />
+          <TemplateIcon template={template} size={36} />
           <div className="min-w-0">
             <div className="text-[14px] font-semibold text-[#F8F8FA] leading-snug truncate">
               {template.display_name}
@@ -323,7 +335,7 @@ function TemplateDetail({
           </button>
           <span className="text-[#33353A]">/</span>
           <div className="flex items-center gap-2.5">
-            <TemplateIcon template={template} size={22} />
+            <TemplateIcon template={template} size={28} />
             <span className="text-[14px] font-semibold text-[#F8F8FA]">{template.display_name}</span>
             <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${style.bg} ${style.text}`}>
               {template.category}

@@ -1,6 +1,7 @@
 {
   "name": "terraform-aws-infrastructure",
   "display_name": "Terraform AWS Infrastructure",
+  "icon": "terraform.io",
   "description": "Production-grade AWS infrastructure as code using Terraform with modular design, remote state in S3, GitHub Actions CI/CD pipeline, Terratest integration tests, and security scanning via Trivy. Covers VPC, ECS, RDS, and CloudFront.",
   "category": "Infrastructure",
   "tags": ["terraform", "aws", "iac", "devops", "github-actions", "terratest"],

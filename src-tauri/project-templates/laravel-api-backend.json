@@ -1,6 +1,7 @@
 {
   "name": "laravel-api-backend",
   "display_name": "Laravel API Backend",
+  "icon": "laravel.com",
   "description": "Production-ready Laravel REST API with Sanctum authentication, API resources, feature flags via Pennant, job queues, and a test suite scaffolded with Pest. Built for teams building mobile or SPA frontends on a solid PHP backend.",
   "category": "API / Backend",
   "tags": ["laravel", "php", "rest-api", "sanctum", "pest", "queues"],

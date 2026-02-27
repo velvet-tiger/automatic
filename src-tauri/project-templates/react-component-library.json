@@ -1,6 +1,7 @@
 {
   "name": "react-component-library",
   "display_name": "React Component Library",
+  "icon": "react.dev",
   "description": "A publishable React component library with TypeScript, Storybook for interactive development, Vitest for unit tests, and Rollup for dual CJS/ESM output. Includes accessibility-first component patterns, automated visual regression testing, and a semantic release pipeline.",
   "category": "Frontend",
   "tags": ["react", "typescript", "storybook", "component-library", "vitest", "rollup"],

@@ -1,6 +1,7 @@
 {
   "name": "nextjs-saas-starter",
   "display_name": "Next.js SaaS Starter",
+  "icon": "nextjs.org",
   "description": "A full-stack SaaS boilerplate with Next.js App Router, Tailwind CSS, Prisma ORM, and NextAuth.js. Includes authentication flows, dashboard layout, billing hooks, and a component library ready for rapid product development.",
   "category": "Web Application",
   "tags": ["nextjs", "react", "saas", "typescript", "tailwind", "prisma"],
