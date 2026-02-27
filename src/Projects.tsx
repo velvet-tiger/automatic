@@ -649,6 +649,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [driftReport, setDriftReport] = useState<DriftReport | null>(null);
   const driftCheckInFlight = useRef(false);
 
+  // Per-project drift indicator: true = drifted, false = clean, undefined = unknown
+  const [driftByProject, setDriftByProject] = useState<Record<string, boolean>>({});
+
   // Drift diff modal state — null when closed
   const [driftDiffFile, setDriftDiffFile] = useState<{ file: DriftedFile; agentLabel: string } | null>(null);
 
@@ -781,7 +784,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       driftCheckInFlight.current = true;
       try {
         const raw: string = await invoke("check_project_drift", { name });
-        setDriftReport(JSON.parse(raw) as DriftReport);
+        const report = JSON.parse(raw) as DriftReport;
+        setDriftReport(report);
+        setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
       } catch {
         // Silently ignore drift-check errors (e.g. directory gone)
       } finally {
@@ -794,6 +799,38 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     const interval = setInterval(runCheck, 15_000);
     return () => clearInterval(interval);
   }, [selectedName, project?.directory, project?.agents.length, dirty, isCreating]);
+
+  // Background drift check for all projects (for sidebar indicators)
+  useEffect(() => {
+    if (projects.length === 0) return;
+
+    let cancelled = false;
+    const checkAll = async () => {
+      // Stagger checks to avoid hammering the backend simultaneously
+      for (const name of projects) {
+        if (cancelled) return;
+        try {
+          const raw: string = await invoke("check_project_drift", { name });
+          const report = JSON.parse(raw) as DriftReport;
+          if (!cancelled) {
+            setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
+          }
+        } catch {
+          // Non-fatal — skip this project silently
+        }
+        // Small delay between each project to avoid UI jank
+        await new Promise((res) => setTimeout(res, 200));
+      }
+    };
+
+    checkAll();
+    // Re-check all projects every 60 seconds
+    const interval = setInterval(checkAll, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [projects]);
 
   const applyStoredOrder = (names: string[]): string[] => {
     try {
@@ -1220,6 +1257,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         : "Saved");
       if (toSave.directory && toSave.agents.length > 0) {
         setDriftReport({ drifted: false, agents: [] });
+        setDriftByProject((prev) => ({ ...prev, [name]: false }));
       }
 
       // Write any pending unified instruction content from a template apply
@@ -1433,6 +1471,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       trackProjectSynced(name);
       setSyncStatus(`Synced ${files.length} config${files.length !== 1 ? "s" : ""}`);
       setDriftReport({ drifted: false, agents: [] });
+      setDriftByProject((prev) => ({ ...prev, [name]: false }));
     } catch (err: any) {
       setSyncStatus(`Sync failed: ${err}`);
     }
@@ -1516,7 +1555,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       <FolderOpen
                         size={14}
                         className={
-                          selectedName === name && !isCreating
+                          driftByProject[name] === true
+                            ? "text-[#F59E0B]"
+                            : selectedName === name && !isCreating
                             ? "text-[#F8F8FA]"
                             : "text-[#C8CAD0]"
                         }
