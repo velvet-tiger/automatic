@@ -36,6 +36,8 @@ interface McpServer {
   title: string;
   description: string;
   provider: string;
+  /** Optional brand domain for Brandfetch icon lookup, e.g. "github.com" */
+  icon?: string;
   classification: string;
   repository_url: string | null;
   remote: { transport: string; url: string } | null;
@@ -71,6 +73,47 @@ const CLASSIFICATION_COLORS: Record<string, string> = {
   reference: "bg-[#8B5CF6]/15 text-[#A78BFA] border-[#8B5CF6]/20",
   community: "bg-[#22D3EE]/15 text-[#67E8F9] border-[#22D3EE]/20",
 };
+
+// ── Server Icon ────────────────────────────────────────────────────────────
+
+const BRANDFETCH_CLIENT_ID = import.meta.env.VITE_BRANDFETCH_CLIENT_ID as string | undefined;
+
+function brandfetchUrl(domain: string, px: number): string {
+  const s = Math.min(px * 2, 64);
+  return `https://cdn.brandfetch.io/${encodeURIComponent(domain)}/w/${s}/h/${s}/theme/dark/fallback/lettermark/type/icon?c=${BRANDFETCH_CLIENT_ID ?? ""}`;
+}
+
+/**
+ * Renders the server's brand icon via Brandfetch if an `icon` domain is set,
+ * with an amber Server icon as the fallback.
+ */
+function McpServerIcon({ server, size }: { server: McpServer; size: number }) {
+  const [imgError, setImgError] = useState(false);
+
+  if (server.icon && BRANDFETCH_CLIENT_ID && !imgError) {
+    return (
+      <img
+        src={brandfetchUrl(server.icon, size)}
+        alt={server.title}
+        width={size}
+        height={size}
+        onError={() => setImgError(true)}
+        className="flex-shrink-0 rounded-md object-contain"
+        style={{ width: size, height: size }}
+        draggable={false}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`flex-shrink-0 rounded-md ${ACCENT_BG} border ${ACCENT_BORDER} flex items-center justify-center`}
+      style={{ width: size, height: size }}
+    >
+      <Server size={Math.round(size * 0.5)} style={{ color: ACCENT }} />
+    </div>
+  );
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -261,11 +304,7 @@ export default function McpMarketplace({
 
             {/* Header */}
             <div className="flex items-start gap-4 mb-6">
-              <div
-                className={`w-12 h-12 rounded-xl ${ACCENT_BG} ${ACCENT_BORDER} border flex items-center justify-center flex-shrink-0`}
-              >
-                <Server size={20} style={{ color: ACCENT }} />
-              </div>
+              <McpServerIcon server={selected} size={48} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2.5 mb-1.5">
                   <h1 className="text-[20px] font-semibold text-[#F8F8FA] leading-tight">
@@ -777,11 +816,7 @@ export default function McpMarketplace({
               >
                 {/* Title row */}
                 <div className="flex items-center gap-2.5 mb-1.5">
-                  <Server
-                    size={15}
-                    style={{ color: ACCENT }}
-                    className="flex-shrink-0"
-                  />
+                  <McpServerIcon server={server} size={28} />
                   <span className="text-[14px] font-medium text-[#F8F8FA] leading-snug truncate flex-1">
                     {server.title}
                   </span>
