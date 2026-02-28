@@ -17,7 +17,7 @@ export function MarkdownPreview({ content }: { content: string }) {
       if (m.index > last) parts.push(text.slice(last, m.index));
       const t = m[0]!;
       if (t.startsWith("`"))
-        parts.push(<code key={key++} className="px-1 py-0.5 rounded bg-bg-input text-brand font-mono text-[11px]">{t.slice(1, -1)}</code>);
+        parts.push(<code key={key++} className="px-1 py-0.5 rounded bg-bg-input text-text-muted font-mono text-[11px]">{t.slice(1, -1)}</code>);
       else if (t.startsWith("**") || t.startsWith("__"))
         parts.push(<strong key={key++} className="font-semibold text-text-base">{t.slice(2, -2)}</strong>);
       else
@@ -62,8 +62,8 @@ export function MarkdownPreview({ content }: { content: string }) {
       elements.push(
         <div key={k++} className="my-4 overflow-x-auto">
           <table className="w-full text-[12px] border-collapse">
-            <thead><tr>{headers.map((h, hi) => <th key={hi} className="text-left px-3 py-2 text-text-base font-semibold border-b border-border-strong/40 bg-bg-input whitespace-nowrap">{inlineFormat(h)}</th>)}</tr></thead>
-            <tbody>{rows.map((cells, ri) => <tr key={ri} className={ri % 2 === 0 ? "bg-bg-base" : "bg-surface-hover"}>{cells.map((cell, ci) => <td key={ci} className="px-3 py-2 text-text-base border-b border-border-strong/40/40 align-top">{inlineFormat(cell)}</td>)}</tr>)}</tbody>
+            <thead><tr>{headers.map((h, hi) => <th key={hi} className="text-left px-3 py-2 text-text-base font-semibold border-b border-border-strong/30 bg-bg-input whitespace-nowrap">{inlineFormat(h)}</th>)}</tr></thead>
+            <tbody>{rows.map((cells, ri) => <tr key={ri} className={ri % 2 === 0 ? "bg-bg-base" : "bg-bg-base"}>{cells.map((cell, ci) => <td key={ci} className="px-3 py-2 text-text-base border-b border-border-strong/20 align-top">{inlineFormat(cell)}</td>)}</tr>)}</tbody>
           </table>
         </div>
       );

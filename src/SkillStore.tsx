@@ -259,7 +259,7 @@ function renderMarkdown(md: string): React.ReactElement {
                 {headers.map((h, hi) => (
                   <th
                     key={hi}
-                    className="text-left px-3 py-2 text-text-base font-semibold border-b border-border-strong/40 bg-bg-input whitespace-nowrap"
+                    className="text-left px-3 py-2 text-text-base font-semibold border-b border-border-strong/30 bg-bg-input whitespace-nowrap"
                   >
                     {inlineFormat(h)}
                   </th>
@@ -268,11 +268,11 @@ function renderMarkdown(md: string): React.ReactElement {
             </thead>
             <tbody>
               {rows.map((cells, ri) => (
-                <tr key={ri} className={ri % 2 === 0 ? "bg-bg-base" : "bg-surface-hover"}>
+                <tr key={ri} className="bg-bg-base">
                   {cells.map((cell, ci) => (
                     <td
                       key={ci}
-                      className="px-3 py-2 text-text-base border-b border-border-strong/40/40 align-top"
+                      className="px-3 py-2 text-text-base border-b border-border-strong/20 align-top"
                     >
                       {inlineFormat(cell)}
                     </td>
