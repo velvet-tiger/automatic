@@ -534,7 +534,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search for skills…"
                 autoFocus
-                className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-success rounded-xl pl-11 pr-4 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm"
+                className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-xl pl-11 pr-4 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm"
               />
             </div>
 
@@ -620,7 +620,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search skills.sh…"
-              className="w-full bg-bg-sidebar border border-border-strong/40 rounded-md pl-8 pr-8 py-1.5 text-[13px] text-text-base placeholder-text-muted focus:outline-none focus:border-success transition-colors"
+              className="w-full bg-bg-sidebar border border-border-strong/40 rounded-md pl-8 pr-8 py-1.5 text-[13px] text-text-base placeholder-text-muted focus:outline-none focus:border-brand transition-colors"
               autoFocus
             />
             {searching && (
