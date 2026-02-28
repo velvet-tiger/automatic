@@ -1704,7 +1704,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {!isCreating && selectedName && (
                   <button
                     onClick={() => handleRemove(selectedName)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-sidebar hover:bg-danger/10 text-text-muted hover:text-danger rounded text-[12px] font-medium border border-border-strong/40-hover hover:border-danger/30 transition-colors mr-1"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded text-[12px] font-medium border border-border-strong hover:border-danger/40 transition-colors mr-1 shadow-sm"
                     title="Remove project from Automatic"
                   >
                     <Trash2 size={12} /> Remove
@@ -1715,7 +1715,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   driftReport?.drifted ? (
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-warning/10 hover:bg-warning/20 text-warning rounded text-[12px] font-medium border border-warning/40 hover:border-warning/60 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-warning/10 text-warning rounded text-[12px] font-medium border border-border-strong hover:border-warning/60 transition-colors shadow-sm"
                       title="Configuration has drifted — click to sync"
                     >
                       <RefreshCw size={12} /> Sync Configs
@@ -1723,7 +1723,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   ) : driftReport && !driftReport.drifted ? (
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-sidebar hover:bg-surface text-success rounded text-[12px] font-medium border border-success/20 hover:border-success/40 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-success/10 text-success rounded text-[12px] font-medium border border-border-strong hover:border-success/40 transition-colors shadow-sm"
                       title="Configuration is up to date — click to force sync"
                     >
                       <Check size={12} /> In Sync
@@ -1732,7 +1732,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     /* driftReport === null: not yet checked */
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-sidebar hover:bg-surface text-text-muted rounded text-[12px] font-medium border border-border-strong/40-hover transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
                       title="Sync agent configurations"
                     >
                       <RefreshCw size={12} /> Sync Configs
