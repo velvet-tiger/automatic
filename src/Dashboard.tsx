@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   Layers,
   Sparkles,
+  Star,
 } from "lucide-react";
 
 interface Project {
@@ -34,6 +35,53 @@ interface DriftReport {
     files: { path: string; reason: string }[];
   }[];
 }
+
+interface FeaturedItem {
+  type: "skill" | "template" | "mcp";
+  title: string;
+  description: string;
+  navigateTo: string;
+  badge: string;
+  author?: string;
+}
+
+const FEATURED_ITEMS: FeaturedItem[] = [
+  {
+    type: "skill",
+    title: "Web Interface Guidelines",
+    description: "Audits files for compliance with Vercel's web interface guidelines, fetching the latest rules from the source.",
+    navigateTo: "skill-store",
+    badge: "Skill",
+    author: "Vercel Labs",
+  },
+  {
+    type: "template",
+    title: "Next.js SaaS Starter",
+    description: "Full-stack SaaS boilerplate with App Router, Tailwind, Prisma, and NextAuth. Ready for rapid product development.",
+    navigateTo: "project-templates",
+    badge: "Template",
+  },
+  {
+    type: "mcp",
+    title: "GitHub",
+    description: "Manage repos, issues, PRs, and workflows through natural language via the official GitHub MCP server.",
+    navigateTo: "mcp-marketplace",
+    badge: "MCP Server",
+    author: "GitHub",
+  },
+];
+
+const FEATURED_COLORS: Record<FeaturedItem["type"], { icon: string; border: string; badge: string; badgeBg: string }> = {
+  skill:    { icon: "text-icon-skill",          border: "border-icon-skill/30 hover:border-icon-skill/60",          badge: "text-icon-skill",          badgeBg: "bg-icon-skill/10" },
+  template: { icon: "text-icon-file-template",  border: "border-icon-file-template/30 hover:border-icon-file-template/60",  badge: "text-icon-file-template",  badgeBg: "bg-icon-file-template/10" },
+  mcp:      { icon: "text-icon-mcp",            border: "border-icon-mcp/30 hover:border-icon-mcp/60",            badge: "text-icon-mcp",            badgeBg: "bg-icon-mcp/10" },
+};
+
+const FEATURED_ICONS: Record<FeaturedItem["type"], typeof Code> = {
+  skill: Code,
+  template: Layers,
+  mcp: Server,
+};
 
 interface DashboardProps {
   onNavigate: (tab: string) => void;
@@ -116,14 +164,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-transparent relative z-10">
+    <div className="flex-1 h-full overflow-y-auto p-8 custom-scrollbar bg-transparent relative z-10">
       <div className="max-w-5xl mx-auto space-y-8">
-        
-        {/* Header */}
-        <div>
-          <h1 className="text-2xl font-semibold text-text-base mb-2">Welcome to Automatic</h1>
-          <p className="text-text-muted text-sm">Manage your AI agent configurations and projects</p>
-        </div>
 
         {error && (
           <div className="bg-red-500/10 text-red-400 p-4 rounded-md border border-red-500/20 flex items-start gap-3">
@@ -152,186 +194,228 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </div>
         )}
 
-        {/* Getting Started — shown only when there are no projects */}
-        {projects.length === 0 && (
+        {/* Top row: Header (left) + Recent Projects (right) */}
+        <div className="grid grid-cols-[1fr_320px] gap-6 items-start">
+          {/* Header */}
           <div>
-            <div className="flex items-center gap-2.5 mb-4">
-              <Sparkles size={16} className="text-brand" />
-              <h2 className="text-lg font-medium text-text-base">Getting started</h2>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              {/* Step 1 */}
-              <button
-                onClick={() => onNavigate("projects")}
-                className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-brand/50 transition-all group flex flex-col gap-3"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-brand/10 border border-brand/20 flex items-center justify-center shrink-0">
-                    <span className="text-[11px] font-semibold text-brand">1</span>
-                  </div>
-                  <h3 className="font-medium text-text-base group-hover:text-brand transition-colors">Create a project</h3>
-                </div>
-                <p className="text-[13px] text-text-muted leading-relaxed pl-10">
-                  Link a directory to an agent configuration so your tools are always in sync.
+            <h1 className="text-2xl font-semibold text-text-base mb-2">Welcome to Automatic</h1>
+            <p className="text-text-muted text-sm">Manage your AI agent configurations and projects</p>
+
+            {/* Note from Chris — shown when projects exist (fills the gap) */}
+            {projects.length > 0 && (
+              <div className="mt-6 bg-bg-input border border-border-strong/40 rounded-lg p-5 text-[13px] text-text-base leading-relaxed space-y-3">
+                <p>Hi,</p>
+                <p>
+                  I'm Chris, the developer of Automatic. Automatic was built to solve a problem I experienced working with AI tools — it keeps your shared project instructions, skills, MCP servers and other AI config in sync and up to date.
                 </p>
-                <div className="flex items-center gap-1 text-[12px] font-medium text-brand pl-10 group-hover:gap-2 transition-all">
-                  Go to Projects <ArrowRight size={13} />
-                </div>
-              </button>
-
-              {/* Step 2 */}
-              <button
-                onClick={() => onNavigate("project-templates")}
-                className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-file-template/50 transition-all group flex flex-col gap-3"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-icon-file-template/10 border border-icon-file-template/20 flex items-center justify-center shrink-0">
-                    <span className="text-[11px] font-semibold text-icon-file-template">2</span>
-                  </div>
-                  <h3 className="font-medium text-text-base group-hover:text-icon-file-template transition-colors">Browse project templates</h3>
-                </div>
-                <p className="text-[13px] text-text-muted leading-relaxed pl-10">
-                  Start from a pre-built project template to hit the ground running with a proven setup.
-                </p>
-                <div className="flex items-center gap-1 text-[12px] font-medium text-icon-file-template pl-10 group-hover:gap-2 transition-all">
-                  Browse Templates <ArrowRight size={13} />
-                </div>
-              </button>
-
-              {/* Step 3 */}
-              <button
-                onClick={() => onNavigate("skill-store")}
-                className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-skill/50 transition-all group flex flex-col gap-3"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-icon-skill/10 border border-icon-skill/20 flex items-center justify-center shrink-0">
-                    <span className="text-[11px] font-semibold text-icon-skill">3</span>
-                  </div>
-                  <h3 className="font-medium text-text-base group-hover:text-icon-skill transition-colors">Install skills</h3>
-                </div>
-                <p className="text-[13px] text-text-muted leading-relaxed pl-10">
-                  Browse the community skill store and load specialised capabilities into your agents.
-                </p>
-                <div className="flex items-center gap-1 text-[12px] font-medium text-icon-skill pl-10 group-hover:gap-2 transition-all">
-                  Browse Skills <ArrowRight size={13} />
-                </div>
-              </button>
-
-              {/* Step 4 */}
-              <button
-                onClick={() => onNavigate("mcp-marketplace")}
-                className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-mcp/50 transition-all group flex flex-col gap-3"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-icon-mcp/10 border border-icon-mcp/20 flex items-center justify-center shrink-0">
-                    <span className="text-[11px] font-semibold text-icon-mcp">4</span>
-                  </div>
-                  <h3 className="font-medium text-text-base group-hover:text-icon-mcp transition-colors">Connect MCP servers</h3>
-                </div>
-                <p className="text-[13px] text-text-muted leading-relaxed pl-10">
-                  Extend your agents with powerful integrations from the MCP server marketplace.
-                </p>
-                <div className="flex items-center gap-1 text-[12px] font-medium text-icon-mcp pl-10 group-hover:gap-2 transition-all">
-                  Browse Servers <ArrowRight size={13} />
-                </div>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Recent Projects — shown only when projects exist */}
-        {projects.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-medium text-text-base">Recent Projects</h2>
-              <button 
-                onClick={() => onNavigate("projects")}
-                className="text-sm text-brand hover:text-icon-file-template flex items-center gap-1 transition-colors"
-              >
-                View all <ArrowRight size={14} />
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              {projects.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()).slice(0, 6).map(project => {
-                const drift = driftMap[project.name];
-                const isDrifted = drift?.drifted === true;
-                const isInSync = drift !== undefined && drift !== null && !drift.drifted;
-                const isConfigured = !!project.directory && project.agents.length > 0;
-
-                return (
-                  <div 
-                    key={project.name}
-                    onClick={() => handleProjectClick(project.name)}
-                    className={`bg-bg-input border rounded-lg p-5 cursor-pointer transition-all group ${
-                      isDrifted
-                        ? "border-warning/40 hover:border-warning/70"
-                        : "border-border-strong/40 hover:border-brand/50"
-                    }`}
+                <p>
+                  If you find it useful, please{" "}
+                  <a
+                    href="https://github.com/velvet-tiger/automatic"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-brand hover:text-brand-hover underline decoration-brand/40 transition-colors"
                   >
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <FolderOpen size={16} className={isDrifted ? "text-warning" : "text-brand"} />
-                        <h3 className={`font-medium text-text-base transition-colors ${
-                          isDrifted ? "group-hover:text-icon-mcp" : "group-hover:text-brand"
-                        }`}>{project.name}</h3>
-                      </div>
-                      {isConfigured && (
-                        isDrifted ? (
-                          <span className="flex items-center gap-1 text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded uppercase tracking-wider font-semibold">
-                            <AlertCircle size={9} />
-                            Drifted
-                          </span>
-                        ) : isInSync ? (
-                          <span className="flex items-center gap-1 text-[10px] bg-success/10 text-success px-1.5 py-0.5 rounded uppercase tracking-wider font-semibold">
-                            <CheckCircle2 size={9} />
-                            In Sync
-                          </span>
-                        ) : (
-                          <span className="text-[10px] bg-success/10 text-success px-1.5 py-0.5 rounded uppercase tracking-wider font-semibold">Configured</span>
-                        )
-                      )}
-                    </div>
-                    
-                    {project.description && (
-                      <p className="text-sm text-text-muted mb-4 line-clamp-2">{project.description}</p>
-                    )}
+                    give us a star on GitHub
+                  </a>{" "}
+                  and tell your friends about us.
+                </p>
+                <p>
+                  We've got heaps of plans for Automatic, and we can't wait to show you what we're working on.
+                </p>
+                <p className="text-text-base font-medium">— Chris</p>
+              </div>
+            )}
 
-                    {/* Drift detail — which agents are affected */}
-                    {isDrifted && drift && (
-                      <div className="mb-3 text-[11px] text-warning/70 space-y-0.5">
-                        {drift.agents.map((a) => (
-                          <div key={a.agent_id}>
-                            <span className="font-medium text-warning/90">{a.agent_label}:</span>{" "}
-                            {a.files.map((f) => f.reason).join(", ")}
-                          </div>
-                        ))}
+            {/* Getting Started — shown only when there are no projects */}
+            {projects.length === 0 && (
+              <div className="mt-6">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <Sparkles size={16} className="text-brand" />
+                  <h2 className="text-lg font-medium text-text-base">Getting started</h2>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Step 1 */}
+                  <button
+                    onClick={() => onNavigate("projects")}
+                    className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-brand/50 transition-all group flex flex-col gap-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-7 h-7 rounded-full bg-brand/10 border border-brand/20 flex items-center justify-center shrink-0">
+                        <span className="text-[11px] font-semibold text-brand">1</span>
                       </div>
-                    )}
-                    
-                    <div className="flex items-center gap-4 mt-auto pt-2 border-t border-border-strong/50">
-                      <div className="flex items-center gap-1.5 text-xs text-text-muted">
-                        <Bot size={12} />
-                        <span>{project.agents.length}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-xs text-text-muted">
-                        <Code size={12} />
-                        <span>{project.skills.length + project.local_skills.length}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-xs text-text-muted">
-                        <Server size={12} />
-                        <span>{project.mcp_servers.length}</span>
-                      </div>
+                      <h3 className="font-medium text-text-base group-hover:text-brand transition-colors">Create a project</h3>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                    <p className="text-[13px] text-text-muted leading-relaxed pl-10">
+                      Link a directory to an agent configuration so your tools are always in sync.
+                    </p>
+                    <div className="flex items-center gap-1 text-[12px] font-medium text-brand pl-10 group-hover:gap-2 transition-all">
+                      Go to Projects <ArrowRight size={13} />
+                    </div>
+                  </button>
+
+                  {/* Step 2 */}
+                  <button
+                    onClick={() => onNavigate("project-templates")}
+                    className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-file-template/50 transition-all group flex flex-col gap-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-7 h-7 rounded-full bg-icon-file-template/10 border border-icon-file-template/20 flex items-center justify-center shrink-0">
+                        <span className="text-[11px] font-semibold text-icon-file-template">2</span>
+                      </div>
+                      <h3 className="font-medium text-text-base group-hover:text-icon-file-template transition-colors">Browse project templates</h3>
+                    </div>
+                    <p className="text-[13px] text-text-muted leading-relaxed pl-10">
+                      Start from a pre-built project template to hit the ground running with a proven setup.
+                    </p>
+                    <div className="flex items-center gap-1 text-[12px] font-medium text-icon-file-template pl-10 group-hover:gap-2 transition-all">
+                      Browse Templates <ArrowRight size={13} />
+                    </div>
+                  </button>
+
+                  {/* Step 3 */}
+                  <button
+                    onClick={() => onNavigate("skill-store")}
+                    className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-skill/50 transition-all group flex flex-col gap-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-7 h-7 rounded-full bg-icon-skill/10 border border-icon-skill/20 flex items-center justify-center shrink-0">
+                        <span className="text-[11px] font-semibold text-icon-skill">3</span>
+                      </div>
+                      <h3 className="font-medium text-text-base group-hover:text-icon-skill transition-colors">Install skills</h3>
+                    </div>
+                    <p className="text-[13px] text-text-muted leading-relaxed pl-10">
+                      Browse the community skill store and load specialised capabilities into your agents.
+                    </p>
+                    <div className="flex items-center gap-1 text-[12px] font-medium text-icon-skill pl-10 group-hover:gap-2 transition-all">
+                      Browse Skills <ArrowRight size={13} />
+                    </div>
+                  </button>
+
+                  {/* Step 4 */}
+                  <button
+                    onClick={() => onNavigate("mcp-marketplace")}
+                    className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-mcp/50 transition-all group flex flex-col gap-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-7 h-7 rounded-full bg-icon-mcp/10 border border-icon-mcp/20 flex items-center justify-center shrink-0">
+                        <span className="text-[11px] font-semibold text-icon-mcp">4</span>
+                      </div>
+                      <h3 className="font-medium text-text-base group-hover:text-icon-mcp transition-colors">Connect MCP servers</h3>
+                    </div>
+                    <p className="text-[13px] text-text-muted leading-relaxed pl-10">
+                      Extend your agents with powerful integrations from the MCP server marketplace.
+                    </p>
+                    <div className="flex items-center gap-1 text-[12px] font-medium text-icon-mcp pl-10 group-hover:gap-2 transition-all">
+                      Browse Servers <ArrowRight size={13} />
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
 
-        {/* Marketplace Section */}
+          {/* Recent Projects — right column, shown only when projects exist */}
+          {projects.length > 0 && (
+            <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between px-4 pt-4 pb-3">
+                <h2 className="text-sm font-semibold text-text-base">Recent Projects</h2>
+                <button
+                  onClick={() => onNavigate("projects")}
+                  className="text-xs text-brand hover:text-brand-hover flex items-center gap-1 transition-colors"
+                >
+                  View all <ArrowRight size={12} />
+                </button>
+              </div>
+              <div className="divide-y divide-border-strong/30 border-t border-border-strong/30">
+                {projects.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()).slice(0, 6).map(project => {
+                  const drift = driftMap[project.name];
+                  const isDrifted = drift?.drifted === true;
+                  const isInSync = drift !== undefined && drift !== null && !drift.drifted;
+                  const isConfigured = !!project.directory && project.agents.length > 0;
+
+                  return (
+                    <div
+                      key={project.name}
+                      onClick={() => handleProjectClick(project.name)}
+                      className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors group ${
+                        isDrifted ? "hover:bg-warning/5" : "hover:bg-surface-hover"
+                      }`}
+                    >
+                      <FolderOpen size={14} className={`shrink-0 ${isDrifted ? "text-warning" : "text-brand"}`} />
+
+                      <span className={`text-[12px] font-medium text-text-base truncate min-w-0 transition-colors ${
+                        isDrifted ? "group-hover:text-warning" : "group-hover:text-brand"
+                      }`}>{project.name}</span>
+
+                      <div className="ml-auto flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-2 text-[10px] text-text-muted">
+                          <span className="flex items-center gap-0.5"><Bot size={10} />{project.agents.length}</span>
+                          <span className="flex items-center gap-0.5"><Code size={10} />{project.skills.length + project.local_skills.length}</span>
+                          <span className="flex items-center gap-0.5"><Server size={10} />{project.mcp_servers.length}</span>
+                        </div>
+
+                        {isConfigured && (
+                          isDrifted ? (
+                            <span className="flex items-center gap-0.5 text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded font-semibold">
+                              <AlertCircle size={8} />
+                              Drifted
+                            </span>
+                          ) : isInSync ? (
+                            <span className="flex items-center gap-0.5 text-[10px] bg-success/10 text-success px-1.5 py-0.5 rounded font-semibold">
+                              <CheckCircle2 size={8} />
+                              Synced
+                            </span>
+                          ) : null
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Featured Section */}
         <div>
-          <h2 className="text-lg font-medium text-text-base mb-4">Discover & Extend</h2>
+          <div className="flex items-center gap-2 mb-3">
+            <Star size={13} className="text-brand" />
+            <h2 className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">Featured</h2>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {FEATURED_ITEMS.map((item) => {
+              const colors = FEATURED_COLORS[item.type];
+              const Icon = FEATURED_ICONS[item.type];
+              return (
+                <button
+                  key={item.title}
+                  onClick={() => onNavigate(item.navigateTo)}
+                  className={`bg-bg-input border rounded-lg p-5 text-left transition-all group flex flex-col gap-3 ${colors.border}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`p-2 rounded-md ${colors.badgeBg}`}>
+                        <Icon size={16} className={colors.icon} />
+                      </div>
+                      <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${colors.badge} ${colors.badgeBg}`}>{item.badge}</span>
+                    </div>
+                    <ArrowRight size={13} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-text-base">{item.title}</h4>
+                    <p className="text-[11px] text-text-muted mt-0.5">by {item.author || "the community"}</p>
+                  </div>
+                  <p className="text-[13px] text-text-muted leading-relaxed line-clamp-3">{item.description}</p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Discover & Extend — full-width across the bottom */}
+        <div>
+          <h2 className="text-lg font-medium text-text-base mb-4">Discover &amp; Extend</h2>
           <div className="grid grid-cols-3 gap-4">
             {/* Skills Marketplace */}
             <button
@@ -391,7 +475,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             </button>
           </div>
         </div>
-       </div>
-     </div>
-   );
+
+      </div>
+    </div>
+  );
 }
