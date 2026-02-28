@@ -1,4 +1,4 @@
-x`.PHONY: help dev build check clean install test tauri-dev tauri-build frontend-dev frontend-build rust-check
+.PHONY: help dev build check clean install test tauri-dev tauri-build frontend-dev frontend-build rust-check
 
 # Default target
 .DEFAULT_GOAL := help
@@ -39,8 +39,8 @@ clean: ## Clean build artifacts
 	rm -rf src-tauri/target
 	rm -rf node_modules
 
-test: ## Run tests (placeholder - add your test commands)
-	@echo "No tests configured yet"
+test: ## Run Rust backend tests
+	cd src-tauri && cargo test
 
 format: ## Format code (Rust)
 	cd src-tauri && cargo fmt
