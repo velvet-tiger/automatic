@@ -254,7 +254,7 @@ function App() {
             {activeTab === "skills" && (
               <button
                 onClick={() => setActiveTab("skill-store")}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors"
+                className="flex h-[30px] items-center gap-1.5 px-3 rounded-md text-[12px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
               >
                 <Store size={13} />
                 Skill Store
@@ -263,7 +263,7 @@ function App() {
             {activeTab === "project-templates" && (
               <button
                 onClick={() => setActiveTab("template-marketplace")}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors"
+                className="flex h-[30px] items-center gap-1.5 px-3 rounded-md text-[12px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
               >
                 <Store size={13} />
                 Template Marketplace
@@ -272,7 +272,7 @@ function App() {
             {activeTab === "mcp" && (
               <button
                 onClick={() => setActiveTab("mcp-marketplace")}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors"
+                className="flex h-[30px] items-center gap-1.5 px-3 rounded-md text-[12px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
               >
                 <Store size={13} />
                 MCP Marketplace

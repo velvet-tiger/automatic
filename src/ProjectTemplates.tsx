@@ -639,7 +639,7 @@ export default function ProjectTemplates() {
                   <>
                     <button
                       onClick={handleDuplicate}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-surface-hover text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
+                      className="flex h-[30px] items-center gap-1.5 px-3 bg-bg-input hover:bg-surface-hover text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
                     >
                       <Copy size={12} /> Duplicate
                     </button>
@@ -647,7 +647,7 @@ export default function ProjectTemplates() {
                     <div className="relative">
                       <button
                         onClick={() => setShowApplyPicker(!showApplyPicker)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors shadow-sm"
+                        className="flex h-[30px] items-center gap-1.5 px-3 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors shadow-sm"
                       >
                         Apply to project...
                         <ChevronDown size={12} className={`transition-transform ${showApplyPicker ? "rotate-180" : ""}`} />
@@ -709,11 +709,11 @@ export default function ProjectTemplates() {
                   </>
                 )}
                 {dirty && (
-                  <button
-                    onClick={handleSave}
-                    disabled={isCreating && !newName.trim()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                  >
+                    <button
+                      onClick={handleSave}
+                      disabled={isCreating && !newName.trim()}
+                      className="flex h-[30px] items-center gap-1.5 px-3 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm border border-transparent"
+                    >
                     <Check size={12} /> Save
                   </button>
                 )}
