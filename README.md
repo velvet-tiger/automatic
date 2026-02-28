@@ -4,7 +4,7 @@ Automatic is a desktop hub for managing your AI agent configurations. It gives y
 
 ## What it does
 
-Automatic does not run agents. Instead, it acts as a registry that your agents connect to at the start of each session to discover skills and load project configurations. You manage everything in one place; your agents stay in sync automatically.
+Automatic acts as a registry that your agents connect to at the start of each session to discover skills and load project configurations. You manage everything in one place; your agents stay in sync automatically.
 
 ## Features
 
@@ -59,22 +59,6 @@ Three built-in marketplaces let you extend Automatic without leaving the app:
 - **Templates Marketplace** — Discover project and file templates
 - **MCP Servers Marketplace** — Find MCP server integrations to connect to your agents
 
-## Connecting your agents
-
-Automatic exposes an MCP server interface so agents can connect directly. Add the following to your agent's MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "automatic": {
-      "command": "nexus",
-      "args": ["mcp-serve"]
-    }
-  }
-}
-```
-
-Once connected, your agent can list and read skills, look up MCP server configurations, and sync project settings — all without you having to copy-paste anything manually.
 
 ## Platforms
 
@@ -82,8 +66,3 @@ Automatic runs on macOS, Windows, and Linux.
 
 > **Note:** MCP server config reading currently reads from the Claude Desktop config path on macOS. Cross-platform support for this feature is in progress.
 
-## Coming soon
-
-- MCP server configuration editing and creation within the app
-- Cross-platform MCP config path support
-- Remote MCP server with OAuth authentication
