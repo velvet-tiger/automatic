@@ -5,6 +5,7 @@ import { AgentIcon } from "./AgentIcon";
 import { McpSelector } from "./McpSelector";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { useCurrentUser } from "./ProfileContext";
+import { MemoryBrowser } from "./MemoryBrowser";
 import { invoke } from "@tauri-apps/api/core";
 import { open, ask } from "@tauri-apps/plugin-dialog";
 import {
@@ -695,10 +696,6 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   // Memory state
   const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
   const [loadingMemories, setLoadingMemories] = useState(false);
-  const [editingMemoryKey, setEditingMemoryKey] = useState<string | null>(null);
-  const [editingMemoryValue, setEditingMemoryValue] = useState<string>("");
-  const [savingMemory, setSavingMemory] = useState(false);
-  const [copiedMemoryKey, setCopiedMemoryKey] = useState<string | null>(null);
 
   // Local skill editing state
   const [localSkillEditing, setLocalSkillEditing] = useState<string | null>(null); // skill name being edited
@@ -3243,171 +3240,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 })()}
 
                 {/* ── Memory tab ──────────────────────────────────── */}
-                {projectTab === "memory" && (
-                  <section>
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <h3 className="text-[14px] font-medium text-text-base">Agent Memory</h3>
-                        <p className="text-[12px] text-text-muted mt-1">
-                          Persistent context and learnings stored by agents working on this project.
-                        </p>
-                      </div>
-                      {Object.keys(memories).length > 0 && (
-                        <button
-                          onClick={async () => {
-                            if (!selectedName || !(await ask("Are you sure you want to clear all memory for this project? This cannot be undone.", { title: "Clear Memories", kind: "warning" }))) return;
-                            try {
-                              await invoke("clear_memories", { project: selectedName, confirm: true, pattern: null });
-                              await loadMemories(selectedName);
-                            } catch (err: any) {
-                              setError(`Failed to clear memories: ${err}`);
-                            }
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-danger/10 hover:bg-danger/20 text-danger rounded text-[12px] font-medium border border-danger/20 transition-colors"
-                        >
-                          <Trash2 size={12} /> Clear All
-                        </button>
-                      )}
-                    </div>
-
-                    {loadingMemories ? (
-                      <div className="text-[13px] text-text-muted text-center py-8">Loading memories...</div>
-                    ) : Object.keys(memories).length === 0 ? (
-                      <div className="text-center py-12 bg-bg-input rounded-lg border border-border-strong/40 border-dashed">
-                        <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-bg-sidebar flex items-center justify-center">
-                          <Bot size={20} className="text-text-muted" />
-                        </div>
-                        <h4 className="text-[13px] font-medium text-text-base mb-1">No memories yet</h4>
-                        <p className="text-[12px] text-text-muted max-w-sm mx-auto">
-                          Agents haven't stored any learnings or context for this project yet.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {Object.entries(memories).map(([key, memory]) => {
-                          const isEditing = editingMemoryKey === key;
-                          const isCopied = copiedMemoryKey === key;
-                          return (
-                          <div key={key} className="bg-bg-input border border-border-strong/40 rounded-lg p-4 group">
-                            <div className="flex items-start justify-between gap-4 mb-2">
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <h4 className="text-[13px] font-semibold text-text-base font-mono truncate">{key}</h4>
-                                  {memory.source && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted border border-border-strong/40">
-                                      {memory.source}
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-[11px] text-text-muted">
-                                  {new Date(memory.timestamp).toLocaleString()}
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(memory.value);
-                                    setCopiedMemoryKey(key);
-                                    setTimeout(() => setCopiedMemoryKey(null), 1500);
-                                  }}
-                                  className="text-text-muted hover:text-text-base p-1.5 hover:bg-surface rounded transition-colors"
-                                  title="Copy value"
-                                >
-                                  {isCopied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    if (isEditing) {
-                                      setEditingMemoryKey(null);
-                                      setEditingMemoryValue("");
-                                    } else {
-                                      setEditingMemoryKey(key);
-                                      setEditingMemoryValue(memory.value);
-                                    }
-                                  }}
-                                  className={`p-1.5 rounded transition-colors ${isEditing ? "text-brand bg-brand/10 hover:bg-brand/20" : "text-text-muted hover:text-text-base hover:bg-surface"}`}
-                                  title={isEditing ? "Cancel edit" : "Edit memory"}
-                                >
-                                  <Edit2 size={14} />
-                                </button>
-                                <button
-                                  onClick={async () => {
-                                    if (!selectedName) return;
-                                    try {
-                                      await invoke("delete_memory", { project: selectedName, key });
-                                      if (editingMemoryKey === key) {
-                                        setEditingMemoryKey(null);
-                                        setEditingMemoryValue("");
-                                      }
-                                      await loadMemories(selectedName);
-                                    } catch (err: any) {
-                                      setError(`Failed to delete memory: ${err}`);
-                                    }
-                                  }}
-                                  className="text-text-muted hover:text-danger p-1.5 hover:bg-surface rounded transition-colors"
-                                  title="Delete memory"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            </div>
-                            {isEditing ? (
-                              <div className="space-y-2">
-                                <textarea
-                                  value={editingMemoryValue}
-                                  onChange={(e) => setEditingMemoryValue(e.target.value)}
-                                  className="w-full text-[13px] text-text-base font-mono bg-bg-base p-3 rounded border border-brand resize-none focus:outline-none focus:ring-1 focus:ring-brand custom-scrollbar"
-                                  rows={Math.min(Math.max(editingMemoryValue.split("\n").length + 1, 4), 15)}
-                                  autoFocus
-                                />
-                                <div className="flex items-center justify-end gap-2">
-                                  <button
-                                    onClick={() => {
-                                      setEditingMemoryKey(null);
-                                      setEditingMemoryValue("");
-                                    }}
-                                    className="px-3 py-1 text-[12px] font-medium text-text-muted hover:text-text-base bg-bg-sidebar hover:bg-surface rounded transition-colors"
-                                  >
-                                    Cancel
-                                  </button>
-                                  <button
-                                    disabled={savingMemory || editingMemoryValue.trim() === ""}
-                                    onClick={async () => {
-                                      if (!selectedName) return;
-                                      try {
-                                        setSavingMemory(true);
-                                        await invoke("store_memory", {
-                                          project: selectedName,
-                                          key,
-                                          value: editingMemoryValue,
-                                          source: memory.source ?? null,
-                                        });
-                                        setEditingMemoryKey(null);
-                                        setEditingMemoryValue("");
-                                        await loadMemories(selectedName);
-                                      } catch (err: any) {
-                                        setError(`Failed to save memory: ${err}`);
-                                      } finally {
-                                        setSavingMemory(false);
-                                      }
-                                    }}
-                                    className="px-3 py-1 text-[12px] font-medium bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-not-allowed text-white rounded transition-colors"
-                                  >
-                                    {savingMemory ? "Saving..." : "Save"}
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="text-[13px] text-text-base whitespace-pre-wrap font-mono bg-bg-base p-3 rounded border border-border-strong/40 max-h-60 overflow-y-auto custom-scrollbar">
-                                {memory.value}
-                              </div>
-                            )}
-                          </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </section>
+                {projectTab === "memory" && selectedName && (
+                  <MemoryBrowser
+                    projectName={selectedName}
+                    memories={memories}
+                    loading={loadingMemories}
+                    onRefresh={() => loadMemories(selectedName)}
+                    onError={(msg) => setError(msg)}
+                  />
                 )}
 
               </div>
