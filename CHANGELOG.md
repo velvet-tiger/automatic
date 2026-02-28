@@ -2,6 +2,42 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.2.0] — 2026-02-28
+
+### Features
+
+#### Shell & UI
+- Custom overlay titlebar with Linear-style header layout replacing the default macOS titlebar
+- Sidebar logo text increased in size and rendered in pure white
+- Add buttons restyled as bordered pill shapes for improved visibility
+
+#### Onboarding
+- First-run setup wizard with Attio newsletter subscription step
+
+#### Projects
+- Yellow folder icon in the sidebar indicates projects with configuration drift
+- Default Agents setting pre-populated into new projects
+
+#### Settings
+- Sub-page sidebar navigation for structured settings sections
+- Default Agents global preference
+
+#### Analytics
+- Amplitude analytics integration with user opt-out support
+- Analytics events routed through Rust backend to the Amplitude EU endpoint
+
+#### CI / Distribution
+- macOS code signing and notarization in the release workflow
+
+### Fixes
+- Analytics events now route correctly through the Rust backend to the EU endpoint
+- Attio debug logging removed from newsletter integration
+- Settings sub-page sidebar text brightened for legibility
+- Error boundary and global error handlers added to surface black-screen failures
+- ClerkProvider updated to allow Tauri origins; `.env.example` added
+
+---
+
 ## [0.1.0] — 2026-02-27
 
 Initial public release of Automatic — a desktop hub for AI coding agents.
@@ -69,4 +105,5 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Warp removal correctly deletes `WARP.md` via owned config paths
 - Junie removal deletes the entire `.junie/` directory
 
+[0.2.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.2.0
 [0.1.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.1.0
