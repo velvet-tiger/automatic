@@ -1,4 +1,4 @@
-export type Theme = "dark" | "light" | "corporate-dark" | "corporate-light" | "cyberpunk" | "synthwave-glow" | "coral" | "arctic-light";
+export type Theme = "dark" | "light" | "corporate-dark" | "corporate-light" | "accessible" | "cyberpunk" | "synthwave-glow" | "coral" | "arctic-light";
 
 export const THEMES: { id: Theme; name: string; description: string; colors: { primary: string; surface: string } }[] = [
   {
@@ -24,6 +24,12 @@ export const THEMES: { id: Theme; name: string; description: string; colors: { p
     name: "Corporate Light",
     description: "Pure monochrome light — white, light grey, and near-black. No colour.",
     colors: { primary: "#2a2a2a", surface: "#ffffff" }
+  },
+  {
+    id: "accessible",
+    name: "Accessible",
+    description: "WCAG AA+, CVD-safe. High contrast blue on white — readable for all vision types.",
+    colors: { primary: "#1d4ed8", surface: "#ffffff" }
   },
   {
     id: "cyberpunk",

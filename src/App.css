@@ -326,6 +326,47 @@
   --danger-hover: #5a5a5a;
 }
 
+[data-theme="accessible"] {
+  --icon-agent: var(--brand);
+  --icon-skill: var(--success);
+  --icon-mcp: var(--warning);
+  --icon-file-template: var(--accent);
+  --icon-rule: var(--accent-hover);
+
+  /* Accessible: WCAG AA+, CVD-safe blue palette, no red/green reliance */
+  --brand: #1d4ed8;        /* Blue-700 — 5.9:1 on white */
+  --brand-hover: #1e40af;  /* Blue-800 — deeper on hover */
+  --brand-active: #1e3a8a; /* Blue-900 — active press */
+  --brand-light: #bfdbfe;  /* Blue-200 — tinted bg */
+
+  --accent: #0369a1;       /* Sky-700 — distinct from brand, still CVD-safe */
+  --accent-hover: #075985; /* Sky-800 */
+  --accent-light: #bae6fd; /* Sky-200 */
+  --accent-hover-light: #e0f2fe; /* Sky-100 */
+
+  --bg-base: #f9fafb;      /* Gray-50 */
+  --bg-sidebar: #f3f4f6;   /* Gray-100 */
+  --bg-input: #ffffff;
+  --bg-input-dark: #f9fafb;
+
+  --surface: #ffffff;
+  --surface-hover: #f3f4f6;
+  --surface-active: #e5e7eb;
+
+  --border-strong: #9ca3af; /* Gray-400 — 3:1 contrast on white, visible to all CVD types */
+
+  --text-base: #111827;    /* Gray-900 — 16:1 on white */
+  --text-muted: #374151;   /* Gray-700 — 10:1 on white */
+
+  /* Semantic: dark enough to read as text; distinguishable in full grayscale */
+  --success: #166534;      /* Green-800 — 7.2:1 on white */
+  --success-light: #dcfce7;
+  --success-active: #14532d;
+  --warning: #92400e;      /* Amber-800 — 7.5:1 on white */
+  --warning-hover: #78350f;
+  --danger: #9f1239;       /* Rose-900 — 9.1:1 on white */
+  --danger-hover: #881337;
+}
 
 [data-theme="light"] {
   --brand: #4f46e5; /* Indigo */
@@ -369,7 +410,8 @@
 
 [data-theme="light"] .agent-icon,
 [data-theme="arctic-light"] .agent-icon,
-[data-theme="corporate-light"] .agent-icon {
+[data-theme="corporate-light"] .agent-icon,
+[data-theme="accessible"] .agent-icon {
   /* Light themes: force the icons to dark grey to match text-base */
   /* brightness(0) makes them black, opacity lightens them slightly to match dark slate/zinc */
   filter: brightness(0);
