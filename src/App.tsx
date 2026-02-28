@@ -205,7 +205,7 @@ function App() {
         </div>
         {/* Sidebar footer — branding */}
         <div className="px-3 py-3 border-t border-[#33353A]/60">
-          <div className="flex items-center gap-2 px-3 py-1.5 text-[13px] font-semibold text-[#C8CAD0]">
+          <div className="flex items-center gap-2 px-3 py-1.5 text-[14px] font-semibold text-white">
             <img src={graphLogo} width="16" height="16" alt="Automatic" />
             <span>Automatic</span>
           </div>
