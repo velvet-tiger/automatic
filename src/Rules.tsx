@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, FileText, Check, ScrollText } from "lucide-react";
 import { ICONS } from "./icons";
 
@@ -84,6 +85,8 @@ export default function Rules() {
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const confirmed = await ask(`Delete rule "${id}"?`, { title: "Delete Rule", kind: "warning" });
+    if (!confirmed) return;
     try {
       await invoke("delete_rule", { machineName: id });
       if (selectedId === id) {

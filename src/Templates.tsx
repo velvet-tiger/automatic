@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, FileText, Check, LayoutTemplate } from "lucide-react";
 import { ICONS } from "./icons";
 
@@ -59,6 +60,8 @@ export default function Templates() {
 
   const handleDelete = async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const confirmed = await ask(`Delete template "${name}"?`, { title: "Delete Template", kind: "warning" });
+    if (!confirmed) return;
     try {
       await invoke("delete_template", { name });
       if (selectedTemplate === name) {

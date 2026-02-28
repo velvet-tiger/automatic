@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   trackSkillCreated,
   trackSkillUpdated,
@@ -418,6 +419,8 @@ export default function Skills() {
 
   const handleDelete = async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const confirmed = await ask(`Delete skill "${name}"?`, { title: "Delete Skill", kind: "warning" });
+    if (!confirmed) return;
     try {
       await invoke("delete_skill", { name });
       trackSkillDeleted(name);
