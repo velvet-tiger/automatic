@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Bot, FolderOpen, AlertCircle, ArrowRight } from "lucide-react";
+import { Bot, FolderOpen, AlertCircle, ArrowRight, CheckCircle2, XCircle } from "lucide-react";
 import { ICONS } from "./icons";
 import { AgentIcon } from "./AgentIcon";
+import type { AgentCapabilities } from "./AgentSelector";
 
 interface AgentProject {
   name: string;
@@ -14,8 +15,31 @@ interface AgentWithProjects {
   label: string;
   description: string;
   project_file: string;
+  capabilities: AgentCapabilities;
   mcp_note: string | null;
   projects: AgentProject[];
+}
+
+interface CapabilityRowProps {
+  label: string;
+  description: string;
+  supported: boolean;
+}
+
+function CapabilityRow({ label, description, supported }: CapabilityRowProps) {
+  return (
+    <div className="flex items-center gap-3 px-3 py-2.5 bg-bg-input rounded-md border border-border-strong/40">
+      {supported ? (
+        <CheckCircle2 size={14} className="text-green-500 flex-shrink-0" />
+      ) : (
+        <XCircle size={14} className="text-text-muted flex-shrink-0" />
+      )}
+      <div className="flex-1 min-w-0">
+        <span className="text-[13px] text-text-base">{label}</span>
+        <span className="text-[11px] text-text-muted ml-2">{description}</span>
+      </div>
+    </div>
+  );
 }
 
 interface AgentsProps {
@@ -158,21 +182,35 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
                   </div>
                 </section>
 
-                {/* Limitations */}
-                {selected.mcp_note && (
-                  <section>
-                    <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
-                      Limitations
-                    </label>
-                    <div className="flex items-start gap-3 px-3 py-3 bg-bg-input rounded-md border border-border-strong">
+                {/* Capabilities */}
+                <section>
+                  <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
+                    Capabilities
+                  </label>
+                  <div className="space-y-2">
+                    <CapabilityRow
+                      label="Skills"
+                      description="Automatic can sync skills to this agent"
+                      supported={selected.capabilities.skills}
+                    />
+                    <CapabilityRow
+                      label="Instructions"
+                      description="Reads a project instructions file"
+                      supported={selected.capabilities.instructions}
+                    />
+                    <CapabilityRow
+                      label="MCP Servers"
+                      description="Automatic can write MCP server configuration"
+                      supported={selected.capabilities.mcp_servers}
+                    />
+                  </div>
+                  {selected.mcp_note && (
+                    <div className="flex items-start gap-3 px-3 py-3 bg-bg-input rounded-md border border-border-strong mt-3">
                       <AlertCircle size={14} className="text-text-muted flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-[13px] font-medium text-text-base mb-1">MCP configuration</p>
-                        <p className="text-[12px] text-text-muted leading-relaxed">{selected.mcp_note}</p>
-                      </div>
+                      <p className="text-[12px] text-text-muted leading-relaxed">{selected.mcp_note}</p>
                     </div>
-                  </section>
-                )}
+                  )}
+                </section>
 
                 {/* Projects */}
                 <section>

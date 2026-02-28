@@ -47,6 +47,39 @@ pub use kiro::Kiro;
 pub use opencode::OpenCode;
 pub use warp::Warp;
 
+// ── Capabilities ─────────────────────────────────────────────────────────────
+
+/// Declares which Automatic features an agent supports.
+///
+/// All fields default to `true`.  An agent overrides only the features it
+/// cannot support (e.g. Warp sets `mcp_servers: false` because it manages MCP
+/// via its own internal database rather than a project-level config file).
+///
+/// These flags are used by:
+/// - The UI — to show/hide controls and display capability badges
+/// - The sync pipeline — to skip steps that are not applicable
+/// - The MCP server — to filter tools offered to a given agent
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentCapabilities {
+    /// Automatic can sync skills (SKILL.md files) to this agent's directory.
+    pub skills: bool,
+    /// This agent reads a project instructions file (e.g. `CLAUDE.md`).
+    pub instructions: bool,
+    /// Automatic can write MCP server config for this agent.
+    pub mcp_servers: bool,
+}
+
+impl Default for AgentCapabilities {
+    /// All capabilities enabled by default.
+    fn default() -> Self {
+        Self {
+            skills: true,
+            instructions: true,
+            mcp_servers: true,
+        }
+    }
+}
+
 // ── Trait ────────────────────────────────────────────────────────────────────
 
 /// The contract every agent type must fulfil.
@@ -96,6 +129,24 @@ pub trait Agent: Send + Sync {
         selected_names: &[String],
         local_skill_names: &[String],
     ) -> Result<Vec<String>, String>;
+
+    // ── Capabilities ────────────────────────────────────────────────────
+
+    /// Returns the set of Automatic features this agent supports.
+    ///
+    /// The default implementation returns all capabilities enabled.  Override
+    /// this to disable specific features that this agent cannot support.
+    ///
+    /// Example — an agent that cannot have its MCP config written by Automatic:
+    ///
+    /// ```ignore
+    /// fn capabilities(&self) -> AgentCapabilities {
+    ///     AgentCapabilities { mcp_servers: false, ..Default::default() }
+    /// }
+    /// ```
+    fn capabilities(&self) -> AgentCapabilities {
+        AgentCapabilities::default()
+    }
 
     // ── MCP capability ──────────────────────────────────────────────────
 
@@ -173,6 +224,8 @@ pub struct AgentInfo {
     pub id: String,
     pub label: String,
     pub description: String,
+    /// Which Automatic features this agent supports.
+    pub capabilities: AgentCapabilities,
     /// Human-readable note about MCP limitations, if any.
     /// `None` means Automatic manages MCP config for this agent normally.
     pub mcp_note: Option<String>,
@@ -184,6 +237,7 @@ impl AgentInfo {
             id: agent.id().to_string(),
             label: agent.label().to_string(),
             description: agent.config_description().to_string(),
+            capabilities: agent.capabilities(),
             mcp_note: agent.mcp_note().map(|s| s.to_string()),
         }
     }

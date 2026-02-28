@@ -46,6 +46,7 @@ pub fn list_agents_with_projects() -> Result<String, String> {
                 "label": a.label(),
                 "description": a.config_description(),
                 "project_file": a.project_file_name(),
+                "capabilities": a.capabilities(),
                 "mcp_note": a.mcp_note(),
                 "projects": agent_projects,
             })

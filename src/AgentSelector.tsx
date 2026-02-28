@@ -2,10 +2,17 @@ import { useState } from "react";
 import { Bot, Plus, Search, Trash2, X } from "lucide-react";
 import { AgentIcon } from "./AgentIcon";
 
+export interface AgentCapabilities {
+  skills: boolean;
+  instructions: boolean;
+  mcp_servers: boolean;
+}
+
 export interface AgentInfo {
   id: string;
   label: string;
   description: string;
+  capabilities?: AgentCapabilities;
 }
 
 interface AgentSelectorProps {
