@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { ProfileProvider } from "./ProfileContext";
 import { useCurrentUser } from "./ProfileContext";
 import { initAnalytics, setAnalyticsEnabled, trackNavigation } from "./analytics";
@@ -67,6 +68,10 @@ function App() {
   const [skillStoreResetKey, setSkillStoreResetKey] = useState(0);
   const [templateMarketplaceResetKey, setTemplateMarketplaceResetKey] = useState(0);
   const [mcpMarketplaceResetKey, setMcpMarketplaceResetKey] = useState(0);
+
+  // ── App version ─────────────────────────────────────────────────────────
+  const [appVersion, setAppVersion] = useState<string>("");
+  useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);
 
   // ── First-run wizard ────────────────────────────────────────────────────
   // null = still loading, true = must show, false = already completed
@@ -214,6 +219,7 @@ function App() {
           <div className="flex items-center gap-2 px-3 py-1.5 text-[14px] font-semibold text-white">
             <img src={graphLogo} width="16" height="16" alt="Automatic" />
             <span>Automatic</span>
+            {appVersion && <span className="ml-auto text-[11px] font-normal text-[#6B6D76]">v{appVersion}</span>}
           </div>
         </div>
       </aside>
