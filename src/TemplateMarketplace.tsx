@@ -345,7 +345,7 @@ function TemplateDetail({
         <div className="flex items-center gap-2">
           {error && <span className="text-[12px] text-red-400">{error}</span>}
           {imported ? (
-            <div className="flex h-[30px] items-center gap-1.5 px-3 rounded-md text-[12px] font-medium bg-bg-sidebar border border-border-strong/40 text-brand">
+            <div className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-brand">
               <CheckCircle2 size={12} />
               Imported
             </div>
@@ -353,7 +353,7 @@ function TemplateDetail({
             <button
               onClick={onImport}
               disabled={importing}
-              className="flex h-[30px] items-center gap-1.5 px-3 rounded-md text-[12px] font-medium bg-brand hover:bg-brand-hover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm border border-transparent"
+              className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-brand hover:bg-brand-hover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm border border-transparent"
             >
               {importing ? (
                 <><Loader2 size={12} className="animate-spin" /> Importing…</>
