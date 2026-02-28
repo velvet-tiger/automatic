@@ -52,7 +52,7 @@ const SIDEBAR_MAX = 420;
 const SIDEBAR_DEFAULT = 220;
 
 function emptyTemplate(name: string): ProjectTemplate {
-  return { name, description: "", skills: [], mcp_servers: [], providers: [], agents: [], project_files: [], unified_instruction: "", unified_rules: [] };
+  return { name, description: "", skills: [], mcp_servers: [], providers: [], agents: [], project_files: [], unified_instruction: "", unified_rules: ["automatic-service"] };
 }
 
 // Derive a colour for the sidebar icon box based on what's in the template
@@ -239,7 +239,7 @@ export default function ProjectTemplates() {
         agents: parsed.agents || [],
         project_files: parsed.project_files || [],
         unified_instruction: parsed.unified_instruction || "",
-        unified_rules: parsed.unified_rules || [],
+        unified_rules: parsed.unified_rules === undefined ? ["automatic-service"] : parsed.unified_rules,
       });
       setUnifiedEditing(false);
       setDirty(false);
@@ -918,7 +918,7 @@ export default function ProjectTemplates() {
                       {appliedProjects.map((p) => (
                         <span
                           key={p.name}
-                          className="px-2.5 py-1 bg-bg-sidebar border border-border-strong/40-hover rounded-md text-[12px] text-text-base font-medium"
+                          className="px-2.5 py-1 bg-bg-sidebar border border-border-strong/40 rounded-md text-[12px] text-text-base font-medium"
                         >
                           {p.name}
                         </span>

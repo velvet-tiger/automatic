@@ -1566,7 +1566,7 @@ const DEFAULT_RULES: &[(&str, &str, &str)] = &[
     ),
     (
         "automatic-service",
-        "Automatic MCP Service",
+        "Automatic",
         include_str!("../rules/automatic/automatic-service.md"),
     ),
 ];
@@ -1588,6 +1588,18 @@ pub fn install_default_rules() -> Result<(), String> {
             };
             let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
             fs::write(&path, pretty).map_err(|e| e.to_string())?;
+        } else if *machine_name == "automatic-service" {
+            // Migration: rename "Automatic MCP Service" → "Automatic"
+            if let Ok(raw) = fs::read_to_string(&path) {
+                if let Ok(mut rule) = serde_json::from_str::<Rule>(&raw) {
+                    if rule.name == "Automatic MCP Service" {
+                        rule.name = "Automatic".to_string();
+                        if let Ok(pretty) = serde_json::to_string_pretty(&rule) {
+                            let _ = fs::write(&path, pretty);
+                        }
+                    }
+                }
+            }
         }
     }
 

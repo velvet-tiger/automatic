@@ -1098,6 +1098,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setProjectFileContent(content);
       setProjectFileDirty(true);
       setProjectFileEditing(true);
+      // Auto-enable Automatic rule if rules have never been configured for this file
+      if (project && activeProjectFile) {
+        const hasAutomatic = availableRules.some(r => r.id === "automatic-service");
+        if (hasAutomatic && !project.file_rules?.[activeProjectFile]) {
+          setProject({ ...project, file_rules: { ...(project.file_rules || {}), [activeProjectFile]: ["automatic-service"] } });
+        }
+      }
       setShowTemplatePicker(false);
     } catch (err: any) {
       setError(`Failed to load template: ${err}`);
@@ -2262,6 +2269,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   setProjectFileContent("");
                                   setProjectFileEditing(true);
                                   setProjectFileDirty(true);
+                                  // Auto-enable Automatic rule when creating a new file
+                                  if (project && activeProjectFile) {
+                                    const hasAutomatic = availableRules.some(r => r.id === "automatic-service");
+                                    if (hasAutomatic && !project.file_rules?.[activeProjectFile]) {
+                                      setProject({ ...project, file_rules: { ...(project.file_rules || {}), [activeProjectFile]: ["automatic-service"] } });
+                                    }
+                                  }
                                 }}
                                 className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5"
                               >
@@ -2324,7 +2338,16 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             <div className="flex items-center gap-1.5">
                               {!projectFileEditing ? (
                                 <button
-                                  onClick={() => setProjectFileEditing(true)}
+                                  onClick={() => {
+                                    setProjectFileEditing(true);
+                                    // Auto-enable Automatic rule if rules have never been configured for this file
+                                    if (project && activeProjectFile) {
+                                      const hasAutomatic = availableRules.some(r => r.id === "automatic-service");
+                                      if (hasAutomatic && !project.file_rules?.[activeProjectFile]) {
+                                        setProject({ ...project, file_rules: { ...(project.file_rules || {}), [activeProjectFile]: ["automatic-service"] } });
+                                      }
+                                    }
+                                  }}
                                   className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
                                 >
                                   <Edit2 size={10} /> Edit
@@ -2927,7 +2950,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 >
                                   <Code size={12} className="text-text-muted" />
                                   <span>{s}</span>
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted border border-border-strong/40-hover">
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted border border-border-strong/40">
                                     local
                                   </span>
                                   {/* Chevron */}
@@ -3271,7 +3294,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 <div className="flex items-center gap-2 mb-1">
                                   <h4 className="text-[13px] font-semibold text-text-base font-mono truncate">{key}</h4>
                                   {memory.source && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted border border-border-strong/40-hover">
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted border border-border-strong/40">
                                       {memory.source}
                                     </span>
                                   )}
