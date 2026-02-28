@@ -482,10 +482,10 @@ impl ServerHandler for AutomaticMcpServer {
             server_info: Implementation {
                 name: "automatic".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
-                title: None,
-                description: None,
+                title: Some("Automatic".into()),
+                description: Some("Desktop hub for AI coding agents — skills, MCP configs, and project management".into()),
                 icons: None,
-                website_url: None,
+                website_url: Some("https://github.com/anomalyco/automatic".into()),
             },
             ..Default::default()
         }
