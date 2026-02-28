@@ -1,4 +1,4 @@
-export type Theme = "dark" | "light" | "sleek" | "cyberpunk" | "synthwave-glow" | "coral" | "arctic-light" | "corporate-light";
+export type Theme = "dark" | "light" | "corporate-dark" | "corporate-light" | "cyberpunk" | "synthwave-glow" | "coral" | "arctic-light";
 
 export const THEMES: { id: Theme; name: string; description: string; colors: { primary: string; surface: string } }[] = [
   {
@@ -14,10 +14,16 @@ export const THEMES: { id: Theme; name: string; description: string; colors: { p
     colors: { primary: "#4f46e5", surface: "#ffffff" }
   },
   {
-    id: "sleek",
-    name: "Sleek",
+    id: "corporate-dark",
+    name: "Corporate Dark",
     description: "Pure monochrome — black, dark grey, and white. No colour.",
     colors: { primary: "#2a2a2a", surface: "#1a1a1a" }
+  },
+  {
+    id: "corporate-light",
+    name: "Corporate Light",
+    description: "Pure monochrome light — white, light grey, and near-black. No colour.",
+    colors: { primary: "#2a2a2a", surface: "#ffffff" }
   },
   {
     id: "cyberpunk",
@@ -42,17 +48,12 @@ export const THEMES: { id: Theme; name: string; description: string; colors: { p
     name: "Arctic Light",
     description: "Clean, crisp light mode with cool Blue and Teal highlights.",
     colors: { primary: "#0ea5e9", surface: "#ffffff" }
-  },
-  {
-    id: "corporate-light",
-    name: "Corporate Light",
-    description: "Pure monochrome light — white, light grey, and near-black. No colour.",
-    colors: { primary: "#2a2a2a", surface: "#ffffff" }
   }
 ];
 
 export function applyTheme(theme: string) {
-  if (theme === "sleek-hacker") theme = "sleek";
+  if (theme === "sleek-hacker") theme = "corporate-dark";
+  if (theme === "sleek") theme = "corporate-dark";
   if (theme === "neon-cyberpunk") theme = "cyberpunk";
   if (theme === "minimalist-coral") theme = "coral";
 

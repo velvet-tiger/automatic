@@ -63,7 +63,8 @@ export default function Settings() {
 
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
     let saved = localStorage.getItem("automatic.theme") as string;
-    if (saved === "sleek-hacker") saved = "sleek";
+    if (saved === "sleek-hacker") saved = "corporate-dark";
+    if (saved === "sleek") saved = "corporate-dark";
     if (saved === "neon-cyberpunk") saved = "cyberpunk";
     if (saved === "minimalist-coral") saved = "coral";
     return (saved as Theme) || "dark";

@@ -81,14 +81,14 @@
   --icon-rule: var(--brand);
 }
 
-[data-theme="sleek"] {
+[data-theme="corporate-dark"] {
   --icon-agent: var(--brand);
   --icon-skill: var(--success);
   --icon-mcp: var(--warning);
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
 
-  /* Sleek: monochrome black / dark grey / white — no colour */
+  /* Corporate Dark: monochrome black / dark grey / white — no colour */
   --brand: #2a2a2a;
   --brand-hover: #3a3a3a;
   --brand-active: #1a1a1a;
