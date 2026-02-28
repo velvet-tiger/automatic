@@ -362,17 +362,17 @@
 
 
 .agent-icon {
-  /* Default dark themes: make the black icons white */
+  /* Default dark themes: force the icons to white */
   filter: brightness(0) invert(1);
 }
 
 [data-theme="light"] .agent-icon,
 [data-theme="arctic-light"] .agent-icon,
 [data-theme="corporate-light"] .agent-icon {
-  /* Light themes: keep the icons black, or tint them to text-base (which is dark grey) */
-  /* If text-base is #09090b, then filter: none works for black SVGs, but to be safe and match text-base exactly we can just use none or slight opacity */
-  filter: none;
-  opacity: 0.85; /* Soften pure black slightly to match text-base */
+  /* Light themes: force the icons to dark grey to match text-base */
+  /* brightness(0) makes them black, opacity lightens them slightly to match dark slate/zinc */
+  filter: brightness(0);
+  opacity: 0.85;
 }
 
 /* Tauri drag regions: prevent text selection while dragging the titlebar */
