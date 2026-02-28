@@ -1663,9 +1663,29 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     {syncStatus === "syncing" ? "Syncing..." : syncStatus}
                   </span>
                 )}
+                {/* Force Refresh button */}
+                {!isCreating && selectedName && (
+                  <button
+                    onClick={async () => { if (selectedName) await reloadProject(selectedName); }}
+                    title="Force reload project from disk"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
+                  >
+                    <RotateCcw size={12} /> Refresh
+                  </button>
+                )}
+                {/* Apply Template button */}
+                {!isCreating && availableProjectTemplates.length > 0 && (
+                  <button
+                    onClick={() => setShowProjectTemplatePicker((v) => !v)}
+                    title="Apply a project template"
+                    className={`flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded text-[12px] font-medium border border-border-strong hover:border-brand/40 transition-colors shadow-sm ${showProjectTemplatePicker ? "bg-brand/10 text-brand border-brand/40" : ""}`}
+                  >
+                    <LayoutTemplate size={12} /> Apply Template
+                  </button>
+                )}
                 {/* Open in editor dropdown — only shown when a directory is set */}
                 {!isCreating && project.directory && (
-                  <div className="relative mr-1" ref={openInDropdownRef}>
+                  <div className="relative" ref={openInDropdownRef}>
                     <button
                       onClick={() => setOpenInDropdownOpen((v) => !v)}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-surface-hover text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
@@ -1701,7 +1721,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {!isCreating && selectedName && (
                   <button
                     onClick={() => handleRemove(selectedName)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded text-[12px] font-medium border border-border-strong hover:border-danger/40 transition-colors mr-1 shadow-sm"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded text-[12px] font-medium border border-border-strong hover:border-danger/40 transition-colors shadow-sm"
                     title="Remove project from Automatic"
                   >
                     <Trash2 size={12} /> Remove
@@ -1783,6 +1803,47 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Apply Template panel (shown from title bar button) ── */}
+            {!isCreating && showProjectTemplatePicker && availableProjectTemplates.length > 0 && (
+              <div className="border-b border-border-strong/40 bg-bg-input/50 px-6 py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[12px] font-semibold text-text-base">Apply Project Template</span>
+                  <button
+                    onClick={() => setShowProjectTemplatePicker(false)}
+                    className="text-[11px] text-text-muted hover:text-text-base transition-colors"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
+                  {availableProjectTemplates.map((tmpl) => {
+                    const isSelected = selectedProjectTemplate === tmpl.name;
+                    return (
+                      <button
+                        key={tmpl.name}
+                        onClick={() => applyProjectTemplate(tmpl)}
+                        className={`text-left px-3 py-2 rounded-md transition-colors flex items-start gap-2 border ${
+                          isSelected ? "bg-brand/15 border-brand/40" : "bg-bg-sidebar hover:bg-surface border-border-strong/30 hover:border-border-strong"
+                        }`}
+                      >
+                        <LayoutTemplate size={13} className={`mt-0.5 shrink-0 ${isSelected ? "text-brand" : "text-text-muted"}`} />
+                        <div className="min-w-0">
+                          <div className="text-[12px] font-medium text-text-base truncate">{tmpl.name}</div>
+                          {tmpl.description && <div className="text-[11px] text-text-muted truncate">{tmpl.description}</div>}
+                          <div className="flex items-center gap-2 mt-1">
+                            {tmpl.agents.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.agents.length} agents</span>}
+                            {tmpl.skills.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.skills.length} skills</span>}
+                            {tmpl.mcp_servers.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.mcp_servers.length} MCP</span>}
+                          </div>
+                        </div>
+                        {isSelected && <Check size={12} className="text-brand shrink-0 mt-0.5 ml-auto" />}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2462,323 +2523,187 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                 {/* ── Summary tab ──────────────────────────────────────── */}
                 {projectTab === "summary" && (
-                  <>
-                    {/* Quick Stats */}
-                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-                      {/* Agents Card */}
-                      <button
-                        onClick={() => setProjectTab("agents")}
-                        className="group bg-bg-input border border-border-strong/40 hover:border-brand/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-brand/10"
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-text-base leading-none mb-1">
-                                {project.agents.length}
-                              </div>
-                              <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
-                            </div>
-                             <div className="text-[13px] text-text-muted mb-1">Agent Tools</div>
-                             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                               {project.agents.length === 0
-                                 ? <span className="text-[11px] text-text-muted">No agents configured</span>
-                                 : <>
-                                     {project.agents.slice(0, 4).map(a => (
-                                       <AgentIcon key={a} agentId={a} size={16} className="text-text-muted" />
-                                     ))}
-                                     {project.agents.length > 4 && (
-                                       <span className="text-[11px] text-text-muted">+{project.agents.length - 4}</span>
-                                     )}
-                                   </>
-                               }
-                             </div>
-                          </div>
-                          <div className="p-2 bg-brand/10 rounded-lg group-hover:bg-brand/20 transition-colors shrink-0">
-                            <Bot size={18} className="text-brand" />
-                          </div>
-                        </div>
-                      </button>
+                  <div className="space-y-5">
 
-                      {/* Skills Card */}
-                      <button
-                        onClick={() => setProjectTab("skills")}
-                        className="group bg-bg-input border border-border-strong/40 hover:border-icon-skill/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-icon-skill/10"
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-text-base leading-none mb-1">
-                                {project.skills.length + project.local_skills.length}
-                              </div>
-                              <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
-                            </div>
-                            <div className="text-[13px] text-text-muted mb-1">Skills</div>
-                            <div className="text-[11px] text-text-muted truncate">
-                              {project.skills.length === 0 && project.local_skills.length === 0
-                                ? "No skills attached"
-                                : `${project.skills.length} global, ${project.local_skills.length} local`}
-                            </div>
-                          </div>
-                          <div className="p-2 bg-icon-skill/10 rounded-lg group-hover:bg-icon-skill/20 transition-colors shrink-0">
-                            <Code size={18} className="text-icon-skill" />
-                          </div>
-                        </div>
-                      </button>
+                    {/* ── Directory ─────────────────────────────────────── */}
+                    <section className="bg-bg-input border border-border-strong/40 rounded-lg p-4">
+                      <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
+                        <span className="flex items-center gap-1.5"><FolderOpen size={12} /> Project Directory</span>
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={project.directory}
+                          onChange={(e) => updateField("directory", e.target.value)}
+                          placeholder="/path/to/your/project"
+                          className="flex-1 bg-bg-base border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors"
+                        />
+                        <button
+                          onClick={async () => {
+                            const selected = await open({ directory: true, multiple: false, title: "Select project directory" });
+                            if (selected) updateField("directory", selected as string);
+                          }}
+                          className="px-3 py-2 bg-bg-input hover:bg-surface-hover text-text-base text-[12px] font-medium rounded border border-border-strong transition-colors shadow-sm whitespace-nowrap"
+                        >
+                          Browse
+                        </button>
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-text-muted">Agent configs will be written to this directory when you sync.</p>
+                    </section>
 
-                      {/* MCP Servers Card */}
-                      <button
-                        onClick={() => setProjectTab("mcp_servers")}
-                        className="group bg-bg-input border border-border-strong/40 hover:border-icon-mcp/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-icon-mcp/10"
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-text-base leading-none mb-1">
-                                {project.mcp_servers.length}
-                              </div>
-                              <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
-                            </div>
-                            <div className="text-[13px] text-text-muted mb-1">MCP Servers</div>
-                            <div className="text-[11px] text-text-muted truncate">
-                              {project.mcp_servers.length === 0
-                                ? "No servers configured"
-                                : project.mcp_servers.slice(0, 2).join(", ") + (project.mcp_servers.length > 2 ? ` +${project.mcp_servers.length - 2}` : "")}
-                            </div>
-                          </div>
-                          <div className="p-2 bg-icon-mcp/10 rounded-lg group-hover:bg-icon-mcp/20 transition-colors shrink-0">
-                            <Server size={18} className="text-icon-mcp" />
-                          </div>
+                    {/* ── Agents ────────────────────────────────────────── */}
+                    <section className="bg-bg-input border border-border-strong/40 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 bg-brand/10 rounded"><Bot size={13} className="text-brand" /></div>
+                          <span className="text-[13px] font-semibold text-text-base">Agents</span>
+                          <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-2 py-0.5">
+                            {project.agents.length}
+                          </span>
                         </div>
-                      </button>
+                        <button
+                          onClick={() => setProjectTab("agents")}
+                          className="flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium"
+                        >
+                          <Plus size={11} /> Add
+                        </button>
+                      </div>
+                      {project.agents.length === 0 ? (
+                        <p className="text-[12px] text-text-muted italic">No agent tools configured. <button onClick={() => setProjectTab("agents")} className="text-brand hover:text-brand-hover underline">Add agents</button> to enable config sync.</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {project.agents.map((a, idx) => {
+                            const info = availableAgents.find((ag) => ag.id === a);
+                            return (
+                              <div key={a} className="group relative flex items-center gap-1.5 px-3 py-1 bg-bg-sidebar border border-border-strong/40 hover:border-border-strong rounded-full text-[12px] text-text-base transition-colors">
+                                <AgentIcon agentId={a} size={13} />
+                                <span>{info?.label ?? a}</span>
+                                <button
+                                  onClick={() => handleRemoveAgent(idx)}
+                                  className="absolute -top-1 -right-1 p-0.5 bg-bg-sidebar border border-border-strong/40 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all rounded-full"
+                                  title="Remove"
+                                >
+                                  <X size={9} />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </section>
 
-                      {/* Memory Card */}
+                    {/* ── Resources: Skills · MCP Servers · Memory ──────── */}
+                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+
+                      {/* Skills */}
+                      <section className="bg-bg-input border border-border-strong/40 rounded-lg p-4 flex flex-col gap-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-icon-skill/10 rounded"><Code size={13} className="text-icon-skill" /></div>
+                            <span className="text-[13px] font-semibold text-text-base">Skills</span>
+                            <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-2 py-0.5">
+                              {project.skills.length + project.local_skills.length}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => setProjectTab("skills")}
+                            className="flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium"
+                          >
+                            <Plus size={11} /> Add
+                          </button>
+                        </div>
+                        {project.skills.length === 0 && project.local_skills.length === 0 ? (
+                          <p className="text-[12px] text-text-muted italic">No skills attached</p>
+                        ) : (
+                          <ul className="space-y-1">
+                            {project.skills.map((s) => (
+                              <li key={s} className="flex items-center justify-between gap-2 group">
+                                <span className="text-[12px] text-text-base truncate">{s}</span>
+                                <button
+                                  onClick={() => removeItem("skills", project.skills.indexOf(s))}
+                                  className="p-0.5 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                                  title="Remove"
+                                >
+                                  <X size={11} />
+                                </button>
+                              </li>
+                            ))}
+                            {project.local_skills.map((s) => (
+                              <li key={s} className="flex items-center justify-between gap-2 group">
+                                <span className="text-[12px] text-text-base truncate">{s}</span>
+                                <span className="text-[10px] text-text-muted bg-bg-sidebar rounded px-1.5 py-0.5 shrink-0">local</span>
+                                <button
+                                  onClick={() => updateField("local_skills", project.local_skills.filter((ls) => ls !== s))}
+                                  className="p-0.5 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                                  title="Remove"
+                                >
+                                  <X size={11} />
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </section>
+
+                      {/* MCP Servers */}
+                      <section className="bg-bg-input border border-border-strong/40 rounded-lg p-4 flex flex-col gap-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-icon-mcp/10 rounded"><Server size={13} className="text-icon-mcp" /></div>
+                            <span className="text-[13px] font-semibold text-text-base">MCP Servers</span>
+                            <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-2 py-0.5">
+                              {project.mcp_servers.length}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => setProjectTab("mcp_servers")}
+                            className="flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium"
+                          >
+                            <Plus size={11} /> Add
+                          </button>
+                        </div>
+                        {project.mcp_servers.length === 0 ? (
+                          <p className="text-[12px] text-text-muted italic">No servers configured</p>
+                        ) : (
+                          <ul className="space-y-1">
+                            {project.mcp_servers.map((s) => (
+                              <li key={s} className="flex items-center justify-between gap-2 group">
+                                <span className="text-[12px] text-text-base truncate">{s}</span>
+                                <button
+                                  onClick={() => removeItem("mcp_servers", project.mcp_servers.indexOf(s))}
+                                  className="p-0.5 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                                  title="Remove"
+                                >
+                                  <X size={11} />
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </section>
+
+                      {/* Memory */}
                       <button
                         onClick={() => setProjectTab("memory")}
-                        className="group bg-bg-input border border-border-strong/40 hover:border-icon-rule/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-icon-rule/10"
+                        className="group bg-bg-input border border-border-strong/40 hover:border-icon-rule/50 rounded-lg p-4 flex flex-col gap-3 text-left transition-all"
                       >
-                        <div className="flex items-start gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-text-base leading-none mb-1">
-                                {Object.keys(memories).length}
-                              </div>
-                              <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
-                            </div>
-                            <div className="text-[13px] text-text-muted mb-1">Memory</div>
-                            <div className="text-[11px] text-text-muted truncate">
-                              {Object.keys(memories).length === 0
-                                ? "No memories stored"
-                                : `${Object.keys(memories).length} entr${Object.keys(memories).length === 1 ? "y" : "ies"}`}
-                            </div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-icon-rule/10 rounded group-hover:bg-icon-rule/20 transition-colors"><Brain size={13} className="text-icon-rule" /></div>
+                            <span className="text-[13px] font-semibold text-text-base">Memory</span>
                           </div>
-                          <div className="p-2 bg-icon-rule/10 rounded-lg group-hover:bg-icon-rule/20 transition-colors shrink-0">
-                            <Brain size={18} className="text-icon-rule" />
+                          <ArrowRight size={13} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                        <div>
+                          <div className="text-2xl font-semibold text-text-base leading-none mb-1">{Object.keys(memories).length}</div>
+                          <div className="text-[11px] text-text-muted">
+                            {Object.keys(memories).length === 0 ? "No memories stored" : `entr${Object.keys(memories).length === 1 ? "y" : "ies"}`}
                           </div>
                         </div>
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-                    {/* Description + Directory */}
-                    <section className="bg-bg-input border border-border-strong/40 rounded-lg p-5 space-y-4">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
-                          Description
-                        </label>
-                        <textarea
-                          value={project.description}
-                          onChange={(e) => updateField("description", e.target.value)}
-                          placeholder="What is this project for?"
-                          rows={3}
-                          className="w-full bg-bg-input border border-border-strong hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none resize-none transition-colors"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
-                          <span className="flex items-center gap-1.5">
-                            <FolderOpen size={12} /> Project Directory
-                          </span>
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            value={project.directory}
-                            onChange={(e) => updateField("directory", e.target.value)}
-                            placeholder="/path/to/your/project"
-                            className="flex-1 bg-bg-base border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors"
-                          />
-                          <button
-                            onClick={async () => {
-                              const selected = await open({
-                                directory: true,
-                                multiple: false,
-                                title: "Select project directory",
-                              });
-                              if (selected) {
-                                updateField("directory", selected as string);
-                              }
-                            }}
-                            className="px-3 py-2 bg-bg-input hover:bg-surface-hover text-text-base text-[12px] font-medium rounded border border-border-strong transition-colors shadow-sm whitespace-nowrap"
-                          >
-                            Browse
-                          </button>
-                        </div>
-                        <p className="mt-1.5 text-[11px] text-text-muted">
-                          Agent configs will be written to this directory when you sync.
-                        </p>
-                      </div>
-                    </section>
-
-                      {/* Quick Actions */}
-                      <div className="flex flex-col gap-3">
-
-                       {/* Apply Project Template */}
-                       {availableProjectTemplates.length > 0 && (
-                         <div>
-                           <button
-                             onClick={() => setShowProjectTemplatePicker(!showProjectTemplatePicker)}
-                             className="w-full group flex items-center gap-3 bg-bg-input border border-border-strong/40 hover:border-brand/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-brand/10 text-left"
-                           >
-                             <div className="p-2 bg-brand/10 rounded-lg group-hover:bg-brand/20 transition-colors">
-                               <LayoutTemplate size={16} className="text-brand" />
-                             </div>
-                             <div className="flex-1 min-w-0">
-                               <div className="text-[13px] font-medium text-text-base mb-0.5">Apply Project Template</div>
-                               <div className="text-[11px] text-text-muted">Merge agents, skills & servers from a template</div>
-                             </div>
-                             <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                           </button>
-                           {showProjectTemplatePicker && (
-                              <div className="mt-1.5 p-2 bg-bg-input border border-border-strong/40 rounded-lg space-y-1">
-                                {availableProjectTemplates.map((tmpl) => {
-                                  const isSelected = selectedProjectTemplate === tmpl.name;
-                                  return (
-                                    <button
-                                      key={tmpl.name}
-                                      onClick={() => applyProjectTemplate(tmpl)}
-                                      className={`w-full text-left px-3 py-2 rounded-md transition-colors flex items-start gap-2 ${
-                                        isSelected
-                                          ? "bg-brand/15 border border-brand/40"
-                                          : "hover:bg-bg-sidebar border border-transparent"
-                                      }`}
-                                    >
-                                      <div className="flex-1 min-w-0">
-                                        <div className="text-[13px] font-medium text-text-base">{tmpl.name}</div>
-                                        {tmpl.description && (
-                                          <div className="text-[11px] text-text-muted mt-0.5 truncate">{tmpl.description}</div>
-                                        )}
-                                        <div className="flex items-center gap-3 mt-1">
-                                          {tmpl.agents.length > 0 && (
-                                            <span className="text-[10px] text-text-muted flex items-center gap-1">
-                                              <Bot size={10} /> {tmpl.agents.length} agent{tmpl.agents.length !== 1 ? "s" : ""}
-                                            </span>
-                                          )}
-                                          {tmpl.skills.length > 0 && (
-                                            <span className="text-[10px] text-text-muted flex items-center gap-1">
-                                              <Code size={10} /> {tmpl.skills.length} skill{tmpl.skills.length !== 1 ? "s" : ""}
-                                            </span>
-                                          )}
-                                          {tmpl.mcp_servers.length > 0 && (
-                                            <span className="text-[10px] text-text-muted flex items-center gap-1">
-                                              <Server size={10} /> {tmpl.mcp_servers.length} MCP server{tmpl.mcp_servers.length !== 1 ? "s" : ""}
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
-                                      {isSelected && (
-                                        <Check size={13} className="text-brand flex-shrink-0 mt-0.5" />
-                                      )}
-                                    </button>
-                                  );
-                                })}
-                                 <div className="mt-1 flex items-center gap-2 px-3 py-1">
-                                   <button
-                                     onClick={() => setShowProjectTemplatePicker(false)}
-                                     className="text-[11px] text-text-muted hover:text-text-base transition-colors"
-                                   >
-                                     Cancel
-                                   </button>
-                                   {selectedProjectTemplate && (
-                                     <>
-                                       <span className="text-surface">·</span>
-                                       <button
-                                         onClick={() => {
-                                           setSelectedProjectTemplate(null);
-                                           setShowProjectTemplatePicker(false);
-                                         }}
-                                         className="text-[11px] text-text-muted hover:text-text-base transition-colors"
-                                       >
-                                         Clear selection
-                                       </button>
-                                     </>
-                                   )}
-                                 </div>
-                              </div>
-                            )}
-                         </div>
-                       )}
-
-                           {/* Open in editor card */}
-                          <div className={`bg-bg-input border border-border-strong/40 rounded-lg p-4 transition-all ${project.directory ? "" : "opacity-40"}`}>
-                            <div className="flex items-center gap-3 mb-3">
-                              <div className="p-2 bg-brand/10 rounded-lg">
-                                <FolderOpen size={16} className="text-brand" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-[13px] font-medium text-text-base mb-0.5">Open in</div>
-                                <div className="text-[11px] text-text-muted">
-                                  {project.directory ? "Choose editor or Finder" : "No directory set"}
-                                </div>
-                              </div>
-                            </div>
-                            {project.directory && installedEditors.filter((e) => e.installed).length > 0 && (
-                              <div className="flex flex-wrap gap-1.5">
-                                {installedEditors.filter((e) => e.installed).map((editor) => (
-                                  <button
-                                    key={editor.id}
-                                    onClick={() => handleOpenInEditor(editor.id)}
-                                    title={`Open in ${editor.label}`}
-                                    className="flex items-center gap-1.5 px-2 py-1 bg-bg-sidebar hover:bg-surface-hover border border-border-strong/40 hover:border-border-strong rounded text-[11px] text-text-base transition-colors"
-                                  >
-                                    <EditorIcon id={editor.id} iconPath={editorIconPaths[editor.id]} />
-                                    {editor.label}
-                                  </button>
-                                ))}
-                                <button
-                                  onClick={() => handleOpenInEditor("copy_path")}
-                                  title="Copy project path"
-                                  className="flex items-center gap-1.5 px-2 py-1 bg-bg-sidebar hover:bg-surface-hover border border-border-strong/40 hover:border-border-strong rounded text-[11px] text-text-muted hover:text-text-base transition-colors"
-                                >
-                                  <Copy size={11} />
-                                  Copy path
-                                </button>
-                              </div>
-                            )}
-                          </div>
-
-                         {/* Force Refresh */}
-                         <button
-                           onClick={async () => {
-                             if (selectedName) {
-                               await reloadProject(selectedName);
-                             }
-                           }}
-                           className="group flex items-center gap-3 bg-bg-input border border-border-strong/40 hover:border-success/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-success/10 text-left"
-                         >
-                           <div className="p-2 bg-success/10 rounded-lg group-hover:bg-success/20 transition-colors">
-                             <RotateCcw size={16} className="text-success" />
-                           </div>
-                           <div className="flex-1 min-w-0">
-                             <div className="text-[13px] font-medium text-text-base mb-0.5">Force Refresh</div>
-                             <div className="text-[11px] text-text-muted">Reload project from disk</div>
-                           </div>
-                           <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                         </button>
-                         </div>
-                     </div>
-
-
-                    {/* Getting Started (existing saved project that is still incomplete) */}
+                    {/* ── Getting Started callout (incomplete setup) ────── */}
                     {!isCreating && (!project.directory || project.agents.length === 0) && (
                       <section className="bg-gradient-to-br from-brand/10 to-brand/5 border border-brand/20 rounded-lg p-5">
                         <div className="flex items-start gap-3">
@@ -2787,9 +2712,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           </div>
                           <div>
                             <h3 className="text-[13px] font-semibold text-text-base mb-2">Complete Setup</h3>
-                            <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
-                              To start using this project, complete these steps:
-                            </p>
+                            <p className="text-[12px] text-text-muted mb-3 leading-relaxed">To start using this project, complete these steps:</p>
                             <ol className="space-y-2 text-[12px] text-text-base">
                               {!project.directory && (
                                 <li className="flex items-start gap-2">
@@ -2797,12 +2720,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     <span className="text-[10px] text-brand">1</span>
                                   </div>
                                   <div>
-                                     <span className="text-text-base font-medium">
-                                       Set project directory
-                                     </span>
-                                    <div className="text-[11px] text-text-muted mt-0.5">
-                                      Choose where agent configs will be synced
-                                    </div>
+                                    <span className="text-text-base font-medium">Set project directory</span>
+                                    <div className="text-[11px] text-text-muted mt-0.5">Choose where agent configs will be synced</div>
                                   </div>
                                 </li>
                               )}
@@ -2812,15 +2731,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     <span className="text-[10px] text-brand">{!project.directory ? "2" : "1"}</span>
                                   </div>
                                   <div>
-                                    <button
-                                      onClick={() => setProjectTab("agents")}
-                                      className="text-brand hover:text-brand-hover transition-colors font-medium"
-                                    >
-                                      Add agent tools
-                                    </button>
-                                    <div className="text-[11px] text-text-muted mt-0.5">
-                                      Select which agents will use this project
-                                    </div>
+                                    <button onClick={() => setProjectTab("agents")} className="text-brand hover:text-brand-hover transition-colors font-medium">Add agent tools</button>
+                                    <div className="text-[11px] text-text-muted mt-0.5">Select which agents will use this project</div>
                                   </div>
                                 </li>
                               )}
@@ -2829,15 +2741,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   <span className="text-[10px] text-text-muted">•</span>
                                 </div>
                                 <div>
-                                  <button
-                                    onClick={() => setProjectTab("skills")}
-                                    className="text-text-base hover:text-brand transition-colors"
-                                  >
-                                    Add skills (optional)
-                                  </button>
-                                  <div className="text-[11px] text-text-muted mt-0.5">
-                                    Give agents specialized capabilities
-                                  </div>
+                                  <button onClick={() => setProjectTab("skills")} className="text-text-base hover:text-brand transition-colors">Add skills (optional)</button>
+                                  <div className="text-[11px] text-text-muted mt-0.5">Give agents specialized capabilities</div>
                                 </div>
                               </li>
                             </ol>
@@ -2845,8 +2750,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         </div>
                       </section>
                     )}
-                  </>
+                  </div>
                 )}
+
+
 
                 {/* ── Details tab ──────────────────────────────────────── */}
                  {/* ── Agents tab ───────────────────────────────────────── */}
