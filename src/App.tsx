@@ -144,13 +144,11 @@ function App() {
     >
       {/* Sidebar */}
       <aside className="w-[180px] flex-shrink-0 bg-[#1A1A1E] border-r border-[#33353A] flex flex-col">
-        {/* Workspace Header */}
-        <div className="h-12 px-4 flex items-center border-b border-[#33353A]/50">
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            <img src={graphLogo} width="20" height="20" alt="Automatic" />
-            <span>Automatic</span>
-          </div>
-        </div>
+        {/* Workspace Header — drag region; left padding clears macOS traffic lights */}
+        <div
+          data-tauri-drag-region
+          className="h-11 border-b border-[#33353A]/50 select-none"
+        />
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-3 custom-scrollbar">
@@ -195,8 +193,8 @@ function App() {
 
         </nav>
 
-        {/* Sidebar footer — setup wizard trigger */}
-        <div className="px-3 py-3 border-t border-[#33353A]/60">
+        {/* Sidebar footer — setup wizard */}
+        <div className="px-3 pt-3 pb-1">
           <button
             onClick={() => setShowWizard(true)}
             className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] font-medium text-[#C8CAD0] hover:bg-[#2D2E36] hover:text-[#F8F8FA] transition-colors"
@@ -205,40 +203,60 @@ function App() {
             <span className="flex-1 text-left">Setup wizard</span>
           </button>
         </div>
+        {/* Sidebar footer — branding */}
+        <div className="px-3 py-3 border-t border-[#33353A]/60">
+          <div className="flex items-center gap-2 px-3 py-1.5 text-[13px] font-semibold text-[#C8CAD0]">
+            <img src={graphLogo} width="16" height="16" alt="Automatic" />
+            <span>Automatic</span>
+          </div>
+        </div>
       </aside>
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0">
-        {/* Top Header */}
-        <header className="h-11 border-b border-[#33353A] flex items-center justify-between px-4 bg-[#222327]">
-          <span className="text-[13px] text-[#F8F8FA] capitalize">{activeTab.replace(/-/g, ' ')}</span>
-          {activeTab === "skills" && (
-            <button
-              onClick={() => setActiveTab("skill-store")}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] text-white shadow-sm transition-colors"
-            >
-              <Store size={13} />
-              Skill Store
-            </button>
-          )}
-          {activeTab === "project-templates" && (
-            <button
-              onClick={() => setActiveTab("template-marketplace")}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] text-white shadow-sm transition-colors"
-            >
-              <Store size={13} />
-              Template Marketplace
-            </button>
-          )}
-          {activeTab === "mcp" && (
-            <button
-              onClick={() => setActiveTab("mcp-marketplace")}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] text-white shadow-sm transition-colors"
-            >
-              <Store size={13} />
-              MCP Marketplace
-            </button>
-          )}
+        {/* Top Header — drag region, title centered, actions right */}
+        <header
+          data-tauri-drag-region
+          className="h-11 border-b border-[#33353A] flex items-center bg-[#222327] select-none relative"
+        >
+          {/* Center: page title */}
+          <span
+            data-tauri-drag-region
+            className="absolute inset-0 flex items-center justify-center text-[13px] font-medium text-[#C8CAD0] pointer-events-none capitalize"
+          >
+            {activeTab.replace(/-/g, ' ')}
+          </span>
+
+          {/* Right: contextual actions */}
+          <div className="ml-auto pr-4 flex items-center gap-2 relative z-10">
+            {activeTab === "skills" && (
+              <button
+                onClick={() => setActiveTab("skill-store")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] text-white shadow-sm transition-colors"
+              >
+                <Store size={13} />
+                Skill Store
+              </button>
+            )}
+            {activeTab === "project-templates" && (
+              <button
+                onClick={() => setActiveTab("template-marketplace")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] text-white shadow-sm transition-colors"
+              >
+                <Store size={13} />
+                Template Marketplace
+              </button>
+            )}
+            {activeTab === "mcp" && (
+              <button
+                onClick={() => setActiveTab("mcp-marketplace")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] text-white shadow-sm transition-colors"
+              >
+                <Store size={13} />
+                MCP Marketplace
+              </button>
+            )}
+          </div>
         </header>
 
         {/* Content Area */}
