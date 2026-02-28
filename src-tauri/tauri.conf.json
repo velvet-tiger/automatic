@@ -40,6 +40,14 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "Developer ID Application: Aurabox Pty Ltd (X52XM4SP3U)",
+      "notarizationCredentials": {
+        "appleId": "${APPLE_ID}",
+        "appleIdPassword": "${APPLE_PASSWORD}",
+        "teamId": "${APPLE_TEAM_ID}"
+      }
+    }
   }
 }
