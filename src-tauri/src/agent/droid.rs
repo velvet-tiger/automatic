@@ -116,7 +116,7 @@ impl Agent for Droid {
     }
 }
 
-/// Normalise Droid's explicit "type" field to Nexus's canonical format.
+/// Normalise Droid's explicit "type" field to Automatic's canonical format.
 /// Droid uses `"type": "stdio"` and `"type": "http"` explicitly.
 fn normalise_import(config: Value) -> Value {
     // Droid's format is close to canonical — just pass through.

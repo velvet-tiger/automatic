@@ -111,7 +111,7 @@ pub trait Agent: Send + Sync {
     // ── Discovery ───────────────────────────────────────────────────────
 
     /// Scan this agent's config files in `dir` for MCP server definitions.
-    /// Returns configs normalised to Nexus's canonical format.
+    /// Returns configs normalised to Automatic's canonical format.
     fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value>;
 
     // ── Cleanup ─────────────────────────────────────────────────────────

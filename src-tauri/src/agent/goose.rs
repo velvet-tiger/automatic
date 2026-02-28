@@ -9,7 +9,7 @@ use super::{discover_mcp_servers_from_json, sync_individual_skills, Agent};
 ///
 /// Goose natively uses `~/.config/goose/config.yaml` for extensions (YAML),
 /// but we write a project-level `.goose/mcp.json` using the standard
-/// `mcpServers` format for consistency with Nexus's sync model.
+/// `mcpServers` format for consistency with Automatic's sync model.
 pub struct Goose;
 
 impl Agent for Goose {

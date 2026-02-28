@@ -120,12 +120,12 @@ fn validate_project(project: &str) -> Result<(), String> {
 // ── MCP Server Handler ──────────────────────────────────────────────────────
 
 #[derive(Clone)]
-pub struct NexusMcpServer {
+pub struct AutomaticMcpServer {
     tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
-impl NexusMcpServer {
+impl AutomaticMcpServer {
     pub fn new() -> Self {
         Self {
             tool_router: Self::tool_router(),
@@ -136,7 +136,7 @@ impl NexusMcpServer {
 
     #[tool(
         name = "automatic_get_credential",
-        description = "Retrieve an API key for a given LLM provider stored in Nexus"
+        description = "Retrieve an API key for a given LLM provider stored in Automatic"
     )]
     async fn get_credential(
         &self,
@@ -153,7 +153,7 @@ impl NexusMcpServer {
 
     #[tool(
         name = "automatic_list_skills",
-        description = "List all available skill names from the Nexus skill registry"
+        description = "List all available skill names from the Automatic skill registry"
     )]
     async fn list_skills(&self) -> Result<CallToolResult, McpError> {
         match crate::core::list_skills() {
@@ -171,7 +171,7 @@ impl NexusMcpServer {
 
     #[tool(
         name = "automatic_read_skill",
-        description = "Read the content of a specific skill from the Nexus skill registry"
+        description = "Read the content of a specific skill from the Automatic skill registry"
     )]
     async fn read_skill(
         &self,
@@ -188,7 +188,7 @@ impl NexusMcpServer {
 
     #[tool(
         name = "automatic_list_mcp_servers",
-        description = "List all MCP server configurations registered in the Nexus server registry"
+        description = "List all MCP server configurations registered in the Automatic server registry"
     )]
     async fn list_mcp_servers(&self) -> Result<CallToolResult, McpError> {
         match crate::core::list_mcp_server_configs() {
@@ -255,7 +255,7 @@ impl NexusMcpServer {
 
     #[tool(
         name = "automatic_list_sessions",
-        description = "List active Claude Code sessions tracked by the Nexus hooks (session id, working directory, model, started_at)"
+        description = "List active Claude Code sessions tracked by the Automatic hooks (session id, working directory, model, started_at)"
     )]
     async fn list_sessions(&self) -> Result<CallToolResult, McpError> {
         match crate::core::list_sessions() {
@@ -468,11 +468,11 @@ impl NexusMcpServer {
 }
 
 #[tool_handler]
-impl ServerHandler for NexusMcpServer {
+impl ServerHandler for AutomaticMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Nexus is a skill registry and MCP config hub. \
+                "Automatic is a desktop hub for AI coding agents. \
                  Use these tools to retrieve API keys, discover and search skills, list MCP \
                  server configs, inspect projects, track active sessions, and sync project \
                  configurations."
@@ -495,7 +495,7 @@ impl ServerHandler for NexusMcpServer {
 // ── Entry Point ──────────────────────────────────────────────────────────────
 
 pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
-    let server = NexusMcpServer::new();
+    let server = AutomaticMcpServer::new();
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
 

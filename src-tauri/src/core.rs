@@ -1716,7 +1716,7 @@ pub fn inject_rules_into_project_file(
 // ── Project Files ────────────────────────────────────────────────────────────
 
 /// Read a project file from the project's directory, stripping any
-/// Nexus-managed sections (skills markers) and rules sections.  Returns
+/// Automatic-managed sections (skills markers) and rules sections.  Returns
 /// the user-authored content only.
 pub fn read_project_file(directory: &str, filename: &str) -> Result<String, String> {
     if directory.is_empty() {

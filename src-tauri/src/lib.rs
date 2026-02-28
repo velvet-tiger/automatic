@@ -586,7 +586,7 @@ fn remove_agent_from_project(name: &str, agent_id: &str) -> Result<String, Strin
     serde_json::to_string(&removed).map_err(|e| e.to_string())
 }
 
-/// Check whether the on-disk agent configs have drifted from what Nexus would
+/// Check whether the on-disk agent configs have drifted from what Automatic would
 /// generate.  Returns a JSON-serialised [`sync::DriftReport`] describing which
 /// agents and files are out of sync.  This is a read-only operation.
 #[tauri::command]

@@ -163,7 +163,7 @@ impl Agent for OpenCode {
     }
 }
 
-/// Convert an OpenCode MCP server config to Nexus's canonical format.
+/// Convert an OpenCode MCP server config to Automatic's canonical format.
 ///
 /// - `type: "local"` → `type: "stdio"`, command array → command + args
 /// - `type: "remote"` → `type: "http"`

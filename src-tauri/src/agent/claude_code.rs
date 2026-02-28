@@ -48,7 +48,7 @@ impl Agent for ClaudeCode {
     // ── Config writing ──────────────────────────────────────────────────
 
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
-        // Claude Code uses Nexus's JSON format directly, with one tweak:
+        // Claude Code uses Automatic's JSON format directly, with one tweak:
         // strip "type" from stdio entries for Claude Desktop backward-compat.
         let mut claude_servers = Map::new();
 

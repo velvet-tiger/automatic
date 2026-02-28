@@ -53,7 +53,7 @@ pub struct DriftReport {
 /// names into `project.mcp_servers` before calling
 /// [`sync_project_without_autodetect`].
 ///
-/// The `automatic` / `nexus` server entries are filtered out automatically by
+/// The `automatic` server entries are filtered out automatically by
 /// `discover_mcp_servers` — they are always injected at sync time.
 pub fn discover_new_agent_mcp_configs(
     dir: &std::path::Path,
@@ -72,7 +72,7 @@ pub fn discover_new_agent_mcp_configs(
     discovered
 }
 
-/// Check whether the on-disk agent configs match what Nexus would generate.
+/// Check whether the on-disk agent configs match what Automatic would generate.
 /// Returns a [`DriftReport`] describing which agents and files have drifted.
 /// This is a read-only operation — nothing is written.
 pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
@@ -709,7 +709,7 @@ fn autodetect_inner(project: &Project) -> Result<(Project, Vec<(String, String)>
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Load MCP server configs from the Nexus registry (~/.automatic/mcp_servers/).
+/// Load MCP server configs from the Automatic registry (~/.automatic/mcp_servers/).
 fn load_mcp_server_configs() -> Result<Map<String, Value>, String> {
     let names = crate::core::list_mcp_server_configs()?;
     let mut servers = Map::new();
