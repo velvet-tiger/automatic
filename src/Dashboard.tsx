@@ -201,18 +201,18 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               {/* Step 3 */}
               <button
                 onClick={() => onNavigate("skill-store")}
-                className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-success/50 transition-all group flex flex-col gap-3"
+                className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-skill/50 transition-all group flex flex-col gap-3"
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-success/10 border border-success/20 flex items-center justify-center shrink-0">
-                    <span className="text-[11px] font-semibold text-success">3</span>
+                  <div className="w-7 h-7 rounded-full bg-icon-skill/10 border border-icon-skill/20 flex items-center justify-center shrink-0">
+                    <span className="text-[11px] font-semibold text-icon-skill">3</span>
                   </div>
-                  <h3 className="font-medium text-text-base group-hover:text-success transition-colors">Install skills</h3>
+                  <h3 className="font-medium text-text-base group-hover:text-icon-skill transition-colors">Install skills</h3>
                 </div>
                 <p className="text-[13px] text-text-muted leading-relaxed pl-10">
                   Browse the community skill store and load specialised capabilities into your agents.
                 </p>
-                <div className="flex items-center gap-1 text-[12px] font-medium text-success pl-10 group-hover:gap-2 transition-all">
+                <div className="flex items-center gap-1 text-[12px] font-medium text-icon-skill pl-10 group-hover:gap-2 transition-all">
                   Browse Skills <ArrowRight size={13} />
                 </div>
               </button>
@@ -220,18 +220,18 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               {/* Step 4 */}
               <button
                 onClick={() => onNavigate("mcp-marketplace")}
-                className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-warning/50 transition-all group flex flex-col gap-3"
+                className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-mcp/50 transition-all group flex flex-col gap-3"
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-warning/10 border border-warning/20 flex items-center justify-center shrink-0">
-                    <span className="text-[11px] font-semibold text-warning">4</span>
+                  <div className="w-7 h-7 rounded-full bg-icon-mcp/10 border border-icon-mcp/20 flex items-center justify-center shrink-0">
+                    <span className="text-[11px] font-semibold text-icon-mcp">4</span>
                   </div>
-                  <h3 className="font-medium text-text-base group-hover:text-warning transition-colors">Connect MCP servers</h3>
+                  <h3 className="font-medium text-text-base group-hover:text-icon-mcp transition-colors">Connect MCP servers</h3>
                 </div>
                 <p className="text-[13px] text-text-muted leading-relaxed pl-10">
                   Extend your agents with powerful integrations from the MCP server marketplace.
                 </p>
-                <div className="flex items-center gap-1 text-[12px] font-medium text-warning pl-10 group-hover:gap-2 transition-all">
+                <div className="flex items-center gap-1 text-[12px] font-medium text-icon-mcp pl-10 group-hover:gap-2 transition-all">
                   Browse Servers <ArrowRight size={13} />
                 </div>
               </button>
@@ -272,7 +272,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                       <div className="flex items-center gap-2">
                         <FolderOpen size={16} className={isDrifted ? "text-warning" : "text-brand"} />
                         <h3 className={`font-medium text-text-base transition-colors ${
-                          isDrifted ? "group-hover:text-warning" : "group-hover:text-brand"
+                          isDrifted ? "group-hover:text-icon-mcp" : "group-hover:text-brand"
                         }`}>{project.name}</h3>
                       </div>
                       {isConfigured && (
@@ -336,18 +336,18 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             {/* Skills Marketplace */}
             <button
               onClick={() => onNavigate("skill-store")}
-              className="bg-bg-input border border-border-strong/40 rounded-lg p-6 text-left hover:border-success/50 hover:bg-bg-input transition-all group flex flex-col justify-between"
+              className="bg-bg-input border border-border-strong/40 rounded-lg p-6 text-left hover:border-icon-skill/50 hover:bg-bg-input transition-all group flex flex-col justify-between"
             >
               <div>
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="p-2.5 bg-success/10 rounded-lg group-hover:bg-success/20 transition-colors">
-                    <Code size={20} className="text-success" />
+                  <div className="p-2.5 bg-icon-skill/10 rounded-lg group-hover:bg-icon-skill/20 transition-colors">
+                    <Code size={20} className="text-icon-skill" />
                   </div>
                   <h3 className="font-semibold text-text-base">Skills Marketplace</h3>
                 </div>
                 <p className="text-sm text-text-muted">Discover and install pre-built skills, prompts, and workflows from the community.</p>
               </div>
-              <div className="flex items-center gap-1.5 text-[12px] font-medium text-success group-hover:gap-2 transition-all mt-4">
+              <div className="flex items-center gap-1.5 text-[12px] font-medium text-icon-skill group-hover:gap-2 transition-all mt-4">
                 Browse Skills <ArrowRight size={14} />
               </div>
             </button>
@@ -374,18 +374,18 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             {/* MCP Servers Marketplace */}
             <button
               onClick={() => onNavigate("mcp-marketplace")}
-              className="bg-bg-input border border-border-strong/40 rounded-lg p-6 text-left hover:border-warning/50 hover:bg-bg-input transition-all group flex flex-col justify-between"
+              className="bg-bg-input border border-border-strong/40 rounded-lg p-6 text-left hover:border-icon-mcp/50 hover:bg-bg-input transition-all group flex flex-col justify-between"
             >
               <div>
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="p-2.5 bg-warning/10 rounded-lg group-hover:bg-warning/20 transition-colors">
-                    <Server size={20} className="text-warning" />
+                  <div className="p-2.5 bg-icon-mcp/10 rounded-lg group-hover:bg-icon-mcp/20 transition-colors">
+                    <Server size={20} className="text-icon-mcp" />
                   </div>
                   <h3 className="font-semibold text-text-base">MCP Servers Marketplace</h3>
                 </div>
                 <p className="text-sm text-text-muted">Connect AI-powered integrations and extend your agents with MCP servers.</p>
               </div>
-              <div className="flex items-center gap-1.5 text-[12px] font-medium text-warning group-hover:gap-2 transition-all mt-4">
+              <div className="flex items-center gap-1.5 text-[12px] font-medium text-icon-mcp group-hover:gap-2 transition-all mt-4">
                 Browse Servers <ArrowRight size={14} />
               </div>
             </button>

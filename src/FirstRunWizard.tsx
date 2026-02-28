@@ -598,7 +598,7 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
         )}
 
         {/* Navigation */}
-        <div className="flex items-center justify-between mt-8 pt-6 border-t border-border-strong/40-hover">
+        <div className="flex items-center justify-between mt-8 pt-6 border-t border-border-strong/40">
           {/* Back / skip */}
           <div className="flex items-center gap-4">
             {step > 0 ? (

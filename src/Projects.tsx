@@ -2505,7 +2505,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       {/* Skills Card */}
                       <button
                         onClick={() => setProjectTab("skills")}
-                        className="group bg-bg-input border border-border-strong/40 hover:border-success/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-success/10"
+                        className="group bg-bg-input border border-border-strong/40 hover:border-icon-skill/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-icon-skill/10"
                       >
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
@@ -2522,8 +2522,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 : `${project.skills.length} global, ${project.local_skills.length} local`}
                             </div>
                           </div>
-                          <div className="p-2 bg-success/10 rounded-lg group-hover:bg-success/20 transition-colors shrink-0">
-                            <Code size={18} className="text-success" />
+                          <div className="p-2 bg-icon-skill/10 rounded-lg group-hover:bg-icon-skill/20 transition-colors shrink-0">
+                            <Code size={18} className="text-icon-skill" />
                           </div>
                         </div>
                       </button>
@@ -2531,7 +2531,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       {/* MCP Servers Card */}
                       <button
                         onClick={() => setProjectTab("mcp_servers")}
-                        className="group bg-bg-input border border-border-strong/40 hover:border-warning/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-warning/10"
+                        className="group bg-bg-input border border-border-strong/40 hover:border-icon-mcp/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-icon-mcp/10"
                       >
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
@@ -2548,8 +2548,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 : project.mcp_servers.slice(0, 2).join(", ") + (project.mcp_servers.length > 2 ? ` +${project.mcp_servers.length - 2}` : "")}
                             </div>
                           </div>
-                          <div className="p-2 bg-warning/10 rounded-lg group-hover:bg-warning/20 transition-colors shrink-0">
-                            <Server size={18} className="text-warning" />
+                          <div className="p-2 bg-icon-mcp/10 rounded-lg group-hover:bg-icon-mcp/20 transition-colors shrink-0">
+                            <Server size={18} className="text-icon-mcp" />
                           </div>
                         </div>
                       </button>
@@ -2557,7 +2557,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       {/* Memory Card */}
                       <button
                         onClick={() => setProjectTab("memory")}
-                        className="group bg-bg-input border border-border-strong/40 hover:border-accent-hover/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-accent-hover/10"
+                        className="group bg-bg-input border border-border-strong/40 hover:border-icon-rule/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-icon-rule/10"
                       >
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
@@ -2574,8 +2574,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 : `${Object.keys(memories).length} entr${Object.keys(memories).length === 1 ? "y" : "ies"}`}
                             </div>
                           </div>
-                          <div className="p-2 bg-accent-hover/10 rounded-lg group-hover:bg-accent-hover/20 transition-colors shrink-0">
-                            <Brain size={18} className="text-accent-hover" />
+                          <div className="p-2 bg-icon-rule/10 rounded-lg group-hover:bg-icon-rule/20 transition-colors shrink-0">
+                            <Brain size={18} className="text-icon-rule" />
                           </div>
                         </div>
                       </button>

@@ -55,9 +55,9 @@ const servers: McpServer[] = serversData as McpServer[];
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const ACCENT = "var(--warning)"; // amber — ICONS.mcp.hex
-const ACCENT_BG = "bg-warning/10";
-const ACCENT_BORDER = "border-warning/20";
+const ACCENT = "var(--icon-mcp)"; // amber — ICONS.mcp.hex
+const ACCENT_BG = "bg-icon-mcp/10";
+const ACCENT_BORDER = "border-icon-mcp/20";
 
 const CLASSIFICATIONS = ["all", "official", "reference", "community"] as const;
 
@@ -338,7 +338,7 @@ export default function McpMarketplace({
                     <button
                       onClick={() => handleInstall(selected)}
                       disabled={installing}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-warning hover:bg-warning-hover text-bg-input font-medium text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-icon-mcp hover:bg-icon-mcp-hover text-bg-input font-medium text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {installing ? (
                         <>
@@ -381,7 +381,7 @@ export default function McpMarketplace({
               )}
               <div className="flex items-center gap-1.5 text-[12px] text-text-muted">
                 {hasRemote(selected) && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-warning/10 text-warning text-[10px] font-medium">
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-icon-mcp/10 text-icon-mcp text-[10px] font-medium">
                     <Cloud size={10} />
                     Remote
                   </span>
@@ -411,7 +411,7 @@ export default function McpMarketplace({
                     disabled={!tab.available}
                     className={`flex items-center gap-1.5 px-4 py-2.5 text-[12px] font-medium border-b-2 transition-colors -mb-[1px] ${
                       setupTab === tab.id && tab.available
-                        ? "border-warning text-text-base"
+                        ? "border-icon-mcp text-text-base"
                         : tab.available
                         ? "border-transparent text-text-muted hover:text-text-base"
                         : "border-transparent text-text-muted cursor-not-allowed"
@@ -445,7 +445,7 @@ export default function McpMarketplace({
                     <label className="text-[11px] font-medium text-text-muted mb-1.5 block">
                       Transport
                     </label>
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-warning/10 text-warning text-[11px] font-mono font-medium">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-icon-mcp/10 text-icon-mcp text-[11px] font-mono font-medium">
                       <Globe size={11} />
                       {selected.remote.transport}
                     </span>
@@ -754,7 +754,7 @@ export default function McpMarketplace({
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search servers..."
               autoFocus
-              className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-warning rounded-xl pl-11 pr-4 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm"
+              className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-icon-mcp rounded-xl pl-11 pr-4 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm"
             />
           </div>
           <div className="flex gap-2 justify-center">
@@ -764,7 +764,7 @@ export default function McpMarketplace({
                 onClick={() => setClassification(c)}
                 className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${
                   classification === c
-                    ? "bg-warning/15 text-warning border-warning/30"
+                    ? "bg-icon-mcp/15 text-icon-mcp border-icon-mcp/30"
                     : "bg-bg-sidebar border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
                 }`}
               >
@@ -840,7 +840,7 @@ export default function McpMarketplace({
                   </span>
                   <div className="flex items-center gap-2.5 flex-shrink-0">
                     {hasRemote(server) && (
-                      <Cloud size={11} className="text-warning/60" />
+                      <Cloud size={11} className="text-icon-mcp/60" />
                     )}
                     {hasLocal(server) && (
                       <Monitor size={11} className="text-success/60" />

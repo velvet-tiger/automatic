@@ -25,6 +25,12 @@
   --color-text-base: var(--text-base);
   --color-text-muted: var(--text-muted);
 
+  --color-icon-agent: var(--icon-agent);
+  --color-icon-skill: var(--icon-skill);
+  --color-icon-mcp: var(--icon-mcp);
+  --color-icon-file-template: var(--icon-file-template);
+  --color-icon-rule: var(--icon-rule);
+
   --color-success: var(--success);
   --color-success-light: var(--success-light);
   --color-success-active: var(--success-active);
@@ -67,9 +73,21 @@
   --warning-hover: #fbbf24;
   --danger: #ef4444;
   --danger-hover: #f87171;
+
+  --icon-agent: var(--brand);
+  --icon-skill: var(--brand);
+  --icon-mcp: var(--brand);
+  --icon-file-template: var(--brand);
+  --icon-rule: var(--brand);
 }
 
 [data-theme="sleek"] {
+  --icon-agent: var(--brand);
+  --icon-skill: var(--success);
+  --icon-mcp: var(--warning);
+  --icon-file-template: var(--accent);
+  --icon-rule: var(--accent-hover);
+
   /* Default: Sleek */
   --brand: #3b82f6; /* Electric Blue */
   --brand-hover: #60a5fa;
@@ -105,6 +123,12 @@
 }
 
 [data-theme="cyberpunk"] {
+  --icon-agent: var(--brand);
+  --icon-skill: var(--success);
+  --icon-mcp: var(--warning);
+  --icon-file-template: var(--accent);
+  --icon-rule: var(--accent-hover);
+
   --brand: #00f0ff; /* Cyan */
   --brand-hover: #5eead4;
   --brand-active: #0891b2;
@@ -139,6 +163,12 @@
 }
 
 [data-theme="synthwave-glow"] {
+  --icon-agent: var(--brand);
+  --icon-skill: var(--success);
+  --icon-mcp: var(--warning);
+  --icon-file-template: var(--accent);
+  --icon-rule: var(--accent-hover);
+
   --brand: #ec4899; /* Magenta */
   --brand-hover: #f472b6;
   --brand-active: #db2777;
@@ -173,6 +203,12 @@
 }
 
 [data-theme="coral"] {
+  --icon-agent: var(--brand);
+  --icon-skill: var(--success);
+  --icon-mcp: var(--warning);
+  --icon-file-template: var(--accent);
+  --icon-rule: var(--accent-hover);
+
   --brand: #f97316; /* Coral/Orange */
   --brand-hover: #fb923c;
   --brand-active: #ea580c;
@@ -210,6 +246,12 @@
 
 
 [data-theme="arctic-light"] {
+  --icon-agent: var(--brand);
+  --icon-skill: var(--success);
+  --icon-mcp: var(--warning);
+  --icon-file-template: var(--accent);
+  --icon-rule: var(--accent-hover);
+
   --brand: #0ea5e9; /* Sky Blue */
   --brand-hover: #38bdf8;
   --brand-active: #0284c7;
@@ -244,6 +286,12 @@
 }
 
 [data-theme="corporate-light"] {
+  --icon-agent: var(--brand);
+  --icon-skill: var(--success);
+  --icon-mcp: var(--warning);
+  --icon-file-template: var(--accent);
+  --icon-rule: var(--accent-hover);
+
   --brand: #4f46e5; /* Indigo */
   --brand-hover: #6366f1;
   --brand-active: #4338ca;
