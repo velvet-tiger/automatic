@@ -58,10 +58,10 @@ function emptyTemplate(name: string): ProjectTemplate {
 // Derive a colour for the sidebar icon box based on what's in the template
 function templateAccent(t: ProjectTemplate): { bg: string; icon: string } {
   if (t.skills.length >= t.mcp_servers.length && t.skills.length > 0)
-    return { bg: "bg-success/15", icon: "text-success" };
+    return { bg: "bg-icon-skill/15", icon: "text-icon-skill" };
   if (t.mcp_servers.length > 0)
-    return { bg: "bg-warning/15", icon: "text-warning" };
-  return { bg: "bg-brand/15", icon: "text-brand" };
+    return { bg: "bg-icon-mcp/15", icon: "text-icon-mcp" };
+  return { bg: "bg-icon-agent/15", icon: "text-icon-agent" };
 }
 
 
@@ -628,12 +628,12 @@ export default function ProjectTemplates() {
 
               <div className="flex items-center gap-2">
                 {saveStatus && (
-                  <span className={`text-[12px] ${saveStatus === "saving" ? "text-text-muted" : "text-success"}`}>
+                  <span className={`text-[12px] ${saveStatus === "saving" ? "text-text-muted" : "text-icon-skill"}`}>
                     {saveStatus === "saving" ? "Saving..." : saveStatus}
                   </span>
                 )}
                 {applyStatus && (
-                  <span className="text-[12px] text-success">{applyStatus}</span>
+                  <span className="text-[12px] text-icon-skill">{applyStatus}</span>
                 )}
                 {!isCreating && selectedName && (
                   <>
@@ -688,7 +688,7 @@ export default function ProjectTemplates() {
                                       className="w-full text-left px-3 py-2 text-[13px] text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors flex items-center justify-between"
                                     >
                                       <span>{p.name}</span>
-                                      <Check size={11} className="text-success" />
+                                      <Check size={11} className="text-icon-skill" />
                                     </button>
                                   ))}
                                 </div>

@@ -66,14 +66,14 @@ export function AgentSelector({
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Bot size={13} className="text-brand" />
+          <Bot size={13} className="text-icon-agent" />
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             {label}
           </span>
         </div>
         <button
           onClick={(e) => { e.stopPropagation(); setAdding(true); }}
-          className="text-[11px] text-brand-light hover:text-text-base flex items-center gap-1 px-2 py-1 rounded border border-brand/50 hover:border-brand hover:bg-brand/15 transition-all"
+          className="text-[11px] text-icon-agent-light hover:text-text-base flex items-center gap-1 px-2 py-1 rounded border border-brand/50 hover:border-brand hover:bg-brand/15 transition-all"
         >
           <Plus size={11} /> Add
         </button>

@@ -55,7 +55,7 @@ export function SkillSelector({
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Code size={13} className="text-success" />
+          <Code size={13} className="text-icon-skill" />
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             {label}
           </span>
@@ -82,8 +82,8 @@ export function SkillSelector({
             key={skill}
             className="flex items-center gap-3 px-3 py-3 bg-bg-input border border-border-strong/40 rounded-lg group"
           >
-            <div className="w-8 h-8 rounded-md bg-success/12 flex items-center justify-center flex-shrink-0">
-              <Code size={15} className="text-success" />
+            <div className="w-8 h-8 rounded-md bg-icon-skill/12 flex items-center justify-center flex-shrink-0">
+              <Code size={15} className="text-icon-skill" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-[13px] font-medium text-text-base">{skill}</div>
@@ -135,8 +135,8 @@ export function SkillSelector({
                   onClick={() => handleAdd(s)}
                   className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-sidebar text-left transition-colors"
                 >
-                  <div className="w-5 h-5 rounded bg-success/10 flex items-center justify-center flex-shrink-0">
-                    <Code size={11} className="text-success" />
+                  <div className="w-5 h-5 rounded bg-icon-skill/10 flex items-center justify-center flex-shrink-0">
+                    <Code size={11} className="text-icon-skill" />
                   </div>
                   <span className="text-[13px] text-text-base">{s}</span>
                 </button>

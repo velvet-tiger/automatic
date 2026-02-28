@@ -182,18 +182,18 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               {/* Step 2 */}
               <button
                 onClick={() => onNavigate("project-templates")}
-                className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-brand-light/50 transition-all group flex flex-col gap-3"
+                className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-file-template/50 transition-all group flex flex-col gap-3"
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-7 h-7 rounded-full bg-brand-light/10 border border-brand-light/20 flex items-center justify-center shrink-0">
-                    <span className="text-[11px] font-semibold text-brand-light">2</span>
+                  <div className="w-7 h-7 rounded-full bg-icon-file-template/10 border border-icon-file-template/20 flex items-center justify-center shrink-0">
+                    <span className="text-[11px] font-semibold text-icon-file-template">2</span>
                   </div>
-                  <h3 className="font-medium text-text-base group-hover:text-brand-light transition-colors">Browse project templates</h3>
+                  <h3 className="font-medium text-text-base group-hover:text-icon-file-template transition-colors">Browse project templates</h3>
                 </div>
                 <p className="text-[13px] text-text-muted leading-relaxed pl-10">
                   Start from a pre-built project template to hit the ground running with a proven setup.
                 </p>
-                <div className="flex items-center gap-1 text-[12px] font-medium text-brand-light pl-10 group-hover:gap-2 transition-all">
+                <div className="flex items-center gap-1 text-[12px] font-medium text-icon-file-template pl-10 group-hover:gap-2 transition-all">
                   Browse Templates <ArrowRight size={13} />
                 </div>
               </button>
@@ -246,7 +246,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               <h2 className="text-lg font-medium text-text-base">Recent Projects</h2>
               <button 
                 onClick={() => onNavigate("projects")}
-                className="text-sm text-brand hover:text-brand-light flex items-center gap-1 transition-colors"
+                className="text-sm text-brand hover:text-icon-file-template flex items-center gap-1 transition-colors"
               >
                 View all <ArrowRight size={14} />
               </button>
@@ -355,18 +355,18 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             {/* Templates Marketplace */}
             <button
               onClick={() => onNavigate("template-marketplace")}
-              className="bg-bg-input border border-border-strong/40 rounded-lg p-6 text-left hover:border-brand-light/50 hover:bg-bg-input transition-all group flex flex-col justify-between"
+              className="bg-bg-input border border-border-strong/40 rounded-lg p-6 text-left hover:border-icon-file-template/50 hover:bg-bg-input transition-all group flex flex-col justify-between"
             >
               <div>
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="p-2.5 bg-brand-light/10 rounded-lg group-hover:bg-brand-light/20 transition-colors">
-                    <Layers size={20} className="text-brand-light" />
+                  <div className="p-2.5 bg-icon-file-template/10 rounded-lg group-hover:bg-icon-file-template/20 transition-colors">
+                    <Layers size={20} className="text-icon-file-template" />
                   </div>
                   <h3 className="font-semibold text-text-base">Templates Marketplace</h3>
                 </div>
                 <p className="text-sm text-text-muted">Explore project templates and file scaffolds to jumpstart your development.</p>
               </div>
-              <div className="flex items-center gap-1.5 text-[12px] font-medium text-brand-light group-hover:gap-2 transition-all mt-4">
+              <div className="flex items-center gap-1.5 text-[12px] font-medium text-icon-file-template group-hover:gap-2 transition-all mt-4">
                 Browse Templates <ArrowRight size={14} />
               </div>
             </button>

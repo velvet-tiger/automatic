@@ -100,7 +100,7 @@ function renderMarkdown(md: string): React.ReactElement {
         parts.push(
           <code
             key={nextKey()}
-            className="px-1 py-0.5 rounded bg-bg-input text-success font-mono text-[11px]"
+            className="px-1 py-0.5 rounded bg-bg-input text-icon-skill font-mono text-[11px]"
           >
             {token.slice(1, -1)}
           </code>
@@ -506,8 +506,8 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
           <div className="w-full max-w-2xl mx-auto">
             {/* Icon + heading */}
             <div className="text-center mb-6 max-w-lg mx-auto">
-              <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-success/10 border border-success/20 flex items-center justify-center">
-                <Download size={20} className="text-success" strokeWidth={1.5} />
+              <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-icon-skill/10 border border-success/20 flex items-center justify-center">
+                <Download size={20} className="text-icon-skill" strokeWidth={1.5} />
               </div>
               <h2 className="text-[18px] font-semibold text-text-base mb-1.5">Skill Store</h2>
               <p className="text-[13px] text-text-muted leading-relaxed">
@@ -516,7 +516,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                   href="https://skills.sh"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-success hover:text-success-light transition-colors"
+                  className="text-icon-skill hover:text-icon-skill-light transition-colors"
                 >
                   skills.sh
                 </a>
@@ -571,7 +571,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                         </span>
                         <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
                           {alreadyImported && (
-                            <CheckCircle2 size={12} className="text-success" />
+                            <CheckCircle2 size={12} className="text-icon-skill" />
                           )}
                           <ArrowRight size={12} className="text-surface group-hover:text-text-muted transition-colors" />
                         </div>
@@ -582,7 +582,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] text-text-muted truncate">{skill.source}</span>
                         <span className="text-[10px] text-text-muted">·</span>
-                        <span className="text-[10px] text-success flex-shrink-0">
+                        <span className="text-[10px] text-icon-skill flex-shrink-0">
                           {formatInstalls(skill.installs)}
                         </span>
                       </div>
@@ -674,14 +674,14 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                             </span>
                           )}
                           {alreadyImported && (
-                            <CheckCircle2 size={12} className="text-success" />
+                            <CheckCircle2 size={12} className="text-icon-skill" />
                           )}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className="text-[11px] text-text-muted truncate">{skill.source}</span>
                         <span className="text-[10px] text-text-muted">·</span>
-                        <span className="text-[11px] text-success flex-shrink-0">
+                        <span className="text-[11px] text-icon-skill flex-shrink-0">
                           {formatInstalls(skill.installs)}
                         </span>
                       </div>
@@ -849,7 +849,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                           </>
                         ) : (
                           <>
-                            <CheckCircle2 size={12} className="text-success" />
+                            <CheckCircle2 size={12} className="text-icon-skill" />
                             Update
                           </>
                         )}
@@ -858,7 +858,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       <button
                         onClick={importSkill}
                         disabled={importing || !rawContent}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-success hover:bg-success-light text-bg-input disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-brand hover:bg-brand-light text-white disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {importing ? (
                           <>
@@ -907,7 +907,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       href={`https://github.com/${selected.source}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 text-[12px] text-success hover:text-success-light transition-colors"
+                      className="flex items-center gap-1.5 text-[12px] text-icon-skill hover:text-icon-skill-light transition-colors"
                     >
                       <Github size={12} className="flex-shrink-0" />
                       <span className="truncate">{selected.source}</span>
@@ -923,7 +923,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       href={`https://skills.sh/${selected.id}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 text-[12px] text-success hover:text-success-light transition-colors"
+                      className="flex items-center gap-1.5 text-[12px] text-icon-skill hover:text-icon-skill-light transition-colors"
                     >
                       <ExternalLink size={12} className="flex-shrink-0" />
                       <span className="truncate">View page</span>

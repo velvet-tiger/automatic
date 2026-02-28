@@ -58,7 +58,7 @@ export function McpSelector({
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Server size={13} className="text-warning" />
+          <Server size={13} className="text-icon-mcp" />
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             {label}
           </span>
@@ -85,8 +85,8 @@ export function McpSelector({
             key={srv}
             className="flex items-center gap-3 px-3 py-3 bg-bg-input border border-border-strong/40 rounded-lg group"
           >
-            <div className="w-8 h-8 rounded-md bg-warning/12 flex items-center justify-center flex-shrink-0">
-              <Server size={15} className="text-warning" />
+            <div className="w-8 h-8 rounded-md bg-icon-mcp/12 flex items-center justify-center flex-shrink-0">
+              <Server size={15} className="text-icon-mcp" />
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-[13px] font-medium text-text-base">{srv}</div>
@@ -138,8 +138,8 @@ export function McpSelector({
                   onClick={() => handleAdd(s)}
                   className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-sidebar text-left transition-colors"
                 >
-                  <div className="w-5 h-5 rounded bg-warning/10 flex items-center justify-center flex-shrink-0">
-                    <Server size={11} className="text-warning" />
+                  <div className="w-5 h-5 rounded bg-icon-mcp/10 flex items-center justify-center flex-shrink-0">
+                    <Server size={11} className="text-icon-mcp" />
                   </div>
                   <span className="text-[13px] text-text-base">{s}</span>
                 </button>
