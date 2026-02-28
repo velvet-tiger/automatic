@@ -16,8 +16,8 @@ export const THEMES: { id: Theme; name: string; description: string; colors: { p
   {
     id: "sleek",
     name: "Sleek",
-    description: "Muted dark surfaces with Electric Blue and Emerald Green highlights.",
-    colors: { primary: "#3b82f6", surface: "#1e293b" }
+    description: "Pure monochrome — black, dark grey, and white. No colour.",
+    colors: { primary: "#2a2a2a", surface: "#1a1a1a" }
   },
   {
     id: "cyberpunk",

@@ -88,38 +88,38 @@
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
 
-  /* Default: Sleek */
-  --brand: #3b82f6; /* Electric Blue */
-  --brand-hover: #60a5fa;
-  --brand-active: #2563eb;
-  --brand-light: #93c5fd;
-  
-  --accent: #10b981; /* Emerald Green */
-  --accent-hover: #34d399;
-  --accent-light: #6ee7b7;
-  --accent-hover-light: #a7f3d0;
+  /* Sleek: monochrome black / dark grey / white — no colour */
+  --brand: #2a2a2a;
+  --brand-hover: #3a3a3a;
+  --brand-active: #1a1a1a;
+  --brand-light: #4a4a4a;
 
-  --bg-base: #0f172a;
-  --bg-sidebar: #020617;
-  --bg-input: #1e293b;
-  --bg-input-dark: #0f172a;
+  --accent: #3a3a3a;
+  --accent-hover: #4a4a4a;
+  --accent-light: #2a2a2a;
+  --accent-hover-light: #1a1a1a;
 
-  --surface: #1e293b;
-  --surface-hover: #334155;
-  --surface-active: #475569;
+  --bg-base: #0a0a0a;
+  --bg-sidebar: #000000;
+  --bg-input: #1a1a1a;
+  --bg-input-dark: #0a0a0a;
 
-  --border-strong: #334155;
+  --surface: #1a1a1a;
+  --surface-hover: #2a2a2a;
+  --surface-active: #3a3a3a;
+
+  --border-strong: #2a2a2a;
 
   --text-base: #f8fafc;
-  --text-muted: #94a3b8;
+  --text-muted: #a3a3a3;
 
-  --success: #10b981;
-  --success-light: #34d399;
-  --success-active: #059669;
-  --warning: #f59e0b;
-  --warning-hover: #fbbf24;
-  --danger: #ef4444;
-  --danger-hover: #f87171;
+  --success: #a3a3a3;
+  --success-light: #d4d4d4;
+  --success-active: #737373;
+  --warning: #a3a3a3;
+  --warning-hover: #d4d4d4;
+  --danger: #737373;
+  --danger-hover: #a3a3a3;
 }
 
 [data-theme="cyberpunk"] {
