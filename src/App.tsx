@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { applyTheme, Theme } from "./theme";
+import { applyTheme, Theme, THEMES } from "./theme";
 import { ProfileProvider } from "./ProfileContext";
 import { useCurrentUser } from "./ProfileContext";
 import { initAnalytics, setAnalyticsEnabled, trackNavigation } from "./analytics";
@@ -75,11 +75,11 @@ function App() {
   useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);
 
   // ── Theme Init ──────────────────────────────────────────────────────────
+  const [activeTheme, setActiveTheme] = useState<Theme>(
+    () => (localStorage.getItem("automatic.theme") as Theme | null) ?? "dark"
+  );
   useEffect(() => {
-    const savedTheme = localStorage.getItem("automatic.theme") as Theme | null;
-    if (savedTheme) {
-      applyTheme(savedTheme);
-    }
+    applyTheme(activeTheme);
   }, []);
 
 
@@ -196,7 +196,6 @@ function App() {
               <NavItem id="rules" icon={ScrollText} label="Rules" />
               <NavItem id="skills" icon={Code} label="Skills" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
-              <NavItem id="settings" icon={SettingsIcon} label="Settings" />
             </ul>
           </div>
 
@@ -214,8 +213,54 @@ function App() {
 
         </nav>
 
+        {/* Sidebar footer — dev theme switcher (dev builds only) */}
+        {import.meta.env.DEV && (() => {
+          const [open, setOpen] = useState(false);
+          const current = THEMES.find((t) => t.id === activeTheme) ?? THEMES[0]!;
+          return (
+            <div className="px-3 pt-3 pb-1 relative">
+              <button
+                onClick={() => setOpen((o) => !o)}
+                className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] font-medium text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors"
+              >
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: current.colors.primary }}
+                />
+                <span className="flex-1 text-left">{current.name}</span>
+                <ChevronDown size={12} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+              </button>
+              {open && (
+                <div className="absolute bottom-full left-3 right-3 mb-1 rounded-md overflow-hidden bg-bg-input border border-border-strong/40">
+                  {THEMES.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        setActiveTheme(t.id);
+                        applyTheme(t.id);
+                        localStorage.setItem("automatic.theme", t.id);
+                        setOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] transition-colors ${
+                        t.id === activeTheme
+                          ? "text-text-base bg-bg-sidebar"
+                          : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
+                      }`}
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: t.colors.primary }}
+                      />
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {/* Sidebar footer — setup wizard */}
-        <div className="px-3 pt-3 pb-1">
+        <div className="px-3 pt-0 pb-1">
           <button
             onClick={() => setShowWizard(true)}
             className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] font-medium text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors"
@@ -223,6 +268,7 @@ function App() {
             <Sparkles size={14} className="text-text-muted" />
             <span className="flex-1 text-left">Setup wizard</span>
           </button>
+          <NavItem id="settings" icon={SettingsIcon} label="Settings" />
         </div>
         {/* Sidebar footer — branding */}
         <div className="px-3 py-3 border-t border-border-strong/60">
