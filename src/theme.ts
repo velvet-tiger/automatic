@@ -1,6 +1,18 @@
-export type Theme = "sleek" | "cyberpunk" | "synthwave-glow" | "coral" | "arctic-light" | "corporate-light";
+export type Theme = "dark" | "light" | "sleek" | "cyberpunk" | "synthwave-glow" | "coral" | "arctic-light" | "corporate-light";
 
 export const THEMES: { id: Theme; name: string; description: string; colors: { primary: string; surface: string } }[] = [
+  {
+    id: "dark",
+    name: "Dark",
+    description: "The default Automatic dark mode with subtle Indigo highlights.",
+    colors: { primary: "#6366f1", surface: "#18181b" }
+  },
+  {
+    id: "light",
+    name: "Light",
+    description: "The default Automatic light mode with crisp Indigo highlights.",
+    colors: { primary: "#4f46e5", surface: "#ffffff" }
+  },
   {
     id: "sleek",
     name: "Sleek",
@@ -44,7 +56,7 @@ export function applyTheme(theme: string) {
   if (theme === "neon-cyberpunk") theme = "cyberpunk";
   if (theme === "minimalist-coral") theme = "coral";
 
-  if (theme === "sleek") {
+  if (theme === "dark") {
     document.documentElement.removeAttribute("data-theme");
   } else {
     document.documentElement.setAttribute("data-theme", theme);

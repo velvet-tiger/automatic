@@ -66,7 +66,7 @@ export default function Settings() {
     if (saved === "sleek-hacker") saved = "sleek";
     if (saved === "neon-cyberpunk") saved = "cyberpunk";
     if (saved === "minimalist-coral") saved = "coral";
-    return (saved as Theme) || "sleek";
+    return (saved as Theme) || "dark";
   });
 
   const handleThemeChange = (theme: Theme) => {
@@ -199,7 +199,7 @@ export default function Settings() {
   return (
     <div className="flex flex-1 h-full bg-bg-base overflow-hidden text-text-base">
       {/* Sub-page sidebar */}
-      <div className="w-52 flex-shrink-0 border-r border-border-strong/40-active flex flex-col py-3">
+      <div className="w-52 flex-shrink-0 border-r border-border-strong/40 flex flex-col py-3">
         <div className="px-3 mb-2">
           <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
             Settings
@@ -258,7 +258,7 @@ export default function Settings() {
                     className={`flex flex-col items-start gap-1 p-4 rounded-lg border text-left transition-all ${
                       settings.skill_sync_mode === "symlink"
                         ? "border-brand bg-brand/10"
-                        : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                        : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
                     }`}
                   >
                     <div className="text-[13px] font-medium text-text-base">
@@ -274,7 +274,7 @@ export default function Settings() {
                     className={`flex flex-col items-start gap-1 p-4 rounded-lg border text-left transition-all ${
                       settings.skill_sync_mode === "copy"
                         ? "border-brand bg-brand/10"
-                        : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                        : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
                     }`}
                   >
                     <div className="text-[13px] font-medium text-text-base">Copy</div>
@@ -299,7 +299,7 @@ export default function Settings() {
                   These agents are automatically pre-selected when creating a new
                   project. You can add or remove agents per-project after creation.
                 </p>
-                <div className="p-4 rounded-lg border border-border-strong/40-active bg-bg-input-dark">
+                <div className="p-4 rounded-lg border border-border-strong/40 bg-bg-input-dark">
                   <AgentSelector
                     agentIds={settings.default_agents}
                     availableAgents={availableAgents}
@@ -336,7 +336,7 @@ export default function Settings() {
                         className={`flex flex-col text-left p-4 rounded-xl border transition-all ${
                           isActive
                             ? "border-brand bg-brand/10 ring-1 ring-brand/50"
-                            : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                            : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
                         }`}
                       >
                         <div className="flex items-center gap-3 mb-2">
@@ -375,7 +375,7 @@ export default function Settings() {
                   className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all ${
                     settings.analytics_enabled
                       ? "border-brand bg-brand/10"
-                      : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                      : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
                   }`}
                 >
                   <div>
@@ -441,7 +441,7 @@ export default function Settings() {
 
                 {/* Downloading */}
                 {updateStatus === "downloading" && (
-                  <div className="mb-4 p-4 rounded-lg border border-border-strong/40-active bg-bg-input-dark text-[13px] text-text-muted">
+                  <div className="mb-4 p-4 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] text-text-muted">
                     Downloading update...
                   </div>
                 )}
@@ -476,7 +476,7 @@ export default function Settings() {
                   <button
                     onClick={checkForUpdates}
                     disabled={updateStatus === "checking"}
-                    className="px-4 py-2 rounded-lg border border-border-strong/40-active bg-bg-input-dark text-[13px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-4 py-2 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {updateStatus === "checking" ? "Checking..." : "Check for Updates"}
                   </button>
