@@ -285,7 +285,7 @@ export default function Rules() {
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-accent-hover/10 border border-accent-hover/20 flex items-center justify-center">
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-icon-rule/12 border border-icon-rule/20 flex items-center justify-center">
               <ScrollText size={24} className={ICONS.rule.iconColor} strokeWidth={1.5} />
             </div>
             <h2 className="text-lg font-medium text-text-base mb-2">No Rule Selected</h2>

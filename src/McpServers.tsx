@@ -812,7 +812,7 @@ export default function McpServers() {
         ) : (
           /* Empty state */
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-warning/10 border border-warning/20 flex items-center justify-center">
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-icon-mcp/12 border border-icon-mcp/20 flex items-center justify-center">
               <Server size={24} className={ICONS.mcp.iconColor} strokeWidth={1.5} />
             </div>
             <h2 className="text-lg font-medium text-text-base mb-2">MCP Servers</h2>

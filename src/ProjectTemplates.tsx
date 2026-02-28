@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { ICONS } from "./icons";
 import { SkillSelector } from "./SkillSelector";
 import { AgentSelector, AgentInfo } from "./AgentSelector";
 import { McpSelector } from "./McpSelector";
@@ -965,8 +966,8 @@ export default function ProjectTemplates() {
         ) : (
           /* Empty state */
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-14 h-14 mx-auto mb-4 rounded-full border border-dashed border-border-strong flex items-center justify-center text-text-muted">
-              <LayoutTemplate size={24} strokeWidth={1.5} />
+            <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-icon-agent/15 border border-icon-agent/20 flex items-center justify-center">
+              <LayoutTemplate size={24} strokeWidth={1.5} className={ICONS.projectTemplate.iconColor} />
             </div>
             <h2 className="text-[16px] font-semibold text-text-base mb-2">No template selected</h2>
             <p className="text-[13px] text-text-muted max-w-sm leading-relaxed mb-6">

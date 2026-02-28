@@ -955,7 +955,7 @@ export default function Skills() {
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-success/10 border border-success/20 flex items-center justify-center">
+            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-icon-skill/12 border border-icon-skill/20 flex items-center justify-center">
               <Code size={22} className={ICONS.skill.iconColor} strokeWidth={1.5} />
             </div>
             <h2 className="text-[15px] font-medium text-text-base mb-2">
