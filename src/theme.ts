@@ -46,8 +46,8 @@ export const THEMES: { id: Theme; name: string; description: string; colors: { p
   {
     id: "corporate-light",
     name: "Corporate Light",
-    description: "Professional light mode with subtle Indigo and deep Slate accents.",
-    colors: { primary: "#4f46e5", surface: "#f8fafc" }
+    description: "Pure monochrome light — white, light grey, and near-black. No colour.",
+    colors: { primary: "#2a2a2a", surface: "#ffffff" }
   }
 ];
 
