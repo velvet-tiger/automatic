@@ -52,7 +52,13 @@ function AnalyticsBootstrap() {
 
 function App() {
   const [activeTab, setActiveTab] = useState(() => {
-    const saved = localStorage.getItem("nexus.activeTab");
+    // Migrate legacy "nexus." localStorage keys to "automatic." prefix
+    const legacy = localStorage.getItem("nexus.activeTab");
+    if (legacy) {
+      localStorage.setItem("automatic.activeTab", legacy);
+      localStorage.removeItem("nexus.activeTab");
+    }
+    const saved = localStorage.getItem("automatic.activeTab") || legacy;
     // Reset to projects if saved tab was removed (activity)
     if (saved === "activity") return "dashboard";
     return saved || "dashboard";
@@ -86,7 +92,7 @@ function App() {
   };
 
   useEffect(() => {
-    localStorage.setItem("nexus.activeTab", activeTab);
+    localStorage.setItem("automatic.activeTab", activeTab);
   }, [activeTab]);
 
   const navigateToProject = (projectName: string) => {

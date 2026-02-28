@@ -23,9 +23,16 @@ interface AgentsProps {
 }
 
 export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
-  const LAST_AGENT_KEY = "nexus.agents.selected";
+  const LAST_AGENT_KEY = "automatic.agents.selected";
   const [agents, setAgents] = useState<AgentWithProjects[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(() => {
+    // Migrate legacy "nexus." key
+    const legacy = localStorage.getItem("nexus.agents.selected");
+    if (legacy) {
+      localStorage.setItem(LAST_AGENT_KEY, legacy);
+      localStorage.removeItem("nexus.agents.selected");
+      return legacy;
+    }
     return localStorage.getItem(LAST_AGENT_KEY);
   });
   const [error, setError] = useState<string | null>(null);

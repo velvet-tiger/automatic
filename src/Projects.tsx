@@ -579,8 +579,23 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
 
 export default function Projects({ initialProject = null, onInitialProjectConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
-  const LAST_PROJECT_KEY = "nexus.projects.selected";
-  const PROJECT_ORDER_KEY = "nexus.projects.order";
+  const LAST_PROJECT_KEY = "automatic.projects.selected";
+  const PROJECT_ORDER_KEY = "automatic.projects.order";
+
+  // Migrate legacy "nexus." localStorage keys on first load
+  useEffect(() => {
+    const legacyKeys = [
+      ["nexus.projects.selected", LAST_PROJECT_KEY],
+      ["nexus.projects.order", PROJECT_ORDER_KEY],
+    ];
+    for (const [oldKey, newKey] of legacyKeys) {
+      const val = localStorage.getItem(oldKey);
+      if (val) {
+        localStorage.setItem(newKey, val);
+        localStorage.removeItem(oldKey);
+      }
+    }
+  }, []);
   const [projects, setProjects] = useState<string[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(() => {
     return localStorage.getItem(LAST_PROJECT_KEY);

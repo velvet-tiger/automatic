@@ -98,7 +98,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   };
 
   const handleProjectClick = (name: string) => {
-    localStorage.setItem("nexus.projects.selected", name);
+    localStorage.setItem("automatic.projects.selected", name);
     onNavigate("projects");
   };
 
