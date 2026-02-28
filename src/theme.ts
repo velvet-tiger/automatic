@@ -36,18 +36,6 @@ export const THEMES: { id: Theme; name: string; description: string; colors: { p
     name: "Corporate Light",
     description: "Professional light mode with subtle Indigo and deep Slate accents.",
     colors: { primary: "#4f46e5", surface: "#f8fafc" }
-  },
-  {
-    id: "arctic-light",
-    name: "Arctic Light",
-    description: "Clean, crisp light mode with cool Blue and Teal highlights.",
-    colors: { primary: "#0ea5e9", surface: "#ffffff" }
-  },
-  {
-    id: "corporate-light",
-    name: "Corporate Light",
-    description: "Professional light mode with subtle Indigo and deep Slate accents.",
-    colors: { primary: "#4f46e5", surface: "#f8fafc" }
   }
 ];
 
