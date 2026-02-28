@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { THEMES, applyTheme, Theme } from "./theme";
+
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import {
@@ -58,6 +60,16 @@ export default function Settings() {
   });
   const [loading, setLoading] = useState(true);
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
+
+  const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
+    return (localStorage.getItem("automatic.theme") as Theme) || "sleek-hacker";
+  });
+
+  const handleThemeChange = (theme: Theme) => {
+    setCurrentTheme(theme);
+    localStorage.setItem("automatic.theme", theme);
+    applyTheme(theme);
+  };
 
   // Update state
   const [appVersion, setAppVersion] = useState<string>("");
@@ -177,15 +189,15 @@ export default function Settings() {
   }
 
   if (loading) {
-    return <div className="flex-1 p-8 bg-[#222327]">Loading...</div>;
+    return <div className="flex-1 p-8 bg-bg-base">Loading...</div>;
   }
 
   return (
-    <div className="flex flex-1 h-full bg-[#222327] overflow-hidden text-[#E0E2E8]">
+    <div className="flex flex-1 h-full bg-bg-base overflow-hidden text-text-base">
       {/* Sub-page sidebar */}
-      <div className="w-52 flex-shrink-0 border-r border-[#2E3038] flex flex-col py-3">
+      <div className="w-52 flex-shrink-0 border-r border-border-strong/40-active flex flex-col py-3">
         <div className="px-3 mb-2">
-          <span className="text-[11px] font-medium text-[#6B6E7A] uppercase tracking-wider">
+          <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
             Settings
           </span>
         </div>
@@ -198,16 +210,16 @@ export default function Settings() {
                 onClick={() => setActivePage(page.id)}
                 className={`flex items-center gap-2.5 px-2.5 py-2 rounded-md text-left transition-colors w-full ${
                   isActive
-                    ? "bg-[#2E3038] text-white"
-                    : "text-[#C8CAD0] hover:bg-[#2A2B30] hover:text-white"
+                    ? "bg-surface-active text-text-base"
+                    : "text-text-muted hover:bg-surface-hover hover:text-text-base"
                 }`}
               >
-                <span className={isActive ? "text-[#5E6AD2]" : "text-[#9B9EA8]"}>
+                <span className={isActive ? "text-brand" : "text-text-muted"}>
                   {page.icon}
                 </span>
                 <div className="flex flex-col min-w-0">
                   <span className="text-[13px] font-medium leading-tight">{page.label}</span>
-                  <span className="text-[11px] text-[#9B9EA8] leading-tight truncate">
+                  <span className="text-[11px] text-text-muted leading-tight truncate">
                     {page.description}
                   </span>
                 </div>
@@ -224,12 +236,12 @@ export default function Settings() {
           {/* ── Skills page ─────────────────────────────────────────── */}
           {activePage === "skills" && (
             <div>
-              <h2 className="text-lg font-medium mb-1 text-white">Skills</h2>
-              <p className="text-[13px] text-[#6B6E7A] mb-6">Configure how skills are applied to your projects.</p>
+              <h2 className="text-lg font-medium mb-1 text-text-base">Skills</h2>
+              <p className="text-[13px] text-text-muted mb-6">Configure how skills are applied to your projects.</p>
 
               <div className="mb-8">
-                <h3 className="text-sm font-medium mb-2 text-white">Skill Sync Mode</h3>
-                <p className="text-[13px] text-[#C8CAD0] mb-4 leading-relaxed">
+                <h3 className="text-sm font-medium mb-2 text-text-base">Skill Sync Mode</h3>
+                <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
                   Choose how skills are applied to your project agent directories.
                   Symlinking ensures updates to skills are immediately reflected
                   without needing a re-sync, while copying physically duplicates the
@@ -241,14 +253,14 @@ export default function Settings() {
                     onClick={() => updateSkillSyncMode("symlink")}
                     className={`flex flex-col items-start gap-1 p-4 rounded-lg border text-left transition-all ${
                       settings.skill_sync_mode === "symlink"
-                        ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
-                        : "border-[#3E4048] bg-[#18191C] hover:border-[#5E5E6A] hover:bg-[#1E1F24]"
+                        ? "border-brand bg-brand/10"
+                        : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
                     }`}
                   >
-                    <div className="text-[13px] font-medium text-white">
+                    <div className="text-[13px] font-medium text-text-base">
                       Symlink (Recommended)
                     </div>
-                    <div className="text-[12px] text-[#C8CAD0]">
+                    <div className="text-[12px] text-text-muted">
                       Creates a reference to the global skill file. Updates apply instantly.
                     </div>
                   </button>
@@ -257,12 +269,12 @@ export default function Settings() {
                     onClick={() => updateSkillSyncMode("copy")}
                     className={`flex flex-col items-start gap-1 p-4 rounded-lg border text-left transition-all ${
                       settings.skill_sync_mode === "copy"
-                        ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
-                        : "border-[#3E4048] bg-[#18191C] hover:border-[#5E5E6A] hover:bg-[#1E1F24]"
+                        ? "border-brand bg-brand/10"
+                        : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
                     }`}
                   >
-                    <div className="text-[13px] font-medium text-white">Copy</div>
-                    <div className="text-[12px] text-[#C8CAD0]">
+                    <div className="text-[13px] font-medium text-text-base">Copy</div>
+                    <div className="text-[12px] text-text-muted">
                       Creates an independent physical copy of the skill file in the project.
                     </div>
                   </button>
@@ -274,16 +286,16 @@ export default function Settings() {
           {/* ── Agents page ─────────────────────────────────────────── */}
           {activePage === "agents" && (
             <div>
-              <h2 className="text-lg font-medium mb-1 text-white">Agents</h2>
-              <p className="text-[13px] text-[#6B6E7A] mb-6">Configure default agent behaviour for new projects.</p>
+              <h2 className="text-lg font-medium mb-1 text-text-base">Agents</h2>
+              <p className="text-[13px] text-text-muted mb-6">Configure default agent behaviour for new projects.</p>
 
               <div className="mb-8">
-                <h3 className="text-sm font-medium mb-2 text-white">Default Agents</h3>
-                <p className="text-[13px] text-[#C8CAD0] mb-4 leading-relaxed">
+                <h3 className="text-sm font-medium mb-2 text-text-base">Default Agents</h3>
+                <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
                   These agents are automatically pre-selected when creating a new
                   project. You can add or remove agents per-project after creation.
                 </p>
-                <div className="p-4 rounded-lg border border-[#3E4048] bg-[#18191C]">
+                <div className="p-4 rounded-lg border border-border-strong/40-active bg-bg-input-dark">
                   <AgentSelector
                     agentIds={settings.default_agents}
                     availableAgents={availableAgents}
@@ -300,13 +312,55 @@ export default function Settings() {
           {/* ── App page ────────────────────────────────────────────── */}
           {activePage === "app" && (
             <div>
-              <h2 className="text-lg font-medium mb-1 text-white">App</h2>
-              <p className="text-[13px] text-[#6B6E7A] mb-6">Analytics preferences and application updates.</p>
+              <h2 className="text-lg font-medium mb-1 text-text-base">App</h2>
+              <p className="text-[13px] text-text-muted mb-6">Analytics preferences and application updates.</p>
+
+              
+              {/* Appearance / Theme */}
+              <div className="mb-8">
+                <h3 className="text-sm font-medium mb-2 text-text-base">Appearance</h3>
+                <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
+                  Choose a color scheme for the application interface.
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  {THEMES.map((theme) => {
+                    const isActive = currentTheme === theme.id;
+                    return (
+                      <button
+                        key={theme.id}
+                        onClick={() => handleThemeChange(theme.id)}
+                        className={`flex flex-col text-left p-4 rounded-xl border transition-all ${
+                          isActive
+                            ? "border-brand bg-brand/10 ring-1 ring-brand/50"
+                            : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 mb-2">
+                          <div
+                            className="w-4 h-4 rounded-full border border-black/20"
+                            style={{ backgroundColor: theme.colors.primary }}
+                          />
+                          <div
+                            className="w-4 h-4 rounded-full border border-black/20 -ml-5"
+                            style={{ backgroundColor: theme.colors.surface }}
+                          />
+                          <span className="text-[13px] font-medium text-text-base">
+                            {theme.name}
+                          </span>
+                        </div>
+                        <span className="text-[12px] text-text-muted line-clamp-2">
+                          {theme.description}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               {/* Analytics */}
               <div className="mb-8">
-                <h3 className="text-sm font-medium mb-2 text-white">Analytics</h3>
-                <p className="text-[13px] text-[#C8CAD0] mb-4 leading-relaxed">
+                <h3 className="text-sm font-medium mb-2 text-text-base">Analytics</h3>
+                <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
                   Help us improve Automatic by sharing anonymous usage data. No
                   personal information, file contents, or project names are ever
                   collected. Analytics are always disabled during local development.
@@ -316,15 +370,15 @@ export default function Settings() {
                   onClick={() => updateAnalyticsEnabled(!settings.analytics_enabled)}
                   className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all ${
                     settings.analytics_enabled
-                      ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
-                      : "border-[#3E4048] bg-[#18191C] hover:border-[#5E5E6A] hover:bg-[#1E1F24]"
+                      ? "border-brand bg-brand/10"
+                      : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
                   }`}
                 >
                   <div>
-                    <div className="text-[13px] font-medium text-white">
+                    <div className="text-[13px] font-medium text-text-base">
                       Anonymous usage analytics
                     </div>
-                    <div className="text-[12px] text-[#C8CAD0]">
+                    <div className="text-[12px] text-text-muted">
                       {settings.analytics_enabled
                         ? "Enabled — thank you for helping improve Automatic"
                         : "Disabled"}
@@ -334,7 +388,7 @@ export default function Settings() {
                   {/* Toggle pill */}
                   <div
                     className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors ${
-                      settings.analytics_enabled ? "bg-[#5E6AD2]" : "bg-[#3E4048]"
+                      settings.analytics_enabled ? "bg-brand" : "bg-surface-active"
                     }`}
                   >
                     <div
@@ -348,33 +402,33 @@ export default function Settings() {
 
               {/* App Updates */}
               <div className="mb-8">
-                <h3 className="text-sm font-medium mb-2 text-white">App Updates</h3>
+                <h3 className="text-sm font-medium mb-2 text-text-base">App Updates</h3>
 
                 <div className="flex items-center gap-3 mb-4">
                   {appVersion && (
-                    <span className="text-[12px] text-[#C8CAD0]">
+                    <span className="text-[12px] text-text-muted">
                       Version {appVersion}
                     </span>
                   )}
                   {updateStatus === "up-to-date" && (
-                    <span className="text-[12px] text-[#4CAF50]">Up to date</span>
+                    <span className="text-[12px] text-success">Up to date</span>
                   )}
                 </div>
 
                 {/* Update available banner */}
                 {updateStatus === "available" && updateInfo && (
-                  <div className="mb-4 p-4 rounded-lg border border-[#5E6AD2] bg-[#5E6AD2]/10">
-                    <div className="text-[13px] font-medium text-white mb-1">
+                  <div className="mb-4 p-4 rounded-lg border border-brand bg-brand/10">
+                    <div className="text-[13px] font-medium text-text-base mb-1">
                       Version {updateInfo.version} available
                     </div>
                     {updateInfo.notes && (
-                      <p className="text-[12px] text-[#C8CAD0] mb-3 leading-relaxed whitespace-pre-wrap">
+                      <p className="text-[12px] text-text-muted mb-3 leading-relaxed whitespace-pre-wrap">
                         {updateInfo.notes}
                       </p>
                     )}
                     <button
                       onClick={installUpdate}
-                      className="px-3 py-1.5 rounded text-[12px] font-medium bg-[#5E6AD2] text-white hover:bg-[#4E5AC2] transition-colors"
+                      className="px-3 py-1.5 rounded text-[12px] font-medium bg-brand text-white hover:bg-brand-active transition-colors"
                     >
                       Download &amp; Install
                     </button>
@@ -383,23 +437,23 @@ export default function Settings() {
 
                 {/* Downloading */}
                 {updateStatus === "downloading" && (
-                  <div className="mb-4 p-4 rounded-lg border border-[#3E4048] bg-[#18191C] text-[13px] text-[#C8CAD0]">
+                  <div className="mb-4 p-4 rounded-lg border border-border-strong/40-active bg-bg-input-dark text-[13px] text-text-muted">
                     Downloading update...
                   </div>
                 )}
 
                 {/* Installed — prompt restart */}
                 {updateStatus === "installed" && (
-                  <div className="mb-4 p-4 rounded-lg border border-[#4CAF50] bg-[#4CAF50]/10">
-                    <div className="text-[13px] font-medium text-white mb-1">
+                  <div className="mb-4 p-4 rounded-lg border border-success bg-success/10">
+                    <div className="text-[13px] font-medium text-text-base mb-1">
                       Update installed
                     </div>
-                    <p className="text-[12px] text-[#C8CAD0] mb-3">
+                    <p className="text-[12px] text-text-muted mb-3">
                       Restart Automatic to apply the update.
                     </p>
                     <button
                       onClick={restartApp}
-                      className="px-3 py-1.5 rounded text-[12px] font-medium bg-[#4CAF50] text-white hover:bg-[#3D9F40] transition-colors"
+                      className="px-3 py-1.5 rounded text-[12px] font-medium bg-success text-white hover:bg-success-active transition-colors"
                     >
                       Restart Now
                     </button>
@@ -408,7 +462,7 @@ export default function Settings() {
 
                 {/* Error */}
                 {updateStatus === "error" && updateError && (
-                  <div className="mb-4 p-4 rounded-lg border border-[#E05252] bg-[#E05252]/10 text-[13px] text-[#E05252]">
+                  <div className="mb-4 p-4 rounded-lg border border-danger bg-danger/10 text-[13px] text-danger">
                     {updateError}
                   </div>
                 )}
@@ -418,7 +472,7 @@ export default function Settings() {
                   <button
                     onClick={checkForUpdates}
                     disabled={updateStatus === "checking"}
-                    className="px-4 py-2 rounded-lg border border-[#3E4048] bg-[#18191C] text-[13px] text-[#E0E2E8] hover:border-[#5E5E6A] hover:bg-[#1E1F24] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-4 py-2 rounded-lg border border-border-strong/40-active bg-bg-input-dark text-[13px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {updateStatus === "checking" ? "Checking..." : "Check for Updates"}
                   </button>

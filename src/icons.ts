@@ -21,96 +21,96 @@
 export const ICONS = {
   /**
    * Agent tools (Claude Code, Cursor, etc.)
-   * Colour: indigo  #5E6AD2
+   * Colour: indigo  var(--brand)
    * Icon:   Bot
    */
   agent: {
-    hex: "#5E6AD2",
-    iconBox: "w-8 h-8 rounded-md bg-[#5E6AD2]/15 flex items-center justify-center flex-shrink-0",
-    iconColor: "text-[#5E6AD2]",
-    text: "text-[#5E6AD2]",
+    hex: "var(--brand)",
+    iconBox: "w-8 h-8 rounded-md bg-brand/15 flex items-center justify-center flex-shrink-0",
+    iconColor: "text-brand",
+    text: "text-brand",
   },
 
   /**
    * Skills & prompts
-   * Colour: green  #4ADE80
+   * Colour: green  var(--success)
    * Icon:   Code
    */
   skill: {
-    hex: "#4ADE80",
-    iconBox: "w-8 h-8 rounded-md bg-[#4ADE80]/12 flex items-center justify-center flex-shrink-0",
-    iconColor: "text-[#4ADE80]",
-    text: "text-[#4ADE80]",
+    hex: "var(--success)",
+    iconBox: "w-8 h-8 rounded-md bg-success/12 flex items-center justify-center flex-shrink-0",
+    iconColor: "text-success",
+    text: "text-success",
   },
 
   /**
    * MCP servers
-   * Colour: amber  #F59E0B
+   * Colour: amber  var(--warning)
    * Icon:   Server
    */
   mcp: {
-    hex: "#F59E0B",
-    iconBox: "w-8 h-8 rounded-md bg-[#F59E0B]/12 flex items-center justify-center flex-shrink-0",
-    iconColor: "text-[#F59E0B]",
-    text: "text-[#F59E0B]",
+    hex: "var(--warning)",
+    iconBox: "w-8 h-8 rounded-md bg-warning/12 flex items-center justify-center flex-shrink-0",
+    iconColor: "text-warning",
+    text: "text-warning",
   },
 
   /**
    * Project files (CLAUDE.md, AGENTS.md, etc.)
-   * Colour: indigo  #5E6AD2  (same family as agents — both are project-level)
+   * Colour: indigo  var(--brand)  (same family as agents — both are project-level)
    * Icon:   FileText
    */
   file: {
-    hex: "#5E6AD2",
-    iconBox: "w-8 h-8 rounded-md bg-[#5E6AD2]/15 flex items-center justify-center flex-shrink-0",
-    iconColor: "text-[#5E6AD2]",
-    text: "text-[#5E6AD2]",
+    hex: "var(--brand)",
+    iconBox: "w-8 h-8 rounded-md bg-brand/15 flex items-center justify-center flex-shrink-0",
+    iconColor: "text-brand",
+    text: "text-brand",
   },
 
   /**
    * Projects / folders
-   * Colour: indigo  #5E6AD2
+   * Colour: indigo  var(--brand)
    * Icon:   FolderOpen
    */
   project: {
-    hex: "#5E6AD2",
-    iconBox: "w-8 h-8 rounded-md bg-[#5E6AD2]/15 flex items-center justify-center flex-shrink-0",
-    iconColor: "text-[#5E6AD2]",
-    text: "text-[#5E6AD2]",
+    hex: "var(--brand)",
+    iconBox: "w-8 h-8 rounded-md bg-brand/15 flex items-center justify-center flex-shrink-0",
+    iconColor: "text-brand",
+    text: "text-brand",
   },
 
   /**
    * Project templates
-   * Colour: indigo  #5E6AD2  (default; sidebar uses dynamic accent based on contents)
+   * Colour: indigo  var(--brand)  (default; sidebar uses dynamic accent based on contents)
    * Icon:   Layers (nav) / LayoutTemplate (detail)
    */
   projectTemplate: {
-    hex: "#5E6AD2",
-    iconBox: "w-8 h-8 rounded-md bg-[#5E6AD2]/15 flex items-center justify-center flex-shrink-0",
-    iconColor: "text-[#5E6AD2]",
-    text: "text-[#5E6AD2]",
+    hex: "var(--brand)",
+    iconBox: "w-8 h-8 rounded-md bg-brand/15 flex items-center justify-center flex-shrink-0",
+    iconColor: "text-brand",
+    text: "text-brand",
   },
 
   /**
    * File templates (CLAUDE.md starters)
-   * Colour: purple-ish  #8B5CF6  — distinct from project templates
+   * Colour: purple-ish  var(--accent)  — distinct from project templates
    * Icon:   LayoutTemplate
    */
   fileTemplate: {
-    hex: "#8B5CF6",
-    iconBox: "w-8 h-8 rounded-md bg-[#8B5CF6]/15 flex items-center justify-center flex-shrink-0",
-    iconColor: "text-[#8B5CF6]",
-    text: "text-[#8B5CF6]",
+    hex: "var(--accent)",
+    iconBox: "w-8 h-8 rounded-md bg-accent/15 flex items-center justify-center flex-shrink-0",
+    iconColor: "text-accent",
+    text: "text-accent",
   },
   /**
    * Rules (reusable content blocks for project instructions)
-   * Colour: cyan  #22D3EE  — distinct from templates and skills
+   * Colour: cyan  var(--accent-hover)  — distinct from templates and skills
    * Icon:   ScrollText
    */
   rule: {
-    hex: "#22D3EE",
-    iconBox: "w-8 h-8 rounded-md bg-[#22D3EE]/12 flex items-center justify-center flex-shrink-0",
-    iconColor: "text-[#22D3EE]",
-    text: "text-[#22D3EE]",
+    hex: "var(--accent-hover)",
+    iconBox: "w-8 h-8 rounded-md bg-accent-hover/12 flex items-center justify-center flex-shrink-0",
+    iconColor: "text-accent-hover",
+    text: "text-accent-hover",
   },
 } as const;

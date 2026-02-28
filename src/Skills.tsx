@@ -131,10 +131,10 @@ function SkillPreview({ content, source, resources }: SkillPreviewProps) {
       {/* ── Metadata header ───────────────────────────────────────────── */}
       <div className="px-8 pt-6 pb-0">
         {displayName && (
-          <h1 className="text-[20px] font-semibold text-[#F8F8FA] mb-2 leading-tight">{displayName}</h1>
+          <h1 className="text-[20px] font-semibold text-text-base mb-2 leading-tight">{displayName}</h1>
         )}
         {description && (
-          <p className="text-[13px] text-[#C8CAD0] leading-relaxed mb-4">{description}</p>
+          <p className="text-[13px] text-text-muted leading-relaxed mb-4">{description}</p>
         )}
 
         {/* Source link (remote skills only) */}
@@ -144,7 +144,7 @@ function SkillPreview({ content, source, resources }: SkillPreviewProps) {
               href={`https://github.com/${source.source}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-[12px] text-[#E5E6EA] hover:text-white transition-colors"
+              className="inline-flex items-center gap-1.5 text-[12px] text-text-base hover:text-text-base transition-colors"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" className="opacity-70">
                 <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
@@ -156,14 +156,14 @@ function SkillPreview({ content, source, resources }: SkillPreviewProps) {
 
         {/* Companion resources */}
         {hasResources && (
-          <div className="mb-5 rounded-lg border border-[#33353A] overflow-hidden">
-            <div className="px-3 py-2 bg-[#2D2E36]/40 border-b border-[#33353A]">
-              <p className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+          <div className="mb-5 rounded-lg border border-border-strong/40 overflow-hidden">
+            <div className="px-3 py-2 bg-bg-sidebar/40 border-b border-border-strong/40">
+              <p className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
                 Additional Resources
               </p>
             </div>
 
-            <div className="divide-y divide-[#33353A]">
+            <div className="divide-y divide-surface">
               {/* Directories — clickable to expand */}
               {resources!.dirs.map(dir => {
                 const isOpen = expandedDirs.has(dir.name);
@@ -171,31 +171,31 @@ function SkillPreview({ content, source, resources }: SkillPreviewProps) {
                   <div key={dir.name}>
                     <button
                       onClick={() => toggleDir(dir.name)}
-                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#2D2E36]/60 transition-colors text-left"
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-sidebar/60 transition-colors text-left"
                     >
                       {/* Chevron */}
                       <svg
                         width="10" height="10" viewBox="0 0 10 10" fill="currentColor"
-                        className={`shrink-0 text-[#C8CAD0]/50 transition-transform ${isOpen ? "rotate-90" : ""}`}
+                        className={`shrink-0 text-text-muted transition-transform ${isOpen ? "rotate-90" : ""}`}
                       >
                         <path d="M3 2l4 3-4 3V2z"/>
                       </svg>
                       {/* Folder icon */}
-                      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-[#8B93E6]">
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-brand-light">
                         <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
                       </svg>
-                      <span className="text-[12px] font-mono text-[#C8CAD0]">{dir.name}/</span>
-                      <span className="text-[11px] text-[#C8CAD0]/40 ml-auto">{dir.files.length} {dir.files.length === 1 ? "file" : "files"}</span>
+                      <span className="text-[12px] font-mono text-text-muted">{dir.name}/</span>
+                      <span className="text-[11px] text-text-muted ml-auto">{dir.files.length} {dir.files.length === 1 ? "file" : "files"}</span>
                     </button>
 
                     {isOpen && (
-                      <div className="bg-[#1A1A1E]/40 border-t border-[#33353A]/50">
+                      <div className="bg-bg-input/40 border-t border-border-strong/50">
                         {dir.files.map(f => (
                           <div key={f.path} className="flex items-center gap-2 pl-9 pr-3 py-1.5">
-                            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-[#C8CAD0]/40">
+                            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-text-muted">
                               <path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25V1.75z"/>
                             </svg>
-                            <span className="text-[12px] font-mono text-[#C8CAD0]/70">{f.path}</span>
+                            <span className="text-[12px] font-mono text-text-muted">{f.path}</span>
                           </div>
                         ))}
                       </div>
@@ -207,10 +207,10 @@ function SkillPreview({ content, source, resources }: SkillPreviewProps) {
               {/* Root-level files */}
               {resources!.root_files.map(f => (
                 <div key={f.path} className="flex items-center gap-2 px-3 py-2">
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-[#C8CAD0]/40 ml-[22px]">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-text-muted ml-[22px]">
                     <path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25V1.75z"/>
                   </svg>
-                  <span className="text-[12px] font-mono text-[#C8CAD0]/70">{f.path}</span>
+                  <span className="text-[12px] font-mono text-text-muted">{f.path}</span>
                 </div>
               ))}
             </div>
@@ -218,7 +218,7 @@ function SkillPreview({ content, source, resources }: SkillPreviewProps) {
         )}
 
         {(displayName || description || source || hasResources) && (
-          <div className="border-b border-[#33353A] mb-0" />
+          <div className="border-b border-border-strong/40 mb-0" />
         )}
       </div>
 
@@ -487,17 +487,17 @@ export default function Skills() {
   const selectedEntry = skills.find(s => s.name === selectedSkill);
 
   return (
-    <div className="flex h-full w-full bg-[#222327]">
+    <div className="flex h-full w-full bg-bg-base">
 
       {/* ── Left Sidebar ─────────────────────────────────────────────────── */}
       <div
-        className="flex-shrink-0 flex flex-col border-r border-[#33353A] bg-[#1A1A1E]/50 relative"
+        className="flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50 relative"
         style={{ width: sidebarWidth }}
       >
         {/* Header */}
-        <div className="px-4 pt-4 pb-3 border-b border-[#33353A]">
+        <div className="px-4 pt-4 pb-3 border-b border-border-strong/40">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+            <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
               Skills
             </span>
             <div className="flex items-center gap-1">
@@ -505,7 +505,7 @@ export default function Skills() {
                 <button
                   onClick={handleSyncAll}
                   disabled={syncingAll}
-                  className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded disabled:opacity-50"
+                  className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded disabled:opacity-50"
                   title={`Sync all (${unsyncedCount} unsynced)`}
                 >
                   <RefreshCw size={13} className={syncingAll ? "animate-spin" : ""} />
@@ -513,7 +513,7 @@ export default function Skills() {
               )}
               <button
                 onClick={startCreateNew}
-                className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded"
+                className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
                 title="New Skill"
               >
                 <Plus size={14} />
@@ -529,8 +529,8 @@ export default function Skills() {
                 onClick={() => setFilter(f)}
                 className={`flex-1 py-1 rounded text-[11px] font-medium transition-colors ${
                   filter === f
-                    ? "bg-[#2D2E36] text-[#F8F8FA]"
-                    : "text-[#C8CAD0] hover:text-[#F8F8FA]"
+                    ? "bg-bg-sidebar text-text-base"
+                    : "text-text-muted hover:text-text-base"
                 }`}
               >
                 {f === "all" ? `All ${skills.length}` : f === "remote" ? `Remote ${remoteCount}` : `Local ${localCount}`}
@@ -540,18 +540,18 @@ export default function Skills() {
 
           {/* Search */}
           <div className="relative">
-            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#C8CAD0] pointer-events-none" />
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
             <input
               type="text"
               placeholder="Search skills…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full pl-7 pr-7 py-1.5 rounded bg-[#2D2E36] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] outline-none text-[12px] text-[#F8F8FA] placeholder-[#C8CAD0]/60 transition-colors"
+              className="w-full pl-7 pr-7 py-1.5 rounded bg-bg-sidebar border border-border-strong/40 hover:border-border-strong focus:border-brand outline-none text-[12px] text-text-base placeholder-text-muted/60 transition-colors"
             />
             {search && (
               <button
                 onClick={() => setSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
               >
                 <X size={11} />
               </button>
@@ -563,18 +563,18 @@ export default function Skills() {
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
           {filteredSkills.length === 0 && !isCreating ? (
             <div className="px-4 py-6 text-center">
-              <p className="text-[13px] text-[#C8CAD0]">
+              <p className="text-[13px] text-text-muted">
                 {searchLower ? `No skills match "${search}".` : "No skills found."}
               </p>
             </div>
           ) : (
             <ul className="space-y-px px-2">
               {isCreating && (
-                <li className="flex items-center gap-3 px-3 py-2.5 rounded-md text-[13px] bg-[#2D2E36] text-[#F8F8FA]">
+                <li className="flex items-center gap-3 px-3 py-2.5 rounded-md text-[13px] bg-bg-sidebar text-text-base">
                   <div className={ICONS.skill.iconBox}>
                     <Code size={15} className={ICONS.skill.iconColor} />
                   </div>
-                  <span className={newSkillName ? "text-[#F8F8FA] font-medium" : "italic text-[#C8CAD0]"}>
+                  <span className={newSkillName ? "text-text-base font-medium" : "italic text-text-muted"}>
                     {newSkillName || "New Skill…"}
                   </span>
                 </li>
@@ -589,7 +589,7 @@ export default function Skills() {
                     <button
                       onClick={() => loadSkillContent(skill.name)}
                       className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors ${
-                        isSelected ? "bg-[#2D2E36]" : "hover:bg-[#2D2E36]/50"
+                        isSelected ? "bg-bg-sidebar" : "hover:bg-bg-sidebar/50"
                       }`}
                     >
                       <div className={ICONS.skill.iconBox}>
@@ -598,7 +598,7 @@ export default function Skills() {
                       <div className="flex-1 min-w-0">
                       {/* Top row: name + action buttons */}
                       <div className="flex items-center gap-2">
-                        <span className={`flex-1 text-[13px] font-medium truncate min-w-0 ${isSelected ? "text-[#F8F8FA]" : "text-[#E5E6EA] group-hover:text-[#F8F8FA]"}`}>
+                        <span className={`flex-1 text-[13px] font-medium truncate min-w-0 ${isSelected ? "text-text-base" : "text-text-base group-hover:text-text-base"}`}>
                           {skill.name}
                         </span>
                         {/* Hover actions */}
@@ -607,7 +607,7 @@ export default function Skills() {
                             <span
                               role="button"
                               onClick={(e) => handleSyncSkill(skill.name, e)}
-                              className="p-0.5 text-[#C8CAD0] hover:text-[#5E6AD2] rounded transition-colors"
+                              className="p-0.5 text-text-muted hover:text-brand rounded transition-colors"
                               title="Sync to both locations"
                             >
                               <RefreshCw size={11} className={syncingSkill === skill.name ? "animate-spin" : ""} />
@@ -616,7 +616,7 @@ export default function Skills() {
                           <span
                             role="button"
                             onClick={(e) => handleDelete(skill.name, e)}
-                            className="p-0.5 text-[#C8CAD0] hover:text-[#FF6B6B] rounded transition-colors"
+                            className="p-0.5 text-text-muted hover:text-danger rounded transition-colors"
                             title="Delete"
                           >
                             <X size={11} />
@@ -627,29 +627,29 @@ export default function Skills() {
                       {/* Bottom row: origin + location badges */}
                       <div className="flex items-center gap-1.5 mt-1">
                         {isRemote ? (
-                          <span className="flex items-center gap-1 text-[10px] text-[#4ADE80]">
+                          <span className="flex items-center gap-1 text-[10px] text-success">
                             <Globe size={9} />
                             <span className="truncate max-w-[120px]">{skill.source!.source}</span>
                           </span>
                         ) : (
-                          <span className="flex items-center gap-1 text-[10px] text-[#C8CAD0]">
+                          <span className="flex items-center gap-1 text-[10px] text-text-muted">
                             <HardDrive size={9} />
                             <span>local</span>
                           </span>
                         )}
-                        <span className="text-[10px] text-[#C8CAD0]/30">·</span>
+                        <span className="text-[10px] text-text-muted">·</span>
                         {skill.in_agents && (
-                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-[#5E6AD2]/20 text-[#8B93E6] leading-none" title="~/.agents/skills/">A</span>
+                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-brand/20 text-brand-light leading-none" title="~/.agents/skills/">A</span>
                         )}
                         {skill.in_claude && (
                           <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-[#D2875E]/20 text-[#E6A87B] leading-none" title="~/.claude/skills/">C</span>
                         )}
                         {!synced && (
-                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-[#F59E0B]/15 text-[#F59E0B] leading-none" title="Not synced to both locations">!</span>
+                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-warning/15 text-warning leading-none" title="Not synced to both locations">!</span>
                         )}
                         {skill.has_resources && (
                           <span title="Has additional resources">
-                            <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" className="text-[#C8CAD0]/40">
+                            <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" className="text-text-muted">
                               <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
                             </svg>
                           </span>
@@ -667,7 +667,7 @@ export default function Skills() {
         {/* Resize handle */}
         <div
           onMouseDown={onMouseDown}
-          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-[#5E6AD2]/40 active:bg-[#5E6AD2]/60 transition-colors z-10"
+          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-brand/40 active:bg-brand/60 transition-colors z-10"
         />
       </div>
 
@@ -685,10 +685,10 @@ export default function Skills() {
           <div className="flex-1 flex flex-col h-full min-h-0">
 
             {/* Header */}
-            <div className="h-11 px-5 border-b border-[#33353A] flex items-center justify-between shrink-0">
+            <div className="h-11 px-5 border-b border-border-strong/40 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2 min-w-0">
                 <Plus size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
-                <span className="text-[14px] font-medium text-[#F8F8FA]">New Skill</span>
+                <span className="text-[14px] font-medium text-text-base">New Skill</span>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <button
@@ -701,13 +701,13 @@ export default function Skills() {
                     setNewSkillDescription("");
                     setFieldErrors({ name: null, description: null });
                   }}
-                  className="px-3 py-1.5 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium transition-colors"
+                  className="px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleSave}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded text-[12px] font-medium transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors"
                 >
                   <Check size={12} /> Create Skill
                 </button>
@@ -715,15 +715,15 @@ export default function Skills() {
             </div>
 
             {/* Frontmatter fields */}
-            <div className="px-6 pt-5 pb-4 border-b border-[#33353A] shrink-0 space-y-4">
+            <div className="px-6 pt-5 pb-4 border-b border-border-strong/40 shrink-0 space-y-4">
 
               {/* name */}
               <div>
                 <div className="flex items-baseline justify-between mb-1.5">
-                  <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                  <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
                     Name <span className="text-red-400 ml-0.5">*</span>
                   </label>
-                  <span className={`text-[11px] tabular-nums ${newSkillName.length > 58 ? (newSkillName.length > 64 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                  <span className={`text-[11px] tabular-nums ${newSkillName.length > 58 ? (newSkillName.length > 64 ? "text-red-400" : "text-warning") : "text-text-muted"}`}>
                     {newSkillName.length}/64
                   </span>
                 </div>
@@ -739,15 +739,15 @@ export default function Skills() {
                   }}
                   autoFocus
                   maxLength={64}
-                  className={`w-full px-3 py-2 rounded-md bg-[#2D2E36] border outline-none text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 font-mono transition-colors ${
-                    fieldErrors.name ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                  className={`w-full px-3 py-2 rounded-md bg-bg-sidebar border outline-none text-[13px] text-text-base placeholder-text-muted/40 font-mono transition-colors ${
+                    fieldErrors.name ? "border-red-500/60 focus:border-red-500" : "border-border-strong/40 hover:border-border-strong focus:border-brand"
                   }`}
                   spellCheck={false}
                 />
                 {fieldErrors.name ? (
                   <p className="mt-1.5 text-[11px] text-red-400">{fieldErrors.name}</p>
                 ) : (
-                  <p className="mt-1.5 text-[11px] text-[#C8CAD0]/50">
+                  <p className="mt-1.5 text-[11px] text-text-muted">
                     Lowercase letters, digits, and hyphens only. Becomes the directory name under <code className="font-mono">~/.agents/skills/</code>.
                   </p>
                 )}
@@ -756,10 +756,10 @@ export default function Skills() {
               {/* description */}
               <div>
                 <div className="flex items-baseline justify-between mb-1.5">
-                  <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                  <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
                     Description <span className="text-red-400 ml-0.5">*</span>
                   </label>
-                  <span className={`text-[11px] tabular-nums ${newSkillDescription.length > 900 ? (newSkillDescription.length > 1024 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                  <span className={`text-[11px] tabular-nums ${newSkillDescription.length > 900 ? (newSkillDescription.length > 1024 ? "text-red-400" : "text-warning") : "text-text-muted"}`}>
                     {newSkillDescription.length}/1024
                   </span>
                 </div>
@@ -772,8 +772,8 @@ export default function Skills() {
                   }}
                   rows={3}
                   maxLength={1024}
-                  className={`w-full px-3 py-2 rounded-md bg-[#2D2E36] border outline-none text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 resize-none transition-colors leading-relaxed ${
-                    fieldErrors.description ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                  className={`w-full px-3 py-2 rounded-md bg-bg-sidebar border outline-none text-[13px] text-text-base placeholder-text-muted/40 resize-none transition-colors leading-relaxed ${
+                    fieldErrors.description ? "border-red-500/60 focus:border-red-500" : "border-border-strong/40 hover:border-border-strong focus:border-brand"
                   }`}
                   spellCheck={false}
                 />
@@ -786,14 +786,14 @@ export default function Skills() {
             {/* Body editor */}
             <div className="flex-1 min-h-0 flex flex-col">
               <div className="px-6 pt-3 pb-2 shrink-0">
-                <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
                   Body
                 </label>
               </div>
               <textarea
                 value={editBody}
                 onChange={(e) => setEditBody(e.target.value)}
-                className="flex-1 px-6 pb-6 resize-none outline-none font-mono text-[13px] bg-[#222327] text-[#F8F8FA] leading-relaxed custom-scrollbar"
+                className="flex-1 px-6 pb-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar"
                 spellCheck={false}
               />
             </div>
@@ -804,19 +804,19 @@ export default function Skills() {
           <div className="flex-1 flex flex-col h-full min-h-0">
 
             {/* Header */}
-            <div className="h-11 px-5 border-b border-[#33353A] flex items-center justify-between shrink-0">
+            <div className="h-11 px-5 border-b border-border-strong/40 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
                 <FileText size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
                 <>
-                  <h3 className="text-[14px] font-medium text-[#F8F8FA] truncate">{selectedSkill}</h3>
+                  <h3 className="text-[14px] font-medium text-text-base truncate">{selectedSkill}</h3>
                   {selectedEntry?.source && (
                     <>
-                      <span className="text-[#33353A]">/</span>
+                      <span className="text-surface">/</span>
                       <a
                         href={`https://github.com/${selectedEntry.source.source}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors truncate"
+                        className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-base transition-colors truncate"
                         onClick={e => e.stopPropagation()}
                       >
                         <Github size={11} />
@@ -831,7 +831,7 @@ export default function Skills() {
                 {!isEditing && (
                   <button
                     onClick={() => setIsEditing(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
                   >
                     <Edit2 size={12} /> Edit
                   </button>
@@ -840,13 +840,13 @@ export default function Skills() {
                   <>
                     <button
                       onClick={() => { setIsEditing(false); loadSkillContent(selectedSkill!); }}
-                      className="px-3 py-1.5 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium transition-colors"
+                      className="px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleSave}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded text-[12px] font-medium transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors"
                     >
                       <Check size={12} /> Save
                     </button>
@@ -860,15 +860,15 @@ export default function Skills() {
               {isEditing ? (
                 <>
                   {/* Frontmatter fields */}
-                  <div className="px-6 pt-5 pb-4 border-b border-[#33353A] shrink-0 space-y-4">
+                  <div className="px-6 pt-5 pb-4 border-b border-border-strong/40 shrink-0 space-y-4">
 
                     {/* name */}
                     <div>
                       <div className="flex items-baseline justify-between mb-1.5">
-                        <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                        <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
                           Name <span className="text-red-400 ml-0.5">*</span>
                         </label>
-                        <span className={`text-[11px] tabular-nums ${editName.length > 58 ? (editName.length > 64 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                        <span className={`text-[11px] tabular-nums ${editName.length > 58 ? (editName.length > 64 ? "text-red-400" : "text-warning") : "text-text-muted"}`}>
                           {editName.length}/64
                         </span>
                       </div>
@@ -882,8 +882,8 @@ export default function Skills() {
                           setFieldErrors(prev => ({ ...prev, name: validateSkillName(raw) }));
                         }}
                         maxLength={64}
-                        className={`w-full px-3 py-2 rounded-md bg-[#2D2E36] border outline-none text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 font-mono transition-colors ${
-                          fieldErrors.name ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                        className={`w-full px-3 py-2 rounded-md bg-bg-sidebar border outline-none text-[13px] text-text-base placeholder-text-muted/40 font-mono transition-colors ${
+                          fieldErrors.name ? "border-red-500/60 focus:border-red-500" : "border-border-strong/40 hover:border-border-strong focus:border-brand"
                         }`}
                         spellCheck={false}
                       />
@@ -895,10 +895,10 @@ export default function Skills() {
                     {/* description */}
                     <div>
                       <div className="flex items-baseline justify-between mb-1.5">
-                        <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                        <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
                           Description <span className="text-red-400 ml-0.5">*</span>
                         </label>
-                        <span className={`text-[11px] tabular-nums ${editDescription.length > 900 ? (editDescription.length > 1024 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                        <span className={`text-[11px] tabular-nums ${editDescription.length > 900 ? (editDescription.length > 1024 ? "text-red-400" : "text-warning") : "text-text-muted"}`}>
                           {editDescription.length}/1024
                         </span>
                       </div>
@@ -911,8 +911,8 @@ export default function Skills() {
                         }}
                         rows={3}
                         maxLength={1024}
-                        className={`w-full px-3 py-2 rounded-md bg-[#2D2E36] border outline-none text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 resize-none transition-colors leading-relaxed ${
-                          fieldErrors.description ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                        className={`w-full px-3 py-2 rounded-md bg-bg-sidebar border outline-none text-[13px] text-text-base placeholder-text-muted/40 resize-none transition-colors leading-relaxed ${
+                          fieldErrors.description ? "border-red-500/60 focus:border-red-500" : "border-border-strong/40 hover:border-border-strong focus:border-brand"
                         }`}
                         spellCheck={false}
                       />
@@ -925,14 +925,14 @@ export default function Skills() {
                   {/* Body textarea */}
                   <div className="flex-1 min-h-0 flex flex-col">
                     <div className="px-6 pt-3 pb-2 shrink-0">
-                      <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                      <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
                         Body
                       </label>
                     </div>
                     <textarea
                       value={editBody}
                       onChange={(e) => setEditBody(e.target.value)}
-                      className="flex-1 px-6 pb-6 resize-none outline-none font-mono text-[13px] bg-[#222327] text-[#F8F8FA] leading-relaxed custom-scrollbar"
+                      className="flex-1 px-6 pb-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar"
                       spellCheck={false}
                     />
                   </div>
@@ -948,27 +948,27 @@ export default function Skills() {
                 </div>
               ) : (
                 <div className="h-full flex items-center justify-center">
-                  <span className="text-[13px] text-[#C8CAD0] italic">This skill is empty. Click Edit to add instructions.</span>
+                  <span className="text-[13px] text-text-muted italic">This skill is empty. Click Edit to add instructions.</span>
                 </div>
               )}
             </div>
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-[#4ADE80]/10 border border-[#4ADE80]/20 flex items-center justify-center">
+            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-success/10 border border-success/20 flex items-center justify-center">
               <Code size={22} className={ICONS.skill.iconColor} strokeWidth={1.5} />
             </div>
-            <h2 className="text-[15px] font-medium text-[#F8F8FA] mb-2">
+            <h2 className="text-[15px] font-medium text-text-base mb-2">
               {skills.length === 0 ? "No skills yet" : "No skill selected"}
             </h2>
-            <p className="text-[13px] text-[#C8CAD0] leading-relaxed max-w-xs mb-6">
+            <p className="text-[13px] text-text-muted leading-relaxed max-w-xs mb-6">
               {skills.length === 0
                 ? "Skills are reusable instruction sets that agents load on demand. Create your first skill to get started."
                 : "Select a skill from the list to view its contents, or create a new one."}
             </p>
             <button
               onClick={startCreateNew}
-              className="flex items-center gap-2 px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded-lg text-[13px] font-medium transition-colors"
+              className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors"
             >
               <Plus size={14} />
               New Skill

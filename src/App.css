@@ -1,6 +1,249 @@
 @import "tailwindcss";
 
+@theme {
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-active: var(--brand-active);
+  --color-brand-light: var(--brand-light);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-light: var(--accent-light);
+  --color-accent-hover-light: var(--accent-hover-light);
+
+  --color-bg-base: var(--bg-base);
+  --color-bg-sidebar: var(--bg-sidebar);
+  --color-bg-input: var(--bg-input);
+  --color-bg-input-dark: var(--bg-input-dark);
+
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+
+  --color-border-strong: var(--border-strong);
+
+  --color-text-base: var(--text-base);
+  --color-text-muted: var(--text-muted);
+
+  --color-success: var(--success);
+  --color-success-light: var(--success-light);
+  --color-success-active: var(--success-active);
+  --color-warning: var(--warning);
+  --color-warning-hover: var(--warning-hover);
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+}
+
+:root {
+  /* Default: Sleek Hacker */
+  --brand: #3b82f6; /* Electric Blue */
+  --brand-hover: #60a5fa;
+  --brand-active: #2563eb;
+  --brand-light: #93c5fd;
+  
+  --accent: #10b981; /* Emerald Green */
+  --accent-hover: #34d399;
+  --accent-light: #6ee7b7;
+  --accent-hover-light: #a7f3d0;
+
+  --bg-base: #0f172a;
+  --bg-sidebar: #020617;
+  --bg-input: #1e293b;
+  --bg-input-dark: #0f172a;
+
+  --surface: #1e293b;
+  --surface-hover: #334155;
+  --surface-active: #475569;
+
+  --border-strong: #334155;
+
+  --text-base: #f8fafc;
+  --text-muted: #94a3b8;
+
+  --success: #10b981;
+  --success-light: #34d399;
+  --success-active: #059669;
+  --warning: #f59e0b;
+  --warning-hover: #fbbf24;
+  --danger: #ef4444;
+  --danger-hover: #f87171;
+}
+
+[data-theme="neon-cyberpunk"] {
+  --brand: #00f0ff; /* Cyan */
+  --brand-hover: #5eead4;
+  --brand-active: #0891b2;
+  --brand-light: #a5f3fc;
+  
+  --accent: #b026ff; /* Electric Purple */
+  --accent-hover: #c084fc;
+  --accent-light: #e879f9;
+  --accent-hover-light: #f0abfc;
+
+  --bg-base: #09090b;
+  --bg-sidebar: #000000;
+  --bg-input: #18181b;
+  --bg-input-dark: #09090b;
+
+  --surface: #18181b;
+  --surface-hover: #27272a;
+  --surface-active: #3f3f46;
+
+  --border-strong: #27272a;
+
+  --text-base: #fafafa;
+  --text-muted: #a1a1aa;
+
+  --success: #00ff9d;
+  --success-light: #6ee7b7;
+  --success-active: #059669;
+  --warning: #ffea00;
+  --warning-hover: #fde047;
+  --danger: #ff0055;
+  --danger-hover: #f43f5e;
+}
+
+[data-theme="synthwave-glow"] {
+  --brand: #ec4899; /* Magenta */
+  --brand-hover: #f472b6;
+  --brand-active: #db2777;
+  --brand-light: #fbcfe8;
+  
+  --accent: #f59e0b; /* Amber */
+  --accent-hover: #fbbf24;
+  --accent-light: #fcd34d;
+  --accent-hover-light: #fde68a;
+
+  --bg-base: #2e1065; /* Dark Purple */
+  --bg-sidebar: #1e1b4b;
+  --bg-input: #4c1d95;
+  --bg-input-dark: #2e1065;
+
+  --surface: #4c1d95;
+  --surface-hover: #5b21b6;
+  --surface-active: #6d28d9;
+
+  --border-strong: #5b21b6;
+
+  --text-base: #fff1f2;
+  --text-muted: #d8b4fe;
+
+  --success: #34d399;
+  --success-light: #6ee7b7;
+  --success-active: #10b981;
+  --warning: #fcd34d;
+  --warning-hover: #fde047;
+  --danger: #fb7185;
+  --danger-hover: #fda4af;
+}
+
+[data-theme="minimalist-coral"] {
+  --brand: #f97316; /* Coral/Orange */
+  --brand-hover: #fb923c;
+  --brand-active: #ea580c;
+  --brand-light: #fdba74;
+  
+  --accent: #64748b; /* Slate */
+  --accent-hover: #94a3b8;
+  --accent-light: #cbd5e1;
+  --accent-hover-light: #e2e8f0;
+
+  --bg-base: #18181b;
+  --bg-sidebar: #09090b;
+  --bg-input: #27272a;
+  --bg-input-dark: #18181b;
+
+  --surface: #27272a;
+  --surface-hover: #3f3f46;
+  --surface-active: #52525b;
+
+  --border-strong: #3f3f46;
+
+  --text-base: #fafafa;
+  --text-muted: #a1a1aa;
+
+  --success: #22c55e;
+  --success-light: #4ade80;
+  --success-active: #16a34a;
+  --warning: #eab308;
+  --warning-hover: #facc15;
+  --danger: #ef4444;
+  --danger-hover: #f87171;
+}
+
+
+
+
+[data-theme="arctic-light"] {
+  --brand: #0ea5e9; /* Sky Blue */
+  --brand-hover: #38bdf8;
+  --brand-active: #0284c7;
+  --brand-light: #7dd3fc;
+  
+  --accent: #14b8a6; /* Teal */
+  --accent-hover: #2dd4bf;
+  --accent-light: #5eead4;
+  --accent-hover-light: #99f6e4;
+
+  --bg-base: #f1f5f9;
+  --bg-sidebar: #e2e8f0;
+  --bg-input: #ffffff;
+  --bg-input-dark: #f8fafc;
+
+  --surface: #ffffff;
+  --surface-hover: #f8fafc;
+  --surface-active: #f1f5f9;
+
+  --border-strong: #cbd5e1;
+
+  --text-base: #0f172a;
+  --text-muted: #64748b;
+
+  --success: #10b981;
+  --success-light: #34d399;
+  --success-active: #059669;
+  --warning: #f59e0b;
+  --warning-hover: #fbbf24;
+  --danger: #ef4444;
+  --danger-hover: #f87171;
+}
+
+[data-theme="corporate-light"] {
+  --brand: #4f46e5; /* Indigo */
+  --brand-hover: #6366f1;
+  --brand-active: #4338ca;
+  --brand-light: #a5b4fc;
+  
+  --accent: #475569; /* Slate */
+  --accent-hover: #64748b;
+  --accent-light: #94a3b8;
+  --accent-hover-light: #cbd5e1;
+
+  --bg-base: #f8fafc;
+  --bg-sidebar: #f1f5f9;
+  --bg-input: #ffffff;
+  --bg-input-dark: #f8fafc;
+
+  --surface: #ffffff;
+  --surface-hover: #f1f5f9;
+  --surface-active: #e2e8f0;
+
+  --border-strong: #cbd5e1;
+
+  --text-base: #1e293b;
+  --text-muted: #64748b;
+
+  --success: #22c55e;
+  --success-light: #4ade80;
+  --success-active: #16a34a;
+  --warning: #eab308;
+  --warning-hover: #facc15;
+  --danger: #ef4444;
+  --danger-hover: #f87171;
+}
+
 /* Tauri drag regions: prevent text selection while dragging the titlebar */
+
 [data-tauri-drag-region] {
   -webkit-user-select: none;
   user-select: none;

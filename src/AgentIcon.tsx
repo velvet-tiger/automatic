@@ -53,5 +53,5 @@ export function AgentIcon({ agentId, size, className }: AgentIconProps) {
     );
   }
 
-  return <Bot size={size} className={className ?? "text-[#F8F8FA]"} />;
+  return <Bot size={size} className={className ?? "text-text-base"} />;
 }

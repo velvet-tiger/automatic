@@ -374,7 +374,7 @@ function EditorIcon({ id, iconPath }: { id: string; iconPath?: string }) {
         </svg>
       );
     default:
-      return <FolderOpen size={14} className="text-[#C8CAD0]" />;
+      return <FolderOpen size={14} className="text-text-muted" />;
   }
 }
 
@@ -451,28 +451,28 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="flex flex-col bg-[#16161A] border border-[#33353A] rounded-xl shadow-2xl overflow-hidden"
+        className="flex flex-col bg-bg-sidebar border border-border-strong/40 rounded-xl shadow-2xl overflow-hidden"
         style={{ width: "min(900px, 90vw)", maxHeight: "80vh" }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-[#2A2B32] flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border-strong flex-shrink-0">
           <div className="flex items-center gap-3">
-            <span className="text-[11px] font-medium text-[#F59E0B]/70 uppercase tracking-wider">{agentLabel}</span>
-            <span className="text-[#44474F]">/</span>
-            <span className="text-[13px] font-mono text-[#F8F8FA]">{file.path}</span>
+            <span className="text-[11px] font-medium text-warning/70 uppercase tracking-wider">{agentLabel}</span>
+            <span className="text-border-strong">/</span>
+            <span className="text-[13px] font-mono text-text-base">{file.path}</span>
             <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded uppercase tracking-wider ${
               file.reason === "modified"
-                ? "bg-[#F59E0B]/15 text-[#F59E0B]"
+                ? "bg-warning/15 text-warning"
                 : file.reason === "missing"
-                ? "bg-[#FF6B6B]/15 text-[#FF6B6B]"
+                ? "bg-danger/15 text-danger"
                 : file.reason === "stale"
-                ? "bg-[#8B8D99]/15 text-[#8B8D99]"
-                : "bg-[#8B8D99]/15 text-[#8B8D99]"
+                ? "bg-text-muted/15 text-text-muted"
+                : "bg-text-muted/15 text-text-muted"
             }`}>{file.reason}</span>
           </div>
           <button
             onClick={onClose}
-            className="text-[#8B8D99] hover:text-[#F8F8FA] transition-colors"
+            className="text-text-muted hover:text-text-base transition-colors"
           >
             <X size={16} />
           </button>
@@ -480,14 +480,14 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
 
         {/* Legend */}
         {diffLines && (
-          <div className="flex items-center gap-4 px-5 py-2 border-b border-[#2A2B32] flex-shrink-0 bg-[#1A1A1E]">
+          <div className="flex items-center gap-4 px-5 py-2 border-b border-border-strong flex-shrink-0 bg-bg-input">
             <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded-sm bg-[#4ADE80]/20 border border-[#4ADE80]/40" />
-              <span className="text-[11px] text-[#8B8D99]">On disk (current)</span>
+              <div className="w-3 h-3 rounded-sm bg-success/20 border border-success/40" />
+              <span className="text-[11px] text-text-muted">On disk (current)</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded-sm bg-[#FF6B6B]/20 border border-[#FF6B6B]/40" />
-              <span className="text-[11px] text-[#8B8D99]">Automatic would generate (expected)</span>
+              <div className="w-3 h-3 rounded-sm bg-danger/20 border border-danger/40" />
+              <span className="text-[11px] text-text-muted">Automatic would generate (expected)</span>
             </div>
           </div>
         )}
@@ -502,33 +502,33 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
                     key={idx}
                     className={
                       line.type === "added"
-                        ? "bg-[#4ADE80]/10 hover:bg-[#4ADE80]/15"
+                        ? "bg-success/10 hover:bg-success/15"
                         : line.type === "removed"
-                        ? "bg-[#FF6B6B]/10 hover:bg-[#FF6B6B]/15"
-                        : "hover:bg-[#1E1E24]"
+                        ? "bg-danger/10 hover:bg-danger/15"
+                        : "hover:bg-surface-hover"
                     }
                   >
                     {/* Line number: expected (a) */}
-                    <td className="select-none text-right text-[#44474F] px-3 py-0.5 w-12 border-r border-[#2A2B32] min-w-[3rem]">
+                    <td className="select-none text-right text-border-strong px-3 py-0.5 w-12 border-r border-border-strong min-w-[3rem]">
                       {line.lineNo.a ?? ""}
                     </td>
                     {/* Line number: actual (b) */}
-                    <td className="select-none text-right text-[#44474F] px-3 py-0.5 w-12 border-r border-[#2A2B32] min-w-[3rem]">
+                    <td className="select-none text-right text-border-strong px-3 py-0.5 w-12 border-r border-border-strong min-w-[3rem]">
                       {line.lineNo.b ?? ""}
                     </td>
                     {/* Sign */}
                     <td className={`select-none px-2 py-0.5 w-5 text-center font-bold ${
-                      line.type === "added" ? "text-[#4ADE80]" : line.type === "removed" ? "text-[#FF6B6B]" : "text-[#44474F]"
+                      line.type === "added" ? "text-success" : line.type === "removed" ? "text-danger" : "text-border-strong"
                     }`}>
                       {line.type === "added" ? "+" : line.type === "removed" ? "−" : " "}
                     </td>
                     {/* Content */}
                     <td className={`px-3 py-0.5 whitespace-pre ${
                       line.type === "added"
-                        ? "text-[#4ADE80]"
+                        ? "text-success"
                         : line.type === "removed"
-                        ? "text-[#FF6B6B]"
-                        : "text-[#C8CAD0]"
+                        ? "text-danger"
+                        : "text-text-muted"
                     }`}>
                       {line.content}
                     </td>
@@ -538,23 +538,23 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
             </table>
           ) : (
             /* Non-modified reasons: nothing to diff — show a descriptive message */
-            <div className="flex flex-col items-center justify-center h-full py-16 text-[#8B8D99]">
+            <div className="flex flex-col items-center justify-center h-full py-16 text-text-muted">
               {file.reason === "missing" && (
                 <>
-                  <p className="text-[13px] font-medium text-[#F8F8FA] mb-2">File is missing on disk</p>
+                  <p className="text-[13px] font-medium text-text-base mb-2">File is missing on disk</p>
                   <p className="text-[12px]">Automatic would create this file. Sync the project to resolve.</p>
                 </>
               )}
               {file.reason === "stale" && (
                 <>
-                  <p className="text-[13px] font-medium text-[#F8F8FA] mb-2">Stale directory</p>
+                  <p className="text-[13px] font-medium text-text-base mb-2">Stale directory</p>
                   <p className="text-[12px]">This skill directory exists on disk but is no longer in the project config.</p>
                   <p className="text-[12px] mt-1">Sync the project to remove it.</p>
                 </>
               )}
               {file.reason === "unreadable" && (
                 <>
-                  <p className="text-[13px] font-medium text-[#F8F8FA] mb-2">File could not be read</p>
+                  <p className="text-[13px] font-medium text-text-base mb-2">File could not be read</p>
                   <p className="text-[12px]">Check file permissions and try again.</p>
                 </>
               )}
@@ -563,10 +563,10 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[#2A2B32] flex-shrink-0">
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border-strong flex-shrink-0">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
+            className="px-3 py-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
           >
             Close
           </button>
@@ -1511,19 +1511,19 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
   return (
     <>
-    <div className="flex h-full w-full bg-[#222327]">
+    <div className="flex h-full w-full bg-bg-base">
       {/* Left sidebar - project list */}
       <div
-        className="flex-shrink-0 flex flex-col border-r border-[#33353A] bg-[#1A1A1E]/50 relative"
+        className="flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50 relative"
         style={{ width: sidebarWidth }}
       >
-        <div className="h-11 px-4 border-b border-[#33353A] flex justify-between items-center bg-[#222327]/30">
-          <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+        <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center bg-bg-base/30">
+          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             Projects
           </span>
           <button
             onClick={startCreate}
-            className="text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors p-1 hover:bg-[#2D2E36] rounded"
+            className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
             title="Create New Project"
           >
             <Plus size={14} />
@@ -1532,14 +1532,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
           {projects.length === 0 && !isCreating ? (
-            <div className="px-4 py-3 text-[13px] text-[#C8CAD0] text-center">
+            <div className="px-4 py-3 text-[13px] text-text-muted text-center">
               No projects yet.
             </div>
           ) : (
             <ul className="space-y-0.5 px-2" ref={listRef}>
               {isCreating && (
-                <li className="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] bg-[#2D2E36] text-[#F8F8FA]">
-                  <FolderOpen size={14} className="text-[#C8CAD0]" />
+                <li className="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] bg-bg-sidebar text-text-base">
+                  <FolderOpen size={14} className="text-text-muted" />
                   <span className="italic">New Project...</span>
                 </li>
               )}
@@ -1550,38 +1550,38 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 >
                   {/* Drop indicator line — above this item */}
                   {dragIdx !== null && dropIdx === idx && dropIdx !== dragIdx && dropIdx !== dragIdx + 1 && (
-                    <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-[#5E6AD2] rounded-full z-10" />
+                    <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
                   )}
                   <div className={`group flex items-center relative ${dragIdx === idx ? "opacity-30" : ""}`}>
                     <div
                       className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
                       onPointerDown={(e) => handleGripDown(idx, e)}
                     >
-                      <GripVertical size={10} className="text-[#C8CAD0]/60" />
+                      <GripVertical size={10} className="text-text-muted" />
                     </div>
                     <button
                       onClick={() => { if (dragIdx === null) selectProject(name); }}
                       className={`w-full flex items-center gap-2.5 pl-4 pr-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
                         selectedName === name && !isCreating
-                          ? "bg-[#2D2E36] text-[#F8F8FA]"
-                          : "text-[#C8CAD0] hover:bg-[#2D2E36]/50 hover:text-[#F8F8FA]"
+                          ? "bg-bg-sidebar text-text-base"
+                          : "text-text-muted hover:bg-bg-sidebar/50 hover:text-text-base"
                       }`}
                     >
                       <FolderOpen
                         size={14}
                         className={
                           driftByProject[name] === true
-                            ? "text-[#F59E0B]"
+                            ? "text-warning"
                             : selectedName === name && !isCreating
-                            ? "text-[#F8F8FA]"
-                            : "text-[#C8CAD0]"
+                            ? "text-text-base"
+                            : "text-text-muted"
                         }
                       />
                       <span className="flex-1 text-left truncate">{name}</span>
                     </button>
                     <button
                       onClick={(e) => handleRemove(name, e)}
-                      className="absolute right-2 p-1 text-[#C8CAD0] hover:text-[#FF6B6B] opacity-0 group-hover:opacity-100 hover:bg-[#33353A] rounded transition-all"
+                      className="absolute right-2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
                       title="Remove Project from Automatic"
                     >
                       <X size={12} />
@@ -1589,7 +1589,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   </div>
                   {/* Drop indicator line — after last item */}
                   {dragIdx !== null && dropIdx === projects.length && idx === projects.length - 1 && dropIdx !== dragIdx && (
-                    <div className="absolute -bottom-[1px] left-2 right-2 h-[2px] bg-[#5E6AD2] rounded-full z-10" />
+                    <div className="absolute -bottom-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
                   )}
                 </li>
               ))}
@@ -1598,13 +1598,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         </div>
         {/* Resize handle */}
         <div
-          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-[#5E6AD2]/40 active:bg-[#5E6AD2]/60 transition-colors z-10"
+          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-brand/40 active:bg-brand/60 transition-colors z-10"
           onMouseDown={onSidebarMouseDown}
         />
       </div>
 
       {/* Right area - project detail */}
-      <div className="flex-1 flex flex-col min-w-0 bg-[#222327]">
+      <div className="flex-1 flex flex-col min-w-0 bg-bg-base">
         {error && (
           <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between">
             {error}
@@ -1617,9 +1617,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         {project ? (
           <div className="flex-1 flex flex-col h-full">
             {/* Header */}
-            <div className="h-11 px-6 border-b border-[#33353A] flex justify-between items-center">
+            <div className="h-11 px-6 border-b border-border-strong/40 flex justify-between items-center">
               <div className="flex items-center gap-3">
-                <FolderOpen size={14} className="text-[#C8CAD0]" />
+                <FolderOpen size={14} className="text-text-muted" />
                 {isCreating ? (
                   <input
                     type="text"
@@ -1627,7 +1627,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#F8F8FA] placeholder-[#C8CAD0]/50 w-64"
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-64"
                   />
                 ) : isRenaming ? (
                   <input
@@ -1640,11 +1640,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     }}
                     onBlur={handleRename}
                     autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-[#F8F8FA] placeholder-[#C8CAD0]/50 w-64"
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-64"
                   />
                 ) : (
                   <h3
-                    className="text-[14px] font-medium text-[#F8F8FA] cursor-text"
+                    className="text-[14px] font-medium text-text-base cursor-text"
                     onDoubleClick={startRename}
                     title="Double-click to rename"
                   >
@@ -1655,7 +1655,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
               <div className="flex items-center gap-2">
                 {syncStatus && (
-                  <span className={`text-[12px] ${syncStatus.startsWith("Sync failed") ? "text-[#FF6B6B]" : syncStatus === "syncing" ? "text-[#C8CAD0]" : "text-[#4ADE80]"}`}>
+                  <span className={`text-[12px] ${syncStatus.startsWith("Sync failed") ? "text-danger" : syncStatus === "syncing" ? "text-text-muted" : "text-success"}`}>
                     {syncStatus === "syncing" ? "Syncing..." : syncStatus}
                   </span>
                 )}
@@ -1664,28 +1664,28 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <div className="relative mr-1" ref={openInDropdownRef}>
                     <button
                       onClick={() => setOpenInDropdownOpen((v) => !v)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[12px] font-medium border border-[#3A3B42] transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-surface-hover text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
                       title="Open project in an editor"
                     >
                       <FolderOpen size={12} /> Open in
                       <ChevronDown size={11} className={`transition-transform ${openInDropdownOpen ? "rotate-180" : ""}`} />
                     </button>
                     {openInDropdownOpen && (
-                      <div className="absolute right-0 top-full mt-1 w-44 bg-[#1A1A1E] border border-[#33353A] rounded-lg shadow-xl z-50 py-1 overflow-hidden">
+                      <div className="absolute right-0 top-full mt-1 w-44 bg-bg-input border border-border-strong/40 rounded-lg shadow-xl z-50 py-1 overflow-hidden">
                         {installedEditors.filter((e) => e.installed).map((editor) => (
                           <button
                             key={editor.id}
                             onClick={() => handleOpenInEditor(editor.id)}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-[#F8F8FA] hover:bg-[#2D2E36] transition-colors text-left"
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-text-base hover:bg-bg-sidebar transition-colors text-left"
                           >
                             <EditorIcon id={editor.id} iconPath={editorIconPaths[editor.id]} />
                             {editor.label}
                           </button>
                         ))}
-                        <div className="border-t border-[#33353A] my-1" />
+                        <div className="border-t border-border-strong/40 my-1" />
                         <button
                           onClick={() => handleOpenInEditor("copy_path")}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-[#C8CAD0] hover:bg-[#2D2E36] hover:text-[#F8F8FA] transition-colors text-left"
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors text-left"
                         >
                           <Copy size={13} />
                           Copy path
@@ -1697,7 +1697,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {!isCreating && selectedName && (
                   <button
                     onClick={() => handleRemove(selectedName)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#FF6B6B]/10 text-[#C8CAD0] hover:text-[#FF6B6B] rounded text-[12px] font-medium border border-[#3A3B42] hover:border-[#FF6B6B]/30 transition-colors mr-1"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-sidebar hover:bg-danger/10 text-text-muted hover:text-danger rounded text-[12px] font-medium border border-border-strong/40-hover hover:border-danger/30 transition-colors mr-1"
                     title="Remove project from Automatic"
                   >
                     <Trash2 size={12} /> Remove
@@ -1708,7 +1708,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   driftReport?.drifted ? (
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#F59E0B]/10 hover:bg-[#F59E0B]/20 text-[#F59E0B] rounded text-[12px] font-medium border border-[#F59E0B]/40 hover:border-[#F59E0B]/60 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-warning/10 hover:bg-warning/20 text-warning rounded text-[12px] font-medium border border-warning/40 hover:border-warning/60 transition-colors"
                       title="Configuration has drifted — click to sync"
                     >
                       <RefreshCw size={12} /> Sync Configs
@@ -1716,7 +1716,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   ) : driftReport && !driftReport.drifted ? (
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#4ADE80] rounded text-[12px] font-medium border border-[#4ADE80]/20 hover:border-[#4ADE80]/40 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-sidebar hover:bg-surface text-success rounded text-[12px] font-medium border border-success/20 hover:border-success/40 transition-colors"
                       title="Configuration is up to date — click to force sync"
                     >
                       <Check size={12} /> In Sync
@@ -1725,7 +1725,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     /* driftReport === null: not yet checked */
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#C8CAD0] rounded text-[12px] font-medium border border-[#3A3B42] transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-sidebar hover:bg-surface text-text-muted rounded text-[12px] font-medium border border-border-strong/40-hover transition-colors"
                       title="Sync agent configurations"
                     >
                       <RefreshCw size={12} /> Sync Configs
@@ -1736,7 +1736,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <button
                     onClick={handleSave}
                     disabled={isCreating && !newName.trim()}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   >
                     <Check size={12} /> Save
                   </button>
@@ -1746,15 +1746,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
             {/* ── Drift warning banner ─────────────────────────────── */}
             {driftReport?.drifted && !dirty && !isCreating && project.directory && project.agents.length > 0 && (
-              <div className="border-b border-[#F59E0B]/25 bg-[#F59E0B]/10">
-                <div className="flex items-center justify-between px-6 py-2 text-[#F59E0B]">
+              <div className="border-b border-warning/25 bg-warning/10">
+                <div className="flex items-center justify-between px-6 py-2 text-warning">
                   <div className="flex items-center gap-2 text-[12px]">
                     <AlertCircle size={13} />
                     <span>Configuration has drifted — agent config files no longer match Automatic settings.</span>
                   </div>
                   <button
                     onClick={handleSync}
-                    className="text-[12px] font-medium text-[#F59E0B] hover:text-[#FBB60D] underline decoration-[#F59E0B]/40 hover:decoration-[#FBB60D] transition-colors ml-4 flex-shrink-0"
+                    className="text-[12px] font-medium text-warning hover:text-warning-hover underline decoration-warning/40 hover:decoration-warning-hover transition-colors ml-4 flex-shrink-0"
                   >
                     Sync now
                   </button>
@@ -1763,17 +1763,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 <div className="px-6 pb-3 space-y-1.5">
                   {driftReport.agents.map((agentDrift) => (
                     <div key={agentDrift.agent_id}>
-                      <div className="text-[11px] font-semibold text-[#F59E0B]/80 mb-0.5">{agentDrift.agent_label}</div>
+                      <div className="text-[11px] font-semibold text-warning/80 mb-0.5">{agentDrift.agent_label}</div>
                       <div className="flex flex-wrap gap-x-2 gap-y-1">
                         {agentDrift.files.map((f, i) => (
                           <button
                             key={i}
                             onClick={() => setDriftDiffFile({ file: f, agentLabel: agentDrift.agent_label })}
-                            className="flex items-center gap-1 text-[11px] font-mono text-[#F59E0B]/70 hover:text-[#F59E0B] bg-[#F59E0B]/5 hover:bg-[#F59E0B]/15 border border-[#F59E0B]/20 hover:border-[#F59E0B]/40 rounded px-1.5 py-0.5 transition-colors"
+                            className="flex items-center gap-1 text-[11px] font-mono text-warning/70 hover:text-warning bg-warning/5 hover:bg-warning/15 border border-warning/20 hover:border-warning/40 rounded px-1.5 py-0.5 transition-colors"
                             title="View diff"
                           >
                             {f.path}
-                            <span className="text-[#F59E0B]/50 font-sans ml-0.5">({f.reason})</span>
+                            <span className="text-warning/50 font-sans ml-0.5">({f.reason})</span>
                           </button>
                         ))}
                       </div>
@@ -1794,15 +1794,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       <div key={s} className="flex items-center gap-2">
                         <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold transition-colors ${
                           wizardStep === s
-                            ? "bg-[#5E6AD2] text-white"
+                            ? "bg-brand text-text-base"
                             : wizardStep > s
-                            ? "bg-[#5E6AD2]/30 text-[#5E6AD2]"
-                            : "bg-[#2D2E36] text-[#C8CAD0]"
+                            ? "bg-brand/30 text-brand"
+                            : "bg-bg-sidebar text-text-muted"
                         }`}>
                           {wizardStep > s ? <Check size={11} /> : s}
                         </div>
                         {s < 3 && (
-                          <div className={`w-8 h-px ${wizardStep > s ? "bg-[#5E6AD2]/50" : "bg-[#33353A]"}`} />
+                          <div className={`w-8 h-px ${wizardStep > s ? "bg-brand/50" : "bg-surface"}`} />
                         )}
                       </div>
                     ))}
@@ -1812,11 +1812,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   {wizardStep === 1 && (
                     <>
                       <div className="mb-8 text-center">
-                        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-[#5E6AD2]/10 border border-[#5E6AD2]/30 flex items-center justify-center">
-                          <FolderOpen size={24} className="text-[#5E6AD2]" strokeWidth={1.5} />
+                        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-brand/10 border border-brand/30 flex items-center justify-center">
+                          <FolderOpen size={24} className="text-brand" strokeWidth={1.5} />
                         </div>
-                        <h2 className="text-[16px] font-semibold text-[#F8F8FA] mb-1">Where is this project?</h2>
-                        <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
+                        <h2 className="text-[16px] font-semibold text-text-base mb-1">Where is this project?</h2>
+                        <p className="text-[13px] text-text-muted leading-relaxed">
                           Choose an existing project directory — Automatic will scan it and detect your agents automatically.
                         </p>
                       </div>
@@ -1828,7 +1828,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             value={project.directory}
                             onChange={(e) => updateField("directory", e.target.value)}
                             placeholder="/path/to/your/project"
-                            className="flex-1 bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors"
+                            className="flex-1 bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors"
                           />
                           <button
                             onClick={async () => {
@@ -1844,7 +1844,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               setNewName(name);
                               updateField("directory", dir);
                             }}
-                            className="px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors whitespace-nowrap"
+                            className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors whitespace-nowrap"
                           >
                             Browse
                           </button>
@@ -1890,7 +1890,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 setWizardDiscovering(false);
                               }
                             }}
-                            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#5E6AD2] hover:bg-[#6B78E3] disabled:opacity-50 disabled:cursor-not-allowed text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+                            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-not-allowed text-white text-[13px] font-medium rounded shadow-sm transition-colors"
                           >
                             {wizardDiscovering ? (
                               <><RefreshCw size={13} className="animate-spin" /> Scanning…</>
@@ -1907,11 +1907,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   {wizardStep === 2 && (
                     <>
                       <div className="mb-6 text-center">
-                        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-[#5E6AD2]/10 border border-[#5E6AD2]/30 flex items-center justify-center">
-                          <Bot size={24} className="text-[#5E6AD2]" strokeWidth={1.5} />
+                        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-brand/10 border border-brand/30 flex items-center justify-center">
+                          <Bot size={24} className="text-brand" strokeWidth={1.5} />
                         </div>
-                        <h2 className="text-[16px] font-semibold text-[#F8F8FA] mb-1">Which agents are you using?</h2>
-                        <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
+                        <h2 className="text-[16px] font-semibold text-text-base mb-1">Which agents are you using?</h2>
+                        <p className="text-[13px] text-text-muted leading-relaxed">
                           {wizardDiscoveredAgents.length > 0
                             ? `We detected ${wizardDiscoveredAgents.length} agent${wizardDiscoveredAgents.length !== 1 ? "s" : ""} in this directory. Add or remove as needed.`
                             : "No agents were detected. Add the ones you use."}
@@ -1926,18 +1926,18 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           return (
                             <div
                               key={id}
-                              className="flex items-center gap-3 px-3 py-2.5 bg-[#1A1A1E] border border-[#33353A] rounded-lg"
+                              className="flex items-center gap-3 px-3 py-2.5 bg-bg-input border border-border-strong/40 rounded-lg"
                             >
                               <AgentIcon agentId={id} size={18} />
                               <div className="flex-1 min-w-0">
-                                <div className="text-[13px] font-medium text-[#F8F8FA]">{info?.label ?? id}</div>
+                                <div className="text-[13px] font-medium text-text-base">{info?.label ?? id}</div>
                                 {isDiscovered && (
-                                  <div className="text-[10px] text-[#5E6AD2] mt-0.5">Detected in directory</div>
+                                  <div className="text-[10px] text-brand mt-0.5">Detected in directory</div>
                                 )}
                               </div>
                               <button
                                 onClick={() => removeItem("agents", idx)}
-                                className="p-1 text-[#C8CAD0] hover:text-[#FF6B6B] hover:bg-[#33353A] rounded transition-colors"
+                                className="p-1 text-text-muted hover:text-danger hover:bg-surface rounded transition-colors"
                                 title="Remove"
                               >
                                 <X size={12} />
@@ -1946,7 +1946,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           );
                         })}
                         {project.agents.length === 0 && (
-                          <p className="text-[12px] text-[#C8CAD0]/50 italic px-1">No agents selected.</p>
+                          <p className="text-[12px] text-text-muted italic px-1">No agents selected.</p>
                         )}
                       </div>
 
@@ -1955,22 +1955,22 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         const unaddedAgents = availableAgents.filter((a) => !project.agents.includes(a.id));
                         return unaddedAgents.length > 0 ? (
                           <div className="mt-1">
-                            <div className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">Add agent</div>
+                            <div className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">Add agent</div>
                             <div className="space-y-1 max-h-36 overflow-y-auto custom-scrollbar">
                               {unaddedAgents.map((a) => (
                                 <button
                                   key={a.id}
                                   onClick={() => addItem("agents", a.id)}
-                                  className="w-full flex items-center gap-2.5 px-3 py-2 bg-[#1A1A1E] hover:bg-[#2D2E36] border border-[#33353A] hover:border-[#44474F] rounded-md text-left transition-colors"
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 bg-bg-input hover:bg-bg-sidebar border border-border-strong/40 hover:border-border-strong rounded-md text-left transition-colors"
                                 >
                                   <AgentIcon agentId={a.id} size={14} />
                                   <div className="flex-1 min-w-0">
-                                    <span className="text-[13px] text-[#F8F8FA] font-medium">{a.label}</span>
+                                    <span className="text-[13px] text-text-base font-medium">{a.label}</span>
                                     {a.description && (
-                                      <span className="text-[11px] text-[#C8CAD0] ml-2">{a.description}</span>
+                                      <span className="text-[11px] text-text-muted ml-2">{a.description}</span>
                                     )}
                                   </div>
-                                  <Plus size={11} className="text-[#5E6AD2] flex-shrink-0" />
+                                  <Plus size={11} className="text-brand flex-shrink-0" />
                                 </button>
                               ))}
                             </div>
@@ -1981,13 +1981,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       <div className="flex gap-2 mt-6">
                         <button
                           onClick={() => setWizardStep(1)}
-                          className="flex-1 px-4 py-2.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] text-[13px] font-medium rounded transition-colors"
+                          className="flex-1 px-4 py-2.5 bg-bg-sidebar hover:bg-surface text-text-muted hover:text-text-base text-[13px] font-medium rounded transition-colors"
                         >
                           Back
                         </button>
                         <button
                           onClick={() => setWizardStep(3)}
-                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
                         >
                           <ArrowRight size={13} /> Continue
                         </button>
@@ -1999,11 +1999,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   {wizardStep === 3 && (
                     <>
                       <div className="mb-6 text-center">
-                        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-[#5E6AD2]/10 border border-[#5E6AD2]/30 flex items-center justify-center">
-                          <LayoutTemplate size={24} className="text-[#5E6AD2]" strokeWidth={1.5} />
+                        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-brand/10 border border-brand/30 flex items-center justify-center">
+                          <LayoutTemplate size={24} className="text-brand" strokeWidth={1.5} />
                         </div>
-                        <h2 className="text-[16px] font-semibold text-[#F8F8FA] mb-1">Apply a template</h2>
-                        <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
+                        <h2 className="text-[16px] font-semibold text-text-base mb-1">Apply a template</h2>
+                        <p className="text-[13px] text-text-muted leading-relaxed">
                           Optionally start from a project template to pre-configure skills, MCP servers, and instructions.
                         </p>
                       </div>
@@ -2018,43 +2018,43 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 onClick={() => applyProjectTemplate(tmpl)}
                                 className={`w-full text-left px-3 py-2.5 rounded-md transition-colors flex items-start gap-2 border ${
                                   isSelected
-                                    ? "bg-[#5E6AD2]/15 border-[#5E6AD2]/40"
-                                    : "bg-[#1A1A1E] border-[#33353A] hover:border-[#44474F] hover:bg-[#2D2E36]"
+                                    ? "bg-brand/15 border-brand/40"
+                                    : "bg-bg-input border-border-strong/40 hover:border-border-strong hover:bg-bg-sidebar"
                                 }`}
                               >
                                 <div className="flex-1 min-w-0">
-                                  <div className="text-[13px] font-medium text-[#F8F8FA]">{tmpl.name}</div>
+                                  <div className="text-[13px] font-medium text-text-base">{tmpl.name}</div>
                                   {tmpl.description && (
-                                    <div className="text-[11px] text-[#C8CAD0] mt-0.5 truncate">{tmpl.description}</div>
+                                    <div className="text-[11px] text-text-muted mt-0.5 truncate">{tmpl.description}</div>
                                   )}
                                   <div className="flex items-center gap-3 mt-1">
                                     {tmpl.agents.length > 0 && (
-                                      <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
+                                      <span className="text-[10px] text-text-muted flex items-center gap-1">
                                         <Bot size={10} /> {tmpl.agents.length}
                                       </span>
                                     )}
                                     {tmpl.skills.length > 0 && (
-                                      <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
+                                      <span className="text-[10px] text-text-muted flex items-center gap-1">
                                         <Code size={10} /> {tmpl.skills.length}
                                       </span>
                                     )}
                                     {tmpl.mcp_servers.length > 0 && (
-                                      <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
+                                      <span className="text-[10px] text-text-muted flex items-center gap-1">
                                         <Server size={10} /> {tmpl.mcp_servers.length}
                                       </span>
                                     )}
                                   </div>
                                 </div>
                                 {isSelected && (
-                                  <Check size={13} className="text-[#5E6AD2] flex-shrink-0 mt-0.5" />
+                                  <Check size={13} className="text-brand flex-shrink-0 mt-0.5" />
                                 )}
                               </button>
                             );
                           })}
                         </div>
                       ) : (
-                        <div className="mb-5 px-3 py-4 bg-[#1A1A1E] border border-[#33353A] rounded-md text-center">
-                          <p className="text-[12px] text-[#C8CAD0]/60 italic">No project templates configured.</p>
+                        <div className="mb-5 px-3 py-4 bg-bg-input border border-border-strong/40 rounded-md text-center">
+                          <p className="text-[12px] text-text-muted italic">No project templates configured.</p>
                         </div>
                       )}
 
@@ -2065,7 +2065,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             setSelectedProjectTemplate(null);
                             setShowProjectTemplatePicker(false);
                           }}
-                          className="flex items-center gap-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] mb-4 transition-colors"
+                          className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base mb-4 transition-colors"
                         >
                           <X size={11} /> Clear template
                         </button>
@@ -2074,13 +2074,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       <div className="flex gap-2">
                         <button
                           onClick={() => setWizardStep(2)}
-                          className="flex-1 px-4 py-2.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] text-[13px] font-medium rounded transition-colors"
+                          className="flex-1 px-4 py-2.5 bg-bg-sidebar hover:bg-surface text-text-muted hover:text-text-base text-[13px] font-medium rounded transition-colors"
                         >
                           Back
                         </button>
                         <button
                           onClick={handleSave}
-                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
                         >
                           <Check size={13} /> Create Project
                         </button>
@@ -2094,7 +2094,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
             {/* Tab bar + content (hidden while in new-project setup) */}
             {!isCreating && <>
-            <div className="flex flex-wrap items-center gap-0 px-6 border-b border-[#33353A] bg-[#222327]">
+            <div className="flex flex-wrap items-center gap-0 px-6 border-b border-border-strong/40 bg-bg-base">
               {([
                  { id: "summary" as ProjectTab, label: "Summary" },
                  { id: "agents" as ProjectTab, label: "Agents" },
@@ -2108,13 +2108,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   onClick={() => setProjectTab(tab.id)}
                   className={`px-3 py-2 text-[13px] font-medium transition-colors relative ${
                     projectTab === tab.id
-                      ? "text-[#F8F8FA]"
-                      : "text-[#C8CAD0] hover:text-[#F8F8FA]"
+                      ? "text-text-base"
+                      : "text-text-muted hover:text-text-base"
                   }`}
                 >
                   {tab.label}
                   {projectTab === tab.id && (
-                    <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#5E6AD2] rounded-t" />
+                    <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
                   )}
                 </button>
               ))}
@@ -2128,9 +2128,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {project.directory && project.agents.length > 0 ? (
                   <div className="flex-1 flex flex-col min-h-0">
                     {/* Mode toggle bar */}
-                    <div className="flex items-center gap-3 px-4 py-2.5 border-b border-[#33353A] bg-[#1A1A1E]/30 flex-shrink-0">
-                      <span className="text-[11px] text-[#C8CAD0]">Mode:</span>
-                      <div className="flex rounded overflow-hidden border border-[#33353A]">
+                    <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border-strong/40 bg-bg-input/30 flex-shrink-0">
+                      <span className="text-[11px] text-text-muted">Mode:</span>
+                      <div className="flex rounded overflow-hidden border border-border-strong/40">
                         <button
                           onClick={async () => {
                             if (project.instruction_mode !== "unified" && selectedName) {
@@ -2143,8 +2143,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           }}
                           className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
                             (project.instruction_mode || "per-agent") === "unified"
-                              ? "bg-[#5E6AD2] text-white"
-                              : "bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA]"
+                              ? "bg-brand text-text-base"
+                              : "bg-bg-sidebar text-text-muted hover:text-text-base"
                           }`}
                         >
                           <Files size={11} />
@@ -2162,8 +2162,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           }}
                           className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
                             (project.instruction_mode || "per-agent") === "per-agent"
-                              ? "bg-[#5E6AD2] text-white"
-                              : "bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA]"
+                              ? "bg-brand text-text-base"
+                              : "bg-bg-sidebar text-text-muted hover:text-text-base"
                           }`}
                         >
                           <SplitSquareHorizontal size={11} />
@@ -2171,7 +2171,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         </button>
                       </div>
                       {(project.instruction_mode || "per-agent") === "unified" && projectFiles.length > 0 && projectFiles[0].target_files && (
-                        <span className="text-[10px] text-[#C8CAD0]">
+                        <span className="text-[10px] text-text-muted">
                           Writes to: {projectFiles[0].target_files.join(", ")}
                         </span>
                       )}
@@ -2180,12 +2180,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     <div className="flex-1 flex min-h-0">
                     {/* File sidebar — hidden in unified mode */}
                     {(project.instruction_mode || "per-agent") === "per-agent" && projectFiles.length > 0 && (
-                      <div className="w-52 flex-shrink-0 border-r border-[#33353A] bg-[#1A1A1E]/50 flex flex-col">
-                        <div className="h-9 px-3 border-b border-[#33353A] flex items-center justify-between">
-                          <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">Files</span>
+                      <div className="w-52 flex-shrink-0 border-r border-border-strong/40 bg-bg-input/50 flex flex-col">
+                        <div className="h-9 px-3 border-b border-border-strong/40 flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Files</span>
                           <button
                             onClick={() => setShowTemplatePicker(!showTemplatePicker)}
-                            className="text-[#C8CAD0] hover:text-[#F8F8FA] p-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                            className="text-text-muted hover:text-text-base p-0.5 hover:bg-bg-sidebar rounded transition-colors"
                             title="Start from template"
                           >
                             <LayoutTemplate size={12} />
@@ -2203,14 +2203,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   }}
                                   className={`w-full text-left px-2.5 py-1.5 rounded-md text-[13px] font-medium transition-colors flex items-center gap-2 ${
                                     activeProjectFile === f.filename
-                                      ? "bg-[#2D2E36] text-[#F8F8FA]"
-                                      : "text-[#C8CAD0] hover:bg-[#2D2E36]/50 hover:text-[#F8F8FA]"
+                                      ? "bg-bg-sidebar text-text-base"
+                                      : "text-text-muted hover:bg-bg-sidebar/50 hover:text-text-base"
                                   }`}
                                 >
-                                  <FileText size={13} className={activeProjectFile === f.filename ? "text-[#F8F8FA]" : f.exists ? "text-[#C8CAD0]" : "text-[#C8CAD0]/40"} />
+                                  <FileText size={13} className={activeProjectFile === f.filename ? "text-text-base" : f.exists ? "text-text-muted" : "text-text-muted"} />
                                   <div className="min-w-0">
                                     <div className={`truncate ${!f.exists ? "opacity-50" : ""}`}>{f.filename}</div>
-                                    <div className="text-[10px] text-[#C8CAD0] truncate">{f.agents.join(", ")}</div>
+                                    <div className="text-[10px] text-text-muted truncate">{f.agents.join(", ")}</div>
                                   </div>
                                 </button>
                               </li>
@@ -2219,14 +2219,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         </div>
                         {/* Template picker (dropdown in sidebar) */}
                         {showTemplatePicker && availableTemplates.length > 0 && (
-                          <div className="border-t border-[#33353A] p-2">
-                            <p className="text-[10px] text-[#C8CAD0] mb-1.5">Apply template:</p>
+                          <div className="border-t border-border-strong/40 p-2">
+                            <p className="text-[10px] text-text-muted mb-1.5">Apply template:</p>
                             <div className="space-y-0.5">
                               {availableTemplates.map((t) => (
                                 <button
                                   key={t}
                                   onClick={() => handleApplyTemplate(t)}
-                                  className="w-full text-left px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#F8F8FA] rounded transition-colors flex items-center gap-1.5"
+                                  className="w-full text-left px-2 py-1 text-[12px] bg-bg-sidebar hover:bg-brand text-text-base rounded transition-colors flex items-center gap-1.5"
                                 >
                                   <LayoutTemplate size={10} />
                                   {t}
@@ -2247,13 +2247,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         // File doesn't exist yet — show create prompt
                         return (
                           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-                            <div className="w-12 h-12 mx-auto mb-4 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#C8CAD0]">
+                            <div className="w-12 h-12 mx-auto mb-4 rounded-full border border-dashed border-border-strong flex items-center justify-center text-text-muted">
                               <FileText size={20} strokeWidth={1.5} />
                             </div>
-                            <h3 className="text-[14px] font-medium text-[#F8F8FA] mb-1">
+                            <h3 className="text-[14px] font-medium text-text-base mb-1">
                               {activeProjectFile}
                             </h3>
-                            <p className="text-[13px] text-[#C8CAD0] mb-5 max-w-xs">
+                            <p className="text-[13px] text-text-muted mb-5 max-w-xs">
                               This file doesn't exist yet. Create it to provide project instructions for {activeFile?.agents.join(" & ")}.
                             </p>
                             <div className="flex items-center gap-2">
@@ -2263,27 +2263,27 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   setProjectFileEditing(true);
                                   setProjectFileDirty(true);
                                 }}
-                                className="px-3 py-1.5 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5"
+                                className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5"
                               >
                                 <Plus size={12} /> Create File
                               </button>
                               {availableTemplates.length > 0 && (
                                 <button
                                   onClick={() => setShowTemplatePicker(!showTemplatePicker)}
-                                  className="px-3 py-1.5 bg-[#2D2E36] hover:bg-[#33353A] text-[#F8F8FA] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors flex items-center gap-1.5"
+                                  className="px-3 py-1.5 bg-bg-sidebar hover:bg-surface text-text-base text-[12px] font-medium rounded border border-border-strong/40-hover transition-colors flex items-center gap-1.5"
                                 >
                                   <LayoutTemplate size={12} /> From Template
                                 </button>
                               )}
                             </div>
                             {showTemplatePicker && availableTemplates.length > 0 && (
-                              <div className="mt-3 p-2 bg-[#1A1A1E] rounded-md border border-[#33353A]">
+                              <div className="mt-3 p-2 bg-bg-input rounded-md border border-border-strong/40">
                                 <div className="flex flex-wrap gap-1.5">
                                   {availableTemplates.map((t) => (
                                     <button
                                       key={t}
                                       onClick={() => handleApplyTemplate(t)}
-                                      className="px-2 py-1 text-[12px] bg-[#2D2E36] hover:bg-[#5E6AD2] text-[#F8F8FA] rounded transition-colors flex items-center gap-1.5"
+                                      className="px-2 py-1 text-[12px] bg-bg-sidebar hover:bg-brand text-text-base rounded transition-colors flex items-center gap-1.5"
                                     >
                                       <LayoutTemplate size={10} />
                                       {t}
@@ -2314,8 +2314,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       return (
                         <div className="flex-1 flex flex-col min-w-0">
                           {/* Editor toolbar */}
-                          <div className="flex items-center justify-between px-4 h-9 bg-[#1A1A1E] border-b border-[#33353A] flex-shrink-0">
-                            <span className="text-[11px] text-[#C8CAD0]">
+                          <div className="flex items-center justify-between px-4 h-9 bg-bg-input border-b border-border-strong/40 flex-shrink-0">
+                            <span className="text-[11px] text-text-muted">
                               {activeProjectFile === "_unified"
                                 ? <>{projectFileEditing ? "Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
                                 : <>{activeProjectFile}{!fileExists ? " (new)" : ""}{projectFileEditing ? " — Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
@@ -2325,7 +2325,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               {!projectFileEditing ? (
                                 <button
                                   onClick={() => setProjectFileEditing(true)}
-                                  className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] hover:bg-[#2D2E36] rounded transition-colors"
+                                  className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
                                 >
                                   <Edit2 size={10} /> Edit
                                 </button>
@@ -2343,14 +2343,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                         }
                                       }
                                     }}
-                                    className="px-2 py-0.5 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] hover:bg-[#2D2E36] rounded transition-colors"
+                                    className="px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
                                   >
                                     Cancel
                                   </button>
                                   <button
                                     onClick={handleSaveProjectFile}
                                     disabled={!projectFileDirty || projectFileSaving}
-                                    className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-brand hover:bg-brand-hover text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
                                     <Check size={10} /> {projectFileSaving ? "Saving..." : "Save"}
                                   </button>
@@ -2367,26 +2367,26 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 setProjectFileContent(e.target.value);
                                 setProjectFileDirty(true);
                               }}
-                              className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-[#222327] text-[#F8F8FA] leading-relaxed custom-scrollbar placeholder-[#C8CAD0]/30 min-h-0"
+                              className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30 min-h-0"
                               placeholder="Write your project instructions here..."
                               spellCheck={false}
                             />
                           ) : (
-                            <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#222327] min-h-0">
+                            <div className="flex-1 overflow-y-auto custom-scrollbar bg-bg-base min-h-0">
                               {projectFileContent
                                 ? <MarkdownPreview content={projectFileContent} />
-                                : <span className="block p-4 text-[13px] text-[#C8CAD0] italic">Empty file.</span>
+                                : <span className="block p-4 text-[13px] text-text-muted italic">Empty file.</span>
                               }
                             </div>
                           )}
 
                           {/* Rules panel */}
-                          <div className="border-t border-[#33353A] bg-[#1A1A1E] flex-shrink-0">
+                          <div className="border-t border-border-strong/40 bg-bg-input flex-shrink-0">
                             <div className="px-4 py-2 flex items-center gap-2">
-                              <ScrollText size={12} className="text-[#22D3EE]" />
-                              <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">Rules</span>
+                              <ScrollText size={12} className="text-accent-hover" />
+                              <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Rules</span>
                               {currentFileRules.length > 0 && (
-                                <span className="text-[10px] text-[#22D3EE] bg-[#22D3EE]/10 px-1.5 py-0.5 rounded">{currentFileRules.length}</span>
+                                <span className="text-[10px] text-accent-hover bg-accent-hover/10 px-1.5 py-0.5 rounded">{currentFileRules.length}</span>
                               )}
                             </div>
                             {availableRules.length > 0 ? (
@@ -2399,8 +2399,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       onClick={() => handleToggleRule(rule.id)}
                                       className={`px-2.5 py-1 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
                                         isSelected
-                                          ? "bg-[#22D3EE]/8 border-[#22D3EE]/25 text-[#22D3EE]/75"
-                                          : "bg-[#2D2E36] border-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] hover:border-[#44474F]"
+                                          ? "bg-accent-hover/8 border-accent-hover/25 text-accent-hover/75"
+                                          : "bg-bg-sidebar border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
                                       }`}
                                     >
                                       <ScrollText size={10} />
@@ -2412,7 +2412,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               </div>
                             ) : (
                               <div className="px-4 pb-3">
-                                <span className="text-[11px] text-[#C8CAD0]/60 italic">No rules created yet. Create rules in the Rules section to attach them here.</span>
+                                <span className="text-[11px] text-text-muted italic">No rules created yet. Create rules in the Rules section to attach them here.</span>
                               </div>
                             )}
                           </div>
@@ -2420,14 +2420,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       );
                     })() : (
                       <div className="flex-1 flex items-center justify-center">
-                        <p className="text-[13px] text-[#C8CAD0]/60 italic">No project files configured. Add agent tools on the Agents tab first.</p>
+                        <p className="text-[13px] text-text-muted italic">No project files configured. Add agent tools on the Agents tab first.</p>
                       </div>
                     )}
                   </div>
                   </div>
                 ) : (
                   <div className="flex-1 flex items-center justify-center">
-                    <p className="text-[13px] text-[#C8CAD0]/60 italic">
+                    <p className="text-[13px] text-text-muted italic">
                       Set a project directory and add agent tools on the Details and Agents tabs to manage project files.
                     </p>
                   </div>
@@ -2448,33 +2448,33 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       {/* Agents Card */}
                       <button
                         onClick={() => setProjectTab("agents")}
-                        className="group bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10"
+                        className="group bg-bg-input border border-border-strong/40 hover:border-brand/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-brand/10"
                       >
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-[#F8F8FA] leading-none mb-1">
+                              <div className="text-3xl font-semibold text-text-base leading-none mb-1">
                                 {project.agents.length}
                               </div>
-                              <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                              <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
                             </div>
-                             <div className="text-[13px] text-[#C8CAD0] mb-1">Agent Tools</div>
+                             <div className="text-[13px] text-text-muted mb-1">Agent Tools</div>
                              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                                {project.agents.length === 0
-                                 ? <span className="text-[11px] text-[#C8CAD0]/60">No agents configured</span>
+                                 ? <span className="text-[11px] text-text-muted">No agents configured</span>
                                  : <>
                                      {project.agents.slice(0, 4).map(a => (
-                                       <AgentIcon key={a} agentId={a} size={16} className="text-[#C8CAD0]" />
+                                       <AgentIcon key={a} agentId={a} size={16} className="text-text-muted" />
                                      ))}
                                      {project.agents.length > 4 && (
-                                       <span className="text-[11px] text-[#C8CAD0]/60">+{project.agents.length - 4}</span>
+                                       <span className="text-[11px] text-text-muted">+{project.agents.length - 4}</span>
                                      )}
                                    </>
                                }
                              </div>
                           </div>
-                          <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors shrink-0">
-                            <Bot size={18} className="text-[#5E6AD2]" />
+                          <div className="p-2 bg-brand/10 rounded-lg group-hover:bg-brand/20 transition-colors shrink-0">
+                            <Bot size={18} className="text-brand" />
                           </div>
                         </div>
                       </button>
@@ -2482,25 +2482,25 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       {/* Skills Card */}
                       <button
                         onClick={() => setProjectTab("skills")}
-                        className="group bg-[#1A1A1E] border border-[#33353A] hover:border-[#4ADE80]/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-[#4ADE80]/10"
+                        className="group bg-bg-input border border-border-strong/40 hover:border-success/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-success/10"
                       >
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-[#F8F8FA] leading-none mb-1">
+                              <div className="text-3xl font-semibold text-text-base leading-none mb-1">
                                 {project.skills.length + project.local_skills.length}
                               </div>
-                              <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                              <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
                             </div>
-                            <div className="text-[13px] text-[#C8CAD0] mb-1">Skills</div>
-                            <div className="text-[11px] text-[#C8CAD0]/60 truncate">
+                            <div className="text-[13px] text-text-muted mb-1">Skills</div>
+                            <div className="text-[11px] text-text-muted truncate">
                               {project.skills.length === 0 && project.local_skills.length === 0
                                 ? "No skills attached"
                                 : `${project.skills.length} global, ${project.local_skills.length} local`}
                             </div>
                           </div>
-                          <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/20 transition-colors shrink-0">
-                            <Code size={18} className="text-[#4ADE80]" />
+                          <div className="p-2 bg-success/10 rounded-lg group-hover:bg-success/20 transition-colors shrink-0">
+                            <Code size={18} className="text-success" />
                           </div>
                         </div>
                       </button>
@@ -2508,25 +2508,25 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       {/* MCP Servers Card */}
                       <button
                         onClick={() => setProjectTab("mcp_servers")}
-                        className="group bg-[#1A1A1E] border border-[#33353A] hover:border-[#F59E0B]/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-[#F59E0B]/10"
+                        className="group bg-bg-input border border-border-strong/40 hover:border-warning/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-warning/10"
                       >
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-[#F8F8FA] leading-none mb-1">
+                              <div className="text-3xl font-semibold text-text-base leading-none mb-1">
                                 {project.mcp_servers.length}
                               </div>
-                              <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                              <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
                             </div>
-                            <div className="text-[13px] text-[#C8CAD0] mb-1">MCP Servers</div>
-                            <div className="text-[11px] text-[#C8CAD0]/60 truncate">
+                            <div className="text-[13px] text-text-muted mb-1">MCP Servers</div>
+                            <div className="text-[11px] text-text-muted truncate">
                               {project.mcp_servers.length === 0
                                 ? "No servers configured"
                                 : project.mcp_servers.slice(0, 2).join(", ") + (project.mcp_servers.length > 2 ? ` +${project.mcp_servers.length - 2}` : "")}
                             </div>
                           </div>
-                          <div className="p-2 bg-[#F59E0B]/10 rounded-lg group-hover:bg-[#F59E0B]/20 transition-colors shrink-0">
-                            <Server size={18} className="text-[#F59E0B]" />
+                          <div className="p-2 bg-warning/10 rounded-lg group-hover:bg-warning/20 transition-colors shrink-0">
+                            <Server size={18} className="text-warning" />
                           </div>
                         </div>
                       </button>
@@ -2534,25 +2534,25 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       {/* Memory Card */}
                       <button
                         onClick={() => setProjectTab("memory")}
-                        className="group bg-[#1A1A1E] border border-[#33353A] hover:border-[#22D3EE]/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-[#22D3EE]/10"
+                        className="group bg-bg-input border border-border-strong/40 hover:border-accent-hover/50 rounded-lg p-4 text-left transition-all hover:shadow-lg hover:shadow-accent-hover/10"
                       >
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between">
-                              <div className="text-3xl font-semibold text-[#F8F8FA] leading-none mb-1">
+                              <div className="text-3xl font-semibold text-text-base leading-none mb-1">
                                 {Object.keys(memories).length}
                               </div>
-                              <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                              <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
                             </div>
-                            <div className="text-[13px] text-[#C8CAD0] mb-1">Memory</div>
-                            <div className="text-[11px] text-[#C8CAD0]/60 truncate">
+                            <div className="text-[13px] text-text-muted mb-1">Memory</div>
+                            <div className="text-[11px] text-text-muted truncate">
                               {Object.keys(memories).length === 0
                                 ? "No memories stored"
                                 : `${Object.keys(memories).length} entr${Object.keys(memories).length === 1 ? "y" : "ies"}`}
                             </div>
                           </div>
-                          <div className="p-2 bg-[#22D3EE]/10 rounded-lg group-hover:bg-[#22D3EE]/20 transition-colors shrink-0">
-                            <Brain size={18} className="text-[#22D3EE]" />
+                          <div className="p-2 bg-accent-hover/10 rounded-lg group-hover:bg-accent-hover/20 transition-colors shrink-0">
+                            <Brain size={18} className="text-accent-hover" />
                           </div>
                         </div>
                       </button>
@@ -2560,9 +2560,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
                     {/* Description + Directory */}
-                    <section className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-5 space-y-4">
+                    <section className="bg-bg-input border border-border-strong/40 rounded-lg p-5 space-y-4">
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
+                        <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
                           Description
                         </label>
                         <textarea
@@ -2570,11 +2570,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           onChange={(e) => updateField("description", e.target.value)}
                           placeholder="What is this project for?"
                           rows={3}
-                          className="w-full bg-[#222327] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none resize-none transition-colors"
+                          className="w-full bg-bg-input border border-border-strong hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none resize-none transition-colors"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-2">
+                        <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
                           <span className="flex items-center gap-1.5">
                             <FolderOpen size={12} /> Project Directory
                           </span>
@@ -2585,7 +2585,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             value={project.directory}
                             onChange={(e) => updateField("directory", e.target.value)}
                             placeholder="/path/to/your/project"
-                            className="flex-1 bg-[#222327] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] rounded-md px-3 py-2 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 outline-none font-mono transition-colors"
+                            className="flex-1 bg-bg-base border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors"
                           />
                           <button
                             onClick={async () => {
@@ -2598,12 +2598,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 updateField("directory", selected as string);
                               }
                             }}
-                            className="px-3 py-2 bg-[#2D2E36] hover:bg-[#33353A] text-[#F8F8FA] text-[12px] font-medium rounded border border-[#3A3B42] transition-colors whitespace-nowrap"
+                            className="px-3 py-2 bg-bg-input hover:bg-surface-hover text-text-base text-[12px] font-medium rounded border border-border-strong transition-colors shadow-sm whitespace-nowrap"
                           >
                             Browse
                           </button>
                         </div>
-                        <p className="mt-1.5 text-[11px] text-[#C8CAD0]">
+                        <p className="mt-1.5 text-[11px] text-text-muted">
                           Agent configs will be written to this directory when you sync.
                         </p>
                       </div>
@@ -2617,19 +2617,19 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                          <div>
                            <button
                              onClick={() => setShowProjectTemplatePicker(!showProjectTemplatePicker)}
-                             className="w-full group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#5E6AD2]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#5E6AD2]/10 text-left"
+                             className="w-full group flex items-center gap-3 bg-bg-input border border-border-strong/40 hover:border-brand/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-brand/10 text-left"
                            >
-                             <div className="p-2 bg-[#5E6AD2]/10 rounded-lg group-hover:bg-[#5E6AD2]/20 transition-colors">
-                               <LayoutTemplate size={16} className="text-[#5E6AD2]" />
+                             <div className="p-2 bg-brand/10 rounded-lg group-hover:bg-brand/20 transition-colors">
+                               <LayoutTemplate size={16} className="text-brand" />
                              </div>
                              <div className="flex-1 min-w-0">
-                               <div className="text-[13px] font-medium text-[#F8F8FA] mb-0.5">Apply Project Template</div>
-                               <div className="text-[11px] text-[#C8CAD0]">Merge agents, skills & servers from a template</div>
+                               <div className="text-[13px] font-medium text-text-base mb-0.5">Apply Project Template</div>
+                               <div className="text-[11px] text-text-muted">Merge agents, skills & servers from a template</div>
                              </div>
-                             <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                             <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                            </button>
                            {showProjectTemplatePicker && (
-                              <div className="mt-1.5 p-2 bg-[#1A1A1E] border border-[#33353A] rounded-lg space-y-1">
+                              <div className="mt-1.5 p-2 bg-bg-input border border-border-strong/40 rounded-lg space-y-1">
                                 {availableProjectTemplates.map((tmpl) => {
                                   const isSelected = selectedProjectTemplate === tmpl.name;
                                   return (
@@ -2638,35 +2638,35 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       onClick={() => applyProjectTemplate(tmpl)}
                                       className={`w-full text-left px-3 py-2 rounded-md transition-colors flex items-start gap-2 ${
                                         isSelected
-                                          ? "bg-[#5E6AD2]/15 border border-[#5E6AD2]/40"
-                                          : "hover:bg-[#2D2E36] border border-transparent"
+                                          ? "bg-brand/15 border border-brand/40"
+                                          : "hover:bg-bg-sidebar border border-transparent"
                                       }`}
                                     >
                                       <div className="flex-1 min-w-0">
-                                        <div className="text-[13px] font-medium text-[#F8F8FA]">{tmpl.name}</div>
+                                        <div className="text-[13px] font-medium text-text-base">{tmpl.name}</div>
                                         {tmpl.description && (
-                                          <div className="text-[11px] text-[#C8CAD0] mt-0.5 truncate">{tmpl.description}</div>
+                                          <div className="text-[11px] text-text-muted mt-0.5 truncate">{tmpl.description}</div>
                                         )}
                                         <div className="flex items-center gap-3 mt-1">
                                           {tmpl.agents.length > 0 && (
-                                            <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
+                                            <span className="text-[10px] text-text-muted flex items-center gap-1">
                                               <Bot size={10} /> {tmpl.agents.length} agent{tmpl.agents.length !== 1 ? "s" : ""}
                                             </span>
                                           )}
                                           {tmpl.skills.length > 0 && (
-                                            <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
+                                            <span className="text-[10px] text-text-muted flex items-center gap-1">
                                               <Code size={10} /> {tmpl.skills.length} skill{tmpl.skills.length !== 1 ? "s" : ""}
                                             </span>
                                           )}
                                           {tmpl.mcp_servers.length > 0 && (
-                                            <span className="text-[10px] text-[#C8CAD0] flex items-center gap-1">
+                                            <span className="text-[10px] text-text-muted flex items-center gap-1">
                                               <Server size={10} /> {tmpl.mcp_servers.length} MCP server{tmpl.mcp_servers.length !== 1 ? "s" : ""}
                                             </span>
                                           )}
                                         </div>
                                       </div>
                                       {isSelected && (
-                                        <Check size={13} className="text-[#5E6AD2] flex-shrink-0 mt-0.5" />
+                                        <Check size={13} className="text-brand flex-shrink-0 mt-0.5" />
                                       )}
                                     </button>
                                   );
@@ -2674,19 +2674,19 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                  <div className="mt-1 flex items-center gap-2 px-3 py-1">
                                    <button
                                      onClick={() => setShowProjectTemplatePicker(false)}
-                                     className="text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
+                                     className="text-[11px] text-text-muted hover:text-text-base transition-colors"
                                    >
                                      Cancel
                                    </button>
                                    {selectedProjectTemplate && (
                                      <>
-                                       <span className="text-[#33353A]">·</span>
+                                       <span className="text-surface">·</span>
                                        <button
                                          onClick={() => {
                                            setSelectedProjectTemplate(null);
                                            setShowProjectTemplatePicker(false);
                                          }}
-                                         className="text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
+                                         className="text-[11px] text-text-muted hover:text-text-base transition-colors"
                                        >
                                          Clear selection
                                        </button>
@@ -2699,14 +2699,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                        )}
 
                            {/* Open in editor card */}
-                          <div className={`bg-[#1A1A1E] border border-[#33353A] rounded-lg p-4 transition-all ${project.directory ? "" : "opacity-40"}`}>
+                          <div className={`bg-bg-input border border-border-strong/40 rounded-lg p-4 transition-all ${project.directory ? "" : "opacity-40"}`}>
                             <div className="flex items-center gap-3 mb-3">
-                              <div className="p-2 bg-[#5E6AD2]/10 rounded-lg">
-                                <FolderOpen size={16} className="text-[#5E6AD2]" />
+                              <div className="p-2 bg-brand/10 rounded-lg">
+                                <FolderOpen size={16} className="text-brand" />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="text-[13px] font-medium text-[#F8F8FA] mb-0.5">Open in</div>
-                                <div className="text-[11px] text-[#C8CAD0]">
+                                <div className="text-[13px] font-medium text-text-base mb-0.5">Open in</div>
+                                <div className="text-[11px] text-text-muted">
                                   {project.directory ? "Choose editor or Finder" : "No directory set"}
                                 </div>
                               </div>
@@ -2718,7 +2718,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     key={editor.id}
                                     onClick={() => handleOpenInEditor(editor.id)}
                                     title={`Open in ${editor.label}`}
-                                    className="flex items-center gap-1.5 px-2 py-1 bg-[#2D2E36] hover:bg-[#3A3B42] border border-[#33353A] hover:border-[#44474F] rounded text-[11px] text-[#F8F8FA] transition-colors"
+                                    className="flex items-center gap-1.5 px-2 py-1 bg-bg-sidebar hover:bg-surface-hover border border-border-strong/40 hover:border-border-strong rounded text-[11px] text-text-base transition-colors"
                                   >
                                     <EditorIcon id={editor.id} iconPath={editorIconPaths[editor.id]} />
                                     {editor.label}
@@ -2727,7 +2727,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 <button
                                   onClick={() => handleOpenInEditor("copy_path")}
                                   title="Copy project path"
-                                  className="flex items-center gap-1.5 px-2 py-1 bg-[#2D2E36] hover:bg-[#3A3B42] border border-[#33353A] hover:border-[#44474F] rounded text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
+                                  className="flex items-center gap-1.5 px-2 py-1 bg-bg-sidebar hover:bg-surface-hover border border-border-strong/40 hover:border-border-strong rounded text-[11px] text-text-muted hover:text-text-base transition-colors"
                                 >
                                   <Copy size={11} />
                                   Copy path
@@ -2743,16 +2743,16 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                await reloadProject(selectedName);
                              }
                            }}
-                           className="group flex items-center gap-3 bg-[#1A1A1E] border border-[#33353A] hover:border-[#4ADE80]/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-[#4ADE80]/10 text-left"
+                           className="group flex items-center gap-3 bg-bg-input border border-border-strong/40 hover:border-success/50 rounded-lg p-4 transition-all hover:shadow-lg hover:shadow-success/10 text-left"
                          >
-                           <div className="p-2 bg-[#4ADE80]/10 rounded-lg group-hover:bg-[#4ADE80]/20 transition-colors">
-                             <RotateCcw size={16} className="text-[#4ADE80]" />
+                           <div className="p-2 bg-success/10 rounded-lg group-hover:bg-success/20 transition-colors">
+                             <RotateCcw size={16} className="text-success" />
                            </div>
                            <div className="flex-1 min-w-0">
-                             <div className="text-[13px] font-medium text-[#F8F8FA] mb-0.5">Force Refresh</div>
-                             <div className="text-[11px] text-[#C8CAD0]">Reload project from disk</div>
+                             <div className="text-[13px] font-medium text-text-base mb-0.5">Force Refresh</div>
+                             <div className="text-[11px] text-text-muted">Reload project from disk</div>
                            </div>
-                           <ArrowRight size={14} className="text-[#C8CAD0] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                           <ArrowRight size={14} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
                          </button>
                          </div>
                      </div>
@@ -2760,27 +2760,27 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                     {/* Getting Started (existing saved project that is still incomplete) */}
                     {!isCreating && (!project.directory || project.agents.length === 0) && (
-                      <section className="bg-gradient-to-br from-[#5E6AD2]/10 to-[#5E6AD2]/5 border border-[#5E6AD2]/20 rounded-lg p-5">
+                      <section className="bg-gradient-to-br from-brand/10 to-brand/5 border border-brand/20 rounded-lg p-5">
                         <div className="flex items-start gap-3">
-                          <div className="p-2 bg-[#5E6AD2]/20 rounded-lg flex-shrink-0">
-                            <Package size={18} className="text-[#5E6AD2]" />
+                          <div className="p-2 bg-brand/20 rounded-lg flex-shrink-0">
+                            <Package size={18} className="text-brand" />
                           </div>
                           <div>
-                            <h3 className="text-[13px] font-semibold text-[#F8F8FA] mb-2">Complete Setup</h3>
-                            <p className="text-[12px] text-[#C8CAD0] mb-3 leading-relaxed">
+                            <h3 className="text-[13px] font-semibold text-text-base mb-2">Complete Setup</h3>
+                            <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
                               To start using this project, complete these steps:
                             </p>
-                            <ol className="space-y-2 text-[12px] text-[#F8F8FA]">
+                            <ol className="space-y-2 text-[12px] text-text-base">
                               {!project.directory && (
                                 <li className="flex items-start gap-2">
-                                  <div className="w-5 h-5 rounded-full border border-[#5E6AD2] flex items-center justify-center flex-shrink-0 mt-0.5">
-                                    <span className="text-[10px] text-[#5E6AD2]">1</span>
+                                  <div className="w-5 h-5 rounded-full border border-brand flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <span className="text-[10px] text-brand">1</span>
                                   </div>
                                   <div>
-                                     <span className="text-[#F8F8FA] font-medium">
+                                     <span className="text-text-base font-medium">
                                        Set project directory
                                      </span>
-                                    <div className="text-[11px] text-[#C8CAD0] mt-0.5">
+                                    <div className="text-[11px] text-text-muted mt-0.5">
                                       Choose where agent configs will be synced
                                     </div>
                                   </div>
@@ -2788,34 +2788,34 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               )}
                               {project.agents.length === 0 && (
                                 <li className="flex items-start gap-2">
-                                  <div className="w-5 h-5 rounded-full border border-[#5E6AD2] flex items-center justify-center flex-shrink-0 mt-0.5">
-                                    <span className="text-[10px] text-[#5E6AD2]">{!project.directory ? "2" : "1"}</span>
+                                  <div className="w-5 h-5 rounded-full border border-brand flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <span className="text-[10px] text-brand">{!project.directory ? "2" : "1"}</span>
                                   </div>
                                   <div>
                                     <button
                                       onClick={() => setProjectTab("agents")}
-                                      className="text-[#5E6AD2] hover:text-[#6B78E3] transition-colors font-medium"
+                                      className="text-brand hover:text-brand-hover transition-colors font-medium"
                                     >
                                       Add agent tools
                                     </button>
-                                    <div className="text-[11px] text-[#C8CAD0] mt-0.5">
+                                    <div className="text-[11px] text-text-muted mt-0.5">
                                       Select which agents will use this project
                                     </div>
                                   </div>
                                 </li>
                               )}
                               <li className="flex items-start gap-2">
-                                <div className="w-5 h-5 rounded-full border border-[#C8CAD0]/50 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                  <span className="text-[10px] text-[#C8CAD0]">•</span>
+                                <div className="w-5 h-5 rounded-full border border-text-muted/50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                  <span className="text-[10px] text-text-muted">•</span>
                                 </div>
                                 <div>
                                   <button
                                     onClick={() => setProjectTab("skills")}
-                                    className="text-[#F8F8FA] hover:text-[#5E6AD2] transition-colors"
+                                    className="text-text-base hover:text-brand transition-colors"
                                   >
                                     Add skills (optional)
                                   </button>
-                                  <div className="text-[11px] text-[#C8CAD0] mt-0.5">
+                                  <div className="text-[11px] text-text-muted mt-0.5">
                                     Give agents specialized capabilities
                                   </div>
                                 </div>
@@ -2860,7 +2860,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     {project.local_skills.length > 0 && (
                       <section>
                         <div className="flex items-center justify-between mb-2">
-                          <label className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase flex items-center gap-1.5">
+                          <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase flex items-center gap-1.5">
                             <Code size={12} /> Local Skills
                           </label>
                           {project.local_skills.length > 1 && selectedName && (
@@ -2876,22 +2876,22 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   setTimeout(() => setSyncStatus(null), 4000);
                                 }
                               }}
-                              className="flex items-center gap-1 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] px-1.5 py-0.5 hover:bg-[#2D2E36] rounded transition-colors"
+                              className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-base px-1.5 py-0.5 hover:bg-bg-sidebar rounded transition-colors"
                               title="Copy all local skills to every agent's skill directory"
                             >
                               <ArrowRightLeft size={11} /> Sync Across Agents
                             </button>
                           )}
                         </div>
-                        <p className="text-[11px] text-[#C8CAD0] mb-2">
+                        <p className="text-[11px] text-text-muted mb-2">
                           These skills exist only in this project directory, not in the global registry.
                         </p>
                         <ul className="space-y-1">
                           {project.local_skills.map((s) => (
                             <li
                               key={s}
-                              className={`group flex flex-col bg-[#1A1A1E] rounded-md border text-[13px] transition-colors ${
-                                localSkillEditing === s ? "border-[#5E6AD2]/50" : "border-[#33353A]"
+                              className={`group flex flex-col bg-bg-input rounded-md border text-[13px] transition-colors ${
+                                localSkillEditing === s ? "border-brand/50" : "border-border-strong/40"
                               }`}
                             >
                               {/* Row: name + action buttons */}
@@ -2923,17 +2923,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       setTimeout(() => setSyncStatus(null), 4000);
                                     }
                                   }}
-                                  className="flex items-center gap-2 flex-1 text-left text-[#F8F8FA] hover:text-white"
+                                  className="flex items-center gap-2 flex-1 text-left text-text-base hover:text-text-base"
                                 >
-                                  <Code size={12} className="text-[#C8CAD0]" />
+                                  <Code size={12} className="text-text-muted" />
                                   <span>{s}</span>
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#C8CAD0] border border-[#3A3B42]">
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted border border-border-strong/40-hover">
                                     local
                                   </span>
                                   {/* Chevron */}
                                   <svg
                                     width="10" height="10" viewBox="0 0 10 10" fill="currentColor"
-                                    className={`ml-auto text-[#C8CAD0]/40 transition-transform ${localSkillEditing === s ? "rotate-90" : ""}`}
+                                    className={`ml-auto text-text-muted transition-transform ${localSkillEditing === s ? "rotate-90" : ""}`}
                                   >
                                     <path d="M3 2l4 3-4 3V2z"/>
                                   </svg>
@@ -2958,7 +2958,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                         setTimeout(() => setSyncStatus(null), 4000);
                                       }
                                     }}
-                                    className="text-[#C8CAD0] hover:text-[#F8F8FA] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                                    className="text-text-muted hover:text-text-base p-1 hover:bg-bg-sidebar rounded transition-colors"
                                     title="Edit skill"
                                   >
                                     <Edit2 size={12} />
@@ -2976,7 +2976,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                         setTimeout(() => setSyncStatus(null), 4000);
                                       }
                                     }}
-                                    className="text-[#C8CAD0] hover:text-[#F8F8FA] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                                    className="text-text-muted hover:text-text-base p-1 hover:bg-bg-sidebar rounded transition-colors"
                                     title="Sync to all agents in this project"
                                   >
                                     <ArrowRightLeft size={12} />
@@ -3005,7 +3005,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                         setTimeout(() => setSyncStatus(null), 4000);
                                       }
                                     }}
-                                    className="text-[#C8CAD0] hover:text-[#4ADE80] p-1 hover:bg-[#2D2E36] rounded transition-colors"
+                                    className="text-text-muted hover:text-success p-1 hover:bg-bg-sidebar rounded transition-colors"
                                     title="Import to global skill registry"
                                   >
                                     <Upload size={12} />
@@ -3015,11 +3015,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                               {/* Expanded editor panel */}
                               {localSkillEditing === s && (
-                                <div className="border-t border-[#33353A] px-3 pt-3 pb-3 space-y-3">
+                                <div className="border-t border-border-strong/40 px-3 pt-3 pb-3 space-y-3">
 
                                   {/* Editor header */}
                                   <div className="flex items-center justify-between">
-                                    <span className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase flex items-center gap-1.5">
+                                    <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase flex items-center gap-1.5">
                                       <FileText size={11} /> Edit Skill
                                     </span>
                                     <div className="flex items-center gap-1.5">
@@ -3035,7 +3035,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                               setLocalSkillFieldErrors({ name: null, description: null });
                                               setLocalSkillIsEditing(false);
                                             }}
-                                            className="px-2 py-1 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[11px] font-medium transition-colors"
+                                            className="px-2 py-1 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[11px] font-medium transition-colors"
                                           >
                                             Cancel
                                           </button>
@@ -3062,7 +3062,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                                 setLocalSkillSaving(false);
                                               }
                                             }}
-                                            className="flex items-center gap-1 px-2 py-1 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+                                            className="flex items-center gap-1 px-2 py-1 bg-brand hover:bg-brand-hover text-white rounded text-[11px] font-medium transition-colors disabled:opacity-50"
                                           >
                                             <Check size={11} /> Save
                                           </button>
@@ -3070,7 +3070,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       ) : (
                                         <button
                                           onClick={() => setLocalSkillIsEditing(true)}
-                                          className="flex items-center gap-1 px-2 py-1 hover:bg-[#2D2E36] text-[#C8CAD0] hover:text-[#F8F8FA] rounded text-[11px] font-medium transition-colors"
+                                          className="flex items-center gap-1 px-2 py-1 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[11px] font-medium transition-colors"
                                         >
                                           <Edit2 size={11} /> Edit
                                         </button>
@@ -3084,10 +3084,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       {/* Name field */}
                                       <div>
                                         <div className="flex items-baseline justify-between mb-1">
-                                          <label className="text-[10px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                                          <label className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">
                                             Name <span className="text-red-400 ml-0.5">*</span>
                                           </label>
-                                          <span className={`text-[10px] tabular-nums ${localSkillEditName.length > 58 ? (localSkillEditName.length > 64 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                                          <span className={`text-[10px] tabular-nums ${localSkillEditName.length > 58 ? (localSkillEditName.length > 64 ? "text-red-400" : "text-warning") : "text-text-muted"}`}>
                                             {localSkillEditName.length}/64
                                           </span>
                                         </div>
@@ -3100,8 +3100,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                             setLocalSkillFieldErrors(prev => ({ ...prev, name: validateLocalSkillName(raw) }));
                                           }}
                                           maxLength={64}
-                                          className={`w-full px-2.5 py-1.5 rounded-md bg-[#2D2E36] border outline-none text-[12px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 font-mono transition-colors ${
-                                            localSkillFieldErrors.name ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                                          className={`w-full px-2.5 py-1.5 rounded-md bg-bg-sidebar border outline-none text-[12px] text-text-base placeholder-text-muted/40 font-mono transition-colors ${
+                                            localSkillFieldErrors.name ? "border-red-500/60 focus:border-red-500" : "border-border-strong/40 hover:border-border-strong focus:border-brand"
                                           }`}
                                           spellCheck={false}
                                         />
@@ -3113,10 +3113,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       {/* Description field */}
                                       <div>
                                         <div className="flex items-baseline justify-between mb-1">
-                                          <label className="text-[10px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+                                          <label className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">
                                             Description <span className="text-red-400 ml-0.5">*</span>
                                           </label>
-                                          <span className={`text-[10px] tabular-nums ${localSkillEditDescription.length > 900 ? (localSkillEditDescription.length > 1024 ? "text-red-400" : "text-[#F59E0B]") : "text-[#C8CAD0]/50"}`}>
+                                          <span className={`text-[10px] tabular-nums ${localSkillEditDescription.length > 900 ? (localSkillEditDescription.length > 1024 ? "text-red-400" : "text-warning") : "text-text-muted"}`}>
                                             {localSkillEditDescription.length}/1024
                                           </span>
                                         </div>
@@ -3128,8 +3128,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                           }}
                                           rows={2}
                                           maxLength={1024}
-                                          className={`w-full px-2.5 py-1.5 rounded-md bg-[#2D2E36] border outline-none text-[12px] text-[#F8F8FA] placeholder-[#C8CAD0]/40 resize-none transition-colors leading-relaxed ${
-                                            localSkillFieldErrors.description ? "border-red-500/60 focus:border-red-500" : "border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2]"
+                                          className={`w-full px-2.5 py-1.5 rounded-md bg-bg-sidebar border outline-none text-[12px] text-text-base placeholder-text-muted/40 resize-none transition-colors leading-relaxed ${
+                                            localSkillFieldErrors.description ? "border-red-500/60 focus:border-red-500" : "border-border-strong/40 hover:border-border-strong focus:border-brand"
                                           }`}
                                           spellCheck={false}
                                         />
@@ -3140,31 +3140,31 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                                       {/* Body field */}
                                       <div>
-                                        <label className="text-[10px] font-semibold text-[#C8CAD0] tracking-wider uppercase block mb-1">
+                                        <label className="text-[10px] font-semibold text-text-muted tracking-wider uppercase block mb-1">
                                           Body
                                         </label>
                                         <textarea
                                           value={localSkillEditBody}
                                           onChange={(e) => setLocalSkillEditBody(e.target.value)}
                                           rows={12}
-                                          className="w-full px-2.5 py-1.5 rounded-md bg-[#2D2E36] border border-[#33353A] hover:border-[#44474F] focus:border-[#5E6AD2] outline-none text-[12px] text-[#F8F8FA] font-mono resize-y transition-colors leading-relaxed custom-scrollbar"
+                                          className="w-full px-2.5 py-1.5 rounded-md bg-bg-sidebar border border-border-strong/40 hover:border-border-strong focus:border-brand outline-none text-[12px] text-text-base font-mono resize-y transition-colors leading-relaxed custom-scrollbar"
                                           spellCheck={false}
                                         />
                                       </div>
                                     </div>
                                   ) : (
                                     /* Preview */
-                                    <div className="rounded-md bg-[#2D2E36]/40 border border-[#33353A] px-3 py-2.5">
+                                    <div className="rounded-md bg-bg-sidebar/40 border border-border-strong/40 px-3 py-2.5">
                                       {localSkillEditName && (
-                                        <p className="text-[13px] font-medium text-[#F8F8FA] mb-1">{localSkillEditName}</p>
+                                        <p className="text-[13px] font-medium text-text-base mb-1">{localSkillEditName}</p>
                                       )}
                                       {localSkillEditDescription && (
-                                        <p className="text-[12px] text-[#C8CAD0] leading-relaxed mb-2">{localSkillEditDescription}</p>
+                                        <p className="text-[12px] text-text-muted leading-relaxed mb-2">{localSkillEditDescription}</p>
                                       )}
                                       {localSkillEditBody ? (
                                         <MarkdownPreview content={localSkillEditBody} />
                                       ) : (
-                                        <p className="text-[12px] text-[#C8CAD0] italic">No body content. Click Edit to add instructions.</p>
+                                        <p className="text-[12px] text-text-muted italic">No body content. Click Edit to add instructions.</p>
                                       )}
                                     </div>
                                   )}
@@ -3187,22 +3187,22 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <section>
                     {/* Warp-only: MCP config not available */}
                     {warpOnly && warpNote && (
-                      <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-[#1A1A1E] border border-[#44474F] rounded-lg">
-                        <AlertCircle size={15} className="text-[#C8CAD0] flex-shrink-0 mt-0.5" />
+                      <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-bg-input border border-border-strong rounded-lg">
+                        <AlertCircle size={15} className="text-text-muted flex-shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-[13px] font-medium text-[#F8F8FA] mb-0.5">MCP not configurable via Automatic</p>
-                          <p className="text-[12px] text-[#C8CAD0] leading-relaxed">{warpNote}</p>
+                          <p className="text-[13px] font-medium text-text-base mb-0.5">MCP not configurable via Automatic</p>
+                          <p className="text-[12px] text-text-muted leading-relaxed">{warpNote}</p>
                         </div>
                       </div>
                     )}
 
                     {/* Warp + other agents: partial warning */}
                     {hasWarp && !warpOnly && warpNote && (
-                      <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-[#F59E0B]/8 border border-[#F59E0B]/30 rounded-lg">
-                        <AlertCircle size={15} className="text-[#F59E0B] flex-shrink-0 mt-0.5" />
+                      <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-warning/8 border border-warning/30 rounded-lg">
+                        <AlertCircle size={15} className="text-warning flex-shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-[13px] font-medium text-[#F59E0B] mb-0.5">Warp requires manual MCP setup</p>
-                          <p className="text-[12px] text-[#F59E0B]/80 leading-relaxed">{warpNote}</p>
+                          <p className="text-[13px] font-medium text-warning mb-0.5">Warp requires manual MCP setup</p>
+                          <p className="text-[12px] text-warning/80 leading-relaxed">{warpNote}</p>
                         </div>
                       </div>
                     )}
@@ -3224,8 +3224,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <section>
                     <div className="flex items-center justify-between mb-4">
                       <div>
-                        <h3 className="text-[14px] font-medium text-[#F8F8FA]">Agent Memory</h3>
-                        <p className="text-[12px] text-[#C8CAD0] mt-1">
+                        <h3 className="text-[14px] font-medium text-text-base">Agent Memory</h3>
+                        <p className="text-[12px] text-text-muted mt-1">
                           Persistent context and learnings stored by agents working on this project.
                         </p>
                       </div>
@@ -3240,7 +3240,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               setError(`Failed to clear memories: ${err}`);
                             }
                           }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FF6B6B]/10 hover:bg-[#FF6B6B]/20 text-[#FF6B6B] rounded text-[12px] font-medium border border-[#FF6B6B]/20 transition-colors"
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-danger/10 hover:bg-danger/20 text-danger rounded text-[12px] font-medium border border-danger/20 transition-colors"
                         >
                           <Trash2 size={12} /> Clear All
                         </button>
@@ -3248,14 +3248,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     </div>
 
                     {loadingMemories ? (
-                      <div className="text-[13px] text-[#C8CAD0] text-center py-8">Loading memories...</div>
+                      <div className="text-[13px] text-text-muted text-center py-8">Loading memories...</div>
                     ) : Object.keys(memories).length === 0 ? (
-                      <div className="text-center py-12 bg-[#1A1A1E] rounded-lg border border-[#33353A] border-dashed">
-                        <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#2D2E36] flex items-center justify-center">
-                          <Bot size={20} className="text-[#C8CAD0]" />
+                      <div className="text-center py-12 bg-bg-input rounded-lg border border-border-strong/40 border-dashed">
+                        <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-bg-sidebar flex items-center justify-center">
+                          <Bot size={20} className="text-text-muted" />
                         </div>
-                        <h4 className="text-[13px] font-medium text-[#F8F8FA] mb-1">No memories yet</h4>
-                        <p className="text-[12px] text-[#C8CAD0] max-w-sm mx-auto">
+                        <h4 className="text-[13px] font-medium text-text-base mb-1">No memories yet</h4>
+                        <p className="text-[12px] text-text-muted max-w-sm mx-auto">
                           Agents haven't stored any learnings or context for this project yet.
                         </p>
                       </div>
@@ -3265,18 +3265,18 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           const isEditing = editingMemoryKey === key;
                           const isCopied = copiedMemoryKey === key;
                           return (
-                          <div key={key} className="bg-[#1A1A1E] border border-[#33353A] rounded-lg p-4 group">
+                          <div key={key} className="bg-bg-input border border-border-strong/40 rounded-lg p-4 group">
                             <div className="flex items-start justify-between gap-4 mb-2">
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 mb-1">
-                                  <h4 className="text-[13px] font-semibold text-[#F8F8FA] font-mono truncate">{key}</h4>
+                                  <h4 className="text-[13px] font-semibold text-text-base font-mono truncate">{key}</h4>
                                   {memory.source && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#2D2E36] text-[#C8CAD0] border border-[#3A3B42]">
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted border border-border-strong/40-hover">
                                       {memory.source}
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-[11px] text-[#C8CAD0]">
+                                <p className="text-[11px] text-text-muted">
                                   {new Date(memory.timestamp).toLocaleString()}
                                 </p>
                               </div>
@@ -3287,10 +3287,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     setCopiedMemoryKey(key);
                                     setTimeout(() => setCopiedMemoryKey(null), 1500);
                                   }}
-                                  className="text-[#C8CAD0] hover:text-[#F8F8FA] p-1.5 hover:bg-[#33353A] rounded transition-colors"
+                                  className="text-text-muted hover:text-text-base p-1.5 hover:bg-surface rounded transition-colors"
                                   title="Copy value"
                                 >
-                                  {isCopied ? <Check size={14} className="text-[#4CAF50]" /> : <Copy size={14} />}
+                                  {isCopied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
                                 </button>
                                 <button
                                   onClick={() => {
@@ -3302,7 +3302,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       setEditingMemoryValue(memory.value);
                                     }
                                   }}
-                                  className={`p-1.5 rounded transition-colors ${isEditing ? "text-[#5E6AD2] bg-[#5E6AD2]/10 hover:bg-[#5E6AD2]/20" : "text-[#C8CAD0] hover:text-[#F8F8FA] hover:bg-[#33353A]"}`}
+                                  className={`p-1.5 rounded transition-colors ${isEditing ? "text-brand bg-brand/10 hover:bg-brand/20" : "text-text-muted hover:text-text-base hover:bg-surface"}`}
                                   title={isEditing ? "Cancel edit" : "Edit memory"}
                                 >
                                   <Edit2 size={14} />
@@ -3321,7 +3321,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       setError(`Failed to delete memory: ${err}`);
                                     }
                                   }}
-                                  className="text-[#C8CAD0] hover:text-[#FF6B6B] p-1.5 hover:bg-[#33353A] rounded transition-colors"
+                                  className="text-text-muted hover:text-danger p-1.5 hover:bg-surface rounded transition-colors"
                                   title="Delete memory"
                                 >
                                   <Trash2 size={14} />
@@ -3333,7 +3333,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 <textarea
                                   value={editingMemoryValue}
                                   onChange={(e) => setEditingMemoryValue(e.target.value)}
-                                  className="w-full text-[13px] text-[#F8F8FA] font-mono bg-[#222327] p-3 rounded border border-[#5E6AD2] resize-none focus:outline-none focus:ring-1 focus:ring-[#5E6AD2] custom-scrollbar"
+                                  className="w-full text-[13px] text-text-base font-mono bg-bg-base p-3 rounded border border-brand resize-none focus:outline-none focus:ring-1 focus:ring-brand custom-scrollbar"
                                   rows={Math.min(Math.max(editingMemoryValue.split("\n").length + 1, 4), 15)}
                                   autoFocus
                                 />
@@ -3343,7 +3343,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       setEditingMemoryKey(null);
                                       setEditingMemoryValue("");
                                     }}
-                                    className="px-3 py-1 text-[12px] font-medium text-[#C8CAD0] hover:text-[#F8F8FA] bg-[#2D2E36] hover:bg-[#33353A] rounded transition-colors"
+                                    className="px-3 py-1 text-[12px] font-medium text-text-muted hover:text-text-base bg-bg-sidebar hover:bg-surface rounded transition-colors"
                                   >
                                     Cancel
                                   </button>
@@ -3368,14 +3368,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                         setSavingMemory(false);
                                       }
                                     }}
-                                    className="px-3 py-1 text-[12px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded transition-colors"
+                                    className="px-3 py-1 text-[12px] font-medium bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-not-allowed text-white rounded transition-colors"
                                   >
                                     {savingMemory ? "Saving..." : "Save"}
                                   </button>
                                 </div>
                               </div>
                             ) : (
-                              <div className="text-[13px] text-[#F8F8FA] whitespace-pre-wrap font-mono bg-[#222327] p-3 rounded border border-[#33353A] max-h-60 overflow-y-auto custom-scrollbar">
+                              <div className="text-[13px] text-text-base whitespace-pre-wrap font-mono bg-bg-base p-3 rounded border border-border-strong/40 max-h-60 overflow-y-auto custom-scrollbar">
                                 {memory.value}
                               </div>
                             )}
@@ -3395,20 +3395,20 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         ) : (
           /* Empty state */
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-full border border-dashed border-[#44474F] flex items-center justify-center text-[#C8CAD0]">
+            <div className="w-16 h-16 mx-auto mb-6 rounded-full border border-dashed border-border-strong flex items-center justify-center text-text-muted">
               <FolderOpen size={24} strokeWidth={1.5} />
             </div>
-            <h2 className="text-lg font-medium text-[#F8F8FA] mb-2">
+            <h2 className="text-lg font-medium text-text-base mb-2">
               No Project Selected
             </h2>
-            <p className="text-[14px] text-[#C8CAD0] mb-8 leading-relaxed max-w-sm">
+            <p className="text-[14px] text-text-muted mb-8 leading-relaxed max-w-sm">
               Projects group skills and MCP servers into reusable
               configurations. Select one from the sidebar or create a new
               project.
             </p>
             <button
               onClick={startCreate}
-              className="px-4 py-2 bg-[#5E6AD2] hover:bg-[#6B78E3] text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+              className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
             >
               Create Project
             </button>

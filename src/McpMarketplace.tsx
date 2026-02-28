@@ -55,9 +55,9 @@ const servers: McpServer[] = serversData as McpServer[];
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const ACCENT = "#F59E0B"; // amber — ICONS.mcp.hex
-const ACCENT_BG = "bg-[#F59E0B]/10";
-const ACCENT_BORDER = "border-[#F59E0B]/20";
+const ACCENT = "var(--warning)"; // amber — ICONS.mcp.hex
+const ACCENT_BG = "bg-warning/10";
+const ACCENT_BORDER = "border-warning/20";
 
 const CLASSIFICATIONS = ["all", "official", "reference", "community"] as const;
 
@@ -69,9 +69,9 @@ const CLASSIFICATION_LABELS: Record<string, string> = {
 };
 
 const CLASSIFICATION_COLORS: Record<string, string> = {
-  official: "bg-[#3B82F6]/15 text-[#60A5FA] border-[#3B82F6]/20",
-  reference: "bg-[#8B5CF6]/15 text-[#A78BFA] border-[#8B5CF6]/20",
-  community: "bg-[#22D3EE]/15 text-[#67E8F9] border-[#22D3EE]/20",
+  official: "bg-brand/15 text-brand-light border-brand/20",
+  reference: "bg-accent/15 text-accent-light border-accent/20",
+  community: "bg-accent-hover/15 text-accent-hover-light border-accent-hover/20",
 };
 
 // ── Server Icon ────────────────────────────────────────────────────────────
@@ -120,7 +120,7 @@ function McpServerIcon({ server, size }: { server: McpServer; size: number }) {
 function classificationBadge(classification: string) {
   const cls =
     CLASSIFICATION_COLORS[classification] ||
-    "bg-[#33353A] text-[#C8CAD0] border-[#33353A]";
+    "bg-surface text-text-muted border-border-strong/40";
   return (
     <span
       className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${cls}`}
@@ -141,13 +141,13 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="flex-shrink-0 p-1.5 rounded hover:bg-[#33353A] transition-colors"
+      className="flex-shrink-0 p-1.5 rounded hover:bg-surface transition-colors"
       title="Copy to clipboard"
     >
       {copied ? (
-        <Check size={12} className="text-[#4ADE80]" />
+        <Check size={12} className="text-success" />
       ) : (
-        <Copy size={12} className="text-[#C8CAD0]" />
+        <Copy size={12} className="text-text-muted" />
       )}
     </button>
   );
@@ -290,13 +290,13 @@ export default function McpMarketplace({
     ];
 
     return (
-      <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-[#222327]">
+      <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-bg-base">
         <div className="flex flex-col items-center px-8 pt-8 pb-10 w-full">
           <div className="w-full max-w-2xl">
             {/* Back button */}
             <button
               onClick={() => setSelected(null)}
-              className="flex items-center gap-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors mb-6"
+              className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors mb-6"
             >
               <ArrowLeft size={13} />
               Back to directory
@@ -307,12 +307,12 @@ export default function McpMarketplace({
               <McpServerIcon server={selected} size={48} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2.5 mb-1.5">
-                  <h1 className="text-[20px] font-semibold text-[#F8F8FA] leading-tight">
+                  <h1 className="text-[20px] font-semibold text-text-base leading-tight">
                     {selected.title}
                   </h1>
                   {classificationBadge(selected.classification)}
                 </div>
-                <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
+                <p className="text-[13px] text-text-muted leading-relaxed">
                   {selected.description}
                 </p>
               </div>
@@ -325,12 +325,12 @@ export default function McpMarketplace({
               return (
                 <div className="mb-6">
                   {isInstalled ? (
-                    <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#4ADE80]/10 border border-[#4ADE80]/20">
-                      <CheckCircle2 size={15} className="text-[#4ADE80]" />
-                      <span className="text-[13px] text-[#4ADE80] font-medium">
+                    <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-success/10 border border-success/20">
+                      <CheckCircle2 size={15} className="text-success" />
+                      <span className="text-[13px] text-success font-medium">
                         Added to MCP Servers
                       </span>
-                      <span className="text-[11px] text-[#C8CAD0] ml-1">
+                      <span className="text-[11px] text-text-muted ml-1">
                         as "{name}"
                       </span>
                     </div>
@@ -338,7 +338,7 @@ export default function McpMarketplace({
                     <button
                       onClick={() => handleInstall(selected)}
                       disabled={installing}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#F59E0B] hover:bg-[#FBBF24] text-[#1A1A1E] font-medium text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-warning hover:bg-warning-hover text-bg-input font-medium text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {installing ? (
                         <>
@@ -361,17 +361,17 @@ export default function McpMarketplace({
             })()}
 
             {/* Meta row */}
-            <div className="flex items-center gap-4 mb-6 pb-6 border-b border-[#33353A]">
-              <div className="flex items-center gap-1.5 text-[12px] text-[#C8CAD0]">
+            <div className="flex items-center gap-4 mb-6 pb-6 border-b border-border-strong/40">
+              <div className="flex items-center gap-1.5 text-[12px] text-text-muted">
                 <Package size={12} style={{ color: ACCENT }} />
-                <span className="text-[#F8F8FA] font-medium">{selected.provider}</span>
+                <span className="text-text-base font-medium">{selected.provider}</span>
               </div>
               {selected.repository_url && (
                 <a
                   href={selected.repository_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-[12px] hover:text-[#F8F8FA] transition-colors"
+                  className="flex items-center gap-1.5 text-[12px] hover:text-text-base transition-colors"
                   style={{ color: ACCENT }}
                 >
                   <Github size={12} />
@@ -379,21 +379,21 @@ export default function McpMarketplace({
                   <ExternalLink size={10} />
                 </a>
               )}
-              <div className="flex items-center gap-1.5 text-[12px] text-[#C8CAD0]">
+              <div className="flex items-center gap-1.5 text-[12px] text-text-muted">
                 {hasRemote(selected) && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#F59E0B]/10 text-[#F59E0B] text-[10px] font-medium">
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-warning/10 text-warning text-[10px] font-medium">
                     <Cloud size={10} />
                     Remote
                   </span>
                 )}
                 {hasLocal(selected) && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#4ADE80]/10 text-[#4ADE80] text-[10px] font-medium">
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-success/10 text-success text-[10px] font-medium">
                     <Monitor size={10} />
                     Local
                   </span>
                 )}
                 {hasAuth(selected) && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#F87171]/10 text-[#F87171] text-[10px] font-medium">
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-danger/10 text-danger text-[10px] font-medium">
                     <Lock size={10} />
                     Auth
                   </span>
@@ -403,7 +403,7 @@ export default function McpMarketplace({
 
             {/* Setup tabs */}
             <div className="mb-4">
-              <div className="flex gap-1 border-b border-[#33353A]">
+              <div className="flex gap-1 border-b border-border-strong/40">
                 {tabs.map((tab) => (
                   <button
                     key={tab.id}
@@ -411,16 +411,16 @@ export default function McpMarketplace({
                     disabled={!tab.available}
                     className={`flex items-center gap-1.5 px-4 py-2.5 text-[12px] font-medium border-b-2 transition-colors -mb-[1px] ${
                       setupTab === tab.id && tab.available
-                        ? "border-[#F59E0B] text-[#F8F8FA]"
+                        ? "border-warning text-text-base"
                         : tab.available
-                        ? "border-transparent text-[#C8CAD0] hover:text-[#F8F8FA]"
-                        : "border-transparent text-[#C8CAD0]/30 cursor-not-allowed"
+                        ? "border-transparent text-text-muted hover:text-text-base"
+                        : "border-transparent text-text-muted cursor-not-allowed"
                     }`}
                   >
                     <tab.icon size={13} />
                     {tab.label}
                     {!tab.available && (
-                      <span className="text-[9px] text-[#C8CAD0]/40 ml-1">N/A</span>
+                      <span className="text-[9px] text-text-muted ml-1">N/A</span>
                     )}
                   </button>
                 ))}
@@ -428,35 +428,35 @@ export default function McpMarketplace({
             </div>
 
             {/* Tab content */}
-            <div className="bg-[#1A1A1E] border border-[#33353A] rounded-xl p-6">
+            <div className="bg-bg-input border border-border-strong/40 rounded-xl p-6">
               {/* Remote tab */}
               {setupTab === "remote" && selected.remote && (
                 <div className="space-y-5">
                   <div>
-                    <h3 className="text-[11px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-3">
+                    <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-3">
                       Remote Endpoint
                     </h3>
-                    <p className="text-[12px] text-[#C8CAD0] mb-4">
+                    <p className="text-[12px] text-text-muted mb-4">
                       Connect directly to the hosted server — no local installation needed.
                     </p>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                    <label className="text-[11px] font-medium text-text-muted mb-1.5 block">
                       Transport
                     </label>
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#F59E0B]/10 text-[#F59E0B] text-[11px] font-mono font-medium">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-warning/10 text-warning text-[11px] font-mono font-medium">
                       <Globe size={11} />
                       {selected.remote.transport}
                     </span>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                    <label className="text-[11px] font-medium text-text-muted mb-1.5 block">
                       URL
                     </label>
-                    <div className="flex items-center gap-2 bg-[#222327] border border-[#33353A] rounded-md px-3 py-2">
-                      <code className="flex-1 text-[12px] font-mono text-[#F8F8FA] truncate">
+                    <div className="flex items-center gap-2 bg-bg-base border border-border-strong/40 rounded-md px-3 py-2">
+                      <code className="flex-1 text-[12px] font-mono text-text-base truncate">
                         {selected.remote.url}
                       </code>
                       <CopyButton text={selected.remote.url} />
@@ -465,11 +465,11 @@ export default function McpMarketplace({
 
                   {/* Example config */}
                   <div>
-                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                    <label className="text-[11px] font-medium text-text-muted mb-1.5 block">
                       Example Configuration
                     </label>
                     <div className="relative">
-                      <pre className="bg-[#222327] border border-[#33353A] rounded-md px-4 py-3 font-mono text-[11px] text-[#E5E6EA] leading-relaxed overflow-x-auto whitespace-pre">
+                      <pre className="bg-bg-base border border-border-strong/40 rounded-md px-4 py-3 font-mono text-[11px] text-text-base leading-relaxed overflow-x-auto whitespace-pre">
 {`{
   "${selected.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}": {
     "type": "${selected.remote.transport === "sse" ? "sse" : "http"}",
@@ -506,39 +506,39 @@ export default function McpMarketplace({
               {setupTab === "local" && selected.local && (
                 <div className="space-y-5">
                   <div>
-                    <h3 className="text-[11px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-3">
+                    <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-3">
                       Local Installation
                     </h3>
-                    <p className="text-[12px] text-[#C8CAD0] mb-4">
+                    <p className="text-[12px] text-text-muted mb-4">
                       Run the server locally on your machine via stdio transport.
                     </p>
                   </div>
 
                   <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                      <label className="text-[11px] font-medium text-text-muted mb-1.5 block">
                         Registry
                       </label>
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#33353A] text-[#E5E6EA] text-[11px] font-mono">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface text-text-base text-[11px] font-mono">
                         <Package size={11} />
                         {selected.local.registry}
                       </span>
                     </div>
                     <div>
-                      <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                      <label className="text-[11px] font-medium text-text-muted mb-1.5 block">
                         Transport
                       </label>
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#33353A] text-[#E5E6EA] text-[11px] font-mono">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface text-text-base text-[11px] font-mono">
                         <Terminal size={11} />
                         {selected.local.transport}
                       </span>
                     </div>
                     {selected.local.version && (
                       <div>
-                        <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                        <label className="text-[11px] font-medium text-text-muted mb-1.5 block">
                           Version
                         </label>
-                        <span className="inline-flex items-center px-2.5 py-1 rounded bg-[#33353A] text-[#E5E6EA] text-[11px] font-mono">
+                        <span className="inline-flex items-center px-2.5 py-1 rounded bg-surface text-text-base text-[11px] font-mono">
                           {selected.local.version}
                         </span>
                       </div>
@@ -546,11 +546,11 @@ export default function McpMarketplace({
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                    <label className="text-[11px] font-medium text-text-muted mb-1.5 block">
                       Package
                     </label>
-                    <div className="flex items-center gap-2 bg-[#222327] border border-[#33353A] rounded-md px-3 py-2">
-                      <code className="flex-1 text-[12px] font-mono text-[#F8F8FA] truncate">
+                    <div className="flex items-center gap-2 bg-bg-base border border-border-strong/40 rounded-md px-3 py-2">
+                      <code className="flex-1 text-[12px] font-mono text-text-base truncate">
                         {selected.local.package}
                       </code>
                       <CopyButton text={selected.local.package} />
@@ -558,11 +558,11 @@ export default function McpMarketplace({
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                    <label className="text-[11px] font-medium text-text-muted mb-1.5 block">
                       Install / Run Command
                     </label>
-                    <div className="flex items-center gap-2 bg-[#222327] border border-[#33353A] rounded-md px-3 py-2">
-                      <code className="flex-1 text-[12px] font-mono text-[#4ADE80] truncate">
+                    <div className="flex items-center gap-2 bg-bg-base border border-border-strong/40 rounded-md px-3 py-2">
+                      <code className="flex-1 text-[12px] font-mono text-success truncate">
                         $ {selected.local.command}
                       </code>
                       <CopyButton text={selected.local.command} />
@@ -571,11 +571,11 @@ export default function McpMarketplace({
 
                   {/* Example config */}
                   <div>
-                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                    <label className="text-[11px] font-medium text-text-muted mb-1.5 block">
                       Example Configuration
                     </label>
                     <div className="relative">
-                      <pre className="bg-[#222327] border border-[#33353A] rounded-md px-4 py-3 font-mono text-[11px] text-[#E5E6EA] leading-relaxed overflow-x-auto whitespace-pre">
+                      <pre className="bg-bg-base border border-border-strong/40 rounded-md px-4 py-3 font-mono text-[11px] text-text-base leading-relaxed overflow-x-auto whitespace-pre">
 {(() => {
   const parts = selected.local!.command.split(/\s+/);
   const cmd = parts[0] || "";
@@ -630,47 +630,47 @@ export default function McpMarketplace({
               {setupTab === "auth" && hasAuth(selected) && (
                 <div className="space-y-5">
                   <div>
-                    <h3 className="text-[11px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-3">
+                    <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-3">
                       Authentication
                     </h3>
-                    <p className="text-[12px] text-[#C8CAD0] mb-4">
+                    <p className="text-[12px] text-text-muted mb-4">
                       This server requires authentication. Set the following environment variables.
                     </p>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-1.5 block">
+                    <label className="text-[11px] font-medium text-text-muted mb-1.5 block">
                       Method
                     </label>
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#F87171]/10 text-[#F87171] text-[11px] font-medium">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-danger/10 text-danger text-[11px] font-medium">
                       <Shield size={11} />
                       {selected.auth.method}
                     </span>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-medium text-[#C8CAD0] mb-2 block">
+                    <label className="text-[11px] font-medium text-text-muted mb-2 block">
                       Environment Variables
                     </label>
                     <div className="space-y-2">
                       {selected.auth.env_vars.map((v) => (
                         <div
                           key={v.name}
-                          className="flex items-start gap-3 bg-[#222327] border border-[#33353A] rounded-md px-3 py-2.5"
+                          className="flex items-start gap-3 bg-bg-base border border-border-strong/40 rounded-md px-3 py-2.5"
                         >
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-0.5">
-                              <code className="text-[12px] font-mono text-[#F8F8FA] font-medium">
+                              <code className="text-[12px] font-mono text-text-base font-medium">
                                 {v.name}
                               </code>
                               {v.secret && (
-                                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[#F87171]/10 text-[#F87171] text-[9px] font-medium">
+                                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-danger/10 text-danger text-[9px] font-medium">
                                   <Key size={8} />
                                   secret
                                 </span>
                               )}
                             </div>
-                            <p className="text-[11px] text-[#C8CAD0] leading-relaxed">
+                            <p className="text-[11px] text-text-muted leading-relaxed">
                               {v.description}
                             </p>
                           </div>
@@ -685,30 +685,30 @@ export default function McpMarketplace({
               {/* Fallback for unavailable tabs */}
               {setupTab === "remote" && !selected.remote && (
                 <div className="text-center py-8">
-                  <Cloud size={24} className="mx-auto mb-3 text-[#33353A]" />
-                  <p className="text-[13px] text-[#C8CAD0]">
+                  <Cloud size={24} className="mx-auto mb-3 text-surface" />
+                  <p className="text-[13px] text-text-muted">
                     No remote endpoint available for this server.
                   </p>
-                  <p className="text-[11px] text-[#C8CAD0]/60 mt-1">
+                  <p className="text-[11px] text-text-muted mt-1">
                     Use local installation instead.
                   </p>
                 </div>
               )}
               {setupTab === "local" && !selected.local && (
                 <div className="text-center py-8">
-                  <Monitor size={24} className="mx-auto mb-3 text-[#33353A]" />
-                  <p className="text-[13px] text-[#C8CAD0]">
+                  <Monitor size={24} className="mx-auto mb-3 text-surface" />
+                  <p className="text-[13px] text-text-muted">
                     No local installation available for this server.
                   </p>
-                  <p className="text-[11px] text-[#C8CAD0]/60 mt-1">
+                  <p className="text-[11px] text-text-muted mt-1">
                     Use the remote endpoint instead.
                   </p>
                 </div>
               )}
               {setupTab === "auth" && !hasAuth(selected) && (
                 <div className="text-center py-8">
-                  <Lock size={24} className="mx-auto mb-3 text-[#33353A]" />
-                  <p className="text-[13px] text-[#C8CAD0]">
+                  <Lock size={24} className="mx-auto mb-3 text-surface" />
+                  <p className="text-[13px] text-text-muted">
                     No authentication required for this server.
                   </p>
                 </div>
@@ -723,7 +723,7 @@ export default function McpMarketplace({
   // ── Landing / directory view ─────────────────────────────────────────────
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-[#222327]">
+    <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-bg-base">
       <div className="flex flex-col px-6 pt-10 pb-10 w-full">
         {/* Header — centered, constrained width */}
         <div className="text-center mb-6 max-w-lg mx-auto">
@@ -732,10 +732,10 @@ export default function McpMarketplace({
           >
             <Server size={20} style={{ color: ACCENT }} strokeWidth={1.5} />
           </div>
-          <h2 className="text-[18px] font-semibold text-[#F8F8FA] mb-1.5">
+          <h2 className="text-[18px] font-semibold text-text-base mb-1.5">
             MCP Server Directory
           </h2>
-          <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
+          <p className="text-[13px] text-text-muted leading-relaxed">
             Browse popular MCP servers. View setup instructions, install
             commands, and authentication requirements.
           </p>
@@ -746,7 +746,7 @@ export default function McpMarketplace({
           <div className="relative mb-3">
             <Search
               size={16}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-[#C8CAD0] pointer-events-none"
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
             />
             <input
               type="text"
@@ -754,7 +754,7 @@ export default function McpMarketplace({
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search servers..."
               autoFocus
-              className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#F59E0B] rounded-xl pl-11 pr-4 py-3 text-[14px] text-[#F8F8FA] placeholder-[#C8CAD0]/60 outline-none transition-colors shadow-sm"
+              className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-warning rounded-xl pl-11 pr-4 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm"
             />
           </div>
           <div className="flex gap-2 justify-center">
@@ -764,8 +764,8 @@ export default function McpMarketplace({
                 onClick={() => setClassification(c)}
                 className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${
                   classification === c
-                    ? "bg-[#F59E0B]/15 text-[#F59E0B] border-[#F59E0B]/30"
-                    : "bg-[#2D2E36] border-[#33353A] text-[#C8CAD0] hover:text-[#F8F8FA] hover:border-[#44474F]"
+                    ? "bg-warning/15 text-warning border-warning/30"
+                    : "bg-bg-sidebar border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
                 }`}
               >
                 {CLASSIFICATION_LABELS[c]}
@@ -776,10 +776,10 @@ export default function McpMarketplace({
 
         {/* Results count — full width */}
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase">
+          <h3 className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             {filtered.length} Server{filtered.length !== 1 ? "s" : ""}
           </h3>
-          <div className="flex items-center gap-3 text-[10px] text-[#C8CAD0]/60">
+          <div className="flex items-center gap-3 text-[10px] text-text-muted">
             <span className="flex items-center gap-1">
               <Cloud size={9} />
               Remote
@@ -800,9 +800,9 @@ export default function McpMarketplace({
           <div className="text-center py-12">
             <Server
               size={32}
-              className="mx-auto mb-4 text-[#33353A]"
+              className="mx-auto mb-4 text-surface"
             />
-            <p className="text-[13px] text-[#C8CAD0]">
+            <p className="text-[13px] text-text-muted">
               No servers match your search.
             </p>
           </div>
@@ -812,41 +812,41 @@ export default function McpMarketplace({
               <button
                 key={server.slug}
                 onClick={() => handleSelect(server)}
-                className="group flex flex-col text-left p-5 rounded-xl bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] hover:bg-[#1E1F24] transition-colors"
+                className="group flex flex-col text-left p-5 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-colors"
               >
                 {/* Header: icon + title + badge */}
                 <div className="flex gap-3 mb-3">
                   <McpServerIcon server={server} size={36} />
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 mb-1">
-                      <span className="text-[14px] font-medium text-[#F8F8FA] leading-snug truncate">
+                      <span className="text-[14px] font-medium text-text-base leading-snug truncate">
                         {server.title}
                       </span>
                       {installedServers.has(configName(server)) && (
-                        <CheckCircle2 size={13} className="text-[#4ADE80] flex-shrink-0" />
+                        <CheckCircle2 size={13} className="text-success flex-shrink-0" />
                       )}
                     </div>
                     {classificationBadge(server.classification)}
                   </div>
                 </div>
                 {/* Description */}
-                <p className="text-[12px] text-[#C8CAD0] leading-relaxed line-clamp-3 flex-1">
+                <p className="text-[12px] text-text-muted leading-relaxed line-clamp-3 flex-1">
                   {server.description}
                 </p>
                 {/* Footer — pinned to bottom */}
-                <div className="flex items-center justify-between gap-4 mt-3 pt-2.5 border-t border-[#33353A]/40">
-                  <span className="text-[11px] text-[#C8CAD0]/60 truncate">
+                <div className="flex items-center justify-between gap-4 mt-3 pt-2.5 border-t border-border-strong/40/40">
+                  <span className="text-[11px] text-text-muted truncate">
                     {server.provider}
                   </span>
                   <div className="flex items-center gap-2.5 flex-shrink-0">
                     {hasRemote(server) && (
-                      <Cloud size={11} className="text-[#F59E0B]/60" />
+                      <Cloud size={11} className="text-warning/60" />
                     )}
                     {hasLocal(server) && (
-                      <Monitor size={11} className="text-[#4ADE80]/60" />
+                      <Monitor size={11} className="text-success/60" />
                     )}
                     {hasAuth(server) && (
-                      <Lock size={11} className="text-[#F87171]/60" />
+                      <Lock size={11} className="text-danger/60" />
                     )}
                   </div>
                 </div>

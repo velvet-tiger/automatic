@@ -100,20 +100,20 @@ function renderMarkdown(md: string): React.ReactElement {
         parts.push(
           <code
             key={nextKey()}
-            className="px-1 py-0.5 rounded bg-[#1A1A1E] text-[#4ADE80] font-mono text-[11px]"
+            className="px-1 py-0.5 rounded bg-bg-input text-success font-mono text-[11px]"
           >
             {token.slice(1, -1)}
           </code>
         );
       } else if (token.startsWith("**") || token.startsWith("__")) {
         parts.push(
-          <strong key={nextKey()} className="font-semibold text-[#F8F8FA]">
+          <strong key={nextKey()} className="font-semibold text-text-base">
             {token.slice(2, -2)}
           </strong>
         );
       } else {
         parts.push(
-          <em key={nextKey()} className="italic text-[#E5E6EA]">
+          <em key={nextKey()} className="italic text-text-base">
             {token.slice(1, -1)}
           </em>
         );
@@ -139,10 +139,10 @@ function renderMarkdown(md: string): React.ReactElement {
       elements.push(
         <pre
           key={nextKey()}
-          className="mt-2 mb-4 bg-[#1A1A1E] border border-[#33353A] rounded-md px-4 py-3 font-mono text-[11px] text-[#E5E6EA] leading-relaxed overflow-x-auto whitespace-pre"
+          className="mt-2 mb-4 bg-bg-input border border-border-strong/40 rounded-md px-4 py-3 font-mono text-[11px] text-text-base leading-relaxed overflow-x-auto whitespace-pre"
         >
           {lang && (
-            <span className="block text-[10px] text-[#C8CAD0] mb-2 uppercase tracking-wider">
+            <span className="block text-[10px] text-text-muted mb-2 uppercase tracking-wider">
               {lang}
             </span>
           )}
@@ -156,7 +156,7 @@ function renderMarkdown(md: string): React.ReactElement {
     // H1
     if (line.startsWith("# ")) {
       elements.push(
-        <h1 key={nextKey()} className="text-[18px] font-semibold text-[#F8F8FA] mt-5 mb-2">
+        <h1 key={nextKey()} className="text-[18px] font-semibold text-text-base mt-5 mb-2">
           {inlineFormat(line.slice(2))}
         </h1>
       );
@@ -169,7 +169,7 @@ function renderMarkdown(md: string): React.ReactElement {
       elements.push(
         <h2
           key={nextKey()}
-          className="text-[14px] font-semibold text-[#F8F8FA] mt-5 mb-2 pb-1.5 border-b border-[#33353A]"
+          className="text-[14px] font-semibold text-text-base mt-5 mb-2 pb-1.5 border-b border-border-strong/40"
         >
           {inlineFormat(line.slice(3))}
         </h2>
@@ -181,7 +181,7 @@ function renderMarkdown(md: string): React.ReactElement {
     // H3
     if (line.startsWith("### ")) {
       elements.push(
-        <h3 key={nextKey()} className="text-[13px] font-semibold text-[#F8F8FA] mt-4 mb-1.5">
+        <h3 key={nextKey()} className="text-[13px] font-semibold text-text-base mt-4 mb-1.5">
           {inlineFormat(line.slice(4))}
         </h3>
       );
@@ -194,8 +194,8 @@ function renderMarkdown(md: string): React.ReactElement {
       const items: React.ReactElement[] = [];
       while (i < lines.length && /^[-*] /.test(lines[i]!)) {
         items.push(
-          <li key={nextKey()} className="flex gap-2 text-[13px] text-[#E5E6EA] leading-relaxed">
-            <span className="mt-1.5 w-1 h-1 rounded-full bg-[#C8CAD0] flex-shrink-0" />
+          <li key={nextKey()} className="flex gap-2 text-[13px] text-text-base leading-relaxed">
+            <span className="mt-1.5 w-1 h-1 rounded-full bg-text-muted flex-shrink-0" />
             <span>{inlineFormat(lines[i]!.replace(/^[-*] /, ""))}</span>
           </li>
         );
@@ -215,8 +215,8 @@ function renderMarkdown(md: string): React.ReactElement {
       let n = 1;
       while (i < lines.length && /^\d+\. /.test(lines[i]!)) {
         items.push(
-          <li key={nextKey()} className="flex gap-2.5 text-[13px] text-[#E5E6EA] leading-relaxed">
-            <span className="flex-shrink-0 text-[11px] text-[#C8CAD0] font-mono w-4 text-right mt-0.5">
+          <li key={nextKey()} className="flex gap-2.5 text-[13px] text-text-base leading-relaxed">
+            <span className="flex-shrink-0 text-[11px] text-text-muted font-mono w-4 text-right mt-0.5">
               {n}.
             </span>
             <span>{inlineFormat(lines[i]!.replace(/^\d+\. /, ""))}</span>
@@ -259,7 +259,7 @@ function renderMarkdown(md: string): React.ReactElement {
                 {headers.map((h, hi) => (
                   <th
                     key={hi}
-                    className="text-left px-3 py-2 text-[#F8F8FA] font-semibold border-b border-[#33353A] bg-[#1A1A1E] whitespace-nowrap"
+                    className="text-left px-3 py-2 text-text-base font-semibold border-b border-border-strong/40 bg-bg-input whitespace-nowrap"
                   >
                     {inlineFormat(h)}
                   </th>
@@ -268,11 +268,11 @@ function renderMarkdown(md: string): React.ReactElement {
             </thead>
             <tbody>
               {rows.map((cells, ri) => (
-                <tr key={ri} className={ri % 2 === 0 ? "bg-[#222327]" : "bg-[#1E1F23]"}>
+                <tr key={ri} className={ri % 2 === 0 ? "bg-bg-base" : "bg-surface-hover"}>
                   {cells.map((cell, ci) => (
                     <td
                       key={ci}
-                      className="px-3 py-2 text-[#E5E6EA] border-b border-[#33353A]/40 align-top"
+                      className="px-3 py-2 text-text-base border-b border-border-strong/40/40 align-top"
                     >
                       {inlineFormat(cell)}
                     </td>
@@ -288,7 +288,7 @@ function renderMarkdown(md: string): React.ReactElement {
 
     // Horizontal rule
     if (/^---+$/.test(line.trim())) {
-      elements.push(<hr key={nextKey()} className="my-4 border-[#33353A]" />);
+      elements.push(<hr key={nextKey()} className="my-4 border-border-strong/40" />);
       i++;
       continue;
     }
@@ -301,7 +301,7 @@ function renderMarkdown(md: string): React.ReactElement {
 
     // Paragraph
     elements.push(
-      <p key={nextKey()} className="text-[13px] text-[#E5E6EA] leading-relaxed my-2">
+      <p key={nextKey()} className="text-[13px] text-text-base leading-relaxed my-2">
         {inlineFormat(line)}
       </p>
     );
@@ -501,22 +501,22 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
   // Landing page shown when there is no active query and no skill selected
   if (!query.trim() && !selected) {
     return (
-      <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-[#222327]">
+      <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-bg-base">
         <div className="flex flex-col px-6 pt-10 pb-10 w-full">
           <div className="w-full max-w-2xl mx-auto">
             {/* Icon + heading */}
             <div className="text-center mb-6 max-w-lg mx-auto">
-              <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-[#4ADE80]/10 border border-[#4ADE80]/20 flex items-center justify-center">
-                <Download size={20} className="text-[#4ADE80]" strokeWidth={1.5} />
+              <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-success/10 border border-success/20 flex items-center justify-center">
+                <Download size={20} className="text-success" strokeWidth={1.5} />
               </div>
-              <h2 className="text-[18px] font-semibold text-[#F8F8FA] mb-1.5">Skill Store</h2>
-              <p className="text-[13px] text-[#C8CAD0] leading-relaxed">
+              <h2 className="text-[18px] font-semibold text-text-base mb-1.5">Skill Store</h2>
+              <p className="text-[13px] text-text-muted leading-relaxed">
                 Browse and install agent skills from{" "}
                 <a
                   href="https://skills.sh"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[#4ADE80] hover:text-[#6EE7A0] transition-colors"
+                  className="text-success hover:text-success-light transition-colors"
                 >
                   skills.sh
                 </a>
@@ -526,7 +526,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
 
             {/* Big search box */}
             <div className="relative mb-3">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[#C8CAD0] pointer-events-none" />
+              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
               <input
                 ref={searchInputRef}
                 type="text"
@@ -534,7 +534,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search for skills…"
                 autoFocus
-                className="w-full bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] focus:border-[#4ADE80] rounded-xl pl-11 pr-4 py-3 text-[14px] text-[#F8F8FA] placeholder-[#C8CAD0]/60 outline-none transition-colors shadow-sm"
+                className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-success rounded-xl pl-11 pr-4 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm"
               />
             </div>
 
@@ -544,7 +544,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 <button
                   key={s}
                   onClick={() => setQuery(s)}
-                  className="px-3 py-1.5 rounded-full bg-[#2D2E36] border border-[#33353A] text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] hover:border-[#44474F] transition-colors"
+                  className="px-3 py-1.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[12px] text-text-muted hover:text-text-base hover:border-border-strong transition-colors"
                 >
                   {s}
                 </button>
@@ -553,7 +553,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
 
             {/* Featured skills */}
             <div>
-              <h3 className="text-[11px] font-semibold text-[#C8CAD0] tracking-wider uppercase mb-3">
+              <h3 className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
                 Featured
               </h3>
               <div className="grid grid-cols-2 gap-3">
@@ -563,26 +563,26 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                     <button
                       key={skill.id}
                       onClick={() => handleSelect({ id: skill.id, name: skill.name, source: skill.source, installs: skill.installs })}
-                      className="group text-left p-4 rounded-xl bg-[#1A1A1E] border border-[#33353A] hover:border-[#44474F] hover:bg-[#1E1F24] transition-colors"
+                      className="group text-left p-4 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-colors"
                     >
                       <div className="flex items-start justify-between gap-2 mb-2">
-                        <span className="text-[13px] font-medium text-[#F8F8FA] leading-snug">
+                        <span className="text-[13px] font-medium text-text-base leading-snug">
                           {skill.displayName}
                         </span>
                         <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
                           {alreadyImported && (
-                            <CheckCircle2 size={12} className="text-[#4ADE80]" />
+                            <CheckCircle2 size={12} className="text-success" />
                           )}
-                          <ArrowRight size={12} className="text-[#33353A] group-hover:text-[#C8CAD0] transition-colors" />
+                          <ArrowRight size={12} className="text-surface group-hover:text-text-muted transition-colors" />
                         </div>
                       </div>
-                      <p className="text-[12px] text-[#C8CAD0] leading-relaxed mb-3 line-clamp-2">
+                      <p className="text-[12px] text-text-muted leading-relaxed mb-3 line-clamp-2">
                         {skill.description}
                       </p>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-[#C8CAD0]/60 truncate">{skill.source}</span>
-                        <span className="text-[10px] text-[#C8CAD0]/30">·</span>
-                        <span className="text-[10px] text-[#4ADE80] flex-shrink-0">
+                        <span className="text-[10px] text-text-muted truncate">{skill.source}</span>
+                        <span className="text-[10px] text-text-muted">·</span>
+                        <span className="text-[10px] text-success flex-shrink-0">
                           {formatInstalls(skill.installs)}
                         </span>
                       </div>
@@ -600,12 +600,12 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
   return (
     <div className="flex h-full">
       {/* Left pane — search + results */}
-      <div className="w-[264px] flex-shrink-0 border-r border-[#33353A] flex flex-col">
+      <div className="w-[264px] flex-shrink-0 border-r border-border-strong/40 flex flex-col">
         {/* Back + search box */}
-        <div className="p-3 border-b border-[#33353A]">
+        <div className="p-3 border-b border-border-strong/40">
           <button
             onClick={() => { setQuery(""); setSelected(null); setRawContent(""); setPreviewError(null); setResults([]); }}
-            className="flex items-center gap-1 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors mb-2"
+            className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-base transition-colors mb-2"
           >
             <ArrowLeft size={11} />
             Skill Store
@@ -613,20 +613,20 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
           <div className="relative">
             <Search
               size={13}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#C8CAD0] pointer-events-none"
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
             />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search skills.sh…"
-              className="w-full bg-[#2D2E36] border border-[#33353A] rounded-md pl-8 pr-8 py-1.5 text-[13px] text-[#F8F8FA] placeholder-[#C8CAD0] focus:outline-none focus:border-[#4ADE80] transition-colors"
+              className="w-full bg-bg-sidebar border border-border-strong/40 rounded-md pl-8 pr-8 py-1.5 text-[13px] text-text-base placeholder-text-muted focus:outline-none focus:border-success transition-colors"
               autoFocus
             />
             {searching && (
               <Loader2
                 size={13}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#C8CAD0] animate-spin"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted animate-spin"
               />
             )}
           </div>
@@ -637,7 +637,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
         <div className="flex-1 overflow-y-auto custom-scrollbar">
 
           {results.length === 0 && !searching && query.trim().length >= 2 && !searchError && (
-            <div className="p-4 text-center text-[13px] text-[#C8CAD0]">No skills found</div>
+            <div className="p-4 text-center text-[13px] text-text-muted">No skills found</div>
           )}
           {(() => {
             // Tag each result as duplicate or not (first occurrence of a name wins)
@@ -659,29 +659,29 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                     <button
                       key={skill.id}
                       onClick={() => handleSelect(skill)}
-                      className={`w-full text-left px-3 py-2.5 border-b border-[#33353A]/40 transition-colors ${
-                        isActive ? "bg-[#2D2E36]" : "hover:bg-[#2D2E36]/50"
+                      className={`w-full text-left px-3 py-2.5 border-b border-border-strong/40/40 transition-colors ${
+                        isActive ? "bg-bg-sidebar" : "hover:bg-bg-sidebar/50"
                       } ${isDuplicate ? "opacity-50" : ""}`}
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <span className={`text-[13px] font-medium leading-snug break-all ${isDuplicate ? "text-[#C8CAD0]" : "text-[#F8F8FA]"}`}>
+                        <span className={`text-[13px] font-medium leading-snug break-all ${isDuplicate ? "text-text-muted" : "text-text-base"}`}>
                           {skill.name}
                         </span>
                         <div className="flex items-center gap-1 flex-shrink-0 mt-0.5">
                           {isDuplicate && (
-                            <span className="text-[9px] text-[#C8CAD0]/70 bg-[#33353A] rounded px-1 py-[1px] leading-none">
+                            <span className="text-[9px] text-text-muted bg-surface rounded px-1 py-[1px] leading-none">
                               duplicate
                             </span>
                           )}
                           {alreadyImported && (
-                            <CheckCircle2 size={12} className="text-[#4ADE80]" />
+                            <CheckCircle2 size={12} className="text-success" />
                           )}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[11px] text-[#C8CAD0] truncate">{skill.source}</span>
-                        <span className="text-[10px] text-[#C8CAD0]/40">·</span>
-                        <span className="text-[11px] text-[#4ADE80] flex-shrink-0">
+                        <span className="text-[11px] text-text-muted truncate">{skill.source}</span>
+                        <span className="text-[10px] text-text-muted">·</span>
+                        <span className="text-[11px] text-success flex-shrink-0">
                           {formatInstalls(skill.installs)}
                         </span>
                       </div>
@@ -691,12 +691,12 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 {duplicateCount > 0 && (
                   <button
                     onClick={() => setShowDuplicates((v) => !v)}
-                    className="w-full text-center px-3 py-2 text-[11px] text-[#C8CAD0]/70 hover:text-[#C8CAD0] transition-colors border-b border-[#33353A]/40"
+                    className="w-full text-center px-3 py-2 text-[11px] text-text-muted hover:text-text-muted transition-colors border-b border-border-strong/40/40"
                   >
                     {showDuplicates
                       ? "Hide duplicates"
                       : `${duplicateCount} likely duplicate${duplicateCount === 1 ? "" : "s"} hidden`}
-                    <span className="ml-1.5 text-[10px] text-[#C8CAD0]/50">
+                    <span className="ml-1.5 text-[10px] text-text-muted">
                       {showDuplicates ? "▲" : "▼"}
                     </span>
                   </button>
@@ -712,13 +712,13 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
         {!selected ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <div className="w-12 h-12 rounded-full border-2 border-dashed border-[#33353A] flex items-center justify-center mx-auto mb-4">
-                <Download size={18} className="text-[#C8CAD0]" />
+              <div className="w-12 h-12 rounded-full border-2 border-dashed border-border-strong/40 flex items-center justify-center mx-auto mb-4">
+                <Download size={18} className="text-text-muted" />
               </div>
-              <h3 className="text-[14px] font-medium text-[#F8F8FA] mb-1">
+              <h3 className="text-[14px] font-medium text-text-base mb-1">
                 Select a skill to preview
               </h3>
-              <p className="text-[13px] text-[#C8CAD0]">
+              <p className="text-[13px] text-text-muted">
                 Search above and click a result
               </p>
             </div>
@@ -726,7 +726,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
         ) : (
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             {loadingPreview ? (
-              <div className="flex items-center gap-2 p-6 text-[13px] text-[#C8CAD0]">
+              <div className="flex items-center gap-2 p-6 text-[13px] text-text-muted">
                 <Loader2 size={14} className="animate-spin" />
                 Loading SKILL.md…
               </div>
@@ -735,35 +735,35 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 {/* Back button */}
                 <button
                   onClick={() => { setSelected(null); setRawContent(""); setPreviewError(null); }}
-                  className="flex items-center gap-1 text-[11px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors mb-6"
+                  className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-base transition-colors mb-6"
                 >
                   <ArrowLeft size={11} />
                   Back
                 </button>
 
-                <h3 className="text-[15px] font-medium text-[#F8F8FA] mb-2">
+                <h3 className="text-[15px] font-medium text-text-base mb-2">
                   Skill not found in repository
                 </h3>
-                <p className="text-[13px] text-[#C8CAD0] leading-relaxed mb-5">
+                <p className="text-[13px] text-text-muted leading-relaxed mb-5">
                   This skill does not conform to any known skill directory structure.
                   It may have been removed from the repository, or stored in an
                   unsupported layout.
                 </p>
 
                 {selected && (
-                  <div className="rounded-lg border border-[#33353A] bg-[#2D2E36]/50 p-4 mb-5">
+                  <div className="rounded-lg border border-border-strong/40 bg-bg-sidebar/50 p-4 mb-5">
                     <div className="grid gap-2.5 text-[12px]">
                       <div className="flex items-baseline gap-2">
-                        <span className="text-[#C8CAD0]/60 w-16 flex-shrink-0">Skill</span>
-                        <span className="text-[#F8F8FA] font-medium break-all">{selected.name}</span>
+                        <span className="text-text-muted w-16 flex-shrink-0">Skill</span>
+                        <span className="text-text-base font-medium break-all">{selected.name}</span>
                       </div>
                       <div className="flex items-baseline gap-2">
-                        <span className="text-[#C8CAD0]/60 w-16 flex-shrink-0">Source</span>
-                        <span className="text-[#C8CAD0] break-all">{selected.source}</span>
+                        <span className="text-text-muted w-16 flex-shrink-0">Source</span>
+                        <span className="text-text-muted break-all">{selected.source}</span>
                       </div>
                       <div className="flex items-baseline gap-2">
-                        <span className="text-[#C8CAD0]/60 w-16 flex-shrink-0">ID</span>
-                        <span className="text-[#C8CAD0]/80 break-all font-mono text-[11px]">{selected.id}</span>
+                        <span className="text-text-muted w-16 flex-shrink-0">ID</span>
+                        <span className="text-text-muted break-all font-mono text-[11px]">{selected.id}</span>
                       </div>
                     </div>
                   </div>
@@ -775,7 +775,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       href={`https://skills.sh/${selected.id}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] bg-[#33353A] hover:bg-[#3D3F46] rounded-md px-3 py-1.5 transition-colors"
+                      className="inline-flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base bg-surface hover:bg-surface-active rounded-md px-3 py-1.5 transition-colors"
                     >
                       <ExternalLink size={11} />
                       View on skills.sh
@@ -784,7 +784,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       href={`https://github.com/${selected.source}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-[12px] text-[#C8CAD0] hover:text-[#F8F8FA] bg-[#33353A] hover:bg-[#3D3F46] rounded-md px-3 py-1.5 transition-colors"
+                      className="inline-flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base bg-surface hover:bg-surface-active rounded-md px-3 py-1.5 transition-colors"
                     >
                       <Github size={11} />
                       Browse repository
@@ -797,10 +797,10 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 {/* Main content column */}
                 <div className="flex-1 min-w-0 px-8 py-6">
                   {/* Breadcrumb */}
-                  <div className="flex items-center gap-1.5 text-[11px] text-[#C8CAD0] mb-4">
+                  <div className="flex items-center gap-1.5 text-[11px] text-text-muted mb-4">
                     <button
                       onClick={() => { setSelected(null); setRawContent(""); setPreviewError(null); }}
-                      className="flex items-center gap-1 hover:text-[#F8F8FA] transition-colors"
+                      className="flex items-center gap-1 hover:text-text-base transition-colors"
                     >
                       <ArrowLeft size={11} />
                       Back
@@ -810,7 +810,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       href="https://skills.sh"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="hover:text-[#F8F8FA] transition-colors"
+                      className="hover:text-text-base transition-colors"
                     >
                       skills
                     </a>
@@ -819,28 +819,28 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       href={`https://github.com/${selected.source}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="hover:text-[#F8F8FA] transition-colors"
+                      className="hover:text-text-base transition-colors"
                     >
                       {selected.source}
                     </a>
                     <span>/</span>
-                    <span className="text-[#F8F8FA]">{selected.name}</span>
+                    <span className="text-text-base">{selected.name}</span>
                   </div>
 
                   {/* Title + install command */}
-                  <h1 className="text-[22px] font-semibold text-[#F8F8FA] mb-3 leading-tight">
+                  <h1 className="text-[22px] font-semibold text-text-base mb-3 leading-tight">
                     {displayName}
                   </h1>
 
                   <div className="flex items-center gap-2 mb-5">
-                    <code className="flex-1 bg-[#1A1A1E] border border-[#33353A] rounded-md px-3 py-2 font-mono text-[11px] text-[#C8CAD0] truncate">
+                    <code className="flex-1 bg-bg-input border border-border-strong/40 rounded-md px-3 py-2 font-mono text-[11px] text-text-muted truncate">
                       $ npx skills add {selected.source} --skill {selected.name}
                     </code>
                     {isImported ? (
                       <button
                         onClick={updateSkill}
                         disabled={updating || !rawContent}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-[#2D2E36] border border-[#33353A] hover:border-[#4ADE80] text-[#F8F8FA] disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-bg-sidebar border border-border-strong/40 hover:border-success text-text-base disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {updating ? (
                           <>
@@ -849,7 +849,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                           </>
                         ) : (
                           <>
-                            <CheckCircle2 size={12} className="text-[#4ADE80]" />
+                            <CheckCircle2 size={12} className="text-success" />
                             Update
                           </>
                         )}
@@ -858,7 +858,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       <button
                         onClick={importSkill}
                         disabled={importing || !rawContent}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-[#4ADE80] hover:bg-[#6EE7A0] text-[#1A1A1E] disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium transition-colors flex-shrink-0 bg-success hover:bg-success-light text-bg-input disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {importing ? (
                           <>
@@ -877,7 +877,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
 
                   {/* Description from frontmatter */}
                   {description && (
-                    <p className="text-[13px] text-[#C8CAD0] leading-relaxed mb-6 pb-6 border-b border-[#33353A]">
+                    <p className="text-[13px] text-text-muted leading-relaxed mb-6 pb-6 border-b border-border-strong/40">
                       {description}
                     </p>
                   )}
@@ -887,27 +887,27 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 </div>
 
                 {/* Sidebar — meta */}
-                <div className="w-[180px] flex-shrink-0 border-l border-[#33353A] px-5 py-6 space-y-6">
+                <div className="w-[180px] flex-shrink-0 border-l border-border-strong/40 px-5 py-6 space-y-6">
                   {/* Installs */}
                   <div>
-                    <div className="text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-1">
+                    <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1">
                       Weekly Installs
                     </div>
-                    <div className="text-[20px] font-semibold text-[#F8F8FA]">
+                    <div className="text-[20px] font-semibold text-text-base">
                       {formatInstalls(selected.installs)}
                     </div>
                   </div>
 
                   {/* Repository */}
                   <div>
-                    <div className="text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-1.5">
+                    <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">
                       Repository
                     </div>
                     <a
                       href={`https://github.com/${selected.source}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 text-[12px] text-[#4ADE80] hover:text-[#6EE7A0] transition-colors"
+                      className="flex items-center gap-1.5 text-[12px] text-success hover:text-success-light transition-colors"
                     >
                       <Github size={12} className="flex-shrink-0" />
                       <span className="truncate">{selected.source}</span>
@@ -916,14 +916,14 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
 
                   {/* skills.sh page */}
                   <div>
-                    <div className="text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-1.5">
+                    <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">
                       skills.sh
                     </div>
                     <a
                       href={`https://skills.sh/${selected.id}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 text-[12px] text-[#4ADE80] hover:text-[#6EE7A0] transition-colors"
+                      className="flex items-center gap-1.5 text-[12px] text-success hover:text-success-light transition-colors"
                     >
                       <ExternalLink size={12} className="flex-shrink-0" />
                       <span className="truncate">View page</span>
@@ -933,11 +933,11 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                   {/* Skill name from frontmatter if different */}
                   {meta.name && meta.name !== selected.name && (
                     <div>
-                      <div className="text-[10px] font-semibold text-[#C8CAD0] uppercase tracking-wider mb-1">
+                      <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1">
                         Skill ID
                       </div>
-                      <div className="flex items-center gap-1.5 text-[12px] text-[#E5E6EA]">
-                        <Package size={12} className="flex-shrink-0 text-[#C8CAD0]" />
+                      <div className="flex items-center gap-1.5 text-[12px] text-text-base">
+                        <Package size={12} className="flex-shrink-0 text-text-muted" />
                         <span className="truncate">{selected.name}</span>
                       </div>
                     </div>

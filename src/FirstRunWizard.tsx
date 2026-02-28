@@ -122,10 +122,10 @@ function StepIndicator({ current }: { current: number }) {
               <div
                 className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold transition-colors ${
                   done
-                    ? "bg-[#5E6AD2] text-white"
+                    ? "bg-brand text-text-base"
                     : active
-                      ? "border-2 border-[#5E6AD2] text-[#5E6AD2]"
-                      : "border border-[#3E4048] text-[#555760]"
+                      ? "border-2 border-brand text-brand"
+                      : "border border-border-strong/40-active text-text-muted"
                 }`}
               >
                 {done ? <Check size={10} strokeWidth={3} /> : i + 1}
@@ -133,10 +133,10 @@ function StepIndicator({ current }: { current: number }) {
               <span
                 className={`text-[12px] hidden sm:inline ${
                   active
-                    ? "text-[#F8F8FA] font-medium"
+                    ? "text-text-base font-medium"
                     : done
-                      ? "text-[#5E6AD2]"
-                      : "text-[#555760]"
+                      ? "text-brand"
+                      : "text-text-muted"
                 }`}
               >
                 {label}
@@ -144,7 +144,7 @@ function StepIndicator({ current }: { current: number }) {
             </div>
             {i < STEPS.length - 1 && (
               <div
-                className={`w-6 h-px ${done ? "bg-[#5E6AD2]" : "bg-[#3E4048]"}`}
+                className={`w-6 h-px ${done ? "bg-brand" : "bg-surface-active"}`}
               />
             )}
           </div>
@@ -172,21 +172,21 @@ function OptionCard({
       onClick={onClick}
       className={`w-full flex items-start gap-3 px-4 py-3 rounded-lg border text-left transition-all ${
         selected
-          ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
-          : "border-[#3E4048] bg-[#18191C] hover:border-[#5E5E6A] hover:bg-[#1E1F24]"
+          ? "border-brand bg-brand/10"
+          : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
       }`}
     >
       <div
         className={`mt-0.5 w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors ${
-          selected ? "border-[#5E6AD2] bg-[#5E6AD2]" : "border-[#555760]"
+          selected ? "border-brand bg-brand" : "border-text-muted"
         }`}
       >
         {selected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
       </div>
       <div className="min-w-0">
-        <div className="text-[13px] font-medium text-[#F8F8FA]">{label}</div>
+        <div className="text-[13px] font-medium text-text-base">{label}</div>
         {description && (
-          <div className="text-[12px] text-[#C8CAD0] mt-0.5 leading-relaxed">
+          <div className="text-[12px] text-text-muted mt-0.5 leading-relaxed">
             {description}
           </div>
         )}
@@ -211,11 +211,11 @@ function AgentChip({
       onClick={onClick}
       className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-[13px] font-medium transition-all ${
         selected
-          ? "border-[#5E6AD2] bg-[#5E6AD2]/15 text-[#8A94F5]"
-          : "border-[#3E4048] bg-[#18191C] text-[#C8CAD0] hover:border-[#5E5E6A] hover:text-[#F8F8FA]"
+          ? "border-brand bg-brand/15 text-brand-light"
+          : "border-border-strong/40-active bg-bg-input-dark text-text-muted hover:border-border-strong hover:text-text-base"
       }`}
     >
-      {selected && <Check size={12} className="text-[#5E6AD2]" strokeWidth={3} />}
+      {selected && <Check size={12} className="text-brand" strokeWidth={3} />}
       {label}
     </button>
   );
@@ -234,7 +234,7 @@ function Toggle({
     <button
       onClick={onToggle}
       className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors focus:outline-none ${
-        enabled ? "bg-[#5E6AD2]" : "bg-[#3E4048]"
+        enabled ? "bg-brand" : "bg-surface-active"
       }`}
       role="switch"
       aria-checked={enabled}
@@ -259,10 +259,10 @@ function StepRole({
 }) {
   return (
     <div>
-      <h2 className="text-[22px] font-semibold text-[#F8F8FA] mb-1">
+      <h2 className="text-[22px] font-semibold text-text-base mb-1">
         What's your primary role?
       </h2>
-      <p className="text-[14px] text-[#C8CAD0] mb-6 leading-relaxed">
+      <p className="text-[14px] text-text-muted mb-6 leading-relaxed">
         This helps us surface the most relevant features and defaults for you.
       </p>
       <div className="space-y-2">
@@ -289,10 +289,10 @@ function StepAiUsage({
 }) {
   return (
     <div>
-      <h2 className="text-[22px] font-semibold text-[#F8F8FA] mb-1">
+      <h2 className="text-[22px] font-semibold text-text-base mb-1">
         How do you use AI in your development process?
       </h2>
-      <p className="text-[14px] text-[#C8CAD0] mb-6 leading-relaxed">
+      <p className="text-[14px] text-text-muted mb-6 leading-relaxed">
         We'll use this to tailor how Automatic presents workflows and
         integrations.
       </p>
@@ -326,10 +326,10 @@ function StepAgents({
 
   return (
     <div>
-      <h2 className="text-[22px] font-semibold text-[#F8F8FA] mb-1">
+      <h2 className="text-[22px] font-semibold text-text-base mb-1">
         Which AI agents do you work with?
       </h2>
-      <p className="text-[14px] text-[#C8CAD0] mb-6 leading-relaxed">
+      <p className="text-[14px] text-text-muted mb-6 leading-relaxed">
         Select all that apply. Automatic can sync skills and MCP server configs
         to each of these tools.
       </p>
@@ -344,7 +344,7 @@ function StepAgents({
         ))}
       </div>
       {value.length === 0 && (
-        <p className="mt-4 text-[12px] text-[#555760] italic">
+        <p className="mt-4 text-[12px] text-text-muted italic">
           Select at least one agent to continue, or skip this step.
         </p>
       )}
@@ -361,23 +361,23 @@ function StepEmail({
 }) {
   return (
     <div>
-      <h2 className="text-[22px] font-semibold text-[#F8F8FA] mb-1">
+      <h2 className="text-[22px] font-semibold text-text-base mb-1">
         Stay in the loop
       </h2>
-      <p className="text-[14px] text-[#C8CAD0] mb-6 leading-relaxed">
+      <p className="text-[14px] text-text-muted mb-6 leading-relaxed">
         Get occasional updates on new features and improvements to Automatic.
         We won't spam you — unsubscribe any time.
       </p>
       <div className="space-y-2">
-        <label className="block text-[12px] font-medium text-[#C8CAD0]">
-          Email address <span className="text-[#555760]">(optional)</span>
+        <label className="block text-[12px] font-medium text-text-muted">
+          Email address <span className="text-text-muted">(optional)</span>
         </label>
         <input
           type="email"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="you@example.com"
-          className="w-full px-3 py-2.5 rounded-lg border border-[#3E4048] bg-[#18191C] text-[13px] text-[#F8F8FA] placeholder-[#555760] focus:outline-none focus:border-[#5E6AD2] focus:ring-1 focus:ring-[#5E6AD2]/40 transition-colors"
+          className="w-full px-3 py-2.5 rounded-lg border border-border-strong/40-active bg-bg-input-dark text-[13px] text-text-base placeholder-text-muted focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-colors"
         />
       </div>
     </div>
@@ -393,10 +393,10 @@ function StepPreferences({
 }) {
   return (
     <div>
-      <h2 className="text-[22px] font-semibold text-[#F8F8FA] mb-1">
+      <h2 className="text-[22px] font-semibold text-text-base mb-1">
         A couple of quick preferences
       </h2>
-      <p className="text-[14px] text-[#C8CAD0] mb-6 leading-relaxed">
+      <p className="text-[14px] text-text-muted mb-6 leading-relaxed">
         You can change these at any time in Settings.
       </p>
 
@@ -405,15 +405,15 @@ function StepPreferences({
           onClick={onToggleAnalytics}
           className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all ${
             analyticsEnabled
-              ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
-              : "border-[#3E4048] bg-[#18191C] hover:border-[#5E5E6A] hover:bg-[#1E1F24]"
+              ? "border-brand bg-brand/10"
+              : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
           }`}
         >
           <div>
-            <div className="text-[13px] font-medium text-[#F8F8FA]">
+            <div className="text-[13px] font-medium text-text-base">
               Share anonymous usage data
             </div>
-            <div className="text-[12px] text-[#C8CAD0] mt-0.5 leading-relaxed">
+            <div className="text-[12px] text-text-muted mt-0.5 leading-relaxed">
               Helps us understand which features matter most. No personal data,
               file contents, or project names are ever collected.
             </div>
@@ -527,17 +527,17 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
 
   if (loading) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111215]" />
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg-base" />
     );
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111215]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg-base">
       <div className="w-full max-w-xl px-6 py-10">
         {/* Logo */}
         <div className="flex items-center gap-2 mb-8">
           <img src={graphLogo} width={28} height={28} alt="Automatic" />
-          <span className="text-[15px] font-semibold text-[#F8F8FA]">
+          <span className="text-[15px] font-semibold text-text-base">
             Automatic
           </span>
         </div>
@@ -586,7 +586,7 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
 
         {/* Subscription error */}
         {subscribeError && (
-          <div className="mt-4 px-4 py-3 rounded-lg border border-[#E05252]/40 bg-[#E05252]/10 text-[12px] text-[#E05252] leading-relaxed">
+          <div className="mt-4 px-4 py-3 rounded-lg border border-danger/40 bg-danger/10 text-[12px] text-danger leading-relaxed">
             <span className="font-medium">Subscription failed:</span> {subscribeError}
             <button
               onClick={() => { setSubscribeError(null); onComplete(answers); }}
@@ -598,13 +598,13 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
         )}
 
         {/* Navigation */}
-        <div className="flex items-center justify-between mt-8 pt-6 border-t border-[#2A2B30]">
+        <div className="flex items-center justify-between mt-8 pt-6 border-t border-border-strong/40-hover">
           {/* Back / skip */}
           <div className="flex items-center gap-4">
             {step > 0 ? (
               <button
                 onClick={() => setStep((s) => s - 1)}
-                className="text-[13px] text-[#C8CAD0] hover:text-[#F8F8FA] transition-colors"
+                className="text-[13px] text-text-muted hover:text-text-base transition-colors"
               >
                 Back
               </button>
@@ -615,7 +615,7 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
             {step === 2 && answers.agents.length === 0 && (
               <button
                 onClick={() => setStep((s) => s + 1)}
-                className="text-[13px] text-[#555760] hover:text-[#C8CAD0] transition-colors"
+                className="text-[13px] text-text-muted hover:text-text-muted transition-colors"
               >
                 Skip for now
               </button>
@@ -626,7 +626,7 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
           <button
             onClick={handleNext}
             disabled={!canAdvance() || saving}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-[13px] font-medium bg-[#5E6AD2] hover:bg-[#6B78E3] text-white shadow-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-[13px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {saving ? (
               "Saving..."
