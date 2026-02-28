@@ -69,6 +69,52 @@ pub fn check_installed_editors() -> Vec<EditorInfo> {
             label: "Xcode".into(),
             installed: app_installed("/Applications/Xcode.app", Some("xed")),
         },
+        // ── JetBrains IDEs ──────────────────────────────────────────────
+        EditorInfo {
+            id: "intellij".into(),
+            label: "IntelliJ IDEA".into(),
+            installed: app_installed("/Applications/IntelliJ IDEA.app", Some("idea")),
+        },
+        EditorInfo {
+            id: "phpstorm".into(),
+            label: "PhpStorm".into(),
+            installed: app_installed("/Applications/PhpStorm.app", Some("phpstorm")),
+        },
+        EditorInfo {
+            id: "webstorm".into(),
+            label: "WebStorm".into(),
+            installed: app_installed("/Applications/WebStorm.app", Some("webstorm")),
+        },
+        EditorInfo {
+            id: "pycharm".into(),
+            label: "PyCharm".into(),
+            installed: app_installed("/Applications/PyCharm.app", Some("pycharm")),
+        },
+        EditorInfo {
+            id: "rustrover".into(),
+            label: "RustRover".into(),
+            installed: app_installed("/Applications/RustRover.app", Some("rustrover")),
+        },
+        EditorInfo {
+            id: "clion".into(),
+            label: "CLion".into(),
+            installed: app_installed("/Applications/CLion.app", Some("clion")),
+        },
+        EditorInfo {
+            id: "goland".into(),
+            label: "GoLand".into(),
+            installed: app_installed("/Applications/GoLand.app", Some("goland")),
+        },
+        EditorInfo {
+            id: "datagrip".into(),
+            label: "DataGrip".into(),
+            installed: app_installed("/Applications/DataGrip.app", Some("datagrip")),
+        },
+        EditorInfo {
+            id: "rider".into(),
+            label: "Rider".into(),
+            installed: app_installed("/Applications/Rider.app", Some("rider")),
+        },
     ]
 }
 
@@ -139,6 +185,88 @@ pub fn open_in_editor(editor_id: &str, path: &str) -> Result<(), String> {
                     .spawn()
             }
         }
+        // ── JetBrains IDEs ──────────────────────────────────────────────
+        "intellij" => {
+            if which_available("idea") {
+                std::process::Command::new("idea").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "IntelliJ IDEA", path])
+                    .spawn()
+            }
+        }
+        "phpstorm" => {
+            if which_available("phpstorm") {
+                std::process::Command::new("phpstorm").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "PhpStorm", path])
+                    .spawn()
+            }
+        }
+        "webstorm" => {
+            if which_available("webstorm") {
+                std::process::Command::new("webstorm").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "WebStorm", path])
+                    .spawn()
+            }
+        }
+        "pycharm" => {
+            if which_available("pycharm") {
+                std::process::Command::new("pycharm").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "PyCharm", path])
+                    .spawn()
+            }
+        }
+        "rustrover" => {
+            if which_available("rustrover") {
+                std::process::Command::new("rustrover").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "RustRover", path])
+                    .spawn()
+            }
+        }
+        "clion" => {
+            if which_available("clion") {
+                std::process::Command::new("clion").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "CLion", path])
+                    .spawn()
+            }
+        }
+        "goland" => {
+            if which_available("goland") {
+                std::process::Command::new("goland").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "GoLand", path])
+                    .spawn()
+            }
+        }
+        "datagrip" => {
+            if which_available("datagrip") {
+                std::process::Command::new("datagrip").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "DataGrip", path])
+                    .spawn()
+            }
+        }
+        "rider" => {
+            if which_available("rider") {
+                std::process::Command::new("rider").arg(path).spawn()
+            } else {
+                std::process::Command::new("open")
+                    .args(["-a", "Rider", path])
+                    .spawn()
+            }
+        }
         other => return Err(format!("Unknown editor id: {}", other)),
     };
 
@@ -161,6 +289,16 @@ pub fn get_editor_icon(editor_id: &str) -> Result<String, String> {
         "textmate" => "/Applications/TextMate.app/Contents/Resources/TextMate.icns",
         "antigravity" => "/Applications/Antigravity.app/Contents/Resources/Antigravity.icns",
         "xcode" => "/Applications/Xcode.app/Contents/Resources/Xcode.icns",
+        // JetBrains IDEs
+        "intellij" => "/Applications/IntelliJ IDEA.app/Contents/Resources/idea.icns",
+        "phpstorm" => "/Applications/PhpStorm.app/Contents/Resources/PhpStorm.icns",
+        "webstorm" => "/Applications/WebStorm.app/Contents/Resources/webstorm.icns",
+        "pycharm" => "/Applications/PyCharm.app/Contents/Resources/PyCharm.icns",
+        "rustrover" => "/Applications/RustRover.app/Contents/Resources/RustRover.icns",
+        "clion" => "/Applications/CLion.app/Contents/Resources/CLion.icns",
+        "goland" => "/Applications/GoLand.app/Contents/Resources/GoLand.icns",
+        "datagrip" => "/Applications/DataGrip.app/Contents/Resources/DataGrip.icns",
+        "rider" => "/Applications/Rider.app/Contents/Resources/Rider.icns",
         other => return Err(format!("Unknown editor id: {}", other)),
     };
 

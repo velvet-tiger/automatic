@@ -374,6 +374,143 @@ function EditorIcon({ id, iconPath }: { id: string; iconPath?: string }) {
           <rect x="40" y="24" width="4" height="18" rx="2" fill="#B0C8FF"/>
         </svg>
       );
+    // ── JetBrains IDEs ─────────────────────────────────────────────
+    // All use the JetBrains icon pattern: gradient bg + black inset with abbreviation
+    case "intellij":
+      return (
+        <svg className={cls} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="ij-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#087CFA"/>
+              <stop offset="100%" stopColor="#FE315D"/>
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="14" fill="url(#ij-bg)"/>
+          <rect x="10" y="10" width="30" height="30" rx="2" fill="#000"/>
+          <text x="13" y="32" fontSize="16" fontWeight="700" fill="#fff" fontFamily="sans-serif">IJ</text>
+          <rect x="10" y="44" width="20" height="3" rx="1" fill="#fff"/>
+        </svg>
+      );
+    case "phpstorm":
+      return (
+        <svg className={cls} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="ps-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#B345F1"/>
+              <stop offset="100%" stopColor="#765AF8"/>
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="14" fill="url(#ps-bg)"/>
+          <rect x="10" y="10" width="30" height="30" rx="2" fill="#000"/>
+          <text x="13" y="32" fontSize="16" fontWeight="700" fill="#fff" fontFamily="sans-serif">PS</text>
+          <rect x="10" y="44" width="20" height="3" rx="1" fill="#fff"/>
+        </svg>
+      );
+    case "webstorm":
+      return (
+        <svg className={cls} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="ws-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#07C3F2"/>
+              <stop offset="100%" stopColor="#087CFA"/>
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="14" fill="url(#ws-bg)"/>
+          <rect x="10" y="10" width="30" height="30" rx="2" fill="#000"/>
+          <text x="12" y="32" fontSize="14" fontWeight="700" fill="#fff" fontFamily="sans-serif">WS</text>
+          <rect x="10" y="44" width="20" height="3" rx="1" fill="#fff"/>
+        </svg>
+      );
+    case "pycharm":
+      return (
+        <svg className={cls} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="pc-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#21D789"/>
+              <stop offset="100%" stopColor="#FCF84A"/>
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="14" fill="url(#pc-bg)"/>
+          <rect x="10" y="10" width="30" height="30" rx="2" fill="#000"/>
+          <text x="13" y="32" fontSize="16" fontWeight="700" fill="#fff" fontFamily="sans-serif">PC</text>
+          <rect x="10" y="44" width="20" height="3" rx="1" fill="#fff"/>
+        </svg>
+      );
+    case "rustrover":
+      return (
+        <svg className={cls} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="rr-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#F26522"/>
+              <stop offset="100%" stopColor="#FDB811"/>
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="14" fill="url(#rr-bg)"/>
+          <rect x="10" y="10" width="30" height="30" rx="2" fill="#000"/>
+          <text x="13" y="32" fontSize="16" fontWeight="700" fill="#fff" fontFamily="sans-serif">RR</text>
+          <rect x="10" y="44" width="20" height="3" rx="1" fill="#fff"/>
+        </svg>
+      );
+    case "clion":
+      return (
+        <svg className={cls} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="cl-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#21D789"/>
+              <stop offset="100%" stopColor="#009AE5"/>
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="14" fill="url(#cl-bg)"/>
+          <rect x="10" y="10" width="30" height="30" rx="2" fill="#000"/>
+          <text x="13" y="32" fontSize="16" fontWeight="700" fill="#fff" fontFamily="sans-serif">CL</text>
+          <rect x="10" y="44" width="20" height="3" rx="1" fill="#fff"/>
+        </svg>
+      );
+    case "goland":
+      return (
+        <svg className={cls} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="gl-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#087CFA"/>
+              <stop offset="100%" stopColor="#765AF8"/>
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="14" fill="url(#gl-bg)"/>
+          <rect x="10" y="10" width="30" height="30" rx="2" fill="#000"/>
+          <text x="13" y="32" fontSize="16" fontWeight="700" fill="#fff" fontFamily="sans-serif">GL</text>
+          <rect x="10" y="44" width="20" height="3" rx="1" fill="#fff"/>
+        </svg>
+      );
+    case "datagrip":
+      return (
+        <svg className={cls} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="dg-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#22D88F"/>
+              <stop offset="100%" stopColor="#9775F8"/>
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="14" fill="url(#dg-bg)"/>
+          <rect x="10" y="10" width="30" height="30" rx="2" fill="#000"/>
+          <text x="12" y="32" fontSize="14" fontWeight="700" fill="#fff" fontFamily="sans-serif">DG</text>
+          <rect x="10" y="44" width="20" height="3" rx="1" fill="#fff"/>
+        </svg>
+      );
+    case "rider":
+      return (
+        <svg className={cls} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="rd-bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#C90F5E"/>
+              <stop offset="100%" stopColor="#087CFA"/>
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="14" fill="url(#rd-bg)"/>
+          <rect x="10" y="10" width="30" height="30" rx="2" fill="#000"/>
+          <text x="13" y="32" fontSize="16" fontWeight="700" fill="#fff" fontFamily="sans-serif">RD</text>
+          <rect x="10" y="44" width="20" height="3" rx="1" fill="#fff"/>
+        </svg>
+      );
     default:
       return <FolderOpen size={14} className="text-text-muted" />;
   }
