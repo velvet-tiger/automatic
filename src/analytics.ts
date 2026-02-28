@@ -1,108 +1,64 @@
 /**
- * Analytics module — Amplitude wrapper
+ * Analytics module — thin wrapper over the Rust track_event command.
+ *
+ * Events are sent from Rust (reqwest → Amplitude HTTP API v2) so that:
+ *   - The API key never appears in the JS bundle.
+ *   - We are not subject to WKWebView network quirks (sendBeacon / fetch).
  *
  * Guards:
- *  1. API key    — analytics are disabled when `VITE_AMPLITUDE_API_KEY` is not
- *                  set. Leave it blank in .env to disable locally.
- *  2. Opt-out    — analytics are disabled when the user has turned off analytics
- *                  in Settings (`analytics_enabled: false`).
+ *   1. Opt-out  — analytics are skipped when the user has disabled them in
+ *                 Settings (`analytics_enabled: false`). The Rust layer also
+ *                 enforces this, but we short-circuit here to avoid the IPC hop.
+ *   2. API key  — if no key was compiled into the Rust binary the call is a
+ *                 silent no-op on the Rust side.
  *
- * All calls are no-ops when either guard is active, so callers never need to
- * check the state themselves.
+ * All public functions are fire-and-forget — they never throw.
  */
 
-import * as amplitude from "@amplitude/analytics-browser";
+import { invoke } from "@tauri-apps/api/core";
 
-// ─── State ───────────────────────────────────────────────────────────────────
+// ─── State ────────────────────────────────────────────────────────────────────
 
-let _initialized = false;
-let _enabled = true; // runtime opt-out flag; toggled by setAnalyticsEnabled()
+let _userId: string = "anonymous";
+let _enabled: boolean = true;
+let _initialized: boolean = false;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 /**
- * Call once after the user profile is loaded.
+ * Call once after the user profile and settings are loaded.
  *
  * @param userId  Stable user identifier (clerk_id from profile)
  * @param enabled Whether the user has analytics enabled in settings
  */
-export function initAnalytics(userId: string, enabled: boolean): void {
+export async function initAnalytics(userId: string, enabled: boolean): Promise<void> {
+  _userId = userId;
   _enabled = enabled;
-
-  if (!_enabled) {
-    return;
-  }
-
-  const apiKey = import.meta.env.VITE_AMPLITUDE_API_KEY as string | undefined;
-  if (!apiKey) {
-    return;
-  }
-
-  amplitude.init(apiKey, userId, {
-    autocapture: {
-      // Disable automatic page-view and interaction tracking — we track
-      // manually so we have full control over event names and properties.
-      pageViews: false,
-      formInteractions: false,
-      fileDownloads: false,
-      sessions: true, // session tracking is useful; tracks DAU/WAU/MAU
-      elementInteractions: false,
-    },
-  });
-
   _initialized = true;
 
-  // Identify the user with stable properties
-  const identifyEvent = new amplitude.Identify();
-  identifyEvent.setOnce("first_seen", new Date().toISOString());
-  amplitude.identify(identifyEvent);
+  if (!_enabled) {
+    console.info("[analytics] disabled by user setting");
+    return;
+  }
 
-  track("app_started");
+  // Fire the first event to confirm the pipeline is working.
+  await _send("app_started");
 }
 
 /**
- * Set onboarding user properties on the Amplitude identity.
- * Uses `set` (not `setOnce`) so re-running the wizard updates the values.
- * No-op when analytics are disabled or not yet initialized.
- */
-export function identifyOnboarding(onboarding: {
-  role: string;
-  aiUsage: string;
-  agents: string[];
-}): void {
-  if (!shouldTrack()) return;
-  const identifyEvent = new amplitude.Identify();
-  identifyEvent.set("onboarding_role", onboarding.role);
-  identifyEvent.set("onboarding_ai_usage", onboarding.aiUsage);
-  identifyEvent.set("onboarding_agents", onboarding.agents);
-  amplitude.identify(identifyEvent);
-}
-
-/**
- * Update the opt-out flag at runtime (e.g. when user toggles the setting).
- * If analytics were previously initialized but the user opts out, Amplitude's
- * opt-out flag is set which stops all future uploads.
+ * Update the opt-out flag at runtime (e.g. when the user toggles the setting).
  */
 export function setAnalyticsEnabled(enabled: boolean): void {
   _enabled = enabled;
-
-  if (_initialized) {
-    amplitude.setOptOut(!enabled);
-  }
 }
 
 // ─── Tracking ─────────────────────────────────────────────────────────────────
 
 /**
- * Track a named event with optional properties.
- * No-op when analytics are disabled or not yet initialized.
+ * Track a named event with optional properties. Fire-and-forget — never throws.
  */
-export function track(
-  eventName: string,
-  properties?: Record<string, unknown>
-): void {
-  if (!shouldTrack()) return;
-  amplitude.track(eventName, properties);
+export function track(eventName: string, properties?: Record<string, unknown>): void {
+  _send(eventName, properties);
 }
 
 // ─── Typed event helpers ──────────────────────────────────────────────────────
@@ -208,8 +164,33 @@ export function trackUpdateInstalled(version: string): void {
   track("update_installed", { version });
 }
 
-// ─── Internal helpers ─────────────────────────────────────────────────────────
+// Onboarding
+export function identifyOnboarding(onboarding: {
+  role: string;
+  aiUsage: string;
+  agents: string[];
+}): void {
+  track("onboarding_completed", {
+    role: onboarding.role,
+    ai_usage: onboarding.aiUsage,
+    agents: onboarding.agents,
+  });
+}
 
-function shouldTrack(): boolean {
-  return _initialized && _enabled;
+// ─── Internal ─────────────────────────────────────────────────────────────────
+
+async function _send(event: string, properties?: Record<string, unknown>): Promise<void> {
+  if (!_initialized || !_enabled) return;
+
+  try {
+    await invoke("track_event", {
+      userId: _userId,
+      event,
+      properties: properties ?? null,
+      enabled: _enabled,
+    });
+  } catch (e) {
+    // Analytics must never crash the app.
+    console.warn("[analytics] track_event invoke failed:", e);
+  }
 }

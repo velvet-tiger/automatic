@@ -1193,7 +1193,7 @@ pub async fn track_event(
         .map_err(|e| format!("HTTP client error: {e}"))?;
 
     let resp = client
-        .post("https://api2.amplitude.com/2/httpapi")
+        .post("https://api.eu.amplitude.com/2/httpapi")
         .header("Content-Type", "application/json")
         .json(&body)
         .send()

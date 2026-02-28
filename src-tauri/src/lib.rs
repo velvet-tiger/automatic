@@ -907,6 +907,20 @@ fn get_editor_icon(editor_id: &str) -> Result<String, String> {
     core::get_editor_icon(editor_id)
 }
 
+// ── Analytics ────────────────────────────────────────────────────────────────
+
+/// Track an event via Amplitude's HTTP API v2.
+/// Fire-and-forget from the frontend — errors are logged but not surfaced.
+#[tauri::command]
+async fn track_event(
+    user_id: String,
+    event: String,
+    properties: Option<serde_json::Value>,
+    enabled: bool,
+) -> Result<(), String> {
+    core::track_event(&user_id, &event, properties, enabled).await
+}
+
 // ── App Updates ───────────────────────────────────────────────────────────────
 
 /// Restart the application to apply a freshly-installed update.
@@ -1017,6 +1031,7 @@ pub fn run() {
             check_installed_editors,
             open_in_editor,
             get_editor_icon,
+            track_event,
             restart_app,
             subscribe_newsletter,
         ])

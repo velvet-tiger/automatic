@@ -37,10 +37,10 @@ function AnalyticsBootstrap() {
       try {
         const settings: any = await invoke("read_settings");
         const enabled: boolean = settings?.analytics_enabled ?? true;
-        initAnalytics(userId ?? "anonymous", enabled);
+        await initAnalytics(userId ?? "anonymous", enabled);
       } catch (e) {
         console.error("[analytics] Failed to read settings for analytics init:", e);
-        initAnalytics(userId ?? "anonymous", false);
+        await initAnalytics(userId ?? "anonymous", false);
       }
     }
 
