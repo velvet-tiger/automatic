@@ -47,7 +47,7 @@ export function AgentIcon({ agentId, size, className }: AgentIconProps) {
         alt={agentId}
         width={size}
         height={size}
-        className="brightness-0 invert flex-shrink-0"
+        className="agent-icon flex-shrink-0"
         draggable={false}
       />
     );

@@ -360,6 +360,21 @@
   --danger-hover: #f87171;
 }
 
+
+.agent-icon {
+  /* Default dark themes: make the black icons white */
+  filter: brightness(0) invert(1);
+}
+
+[data-theme="light"] .agent-icon,
+[data-theme="arctic-light"] .agent-icon,
+[data-theme="corporate-light"] .agent-icon {
+  /* Light themes: keep the icons black, or tint them to text-base (which is dark grey) */
+  /* If text-base is #09090b, then filter: none works for black SVGs, but to be safe and match text-base exactly we can just use none or slight opacity */
+  filter: none;
+  opacity: 0.85; /* Soften pure black slightly to match text-base */
+}
+
 /* Tauri drag regions: prevent text selection while dragging the titlebar */
 
 [data-tauri-drag-region] {
