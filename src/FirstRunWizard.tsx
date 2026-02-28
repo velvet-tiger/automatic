@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { identifyOnboarding } from "./analytics";
 import { ChevronRight, Check } from "lucide-react";
@@ -89,20 +89,20 @@ const AI_USAGE_OPTIONS = [
 ];
 
 const AGENT_OPTIONS = [
+  { id: "antigravity", label: "Antigravity" },
   { id: "claude", label: "Claude Code" },
-  { id: "cursor", label: "Cursor" },
-  { id: "github_copilot", label: "GitHub Copilot" },
   { id: "cline", label: "Cline" },
-  { id: "kilo_code", label: "Kilo Code" },
-  { id: "junie", label: "Junie" },
-  { id: "kiro", label: "Kiro" },
-  { id: "gemini_cli", label: "Gemini CLI" },
   { id: "codex_cli", label: "Codex CLI" },
+  { id: "cursor", label: "Cursor" },
+  { id: "droid", label: "Droid" },
+  { id: "gemini_cli", label: "Gemini CLI" },
+  { id: "github_copilot", label: "GitHub Copilot" },
   { id: "goose", label: "Goose" },
+  { id: "junie", label: "Junie" },
+  { id: "kilo_code", label: "Kilo Code" },
+  { id: "kiro", label: "Kiro" },
   { id: "opencode", label: "OpenCode" },
   { id: "warp", label: "Warp" },
-  { id: "antigravity", label: "Antigravity" },
-  { id: "droid", label: "Droid" },
   { id: "other", label: "Other" },
 ];
 
@@ -112,26 +112,27 @@ const STEPS = ["Your role", "AI workflow", "Your agents", "Stay in touch", "Pref
 
 function StepIndicator({ current }: { current: number }) {
   return (
-    <div className="flex items-center gap-2 mb-10">
+    <div className="flex items-center mb-10">
       {STEPS.map((label, i) => {
         const done = i < current;
         const active = i === current;
         return (
-          <div key={i} className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5">
+          <React.Fragment key={i}>
+            {/* Step: circle + label */}
+            <div className="flex items-center gap-1.5 shrink-0">
               <div
                 className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold transition-colors ${
                   done
-                    ? "bg-brand text-text-base"
+                    ? "bg-brand text-white"
                     : active
                       ? "border-2 border-brand text-brand"
-                      : "border border-border-strong/40-active text-text-muted"
+                      : "border border-border-strong/40 text-text-muted"
                 }`}
               >
                 {done ? <Check size={10} strokeWidth={3} /> : i + 1}
               </div>
               <span
-                className={`text-[12px] hidden sm:inline ${
+                className={`text-[12px] whitespace-nowrap hidden sm:inline ${
                   active
                     ? "text-text-base font-medium"
                     : done
@@ -142,12 +143,13 @@ function StepIndicator({ current }: { current: number }) {
                 {label}
               </span>
             </div>
+            {/* Connector line between steps */}
             {i < STEPS.length - 1 && (
               <div
-                className={`w-6 h-px ${done ? "bg-brand" : "bg-surface-active"}`}
+                className={`flex-1 h-px mx-3 ${done ? "bg-brand" : "bg-surface-active"}`}
               />
             )}
-          </div>
+          </React.Fragment>
         );
       })}
     </div>
@@ -173,7 +175,7 @@ function OptionCard({
       className={`w-full flex items-start gap-3 px-4 py-3 rounded-lg border text-left transition-all ${
         selected
           ? "border-brand bg-brand/10"
-          : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+          : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
       }`}
     >
       <div
@@ -212,7 +214,7 @@ function AgentChip({
       className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-[13px] font-medium transition-all ${
         selected
           ? "border-brand bg-brand/15 text-brand-light"
-          : "border-border-strong/40-active bg-bg-input-dark text-text-muted hover:border-border-strong hover:text-text-base"
+          : "border-border-strong/40 bg-bg-input-dark text-text-muted hover:border-border-strong hover:text-text-base"
       }`}
     >
       {selected && <Check size={12} className="text-brand" strokeWidth={3} />}
@@ -377,7 +379,7 @@ function StepEmail({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="you@example.com"
-          className="w-full px-3 py-2.5 rounded-lg border border-border-strong/40-active bg-bg-input-dark text-[13px] text-text-base placeholder-text-muted focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-colors"
+          className="w-full px-3 py-2.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] text-text-base placeholder-text-muted focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-colors"
         />
       </div>
     </div>
@@ -406,7 +408,7 @@ function StepPreferences({
           className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all ${
             analyticsEnabled
               ? "border-brand bg-brand/10"
-              : "border-border-strong/40-active bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+              : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
           }`}
         >
           <div>
