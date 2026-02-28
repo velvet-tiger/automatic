@@ -62,7 +62,11 @@ export default function Settings() {
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
 
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
-    return (localStorage.getItem("automatic.theme") as Theme) || "sleek-hacker";
+    let saved = localStorage.getItem("automatic.theme") as string;
+    if (saved === "sleek-hacker") saved = "sleek";
+    if (saved === "neon-cyberpunk") saved = "cyberpunk";
+    if (saved === "minimalist-coral") saved = "coral";
+    return (saved as Theme) || "sleek";
   });
 
   const handleThemeChange = (theme: Theme) => {

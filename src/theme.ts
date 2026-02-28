@@ -1,15 +1,15 @@
-export type Theme = "sleek-hacker" | "neon-cyberpunk" | "synthwave-glow" | "minimalist-coral" | "arctic-light" | "corporate-light";
+export type Theme = "sleek" | "cyberpunk" | "synthwave-glow" | "coral" | "arctic-light" | "corporate-light";
 
 export const THEMES: { id: Theme; name: string; description: string; colors: { primary: string; surface: string } }[] = [
   {
-    id: "sleek-hacker",
-    name: "Sleek Hacker",
+    id: "sleek",
+    name: "Sleek",
     description: "Muted dark surfaces with Electric Blue and Emerald Green highlights.",
     colors: { primary: "#3b82f6", surface: "#1e293b" }
   },
   {
-    id: "neon-cyberpunk",
-    name: "Neon Cyberpunk",
+    id: "cyberpunk",
+    name: "Cyberpunk",
     description: "Deep dark backgrounds with vibrant Cyan and Electric Purple.",
     colors: { primary: "#00f0ff", surface: "#18181b" }
   },
@@ -20,8 +20,8 @@ export const THEMES: { id: Theme; name: string; description: string; colors: { p
     colors: { primary: "#ec4899", surface: "#4c1d95" }
   },
   {
-    id: "minimalist-coral",
-    name: "Minimalist Coral",
+    id: "coral",
+    name: "Coral",
     description: "Stark dark mode with vibrant Coral and minimal Slate accents.",
     colors: { primary: "#f97316", surface: "#27272a" }
   },
@@ -39,8 +39,12 @@ export const THEMES: { id: Theme; name: string; description: string; colors: { p
   }
 ];
 
-export function applyTheme(theme: Theme) {
-  if (theme === "sleek-hacker") {
+export function applyTheme(theme: string) {
+  if (theme === "sleek-hacker") theme = "sleek";
+  if (theme === "neon-cyberpunk") theme = "cyberpunk";
+  if (theme === "minimalist-coral") theme = "coral";
+
+  if (theme === "sleek") {
     document.documentElement.removeAttribute("data-theme");
   } else {
     document.documentElement.setAttribute("data-theme", theme);
