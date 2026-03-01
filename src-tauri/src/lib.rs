@@ -19,23 +19,29 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|_app| {
             // Ensure plugin marketplace exists on disk; register with Claude
-            // Code if the CLI is available.  Runs on a background thread so
-            // it never blocks the UI.
-            std::thread::spawn(|| {
-                if let Err(e) = core::install_default_skills() {
-                    eprintln!("[automatic] skill install error: {}", e);
-                }
-                if let Err(e) = core::install_default_templates() {
-                    eprintln!("[automatic] template install error: {}", e);
-                }
-                if let Err(e) = core::install_default_rules() {
-                    eprintln!("[automatic] rule install error: {}", e);
-                }
-                match core::install_plugin_marketplace() {
-                    Ok(msg) => eprintln!("[automatic] plugin startup: {}", msg),
-                    Err(e) => eprintln!("[automatic] plugin startup error: {}", e),
-                }
-            });
+            // Code if the CLI is available. Runs on a background thread so
+            // it never blocks the UI. We use a custom 8MB stack size because
+            // the default Windows ARM64 thread stack (1MB) is too small to
+            // handle the large `include_str!` payloads during installation.
+            std::thread::Builder::new()
+                .name("automatic-startup".into())
+                .stack_size(8 * 1024 * 1024)
+                .spawn(|| {
+                    if let Err(e) = core::install_default_skills() {
+                        eprintln!("[automatic] skill install error: {}", e);
+                    }
+                    if let Err(e) = core::install_default_templates() {
+                        eprintln!("[automatic] template install error: {}", e);
+                    }
+                    if let Err(e) = core::install_default_rules() {
+                        eprintln!("[automatic] rule install error: {}", e);
+                    }
+                    match core::install_plugin_marketplace() {
+                        Ok(msg) => eprintln!("[automatic] plugin startup: {}", msg),
+                        Err(e) => eprintln!("[automatic] plugin startup error: {}", e),
+                    }
+                })
+                .expect("Failed to spawn startup thread");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
