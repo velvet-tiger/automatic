@@ -59,7 +59,7 @@ const FEATURED_ITEMS: FeaturedItem[] = [
     type: "template",
     title: "Next.js SaaS Starter",
     description: "Full-stack SaaS boilerplate with App Router, Tailwind, Prisma, and NextAuth. Ready for rapid product development.",
-    navigateTo: "project-templates",
+    navigateTo: "template-marketplace",
     badge: "Template",
     _author: { type: "provider", name: "Automatic", url: "https://automatic.sh" },
   },
@@ -212,7 +212,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                     href="https://github.com/velvet-tiger/automatic"
                     target="_blank"
                     rel="noreferrer"
-                    className="text-brand hover:text-brand-hover underline decoration-brand/40 transition-colors"
+                    className="text-text-base hover:text-text-base underline decoration-text-muted/40 hover:decoration-text-base/60 font-medium transition-colors"
                   >
                     give us a star on GitHub
                   </a>{" "}
