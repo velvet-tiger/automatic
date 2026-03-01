@@ -76,11 +76,24 @@ function App() {
   useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);
 
   // ── Theme Init ──────────────────────────────────────────────────────────
+  // Default to "system" for new installs (no saved preference).
   const [activeTheme, setActiveTheme] = useState<Theme>(
-    () => (localStorage.getItem("automatic.theme") as Theme | null) ?? "dark"
+    () => (localStorage.getItem("automatic.theme") as Theme | null) ?? "system"
   );
   useEffect(() => {
     applyTheme(activeTheme);
+  }, []);
+
+  // Listen for OS color-scheme changes and re-apply when following system.
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => {
+      if ((localStorage.getItem("automatic.theme") ?? "system") === "system") {
+        applyTheme("system");
+      }
+    };
+    mq.addEventListener("change", handleChange);
+    return () => mq.removeEventListener("change", handleChange);
   }, []);
 
 

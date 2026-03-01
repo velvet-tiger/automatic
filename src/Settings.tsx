@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { THEMES, applyTheme, Theme } from "./theme";
+import { THEMES, applyTheme, Theme, resolveSystemTheme } from "./theme";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -67,13 +67,25 @@ export default function Settings() {
     if (saved === "sleek") saved = "corporate-dark";
     if (saved === "neon-cyberpunk") saved = "cyberpunk";
     if (saved === "minimalist-coral") saved = "coral";
-    return (saved as Theme) || "dark";
+    return (saved as Theme) || "system";
   });
+
+  const followSystem = currentTheme === "system";
 
   const handleThemeChange = (theme: Theme) => {
     setCurrentTheme(theme);
     localStorage.setItem("automatic.theme", theme);
     applyTheme(theme);
+  };
+
+  const handleFollowSystemToggle = () => {
+    if (followSystem) {
+      // Switch to whichever explicit theme matches the current OS appearance
+      const resolved = resolveSystemTheme();
+      handleThemeChange(resolved);
+    } else {
+      handleThemeChange("system");
+    }
   };
 
   // Update state
@@ -328,9 +340,41 @@ export default function Settings() {
                 <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
                   Choose a color scheme for the application interface.
                 </p>
-                <div className="grid grid-cols-2 gap-4">
-                  {THEMES.map((theme) => {
-                    const isActive = currentTheme === theme.id;
+
+                {/* Follow system toggle */}
+                <button
+                  onClick={handleFollowSystemToggle}
+                  className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all mb-4 ${
+                    followSystem
+                      ? "border-brand bg-brand/10"
+                      : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                  }`}
+                >
+                  <div>
+                    <div className="text-[13px] font-medium text-text-base">Follow system</div>
+                    <div className="text-[12px] text-text-muted">
+                      {followSystem
+                        ? "Automatically switches between Dark and Light based on your OS setting"
+                        : "Using a manually selected theme"}
+                    </div>
+                  </div>
+                  <div
+                    className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors ${
+                      followSystem ? "bg-brand" : "bg-surface-active"
+                    }`}
+                  >
+                    <div
+                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                        followSystem ? "left-5" : "left-0.5"
+                      }`}
+                    />
+                  </div>
+                </button>
+
+                {/* Manual theme grid — disabled when following system */}
+                <div className={`grid grid-cols-2 gap-4 transition-opacity ${followSystem ? "opacity-40 pointer-events-none" : ""}`}>
+                  {THEMES.filter((t) => t.id !== "system").map((theme) => {
+                    const isActive = !followSystem && currentTheme === theme.id;
                     return (
                       <button
                         key={theme.id}

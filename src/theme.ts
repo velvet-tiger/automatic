@@ -1,4 +1,4 @@
-export type Theme = "dark" | "light" | "corporate-dark" | "corporate-light" | "accessible" | "cyberpunk" | "synthwave-glow" | "coral" | "arctic-light";
+export type Theme = "system" | "dark" | "light" | "corporate-dark" | "corporate-light" | "accessible" | "cyberpunk" | "synthwave-glow" | "coral" | "arctic-light";
 
 export const THEMES: { id: Theme; name: string; description: string; colors: { primary: string; surface: string } }[] = [
   {
@@ -57,11 +57,22 @@ export const THEMES: { id: Theme; name: string; description: string; colors: { p
   }
 ];
 
+/**
+ * Returns the resolved theme id when "system" is selected,
+ * i.e. "dark" or "light" based on the OS preference.
+ */
+export function resolveSystemTheme(): "dark" | "light" {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 export function applyTheme(theme: string) {
   if (theme === "sleek-hacker") theme = "corporate-dark";
   if (theme === "sleek") theme = "corporate-dark";
   if (theme === "neon-cyberpunk") theme = "cyberpunk";
   if (theme === "minimalist-coral") theme = "coral";
+
+  // "system" resolves to dark or light based on OS preference
+  if (theme === "system") theme = resolveSystemTheme();
 
   if (theme === "dark") {
     document.documentElement.removeAttribute("data-theme");
