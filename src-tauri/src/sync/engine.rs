@@ -100,10 +100,12 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
         }),
     );
 
-    // Add project-selected MCP servers from the Automatic registry
+    // Add project-selected MCP servers from the Automatic registry.
+    // Strip Automatic-internal fields (prefixed with `_`) before writing to agent files.
     for server_name in &project.mcp_servers {
         if let Some(server_config) = mcp_config.get(server_name) {
-            selected_servers.insert(server_name.clone(), server_config.clone());
+            let cleaned = strip_internal_fields(server_config.clone());
+            selected_servers.insert(server_name.clone(), cleaned);
         }
     }
 
@@ -231,4 +233,14 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
     }
 
     Ok(written_files)
+}
+
+/// Remove fields whose names start with `_` from a JSON object.
+/// These are Automatic-internal metadata fields (e.g. `_author`) that should
+/// never be written to agent configuration files.
+fn strip_internal_fields(mut value: serde_json::Value) -> serde_json::Value {
+    if let serde_json::Value::Object(ref mut map) = value {
+        map.retain(|key, _| !key.starts_with('_'));
+    }
+    value
 }

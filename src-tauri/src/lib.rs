@@ -39,6 +39,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            resolve_author,
             read_profile,
             save_profile,
             read_settings,
@@ -62,6 +63,8 @@ pub fn run() {
             read_rule,
             save_rule,
             delete_rule,
+            get_projects_referencing_rule,
+            sync_rule_to_project,
             get_project_templates,
             read_project_template,
             save_project_template,

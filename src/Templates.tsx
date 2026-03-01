@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, FileText, Check, LayoutTemplate } from "lucide-react";
 import { ICONS } from "./icons";
+import { AuthorSection } from "./AuthorPanel";
 
 export default function Templates() {
   const [templates, setTemplates] = useState<string[]>([]);
@@ -209,19 +210,25 @@ export default function Templates() {
             </div>
 
             {/* Editor Body */}
-            <div className="flex-1 relative">
+            <div className="flex-1 flex flex-col relative min-h-0">
               {isEditing ? (
                 <textarea
                   value={templateContent}
                   onChange={(e) => setTemplateContent(e.target.value)}
-                  className="absolute inset-0 w-full h-full p-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30"
+                  className="flex-1 w-full h-full p-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30"
                   placeholder="Write your project file template here in Markdown..."
                   spellCheck={false}
                 />
               ) : (
-                <div className="absolute inset-0 overflow-y-auto p-6 font-mono text-[13px] whitespace-pre-wrap text-text-base leading-relaxed custom-scrollbar">
-                  {templateContent || <span className="text-text-muted italic">This template is empty. Click edit to add content.</span>}
-                </div>
+                <>
+                  {/* Author section */}
+                  <div className="px-6 pt-4 pb-3 border-b border-border-strong/40 shrink-0">
+                    <AuthorSection descriptor={{ type: "local" }} />
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-6 font-mono text-[13px] whitespace-pre-wrap text-text-base leading-relaxed custom-scrollbar">
+                    {templateContent || <span className="text-text-muted italic">This template is empty. Click edit to add content.</span>}
+                  </div>
+                </>
               )}
             </div>
           </div>

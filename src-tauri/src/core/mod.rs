@@ -1,3 +1,4 @@
+mod author;
 mod credentials;
 mod editors;
 mod integrations;
@@ -16,6 +17,7 @@ mod skills;
 mod templates;
 mod types;
 
+pub use author::*;
 pub use credentials::*;
 pub use editors::*;
 pub use integrations::*;

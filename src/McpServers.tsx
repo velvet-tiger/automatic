@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { trackMcpServerCreated, trackMcpServerUpdated, trackMcpServerDeleted } from "./analytics";
+import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
 import {
   Plus,
   X,
@@ -18,6 +19,16 @@ import {
 import { ICONS } from "./icons";
 
 type TransportType = "stdio" | "http" | "sse";
+
+/** Metadata stored alongside config in Automatic's own JSON. Not written to agent files. */
+interface McpAuthorMeta {
+  /** Display name of the provider / author, e.g. "Anthropic", "Microsoft" */
+  name: string;
+  /** Optional homepage URL for the provider */
+  url?: string;
+  /** Optional GitHub repository URL */
+  repository_url?: string;
+}
 
 interface McpServerConfig {
   type: TransportType;
@@ -38,6 +49,8 @@ interface McpServerConfig {
   // common
   enabled?: boolean;
   timeout?: number;
+  /** Automatic-internal: author/provider metadata. Stripped before writing to agent configs. */
+  _author?: McpAuthorMeta;
 }
 
 function emptyConfig(): McpServerConfig {
@@ -78,10 +91,12 @@ function normalizeConfig(data: Partial<McpServerConfig> & { oauth?: any }): McpS
     oauth,
     enabled: data.enabled !== false,
     timeout: data.timeout,
+    // Preserve author metadata if present (Automatic-internal field)
+    _author: data._author,
   };
 }
 
-/** Strip empty optional fields before saving. */
+/** Strip empty optional fields before saving. Keeps _author metadata for Automatic's own store. */
 function cleanConfig(config: McpServerConfig): Record<string, unknown> {
   const out: Record<string, unknown> = { type: config.type };
 
@@ -109,6 +124,10 @@ function cleanConfig(config: McpServerConfig): Record<string, unknown> {
 
   if (config.enabled === false) out.enabled = false;
   if (config.timeout && config.timeout > 0) out.timeout = config.timeout;
+
+  // Preserve author metadata in the Automatic store. The sync layer is responsible
+  // for stripping _author before writing to agent config files.
+  if (config._author) out._author = config._author;
 
   return out;
 }
@@ -486,6 +505,19 @@ export default function McpServers() {
             {/* Body */}
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div className="max-w-2xl space-y-8">
+
+                {/* Author */}
+                {(() => {
+                  const descriptor: AuthorDescriptor = config._author
+                    ? { type: "provider", name: config._author.name, url: config._author.url ?? config._author.repository_url }
+                    : { type: "local" };
+                  return (
+                    <section className="pb-2 border-b border-border-strong/40">
+                      <AuthorSection descriptor={descriptor} />
+                    </section>
+                  );
+                })()}
+
                 {/* Transport Type + Enabled */}
                 <section>
                   <div className="flex items-center justify-between mb-2">

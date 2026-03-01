@@ -1,5 +1,20 @@
 use crate::core;
 
+// ── Author Resolution ─────────────────────────────────────────────────────────
+
+/// Resolve a raw author descriptor JSON string into a fully-enriched
+/// AuthorProfile for display.  Network calls (GitHub API) are made
+/// transparently; errors produce safe fallbacks.
+///
+/// `descriptor` must be a JSON string matching the AuthorDescriptor shape:
+///   `{ "type": "github", "repo": "owner/repo" }`
+///   `{ "type": "provider", "name": "Acme", "url": "https://acme.com" }`
+///   `{ "type": "local" }`
+#[tauri::command]
+pub async fn resolve_author(descriptor: String) -> Result<core::AuthorProfile, String> {
+    core::resolve_author_json(&descriptor).await
+}
+
 // ── Newsletter ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
