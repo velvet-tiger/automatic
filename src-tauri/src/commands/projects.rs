@@ -287,25 +287,6 @@ pub(crate) fn prune_mcp_server_from_projects(server_name: &str) {
     });
 }
 
-pub(crate) fn sync_projects_referencing_rule(rule_name: &str) {
-    with_each_project_mut(|project_name, project| {
-        let references_rule = project
-            .file_rules
-            .values()
-            .any(|rules| rules.iter().any(|r| r == rule_name));
-        if references_rule {
-            // Re-inject rules into any project files that use this rule
-            for (filename, rules) in &project.file_rules {
-                if rules.iter().any(|r| r == rule_name) {
-                    let _ =
-                        core::inject_rules_into_project_file(&project.directory, filename, rules);
-                }
-            }
-            sync_project_if_configured(project_name, project);
-        }
-    });
-}
-
 pub(crate) fn prune_rule_from_projects(rule_name: &str) {
     with_each_project_mut(|project_name, project| {
         let mut changed = false;
