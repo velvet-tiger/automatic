@@ -117,6 +117,23 @@ pub fn run() {
             restart_app,
             subscribe_newsletter,
         ])
-        .run(tauri::generate_context!())
+        // `tauri::generate_context!()` expands to a large amount of code that
+        // can overflow the Windows main-thread stack (1 MiB) when many plugins,
+        // skills and templates are embedded. Generate the context on a temporary
+        // thread with an 8 MiB stack — matching the fix Tauri merged in PR #10734
+        // — then run the app on the main thread as required by macOS/Windows.
+        .run({
+            let ctx = std::thread::Builder::new()
+                .name("tauri-context-init".into())
+                .stack_size(8 * 1024 * 1024)
+                .spawn(|| tauri::generate_context!())
+                .expect("failed to spawn context init thread")
+                .join()
+                .unwrap_or_else(|_| {
+                    eprintln!("[automatic] tauri context init panicked");
+                    std::process::exit(101);
+                });
+            ctx
+        })
         .expect("error while running tauri application");
 }
