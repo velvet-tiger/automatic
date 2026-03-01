@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { identifyOnboarding } from "./analytics";
-import { ChevronRight, Check } from "lucide-react";
+import { ChevronRight, Check, FolderOpen } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import graphLogo from "../logos/graph_5.svg";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -12,6 +13,23 @@ interface WizardAnswers {
   agents: string[];
   email: string;
   analyticsEnabled: boolean;
+  createdProjectName?: string;
+}
+
+interface BundledTemplate {
+  name: string;
+  display_name: string;
+  description: string;
+  category: string;
+  icon?: string;
+  tags: string[];
+  skills: string[];
+  mcp_servers: string[];
+  providers: string[];
+  agents: string[];
+  unified_instruction?: string;
+  unified_rules?: string[];
+  project_files?: { filename: string; content: string }[];
 }
 
 interface FirstRunWizardProps {
@@ -108,7 +126,7 @@ const AGENT_OPTIONS = [
 
 // ── Step indicator ────────────────────────────────────────────────────────────
 
-const STEPS = ["Your role", "AI workflow", "Your agents", "Stay in touch", "Preferences"];
+const STEPS = ["Your role", "AI workflow", "Your agents", "Stay in touch", "Preferences", "First project"];
 
 function StepIndicator({ current }: { current: number }) {
   return (
@@ -429,6 +447,92 @@ function StepPreferences({
   );
 }
 
+// ── First project step ────────────────────────────────────────────────────────
+
+function StepFirstProject({
+  templates,
+  selectedTemplate,
+  projectDir,
+  onSelectTemplate,
+  onBrowse,
+}: {
+  templates: BundledTemplate[];
+  selectedTemplate: string | null;
+  projectDir: string;
+  onSelectTemplate: (name: string | null) => void;
+  onBrowse: () => void;
+}) {
+  return (
+    <div>
+      <h2 className="text-[22px] font-semibold text-text-base mb-1">
+        Create your first project
+      </h2>
+      <p className="text-[14px] text-text-muted mb-6 leading-relaxed">
+        Point Automatic at a project directory and it will detect your agents
+        and tools. Optionally pick a template for pre-configured skills and
+        instructions.
+      </p>
+
+      {/* Directory picker — always visible */}
+      <div className="mb-6">
+        <label className="block text-[12px] font-medium text-text-muted mb-2">
+          Project directory
+        </label>
+        <div className="flex gap-2">
+          <div
+            onClick={onBrowse}
+            className="flex-1 flex items-center px-3 py-2.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] cursor-pointer hover:border-border-strong transition-colors min-w-0"
+          >
+            {projectDir ? (
+              <span className="text-text-base truncate">{projectDir}</span>
+            ) : (
+              <span className="text-text-muted">Select a folder...</span>
+            )}
+          </div>
+          <button
+            onClick={onBrowse}
+            className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] text-text-muted hover:border-border-strong hover:text-text-base transition-colors flex-shrink-0"
+          >
+            <FolderOpen size={14} />
+            Browse
+          </button>
+        </div>
+      </div>
+
+      {/* Template grid — optional */}
+      <div>
+        <label className="block text-[12px] font-medium text-text-muted mb-2">
+          Start from a template{" "}
+          <span className="font-normal text-text-muted">(optional)</span>
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          {templates.map((t) => {
+            const isSelected = selectedTemplate === t.name;
+            return (
+              <button
+                key={t.name}
+                onClick={() => onSelectTemplate(isSelected ? null : t.name)}
+                className={`text-left px-3 py-2.5 rounded-lg border transition-all ${
+                  isSelected
+                    ? "border-brand bg-brand/10"
+                    : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                }`}
+              >
+                <div className="text-[13px] font-medium text-text-base">
+                  {t.display_name}
+                </div>
+                <div className="text-[11px] text-text-muted mt-0.5">
+                  {t.category}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Wizard shell ──────────────────────────────────────────────────────────────
 
 export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
@@ -443,6 +547,9 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [subscribeError, setSubscribeError] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<BundledTemplate[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [projectDir, setProjectDir] = useState("");
 
   // Pre-populate answers from any previously saved onboarding data.
   useEffect(() => {
@@ -465,12 +572,27 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
     loadSaved();
   }, []);
 
+  // Load bundled project templates for the first-project step.
+  useEffect(() => {
+    async function loadTemplates() {
+      try {
+        const raw: string = await invoke("list_bundled_project_templates");
+        setTemplates(JSON.parse(raw));
+      } catch (e) {
+        console.error("[wizard] Failed to load bundled templates:", e);
+      }
+    }
+    loadTemplates();
+  }, []);
+
   const totalSteps = STEPS.length;
   const isLast = step === totalSteps - 1;
 
   const canAdvance = () => {
     if (step === 0) return answers.role !== "";
     if (step === 1) return answers.aiUsage !== "";
+    // First project step: need a directory when a template is selected.
+    if (step === 5) return !selectedTemplate || !!projectDir;
     // agents step: allow skipping (zero selection)
     return true;
   };
@@ -483,8 +605,9 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
     }
   };
 
-  const finish = async () => {
+  const finish = async (skipProject?: boolean) => {
     setSaving(true);
+    let createdProjectName: string | undefined;
     try {
       // Read current settings, patch wizard fields, write back.
       const current: any = await invoke("read_settings");
@@ -507,6 +630,88 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
         agents: answers.agents,
       });
 
+      // Create first project if a directory was selected.
+      // This runs before the newsletter call so that a subscription error
+      // (which can trigger an early return) never prevents project creation.
+      if (!skipProject && projectDir) {
+        try {
+          const dirName =
+            projectDir.split("/").filter(Boolean).pop() ?? "my-project";
+          const tmpl = selectedTemplate
+            ? templates.find((t) => t.name === selectedTemplate)
+            : null;
+
+          // If a template was chosen, import it (installs bundled skills).
+          if (selectedTemplate) {
+            await invoke("import_bundled_project_template", { name: selectedTemplate });
+          }
+
+          const mergedAgents = [
+            ...new Set([...answers.agents, ...(tmpl?.agents ?? [])]),
+          ];
+          const project = {
+            name: dirName,
+            description: tmpl?.description ?? "",
+            directory: projectDir,
+            skills: [...(tmpl?.skills ?? [])],
+            local_skills: [] as string[],
+            mcp_servers: [...(tmpl?.mcp_servers ?? [])],
+            providers: [...(tmpl?.providers ?? [])],
+            agents: mergedAgents,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            instruction_mode:
+              tmpl?.unified_instruction?.trim() ? "unified" : "per-agent",
+          };
+
+          // save_project for new projects runs sync_project (autodetect + write agent configs).
+          await invoke("save_project", {
+            name: dirName,
+            data: JSON.stringify(project, null, 2),
+          });
+
+          // Write unified instruction if the template provides one.
+          if (tmpl?.unified_instruction?.trim()) {
+            if ((tmpl.unified_rules ?? []).length > 0) {
+              const latestRaw: string = await invoke("read_project", {
+                name: dirName,
+              });
+              const latestProj = JSON.parse(latestRaw);
+              const withRules = {
+                ...latestProj,
+                file_rules: {
+                  ...(latestProj.file_rules || {}),
+                  _unified: tmpl.unified_rules,
+                },
+              };
+              await invoke("save_project", {
+                name: dirName,
+                data: JSON.stringify(withRules, null, 2),
+              });
+            }
+            await invoke("save_project_file", {
+              name: dirName,
+              filename: "_unified",
+              content: tmpl.unified_instruction,
+            });
+          }
+
+          // Write any inline project files from the template.
+          for (const pf of tmpl?.project_files ?? []) {
+            await invoke("save_project_file", {
+              name: dirName,
+              filename: pf.filename,
+              content: pf.content,
+            });
+          }
+
+          createdProjectName = dirName;
+        } catch (e) {
+          console.error("[wizard] Failed to create first project:", e);
+          // Non-fatal — don't block wizard completion.
+        }
+      }
+
       // Subscribe to newsletter if an email was provided.
       if (answers.email.trim()) {
         try {
@@ -523,8 +728,17 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
       console.error("[wizard] Failed to save wizard results:", e);
     } finally {
       setSaving(false);
-      onComplete(answers);
+      onComplete({ ...answers, createdProjectName });
     }
+  };
+
+  const handleBrowseDir = async () => {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Select project directory",
+    });
+    if (selected) setProjectDir(selected as string);
   };
 
   if (loading) {
@@ -584,6 +798,15 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
               }
             />
           )}
+          {step === 5 && (
+            <StepFirstProject
+              templates={templates}
+              selectedTemplate={selectedTemplate}
+              projectDir={projectDir}
+              onSelectTemplate={setSelectedTemplate}
+              onBrowse={handleBrowseDir}
+            />
+          )}
         </div>
 
         {/* Subscription error */}
@@ -622,6 +845,16 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
                 Skip for now
               </button>
             )}
+            {/* Allow skipping first project creation */}
+            {step === 5 && (
+              <button
+                onClick={() => finish(true)}
+                disabled={saving}
+                className="text-[13px] text-text-muted hover:text-text-base transition-colors"
+              >
+                Skip for now
+              </button>
+            )}
           </div>
 
           {/* Next / finish */}
@@ -633,7 +866,7 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
             {saving ? (
               "Saving..."
             ) : isLast ? (
-              "Get started"
+              projectDir ? "Create & get started" : "Get started"
             ) : (
               <>
                 Continue

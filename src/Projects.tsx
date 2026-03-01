@@ -895,7 +895,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   }, [openInDropdownOpen]);
 
   useEffect(() => {
-    if (projects.length === 0) {
+    // Skip when an external navigation (initialProject) is pending — let
+    // the initialProject effect handle selection instead of racing it.
+    if (projects.length === 0 || initialProject) {
       return;
     }
 

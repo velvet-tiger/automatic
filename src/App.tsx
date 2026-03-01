@@ -100,10 +100,14 @@ function App() {
     checkWizard();
   }, []);
 
-  const handleWizardComplete = (answers: { analyticsEnabled: boolean }) => {
+  const handleWizardComplete = (answers: { analyticsEnabled: boolean; createdProjectName?: string }) => {
     // Apply analytics preference immediately so the runtime flag is in sync.
     setAnalyticsEnabled(answers.analyticsEnabled);
     setShowWizard(false);
+    // Navigate to the newly created project if one was set up.
+    if (answers.createdProjectName) {
+      navigateToProject(answers.createdProjectName);
+    }
   };
 
   useEffect(() => {
