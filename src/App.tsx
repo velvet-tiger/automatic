@@ -140,6 +140,9 @@ function App() {
     if (activeTab === id && MARKETPLACE_TABS[id]) {
       MARKETPLACE_TABS[id]!();
     }
+    // Track first visit to marketplace tabs so the dashboard can hide those getting-started items
+    if (id === "template-marketplace") localStorage.setItem("automatic.visited.template-marketplace", "1");
+    if (id === "skill-store") localStorage.setItem("automatic.visited.skill-store", "1");
     setActiveTab(id);
     trackNavigation(id);
   };

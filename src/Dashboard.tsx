@@ -87,21 +87,45 @@ interface DashboardProps {
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [mcpServerCount, setMcpServerCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Map of project name → drift report (undefined = not yet checked, null = not applicable)
   const [driftMap, setDriftMap] = useState<Record<string, DriftReport | null>>({});
 
+  // Visited flags — read once on mount; updated reactively when the user navigates
+  const [visitedTemplates, setVisitedTemplates] = useState(
+    () => !!localStorage.getItem("automatic.visited.template-marketplace")
+  );
+  const [visitedSkills, setVisitedSkills] = useState(
+    () => !!localStorage.getItem("automatic.visited.skill-store")
+  );
+
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Re-read visited flags whenever the window regains focus (user may have
+  // navigated away and come back to the dashboard tab)
+  useEffect(() => {
+    const sync = () => {
+      setVisitedTemplates(!!localStorage.getItem("automatic.visited.template-marketplace"));
+      setVisitedSkills(!!localStorage.getItem("automatic.visited.skill-store"));
+    };
+    window.addEventListener("focus", sync);
+    return () => window.removeEventListener("focus", sync);
   }, []);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      // Get project names
-      const names: string[] = await invoke("get_projects");
-      
+      // Get project names + MCP server configs in parallel
+      const [names, mcpNames] = await Promise.all([
+        invoke<string[]>("get_projects"),
+        invoke<string[]>("list_mcp_server_configs").catch(() => [] as string[]),
+      ]);
+      setMcpServerCount(mcpNames.length);
+
       // Load details for each project
       const projectDetails = await Promise.all(
         names.map(async (name) => {
@@ -192,129 +216,43 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </div>
         )}
 
-        {/* Top row: Header (left) + Recent Projects (right) */}
+        {/* Top row: Header + Chris note (left) | Recent Projects + Getting Started (right) */}
         <div className="grid grid-cols-[1fr_320px] gap-6 items-start">
-          {/* Header */}
+
+          {/* Left column: title + Chris note */}
           <div>
             <h1 className="text-2xl font-semibold text-text-base mb-2">Welcome to Automatic</h1>
             <p className="text-text-muted text-sm">Manage your AI agent configurations and projects</p>
 
-            {/* Note from Chris — shown when projects exist (fills the gap) */}
-            {projects.length > 0 && (
-              <div className="mt-6 bg-bg-input border border-border-strong/40 rounded-lg p-5 text-[13px] text-text-base leading-relaxed space-y-3">
-                <p>Hi,</p>
-                <p>
-                  I'm Chris, the developer of Automatic. Automatic was built to solve a problem I experienced working with AI tools — it keeps your shared project instructions, skills, MCP servers and other AI config in sync and up to date.
-                </p>
-                <p>
-                  If you find it useful, please{" "}
-                  <a
-                    href="https://github.com/velvet-tiger/automatic"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-text-base hover:text-text-base underline decoration-text-muted/40 hover:decoration-text-base/60 font-medium transition-colors"
-                  >
-                    give us a star on GitHub
-                  </a>{" "}
-                  and tell your friends about us.
-                </p>
-                <p>
-                  We've got heaps of plans for Automatic, and we can't wait to show you what we're working on.
-                </p>
-                <p className="text-text-base font-medium">— Chris</p>
-              </div>
-            )}
-
-            {/* Getting Started — shown only when there are no projects */}
-            {projects.length === 0 && (
-              <div className="mt-6">
-                <div className="flex items-center gap-2.5 mb-4">
-                  <Sparkles size={16} className="text-brand" />
-                  <h2 className="text-lg font-medium text-text-base">Getting started</h2>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Step 1 */}
-                  <button
-                    onClick={() => onNavigate("projects")}
-                    className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-brand/50 transition-all group flex flex-col gap-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-7 h-7 rounded-full bg-brand/10 border border-brand/20 flex items-center justify-center shrink-0">
-                        <span className="text-[11px] font-semibold text-brand">1</span>
-                      </div>
-                      <h3 className="font-medium text-text-base group-hover:text-brand transition-colors">Create a project</h3>
-                    </div>
-                    <p className="text-[13px] text-text-muted leading-relaxed pl-10">
-                      Link a directory to an agent configuration so your tools are always in sync.
-                    </p>
-                    <div className="flex items-center gap-1 text-[12px] font-medium text-brand pl-10 group-hover:gap-2 transition-all">
-                      Go to Projects <ArrowRight size={13} />
-                    </div>
-                  </button>
-
-                  {/* Step 2 */}
-                  <button
-                    onClick={() => onNavigate("project-templates")}
-                    className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-file-template/50 transition-all group flex flex-col gap-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-7 h-7 rounded-full bg-icon-file-template/10 border border-icon-file-template/20 flex items-center justify-center shrink-0">
-                        <span className="text-[11px] font-semibold text-icon-file-template">2</span>
-                      </div>
-                      <h3 className="font-medium text-text-base group-hover:text-icon-file-template transition-colors">Browse project templates</h3>
-                    </div>
-                    <p className="text-[13px] text-text-muted leading-relaxed pl-10">
-                      Start from a pre-built project template to hit the ground running with a proven setup.
-                    </p>
-                    <div className="flex items-center gap-1 text-[12px] font-medium text-icon-file-template pl-10 group-hover:gap-2 transition-all">
-                      Browse Templates <ArrowRight size={13} />
-                    </div>
-                  </button>
-
-                  {/* Step 3 */}
-                  <button
-                    onClick={() => onNavigate("skill-store")}
-                    className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-skill/50 transition-all group flex flex-col gap-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-7 h-7 rounded-full bg-icon-skill/10 border border-icon-skill/20 flex items-center justify-center shrink-0">
-                        <span className="text-[11px] font-semibold text-icon-skill">3</span>
-                      </div>
-                      <h3 className="font-medium text-text-base group-hover:text-icon-skill transition-colors">Install skills</h3>
-                    </div>
-                    <p className="text-[13px] text-text-muted leading-relaxed pl-10">
-                      Browse the community skill store and load specialised capabilities into your agents.
-                    </p>
-                    <div className="flex items-center gap-1 text-[12px] font-medium text-icon-skill pl-10 group-hover:gap-2 transition-all">
-                      Browse Skills <ArrowRight size={13} />
-                    </div>
-                  </button>
-
-                  {/* Step 4 */}
-                  <button
-                    onClick={() => onNavigate("mcp-marketplace")}
-                    className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-left hover:border-icon-mcp/50 transition-all group flex flex-col gap-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-7 h-7 rounded-full bg-icon-mcp/10 border border-icon-mcp/20 flex items-center justify-center shrink-0">
-                        <span className="text-[11px] font-semibold text-icon-mcp">4</span>
-                      </div>
-                      <h3 className="font-medium text-text-base group-hover:text-icon-mcp transition-colors">Connect MCP servers</h3>
-                    </div>
-                    <p className="text-[13px] text-text-muted leading-relaxed pl-10">
-                      Extend your agents with powerful integrations from the MCP server marketplace.
-                    </p>
-                    <div className="flex items-center gap-1 text-[12px] font-medium text-icon-mcp pl-10 group-hover:gap-2 transition-all">
-                      Browse Servers <ArrowRight size={13} />
-                    </div>
-                  </button>
-                </div>
-              </div>
-            )}
+            <div className="mt-6 bg-bg-input border border-border-strong/40 rounded-lg p-5 text-[13px] text-text-base leading-relaxed space-y-3">
+              <p>Hi,</p>
+              <p>
+                I'm Chris, the developer of Automatic. Automatic was built to solve a problem I experienced working with AI tools — it keeps your shared project instructions, skills, MCP servers and other AI config in sync and up to date.
+              </p>
+              <p>
+                If you find it useful, please{" "}
+                <a
+                  href="https://github.com/velvet-tiger/automatic"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-text-base hover:text-text-base underline decoration-text-muted/40 hover:decoration-text-base/60 font-medium transition-colors"
+                >
+                  give us a star on GitHub
+                </a>{" "}
+                and tell your friends about us.
+              </p>
+              <p>
+                We've got heaps of plans for Automatic, and we can't wait to show you what we're working on.
+              </p>
+              <p className="text-text-base font-medium">— Chris</p>
+            </div>
           </div>
 
-          {/* Recent Projects — right column, shown only when projects exist */}
-          {projects.length > 0 && (
+          {/* Right column: Recent Projects + conditional Getting Started checklist */}
+          <div className="flex flex-col gap-4">
+
+            {/* Recent Projects — hidden when empty */}
+            {projects.length > 0 && (
             <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
               <div className="flex items-center justify-between px-4 pt-4 pb-3">
                 <h2 className="text-sm font-semibold text-text-base">Recent Projects</h2>
@@ -326,53 +264,126 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                 </button>
               </div>
               <div className="divide-y divide-border-strong/30 border-t border-border-strong/30">
-                {projects.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()).slice(0, 6).map(project => {
-                  const drift = driftMap[project.name];
-                  const isDrifted = drift?.drifted === true;
-                  const isInSync = drift !== undefined && drift !== null && !drift.drifted;
-                  const isConfigured = !!project.directory && project.agents.length > 0;
+                {projects
+                  .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+                  .slice(0, 6)
+                  .map(project => {
+                      const drift = driftMap[project.name];
+                      const isDrifted = drift?.drifted === true;
+                      const isInSync = drift !== undefined && drift !== null && !drift.drifted;
+                      const isConfigured = !!project.directory && project.agents.length > 0;
 
-                  return (
-                    <div
-                      key={project.name}
-                      onClick={() => handleProjectClick(project.name)}
-                      className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors group ${
-                        isDrifted ? "hover:bg-warning/5" : "hover:bg-surface-hover"
-                      }`}
-                    >
-                      <FolderOpen size={14} className={`shrink-0 ${isDrifted ? "text-warning" : "text-brand"}`} />
+                      return (
+                        <div
+                          key={project.name}
+                          onClick={() => handleProjectClick(project.name)}
+                          className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors group ${
+                            isDrifted ? "hover:bg-warning/5" : "hover:bg-surface-hover"
+                          }`}
+                        >
+                          <FolderOpen size={14} className={`shrink-0 ${isDrifted ? "text-warning" : "text-brand"}`} />
 
-                      <span className={`text-[12px] font-medium text-text-base truncate min-w-0 transition-colors ${
-                        isDrifted ? "group-hover:text-warning" : "group-hover:text-brand"
-                      }`}>{project.name}</span>
+                          <span className={`text-[12px] font-medium text-text-base truncate min-w-0 transition-colors ${
+                            isDrifted ? "group-hover:text-warning" : "group-hover:text-brand"
+                          }`}>{project.name}</span>
 
-                      <div className="ml-auto flex items-center gap-2 shrink-0">
-                        <div className="flex items-center gap-2 text-[10px] text-text-muted">
-                          <span className="flex items-center gap-0.5"><Bot size={10} />{project.agents.length}</span>
-                          <span className="flex items-center gap-0.5"><Code size={10} />{project.skills.length + project.local_skills.length}</span>
-                          <span className="flex items-center gap-0.5"><Server size={10} />{project.mcp_servers.length}</span>
+                          <div className="ml-auto flex items-center gap-2 shrink-0">
+                            <div className="flex items-center gap-2 text-[10px] text-text-muted">
+                              <span className="flex items-center gap-0.5"><Bot size={10} />{project.agents.length}</span>
+                              <span className="flex items-center gap-0.5"><Code size={10} />{project.skills.length + project.local_skills.length}</span>
+                              <span className="flex items-center gap-0.5"><Server size={10} />{project.mcp_servers.length}</span>
+                            </div>
+
+                            {isConfigured && (
+                              isDrifted ? (
+                                <span className="flex items-center gap-0.5 text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded font-semibold">
+                                  <AlertCircle size={8} />
+                                  Drifted
+                                </span>
+                              ) : isInSync ? (
+                                <span className="flex items-center gap-0.5 text-[10px] bg-success/10 text-success px-1.5 py-0.5 rounded font-semibold">
+                                  <CheckCircle2 size={8} />
+                                  Synced
+                                </span>
+                              ) : null
+                            )}
+                          </div>
                         </div>
-
-                        {isConfigured && (
-                          isDrifted ? (
-                            <span className="flex items-center gap-0.5 text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded font-semibold">
-                              <AlertCircle size={8} />
-                              Drifted
-                            </span>
-                          ) : isInSync ? (
-                            <span className="flex items-center gap-0.5 text-[10px] bg-success/10 text-success px-1.5 py-0.5 rounded font-semibold">
-                              <CheckCircle2 size={8} />
-                              Synced
-                            </span>
-                          ) : null
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                      );
+                    })}
               </div>
             </div>
-          )}
+            )}
+
+            {/* Getting Started checklist — only shown while any item is incomplete */}
+            {(() => {
+              const items = [
+                {
+                  show: projects.length === 0,
+                  label: "Create a project",
+                  description: "Link a directory to an agent configuration.",
+                  action: () => onNavigate("projects"),
+                  actionLabel: "Go to Projects",
+                  color: "text-brand",
+                  hoverBorder: "hover:border-brand/50",
+                },
+                {
+                  show: !visitedTemplates,
+                  label: "Browse project templates",
+                  description: "Start from a pre-built setup.",
+                  action: () => onNavigate("template-marketplace"),
+                  actionLabel: "Browse Templates",
+                  color: "text-icon-file-template",
+                  hoverBorder: "hover:border-icon-file-template/50",
+                },
+                {
+                  show: !visitedSkills,
+                  label: "Install a skill",
+                  description: "Load specialised capabilities into your agents.",
+                  action: () => onNavigate("skill-store"),
+                  actionLabel: "Browse Skills",
+                  color: "text-icon-skill",
+                  hoverBorder: "hover:border-icon-skill/50",
+                },
+                {
+                  show: mcpServerCount === 0,
+                  label: "Connect MCP servers",
+                  description: "Extend your agents with powerful integrations.",
+                  action: () => onNavigate("mcp-marketplace"),
+                  actionLabel: "Browse Servers",
+                  color: "text-icon-mcp",
+                  hoverBorder: "hover:border-icon-mcp/50",
+                },
+              ].filter(i => i.show);
+
+              if (items.length === 0) return null;
+
+              return (
+                <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 pt-4 pb-3">
+                    <Sparkles size={12} className="text-brand" />
+                    <h2 className="text-sm font-semibold text-text-base">Getting started</h2>
+                  </div>
+                  <div className="divide-y divide-border-strong/30 border-t border-border-strong/30">
+                    {items.map((item) => (
+                      <button
+                        key={item.label}
+                        onClick={item.action}
+                        className={`w-full flex items-start gap-3 px-4 py-3 text-left border border-transparent transition-all group ${item.hoverBorder} hover:bg-surface-hover`}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-[12px] font-medium text-text-base group-hover:${item.color} transition-colors`}>{item.label}</p>
+                          <p className="text-[11px] text-text-muted mt-0.5 leading-relaxed">{item.description}</p>
+                        </div>
+                        <ArrowRight size={12} className={`mt-0.5 shrink-0 ${item.color} opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all`} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+          </div>
         </div>
 
         {/* Featured Section */}
