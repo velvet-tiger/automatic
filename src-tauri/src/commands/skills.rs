@@ -65,8 +65,8 @@ pub fn import_local_skill(name: &str, skill_name: &str) -> Result<String, String
 /// Copy all local skills to every agent's skill directory in the project.
 /// Returns the list of files written.
 #[tauri::command]
-pub fn sync_local_skills(name: &str) -> Result<String, String> {
-    let raw = core::read_project(name)?;
+pub async fn sync_local_skills(name: String) -> Result<String, String> {
+    let raw = core::read_project(&name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
     let written = sync::sync_local_skills_across_agents(&project)?;

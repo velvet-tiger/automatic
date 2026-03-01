@@ -128,12 +128,12 @@ pub fn delete_project(name: &str) -> Result<(), String> {
 // ── Project Sync ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn sync_project(name: &str) -> Result<String, String> {
-    let raw = core::read_project(name)?;
+pub async fn sync_project(name: String) -> Result<String, String> {
+    let raw = core::read_project(&name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    let written = sync::sync_project(&project)?;
-    serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
+    let _ = sync::sync_project(&project)?;
+    Ok("Sync successful".to_string())
 }
 
 /// Return the list of file/directory paths that would be removed if the given
@@ -164,8 +164,8 @@ pub fn remove_agent_from_project(name: &str, agent_id: &str) -> Result<String, S
 /// generate.  Returns a JSON-serialised [`sync::DriftReport`] describing which
 /// agents and files are out of sync.  This is a read-only operation.
 #[tauri::command]
-pub fn check_project_drift(name: &str) -> Result<String, String> {
-    let raw = core::read_project(name)?;
+pub async fn check_project_drift(name: String) -> Result<String, String> {
+    let raw = core::read_project(&name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
     let report = sync::check_project_drift(&project)?;

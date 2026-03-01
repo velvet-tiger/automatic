@@ -6,10 +6,7 @@ fn main() {
 
     if args.len() > 1 && args[1] == "mcp-serve" {
         // Run as MCP server on stdio
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create tokio runtime");
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async {
             if let Err(e) = automatic_lib::mcp::run_mcp_server().await {
                 eprintln!("MCP server error: {}", e);
@@ -17,18 +14,6 @@ fn main() {
             }
         });
     } else {
-        // Create an ambient Tokio runtime with an 8MB stack size for all worker
-        // and blocking threads. Tauri will detect and use this runtime.
-        // This prevents stack overflows (0xc00000fd) on Windows ARM64 during
-        // IPC commands that do heavy JSON serialization or file I/O.
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .thread_stack_size(8 * 1024 * 1024)
-            .build()
-            .expect("Failed to create tokio runtime");
-        
-        let _guard = rt.enter();
-
         // Default: launch Tauri desktop app
         automatic_lib::run();
     }
