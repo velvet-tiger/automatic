@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { AuthorSection } from "./AuthorPanel";
 import {
   Search,
   Server,
@@ -172,8 +173,14 @@ function configName(server: McpServer): string {
   return server.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-/** Build a save-ready config JSON from marketplace data. Prefers local, falls back to remote. */
+/** Build a save-ready config JSON from marketplace data. Prefers local, falls back to remote.
+ *  Embeds `_author` metadata so Automatic can display the provider in the MCP Servers view.
+ */
 function buildConfig(server: McpServer): Record<string, unknown> {
+  // Author metadata derived from marketplace data
+  const _author: Record<string, string> = { name: server.provider };
+  if (server.repository_url) _author.repository_url = server.repository_url;
+
   if (server.local) {
     const parts = server.local.command.split(/\s+/);
     const cmd = parts[0] || "";
@@ -182,16 +189,16 @@ function buildConfig(server: McpServer): Record<string, unknown> {
     server.auth.env_vars.forEach((v) => {
       env[v.name] = "";
     });
-    const cfg: Record<string, unknown> = { type: "stdio", command: cmd };
+    const cfg: Record<string, unknown> = { type: "stdio", command: cmd, _author };
     if (args.length > 0) cfg.args = args;
     if (Object.keys(env).length > 0) cfg.env = env;
     return cfg;
   }
   if (server.remote) {
     const type = server.remote.transport === "sse" ? "sse" : "http";
-    return { type, url: server.remote.url };
+    return { type, url: server.remote.url, _author };
   }
-  return { type: "stdio", command: "" };
+  return { type: "stdio", command: "", _author };
 }
 
 export default function McpMarketplace({
@@ -359,6 +366,15 @@ export default function McpMarketplace({
                 </div>
               );
             })()}
+
+            {/* Author */}
+            <div className="mb-6 pb-6 border-b border-border-strong/40">
+              <AuthorSection descriptor={{
+                type: "provider",
+                name: selected.provider,
+                repository_url: selected.repository_url ?? undefined,
+              }} />
+            </div>
 
             {/* Meta row */}
             <div className="flex items-center gap-4 mb-6 pb-6 border-b border-border-strong/40">

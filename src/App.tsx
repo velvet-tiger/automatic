@@ -66,6 +66,7 @@ function App() {
     return saved || "dashboard";
   });
   const [pendingProject, setPendingProject] = useState<string | null>(null);
+  const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
   const [skillStoreResetKey, setSkillStoreResetKey] = useState(0);
   const [templateMarketplaceResetKey, setTemplateMarketplaceResetKey] = useState(0);
   const [mcpMarketplaceResetKey, setMcpMarketplaceResetKey] = useState(0);
@@ -117,6 +118,11 @@ function App() {
   const navigateToProject = (projectName: string) => {
     setPendingProject(projectName);
     setActiveTab("projects");
+  };
+
+  const navigateToTemplate = (templateName: string) => {
+    setPendingTemplate(templateName);
+    setActiveTab("project-templates");
   };
 
   const MARKETPLACE_TABS: Record<string, () => void> = {
@@ -346,7 +352,7 @@ function App() {
           )}
           {activeTab === "project-templates" && (
             <div className="flex-1 h-full">
-              <ProjectTemplates />
+              <ProjectTemplates initialTemplate={pendingTemplate} />
             </div>
           )}
           {activeTab === "agents" && (
@@ -366,7 +372,7 @@ function App() {
           )}
           {activeTab === "template-marketplace" && (
             <div className="flex-1 h-full">
-              <TemplateMarketplace resetKey={templateMarketplaceResetKey} />
+              <TemplateMarketplace resetKey={templateMarketplaceResetKey} onNavigateToTemplate={navigateToTemplate} />
             </div>
           )}
           {activeTab === "mcp-marketplace" && (

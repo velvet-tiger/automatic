@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   PackagePlus,
 } from "lucide-react";
+import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,6 +35,8 @@ interface BundledProjectTemplate {
   unified_rules?: string[];
   /** Optional icon filename (e.g. "nextjs.svg") served from /template-icons/ */
   icon?: string;
+  /** Author/provider metadata — same shape as AuthorDescriptor. */
+  _author?: AuthorDescriptor;
 }
 
 interface SkillDependencyStatus {
@@ -282,6 +285,7 @@ function TemplateDetail({
   error,
   onImport,
   onClose,
+  onGoToTemplate,
 }: {
   template: BundledProjectTemplate;
   imported: boolean;
@@ -289,6 +293,7 @@ function TemplateDetail({
   error: string | null;
   onImport: () => void;
   onClose: () => void;
+  onGoToTemplate?: (name: string) => void;
 }) {
   const style = categoryStyle(template.category);
   const instruction = template.unified_instruction?.trim() ?? "";
@@ -345,9 +350,20 @@ function TemplateDetail({
         <div className="flex items-center gap-2">
           {error && <span className="text-[12px] text-red-400">{error}</span>}
           {imported ? (
-            <div className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-brand">
-              <CheckCircle2 size={12} />
-              Imported
+            <div className="flex items-center gap-2">
+              <div className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-brand">
+                <CheckCircle2 size={12} />
+                Imported
+              </div>
+              {onGoToTemplate && (
+                <button
+                  onClick={() => onGoToTemplate(template.name)}
+                  className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-brand hover:bg-brand-hover text-white transition-colors shadow-sm border border-transparent"
+                >
+                  <ArrowRight size={12} />
+                  Go to template
+                </button>
+              )}
             </div>
           ) : (
             <button
@@ -397,6 +413,9 @@ function TemplateDetail({
 
             {/* Right — metadata sidebar */}
             <div className="space-y-6">
+
+              {/* Author */}
+              <AuthorSection descriptor={template._author ?? { type: "provider", name: "Automatic", url: "https://automatic.sh" }} />
 
               {/* Dependency status */}
               {(template.skills.length > 0 || template.mcp_servers.length > 0) && (
@@ -532,7 +551,7 @@ function TemplateDetail({
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function TemplateMarketplace({ resetKey }: { resetKey?: number }) {
+export default function TemplateMarketplace({ resetKey, onNavigateToTemplate }: { resetKey?: number; onNavigateToTemplate?: (name: string) => void }) {
   const [allTemplates, setAllTemplates] = useState<BundledProjectTemplate[]>([]);
   const [results, setResults] = useState<BundledProjectTemplate[]>([]);
   const [query, setQuery] = useState("");
@@ -620,6 +639,7 @@ export default function TemplateMarketplace({ resetKey }: { resetKey?: number })
         error={importError}
         onImport={handleImport}
         onClose={() => { setSelected(null); setImportError(null); }}
+        onGoToTemplate={onNavigateToTemplate}
       />
     );
   }

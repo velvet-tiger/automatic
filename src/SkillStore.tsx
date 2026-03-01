@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { trackSkillInstalled, trackSkillUpdated } from "./analytics";
+import { AuthorSection } from "./AuthorPanel";
 import {
   Search,
   Download,
@@ -828,9 +829,12 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                   </div>
 
                   {/* Title + install command */}
-                  <h1 className="text-[22px] font-semibold text-text-base mb-3 leading-tight">
+                  <h1 className="text-[22px] font-semibold text-text-base mb-1.5 leading-tight">
                     {displayName}
                   </h1>
+                  <div className="mb-5 pb-5 border-b border-border-strong/40">
+                    <AuthorSection descriptor={{ type: "github", repo: selected.source }} />
+                  </div>
 
                   <div className="flex items-center gap-2 mb-5">
                     <code className="flex-1 bg-bg-input border border-border-strong/40 rounded-md px-3 py-2 font-mono text-[11px] text-text-muted truncate">
@@ -888,6 +892,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
 
                 {/* Sidebar — meta */}
                 <div className="w-[180px] flex-shrink-0 border-l border-border-strong/40 px-5 py-6 space-y-6">
+
                   {/* Installs */}
                   <div>
                     <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1">

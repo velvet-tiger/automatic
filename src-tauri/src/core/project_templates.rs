@@ -45,6 +45,11 @@ pub struct ProjectTemplate {
     /// the project's `file_rules["_unified"]` when the template is applied.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unified_rules: Vec<String>,
+    /// Author/provider metadata.  Mirrors the `_author` convention used by
+    /// MCP server configs.  Stored as a raw JSON value so it round-trips
+    /// without a dedicated struct — shape: `{ type, name?, url?, repo?, ... }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub _author: Option<serde_json::Value>,
 }
 
 pub fn get_project_templates_dir() -> Result<PathBuf, String> {
@@ -185,6 +190,9 @@ pub struct BundledProjectTemplate {
     /// frontend. When absent the UI falls back to the first letter of the name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Author/provider metadata, same shape as `ProjectTemplate::_author`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub _author: Option<serde_json::Value>,
 }
 
 /// All bundled marketplace templates, compiled in at build time.
@@ -248,7 +256,8 @@ pub fn import_bundled_project_template(name: &str) -> Result<(), String> {
     // Install any bundled skills the template requires (skip already-installed ones).
     install_skills_from_bundle(&bundled.skills)?;
 
-    // Convert to the standard ProjectTemplate structure for storage
+    // Convert to the standard ProjectTemplate structure for storage.
+    // _author is preserved so the user-local copy retains provenance.
     let pt = ProjectTemplate {
         name: bundled.name.clone(),
         description: bundled.description,
@@ -259,6 +268,7 @@ pub fn import_bundled_project_template(name: &str) -> Result<(), String> {
         project_files: bundled.project_files,
         unified_instruction: bundled.unified_instruction,
         unified_rules: bundled.unified_rules,
+        _author: bundled._author,
     };
 
     let json = serde_json::to_string_pretty(&pt).map_err(|e| e.to_string())?;

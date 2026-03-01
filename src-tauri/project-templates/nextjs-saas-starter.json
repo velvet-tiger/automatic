@@ -11,5 +11,6 @@
   "agents": [],
   "project_files": [],
   "unified_instruction": "# Next.js SaaS Starter\n\n## Stack\n- **Framework**: Next.js 14+ (App Router)\n- **Styling**: Tailwind CSS v3\n- **Database**: PostgreSQL via Prisma ORM\n- **Auth**: NextAuth.js v5\n- **Payments**: Stripe (webhook handler included)\n- **Language**: TypeScript (strict mode)\n\n## Project Structure\n```\nsrc/\n  app/           # Next.js App Router pages and layouts\n    (auth)/      # Auth pages (login, register, forgot-password)\n    (dashboard)/ # Protected dashboard routes\n    api/         # API route handlers\n  components/    # Shared UI components\n  lib/           # Utilities, db client, auth config\n  hooks/         # Custom React hooks\nprisma/\n  schema.prisma  # Database schema\n```\n\n## Conventions\n- Use Server Components by default; add `\"use client\"` only when needed\n- Co-locate types with their modules\n- All DB access goes through `lib/db.ts` (Prisma client singleton)\n- Environment variables validated at startup via `lib/env.ts` (zod schema)\n- API routes return typed JSON responses with consistent error shapes\n\n## Key Commands\n```bash\nnpm run dev           # Start dev server\nnpm run db:push       # Sync Prisma schema to DB\nnpm run db:studio     # Open Prisma Studio\nnpm run stripe:listen # Forward Stripe webhooks locally\n```\n",
-  "unified_rules": []
+  "unified_rules": [],
+  "_author": { "type": "provider", "name": "Automatic", "url": "https://automatic.sh" }
 }

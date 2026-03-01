@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ICONS } from "./icons";
+import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
 import { SkillSelector } from "./SkillSelector";
 import { AgentSelector, AgentInfo } from "./AgentSelector";
 import { McpSelector } from "./McpSelector";
@@ -34,6 +35,8 @@ interface ProjectTemplate {
   unified_instruction?: string;
   /** Rule IDs attached to the unified instruction */
   unified_rules?: string[];
+  /** Author/provider metadata — present on marketplace-imported templates. */
+  _author?: AuthorDescriptor;
 }
 
 
@@ -66,12 +69,12 @@ function templateAccent(t: ProjectTemplate): { bg: string; icon: string } {
 }
 
 
-export default function ProjectTemplates() {
+export default function ProjectTemplates({ initialTemplate }: { initialTemplate?: string | null }) {
   const [templates, setTemplates] = useState<string[]>([]);
   // Map of template name → loaded data (for sidebar summaries)
   const [templateData, setTemplateData] = useState<Record<string, ProjectTemplate>>({});
 
-  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [selectedName, setSelectedName] = useState<string | null>(initialTemplate ?? null);
   const [template, setTemplate] = useState<ProjectTemplate | null>(null);
   const [dirty, setDirty] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -724,6 +727,11 @@ export default function ProjectTemplates() {
             {/* Body */}
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar" onClick={() => { setShowApplyPicker(false); setConfirmDelete(null); }}>
               <div className="max-w-2xl space-y-8">
+
+                {/* Author */}
+                <section className="pb-2 border-b border-border-strong/40">
+                  <AuthorSection descriptor={template._author ?? { type: "local" }} />
+                </section>
 
                 {/* Description */}
                 {(template.description || isCreating || dirty) && (
