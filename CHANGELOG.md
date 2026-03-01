@@ -2,6 +2,75 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.3.0] — 2026-03-01
+
+### Features
+
+#### Themes
+- Added Accessible theme with WCAG AA+ and colour-vision-deficiency-safe palette
+- Added official Dark and Light themes as defaults
+- Added Corporate Dark and Corporate Light themes (renamed from Sleek)
+- Dynamic semantic icon colours with per-theme token mappings
+- Dark agent icons rendered correctly in light themes
+
+#### Dashboard
+- Restructured layout with welcome note and featured cards using compact AuthorPanel layout
+
+#### Author & Marketplace
+- Author metadata added to marketplace templates, MCP servers, and skills
+- AuthorPanel component with session caching and rate-limit fallback
+
+#### Rules
+- Per-project sync status indicators and Update buttons
+- Automatic MCP Service rule renamed to "Automatic" and auto-enabled by default
+
+#### Agents
+- AgentCapabilities declaration for supported feature advertising
+- Agent lists now sorted alphabetically by label
+
+#### Memory
+- Replaced inline memory tab with scalable MemoryBrowser component
+
+#### Projects
+- Summary tab redesigned with actionable layout
+
+#### Onboarding Wizard
+- "First project" step added to the onboarding flow
+- Cancel support for re-opened wizard; mesh hidden on minimal themes
+
+#### Editors
+- JetBrains IDEs added to the "Open In" list
+
+#### MCP Server
+- Server metadata populated with title, description, and URL
+
+#### UI
+- App version displayed in sidebar footer
+- Delete confirmation dialogs for MCP servers, templates, rules, and skills
+
+### Refactoring
+- Rust backend decomposed from monolithic `core.rs`/`lib.rs`/`sync.rs` into a modular directory structure
+- Frontend localStorage keys migrated from `nexus.*` to `automatic.*` namespace
+- All remaining Nexus references renamed to Automatic across the Rust backend
+
+### Fixes
+- AgentSelector Add button styling corrected to match other selectors
+- Rules sync status check resolved for unified mode and section-only comparison
+- Wizard step indicator layout restored; invalid border token classes removed
+- Icon theme tokens used correctly in empty state icon boxes
+- Agent icon filter corrected on light themes
+- `allow-start-dragging` capability added to enable window drag
+- Color contrast improved across light themes
+- Markdown table borders lightened; inline code visibility fixed in Sleek theme
+- Welcome link visibility improved on Corporate Dark
+- Icon and rule pill contrast improved for Corporate Dark and Light themes
+
+### CI
+- Alternative Apple environment variables passed for notarization
+- Keychain hang during codesign resolved
+
+---
+
 ## [0.2.0] — 2026-02-28
 
 ### Features
@@ -105,5 +174,6 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Warp removal correctly deletes `WARP.md` via owned config paths
 - Junie removal deletes the entire `.junie/` directory
 
+[0.3.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.3.0
 [0.2.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.2.0
 [0.1.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.1.0
