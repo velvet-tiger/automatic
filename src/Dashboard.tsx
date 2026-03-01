@@ -369,7 +369,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                       <button
                         key={item.label}
                         onClick={item.action}
-                        className={`w-full flex items-start gap-3 px-4 py-3 text-left border border-transparent transition-all group ${item.hoverBorder} hover:bg-surface-hover`}
+                        className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-all group hover:bg-surface-hover`}
                       >
                         <div className="flex-1 min-w-0">
                           <p className={`text-[12px] font-medium text-text-base group-hover:${item.color} transition-colors`}>{item.label}</p>
