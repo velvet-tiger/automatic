@@ -14,12 +14,20 @@ pub fn read_project(name: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
-    let raw = core::read_project(name)?;
-    let project: core::Project =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    let updated = sync::autodetect_project_dependencies(&project)?;
-    serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())
+pub async fn autodetect_project_dependencies(name: String) -> Result<String, String> {
+    let handle = std::thread::Builder::new()
+        .name("autodetect_thread".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let raw = core::read_project(&name)?;
+            let project: core::Project =
+                serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+            let updated = sync::autodetect_project_dependencies(&project)?;
+            serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())
+        })
+        .map_err(|e| e.to_string())?;
+
+    handle.join().unwrap_or_else(|_| Err("autodetect_project_dependencies thread panicked".to_string()))
 }
 
 #[tauri::command]
@@ -129,11 +137,19 @@ pub fn delete_project(name: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn sync_project(name: String) -> Result<String, String> {
-    let raw = core::read_project(&name)?;
-    let project: core::Project =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    let _ = sync::sync_project(&project)?;
-    Ok("Sync successful".to_string())
+    let handle = std::thread::Builder::new()
+        .name("sync_project_thread".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let raw = core::read_project(&name)?;
+            let project: core::Project =
+                serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+            let _ = sync::sync_project(&project)?;
+            Ok("Sync successful".to_string())
+        })
+        .map_err(|e| e.to_string())?;
+
+    handle.join().unwrap_or_else(|_| Err("sync_project thread panicked".to_string()))
 }
 
 /// Return the list of file/directory paths that would be removed if the given
@@ -165,11 +181,21 @@ pub fn remove_agent_from_project(name: &str, agent_id: &str) -> Result<String, S
 /// agents and files are out of sync.  This is a read-only operation.
 #[tauri::command]
 pub async fn check_project_drift(name: String) -> Result<String, String> {
-    let raw = core::read_project(&name)?;
-    let project: core::Project =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    let report = sync::check_project_drift(&project)?;
-    serde_json::to_string(&report).map_err(|e| e.to_string())
+    // Execute on a dedicated thread with an 8MB stack to prevent 0xc00000fd
+    // stack overflows on Windows ARM64 during deep JSON serialization.
+    let handle = std::thread::Builder::new()
+        .name("check_drift_thread".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let raw = core::read_project(&name)?;
+            let project: core::Project =
+                serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+            let report = sync::check_project_drift(&project)?;
+            serde_json::to_string(&report).map_err(|e| e.to_string())
+        })
+        .map_err(|e| e.to_string())?;
+
+    handle.join().unwrap_or_else(|_| Err("check_project_drift thread panicked".to_string()))
 }
 
 // ── Cross-cutting helpers ────────────────────────────────────────────────────
