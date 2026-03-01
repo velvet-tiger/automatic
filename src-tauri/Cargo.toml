@@ -1,6 +1,6 @@
 [package]
 name = "automatic"
-version = "0.3.2"
+version = "0.3.3"
 description = "Manage your AI dependencies"
 authors = ["you"]
 edition = "2021"
