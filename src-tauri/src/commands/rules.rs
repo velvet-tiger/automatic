@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::core;
 
 use super::projects::{
@@ -48,21 +50,39 @@ pub struct RuleProjectStatus {
 pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectStatus>, String> {
     let mut referencing: Vec<RuleProjectStatus> = Vec::new();
     with_each_project_mut(|project_name, project| {
-        // Collect the filenames that reference this rule.
-        let referencing_files: Vec<(&String, &Vec<String>)> = project
+        // Collect the file_rules entries that reference this rule.
+        let referencing_entries: Vec<(&String, &Vec<String>)> = project
             .file_rules
             .iter()
             .filter(|(_, rules)| rules.iter().any(|r| r == rule_name))
             .collect();
 
-        if referencing_files.is_empty() {
+        if referencing_entries.is_empty() {
             return;
         }
 
-        // Check each file — the project is "synced" only if ALL files are current.
-        let synced = referencing_files.iter().all(|(filename, rules)| {
-            core::is_project_file_rules_current(&project.directory, filename, rules)
-                .unwrap_or(false)
+        let dir = PathBuf::from(&project.directory);
+
+        // Resolve each file_rules key to actual on-disk paths.
+        // In unified mode, "_unified" maps to every agent's project file.
+        let synced = referencing_entries.iter().all(|(key, rules)| {
+            let paths: Vec<PathBuf> = if *key == "_unified" {
+                let mut seen = std::collections::HashSet::new();
+                project
+                    .agents
+                    .iter()
+                    .filter_map(|aid| crate::agent::from_id(aid))
+                    .filter(|inst| seen.insert(inst.project_file_name().to_string()))
+                    .map(|inst| dir.join(inst.project_file_name()))
+                    .collect()
+            } else {
+                vec![dir.join(key.as_str())]
+            };
+
+            // All resolved files must contain the current rules section.
+            paths
+                .iter()
+                .all(|path| core::is_file_rules_current(path, rules).unwrap_or(false))
         });
 
         referencing.push(RuleProjectStatus {

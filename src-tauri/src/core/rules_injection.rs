@@ -89,35 +89,26 @@ pub fn save_project_file_with_rules(
 }
 
 /// Read-only check: returns `true` if the on-disk file already contains the
-/// rules section that would be generated from the given rule names.
-/// Used to show green/yellow status in the Rules UI without writing anything.
-pub fn is_project_file_rules_current(
-    directory: &str,
-    filename: &str,
+/// exact rules section that would be generated from the given rule names.
+/// Only compares the rules section — ignores user content and managed sections.
+pub fn is_file_rules_current(
+    path: &std::path::Path,
     rule_names: &[String],
 ) -> Result<bool, String> {
-    if directory.is_empty() {
-        return Ok(true);
-    }
-
-    let path = PathBuf::from(directory).join(filename);
     if !path.exists() {
-        // File doesn't exist yet — not current.
         return Ok(false);
     }
 
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let user_content = strip_rules_section(&strip_managed_section(&raw));
+    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let expected_section = build_rules_section(rule_names)?;
 
-    let rules_section = build_rules_section(rule_names)?;
+    if expected_section.is_empty() {
+        // No rules expected — current if the file has no rules section.
+        return Ok(!raw.contains(RULES_START_MARKER));
+    }
 
-    let expected = if rules_section.is_empty() {
-        user_content
-    } else {
-        format!("{}\n\n{}\n", user_content.trim_end(), rules_section)
-    };
-
-    Ok(expected == raw)
+    // Check if the file contains the exact expected rules section.
+    Ok(raw.contains(&expected_section))
 }
 
 /// Re-inject rules into an existing project file.  Reads the file, strips
