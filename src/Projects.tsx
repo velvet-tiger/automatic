@@ -1210,15 +1210,25 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   };
 
   const handleSaveProjectFile = async () => {
-    if (!selectedName || !activeProjectFile) return;
+    if (!selectedName || !activeProjectFile || !project) return;
     setProjectFileSaving(true);
     try {
+      // Flush the in-memory project config (including file_rules) to disk first,
+      // so save_project_file on the backend reads up-to-date rule assignments.
+      // This also handles the case where rules were toggled on a not-yet-existing file.
+      const toSave = { ...project, name: selectedName, updated_at: new Date().toISOString() };
+      await invoke("save_project", { name: selectedName, data: JSON.stringify(toSave, null, 2) });
+      setDirty(false);
+
       await invoke("save_project_file", {
         name: selectedName,
         filename: activeProjectFile,
         content: projectFileContent,
       });
       setProjectFileDirty(false);
+
+      // Reload file list so the "exists" flag updates for newly created files
+      await loadProjectFiles(selectedName);
     } catch (err: any) {
       setError(`Failed to save project file: ${err}`);
     } finally {
@@ -1996,7 +2006,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       <div key={s} className="flex items-center gap-2">
                         <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-semibold transition-colors ${
                           wizardStep === s
-                            ? "bg-brand text-text-base"
+                            ? "bg-brand text-white"
                             : wizardStep > s
                             ? "bg-brand/30 text-brand"
                             : "bg-bg-sidebar text-text-muted"
@@ -2345,7 +2355,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           }}
                           className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
                             (project.instruction_mode || "per-agent") === "unified"
-                              ? "bg-brand text-text-base"
+                              ? "bg-brand text-white"
                               : "bg-bg-sidebar text-text-muted hover:text-text-base"
                           }`}
                         >
@@ -2364,7 +2374,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           }}
                           className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
                             (project.instruction_mode || "per-agent") === "per-agent"
-                              ? "bg-brand text-text-base"
+                              ? "bg-brand text-white"
                               : "bg-bg-sidebar text-text-muted hover:text-text-base"
                           }`}
                         >
@@ -2428,7 +2438,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 <button
                                   key={t}
                                   onClick={() => handleApplyTemplate(t)}
-                                  className="w-full text-left px-2 py-1 text-[12px] bg-bg-sidebar hover:bg-brand text-text-base rounded transition-colors flex items-center gap-1.5"
+                                  className="w-full text-left px-2 py-1 text-[12px] bg-bg-sidebar hover:bg-brand text-text-base hover:text-white rounded transition-colors flex items-center gap-1.5"
                                 >
                                   <LayoutTemplate size={10} />
                                   {t}
@@ -2453,7 +2463,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               <FileText size={20} strokeWidth={1.5} />
                             </div>
                             <h3 className="text-[14px] font-medium text-text-base mb-1">
-                              {activeProjectFile}
+                              {activeProjectFile === "_unified" ? "Shared File" : activeProjectFile}
                             </h3>
                             <p className="text-[13px] text-text-muted mb-5 max-w-xs">
                               This file doesn't exist yet. Create it to provide project instructions for {activeFile?.agents.join(" & ")}.
@@ -2492,7 +2502,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     <button
                                       key={t}
                                       onClick={() => handleApplyTemplate(t)}
-                                      className="px-2 py-1 text-[12px] bg-bg-sidebar hover:bg-brand text-text-base rounded transition-colors flex items-center gap-1.5"
+                                      className="px-2 py-1 text-[12px] bg-bg-sidebar hover:bg-brand text-text-base hover:text-white rounded transition-colors flex items-center gap-1.5"
                                     >
                                       <LayoutTemplate size={10} />
                                       {t}

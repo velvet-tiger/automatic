@@ -69,9 +69,9 @@ const CLASSIFICATION_LABELS: Record<string, string> = {
 };
 
 const CLASSIFICATION_COLORS: Record<string, string> = {
-  official: "bg-brand/15 text-brand-light border-brand/20",
-  reference: "bg-accent/15 text-accent-light border-accent/20",
-  community: "bg-accent-hover/15 text-accent-hover-light border-accent-hover/20",
+  official: "bg-brand/15 text-brand border-brand/20",
+  reference: "bg-accent/15 text-accent border-accent/20",
+  community: "bg-accent-hover/15 text-accent-hover border-accent-hover/20",
 };
 
 // ── Server Icon ────────────────────────────────────────────────────────────

@@ -142,7 +142,7 @@ function KvList({
           className="group flex items-center justify-between px-3 py-1.5 bg-bg-input rounded-md border border-surface text-[13px] font-mono"
         >
           <span className="truncate">
-            <span className={colorKey ? "text-brand-light" : "text-text-base"}>{key}</span>
+            <span className={colorKey ? "text-brand" : "text-text-base"}>{key}</span>
             <span className="text-text-muted mx-1">=</span>
             <span className="text-text-base">{val}</span>
           </span>
@@ -508,7 +508,7 @@ export default function McpServers() {
                       onClick={() => setTransport("stdio")}
                       className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                         isStdio
-                          ? "bg-brand border-brand text-text-base"
+                          ? "bg-brand border-brand text-white"
                           : "bg-bg-input border-surface text-text-muted hover:border-border-strong hover:text-text-base"
                       }`}
                     >
@@ -518,7 +518,7 @@ export default function McpServers() {
                       onClick={() => setTransport(config.type === "sse" ? "sse" : "http")}
                       className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                         !isStdio
-                          ? "bg-brand border-brand text-text-base"
+                          ? "bg-brand border-brand text-white"
                           : "bg-bg-input border-surface text-text-muted hover:border-border-strong hover:text-text-base"
                       }`}
                     >

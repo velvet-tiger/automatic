@@ -181,7 +181,7 @@ function SkillPreview({ content, source, resources }: SkillPreviewProps) {
                         <path d="M3 2l4 3-4 3V2z"/>
                       </svg>
                       {/* Folder icon */}
-                      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-brand-light">
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-brand">
                         <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
                       </svg>
                       <span className="text-[12px] font-mono text-text-muted">{dir.name}/</span>
@@ -639,10 +639,10 @@ export default function Skills() {
                         )}
                         <span className="text-[10px] text-text-muted">·</span>
                         {skill.in_agents && (
-                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-brand/20 text-brand-light leading-none" title="~/.agents/skills/">A</span>
+                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-brand/20 text-brand leading-none" title="~/.agents/skills/">A</span>
                         )}
                         {skill.in_claude && (
-                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-[#D2875E]/20 text-[#E6A87B] leading-none" title="~/.claude/skills/">C</span>
+                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-accent/20 text-accent leading-none" title="~/.claude/skills/">C</span>
                         )}
                         {!synced && (
                           <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-warning/15 text-warning leading-none" title="Not synced to both locations">!</span>

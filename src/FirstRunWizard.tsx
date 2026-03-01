@@ -213,7 +213,7 @@ function AgentChip({
       onClick={onClick}
       className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-[13px] font-medium transition-all ${
         selected
-          ? "border-brand bg-brand/15 text-brand-light"
+          ? "border-brand bg-brand/15 text-brand"
           : "border-border-strong/40 bg-bg-input-dark text-text-muted hover:border-border-strong hover:text-text-base"
       }`}
     >
