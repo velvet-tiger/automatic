@@ -301,6 +301,53 @@ pub fn ensure_plugin_marketplace() -> Result<PathBuf, String> {
     Ok(plugins_dir)
 }
 
+/// Locate the `claude` CLI binary.
+///
+/// On macOS, Tauri apps launched from the Dock inherit a minimal PATH that
+/// often does not include `~/.local/bin` or `/opt/homebrew/bin` where Claude
+/// Code installs itself.  This function tries the well-known install locations
+/// before falling back to a plain `claude` on PATH.
+fn find_claude_binary() -> Option<std::path::PathBuf> {
+    // 1. Try bare `claude` first (works in terminal / CI).
+    if std::process::Command::new("claude")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return Some(std::path::PathBuf::from("claude"));
+    }
+
+    // 2. Check well-known install paths.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates: &[&str] = &[
+        "~/.local/bin/claude",
+        "/usr/local/bin/claude",
+        "/opt/homebrew/bin/claude",
+    ];
+
+    for candidate in candidates {
+        let path = if candidate.starts_with('~') {
+            std::path::PathBuf::from(candidate.replacen('~', &home, 1))
+        } else {
+            std::path::PathBuf::from(candidate)
+        };
+
+        if path.exists() {
+            if std::process::Command::new(&path)
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
 /// Shell out to the `claude` CLI to register the local marketplace and
 /// install plugins.  Skips silently if `claude` is not on PATH (the user
 /// may not have Claude Code installed yet).
@@ -310,31 +357,40 @@ pub fn install_plugin_marketplace() -> Result<String, String> {
         .to_str()
         .ok_or("Plugin path contains invalid UTF-8")?;
 
-    // Check if claude CLI is available
-    let claude_check = std::process::Command::new("claude")
-        .arg("--version")
+    // Locate the claude CLI — skip silently if not installed yet.
+    let claude = match find_claude_binary() {
+        Some(p) => p,
+        None => return Ok("claude CLI not found — skipping plugin marketplace install".into()),
+    };
+
+    // Remove the marketplace first so that a stale registration pointing to a
+    // different path (e.g. a release build path when running as a dev build)
+    // does not cause the subsequent `plugin install` to fail.  Ignore errors
+    // here — if it wasn't registered the remove is a no-op.
+    let _ = std::process::Command::new(&claude)
+        .args(["plugin", "marketplace", "remove", MARKETPLACE_NAME])
         .output();
 
-    if claude_check.is_err() {
-        return Ok("claude CLI not found — skipping plugin marketplace install".into());
-    }
-
-    // Register the marketplace (idempotent — re-adding updates it)
-    let add_result = std::process::Command::new("claude")
+    // Register the marketplace with the current (correct) path.
+    let add_result = std::process::Command::new(&claude)
         .args(["plugin", "marketplace", "add", plugins_path])
         .output()
         .map_err(|e| format!("Failed to run claude plugin marketplace add: {}", e))?;
 
     if !add_result.status.success() {
         let stderr = String::from_utf8_lossy(&add_result.stderr);
-        // "already added" is fine — treat as success
-        if !stderr.contains("already") {
-            return Err(format!("claude plugin marketplace add failed: {}", stderr));
-        }
+        return Err(format!("claude plugin marketplace add failed: {}", stderr));
     }
 
-    // Install the automatic plugin (idempotent — reinstall is a no-op)
-    let install_result = std::process::Command::new("claude")
+    // Uninstall any previously installed version so that a stale plugin entry
+    // (pointing at the old marketplace path) does not block reinstall.
+    // Ignore errors — the plugin may not be installed yet.
+    let _ = std::process::Command::new(&claude)
+        .args(["plugin", "uninstall", "automatic"])
+        .output();
+
+    // Install the automatic plugin from the freshly registered marketplace.
+    let install_result = std::process::Command::new(&claude)
         .args([
             "plugin",
             "install",
@@ -345,9 +401,7 @@ pub fn install_plugin_marketplace() -> Result<String, String> {
 
     if !install_result.status.success() {
         let stderr = String::from_utf8_lossy(&install_result.stderr);
-        if !stderr.contains("already installed") {
-            return Err(format!("claude plugin install failed: {}", stderr));
-        }
+        return Err(format!("claude plugin install failed: {}", stderr));
     }
 
     Ok("Plugin marketplace registered and plugins installed".into())

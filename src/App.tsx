@@ -107,9 +107,12 @@ function App() {
     // Apply analytics preference immediately so the runtime flag is in sync.
     setAnalyticsEnabled(answers.analyticsEnabled);
     setShowWizard(false);
-    // Navigate to the newly created project if one was set up.
+    // Navigate to the newly created project if one was set up, otherwise always
+    // land on the dashboard regardless of what was previously stored in localStorage.
     if (answers.createdProjectName) {
       navigateToProject(answers.createdProjectName);
+    } else {
+      setActiveTab("dashboard");
     }
   };
 
