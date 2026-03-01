@@ -80,7 +80,7 @@ export function AgentSelector({
         </div>
         <button
           onClick={(e) => { e.stopPropagation(); setAdding(true); }}
-          className="text-[11px] text-icon-agent-light hover:text-text-base flex items-center gap-1 px-2 py-1 rounded border border-brand/50 hover:border-brand hover:bg-brand/15 transition-all"
+          className="text-[11px] text-brand hover:text-text-base flex items-center gap-1 px-2 py-1 rounded border border-brand/50 hover:border-brand hover:bg-brand/15 transition-all"
         >
           <Plus size={11} /> Add
         </button>
