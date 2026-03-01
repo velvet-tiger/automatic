@@ -180,6 +180,7 @@ export default function ProjectTemplates({ initialTemplate }: { initialTemplate?
   const loadAvailableAgents = async () => {
     try {
       const result: AgentInfo[] = await invoke("list_agents");
+      result.sort((a, b) => a.label.localeCompare(b.label));
       setAvailableAgents(result);
     } catch { /* ignore */ }
   };

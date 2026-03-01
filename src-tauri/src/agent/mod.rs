@@ -245,11 +245,12 @@ impl AgentInfo {
 
 // ── Registry ────────────────────────────────────────────────────────────────
 
-/// Returns every registered agent instance.
+/// Returns every registered agent instance, sorted alphabetically by label.
 ///
-/// To add a new agent, append it here.
+/// To add a new agent, append it to the vec below (order does not matter —
+/// the vec is sorted before it is returned).
 pub fn all() -> Vec<&'static dyn Agent> {
-    vec![
+    let mut agents: Vec<&'static dyn Agent> = vec![
         &ClaudeCode,
         &Cursor,
         &GitHubCopilot,
@@ -264,7 +265,9 @@ pub fn all() -> Vec<&'static dyn Agent> {
         &CodexCli,
         &OpenCode,
         &Warp,
-    ]
+    ];
+    agents.sort_by(|a, b| a.label().to_lowercase().cmp(&b.label().to_lowercase()));
+    agents
 }
 
 /// Look up an agent by its string id (e.g. from `Project.agents`).

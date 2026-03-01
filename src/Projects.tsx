@@ -1074,6 +1074,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const loadAvailableAgents = async () => {
     try {
       const result: AgentInfo[] = await invoke("list_agents");
+      result.sort((a, b) => a.label.localeCompare(b.label));
       setAvailableAgents(result);
     } catch {
       // Agents list may not be available yet

@@ -78,6 +78,7 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
     try {
       const raw: string = await invoke("list_agents_with_projects");
       const parsed: AgentWithProjects[] = JSON.parse(raw);
+      parsed.sort((a, b) => a.label.localeCompare(b.label));
       setAgents(parsed);
       setError(null);
     } catch (err: any) {

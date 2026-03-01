@@ -91,6 +91,7 @@ export default function Settings() {
       try {
         const raw: any = await invoke("read_settings");
         const agents = await invoke<AgentInfo[]>("list_agents");
+        agents.sort((a, b) => a.label.localeCompare(b.label));
         setSettings({
           skill_sync_mode: raw.skill_sync_mode ?? "symlink",
           analytics_enabled: raw.analytics_enabled ?? true,
