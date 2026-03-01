@@ -14,7 +14,18 @@ fn main() {
             }
         });
     } else {
-        // Default: launch Tauri desktop app
-        automatic_lib::run();
+        // Spawn Tauri on a thread with an explicit 64 MB stack.
+        // The default main-thread stack (1–4 MB on Windows ARM64 / Parallels)
+        // is too small for Tauri's initialisation when combined with the
+        // embedded default skills, templates and rules, causing a stack
+        // overflow (0xc00000fd) before the window appears.
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024) // 64 MB
+            .spawn(|| {
+                automatic_lib::run();
+            })
+            .expect("Failed to spawn main app thread")
+            .join()
+            .expect("Main app thread panicked");
     }
 }
