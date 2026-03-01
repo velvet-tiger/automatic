@@ -35,6 +35,8 @@ interface BundledTemplate {
 interface FirstRunWizardProps {
   /** Called when the user completes (or skips) the wizard. */
   onComplete: (answers: WizardAnswers) => void;
+  /** Called when the user cancels out of a re-opened wizard (not shown on first run). */
+  onCancel?: () => void;
 }
 
 // ── Option data ───────────────────────────────────────────────────────────────
@@ -535,7 +537,7 @@ function StepFirstProject({
 
 // ── Wizard shell ──────────────────────────────────────────────────────────────
 
-export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
+export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardProps) {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<WizardAnswers>({
     role: "",
@@ -824,7 +826,7 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
 
         {/* Navigation */}
         <div className="flex items-center justify-between mt-8 pt-6 border-t border-border-strong/40">
-          {/* Back / skip */}
+          {/* Back / skip / cancel */}
           <div className="flex items-center gap-4">
             {step > 0 ? (
               <button
@@ -832,6 +834,13 @@ export default function FirstRunWizard({ onComplete }: FirstRunWizardProps) {
                 className="text-[13px] text-text-muted hover:text-text-base transition-colors"
               >
                 Back
+              </button>
+            ) : onCancel ? (
+              <button
+                onClick={onCancel}
+                className="text-[13px] text-text-muted hover:text-text-base transition-colors"
+              >
+                Cancel
               </button>
             ) : (
               <div />

@@ -87,6 +87,8 @@ function App() {
   // ── First-run wizard ────────────────────────────────────────────────────
   // null = still loading, true = must show, false = already completed
   const [showWizard, setShowWizard] = useState<boolean | null>(null);
+  // true when the wizard was re-opened manually (vs. first run)
+  const [wizardIsReopen, setWizardIsReopen] = useState(false);
 
   useEffect(() => {
     async function checkWizard() {
@@ -167,7 +169,10 @@ function App() {
     {/* First-run wizard — rendered as a full-screen overlay; main UI is
         mounted but hidden so that tabs retain their state after completion. */}
     {showWizard === true && (
-      <FirstRunWizard onComplete={handleWizardComplete} />
+      <FirstRunWizard
+        onComplete={handleWizardComplete}
+        onCancel={wizardIsReopen ? () => { setShowWizard(false); setWizardIsReopen(false); } : undefined}
+      />
     )}
     <div
       className="relative flex h-screen w-screen overflow-hidden bg-bg-base text-[#fafafa] selection:bg-brand/30"
@@ -272,7 +277,7 @@ function App() {
         {/* Sidebar footer — setup wizard */}
         <div className="px-3 pt-0 pb-1">
           <button
-            onClick={() => setShowWizard(true)}
+            onClick={() => { setWizardIsReopen(true); setShowWizard(true); }}
             className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] font-medium text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors"
           >
             <Sparkles size={14} className="text-text-muted" />
@@ -341,7 +346,9 @@ function App() {
         <div className="flex-1 overflow-hidden flex flex-col">
           {activeTab === "dashboard" && (
             <div className="relative flex-1 h-full">
-              <TechMeshBackground />
+              {!["corporate-light", "corporate-dark", "accessible"].includes(activeTheme) && (
+                <TechMeshBackground />
+              )}
               <Dashboard onNavigate={setActiveTab} />
             </div>
           )}
