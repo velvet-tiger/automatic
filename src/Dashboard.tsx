@@ -13,6 +13,7 @@ import {
   Sparkles,
   Star,
 } from "lucide-react";
+import { AuthorPanel, type AuthorDescriptor } from "./AuthorPanel";
 
 interface Project {
   name: string;
@@ -42,7 +43,7 @@ interface FeaturedItem {
   description: string;
   navigateTo: string;
   badge: string;
-  author?: string;
+  _author?: AuthorDescriptor;
 }
 
 const FEATURED_ITEMS: FeaturedItem[] = [
@@ -52,7 +53,7 @@ const FEATURED_ITEMS: FeaturedItem[] = [
     description: "Audits files for compliance with Vercel's web interface guidelines, fetching the latest rules from the source.",
     navigateTo: "skill-store",
     badge: "Skill",
-    author: "Vercel Labs",
+    _author: { type: "provider", name: "Vercel Labs" },
   },
   {
     type: "template",
@@ -60,6 +61,7 @@ const FEATURED_ITEMS: FeaturedItem[] = [
     description: "Full-stack SaaS boilerplate with App Router, Tailwind, Prisma, and NextAuth. Ready for rapid product development.",
     navigateTo: "project-templates",
     badge: "Template",
+    _author: { type: "provider", name: "Automatic", url: "https://automatic.sh" },
   },
   {
     type: "mcp",
@@ -67,7 +69,7 @@ const FEATURED_ITEMS: FeaturedItem[] = [
     description: "Manage repos, issues, PRs, and workflows through natural language via the official GitHub MCP server.",
     navigateTo: "mcp-marketplace",
     badge: "MCP Server",
-    author: "GitHub",
+    _author: { type: "provider", name: "GitHub", url: "https://github.com" },
   },
 ];
 
@@ -77,11 +79,7 @@ const FEATURED_COLORS: Record<FeaturedItem["type"], { icon: string; border: stri
   mcp:      { icon: "text-icon-mcp",            border: "border-icon-mcp/30 hover:border-icon-mcp/60",            badge: "text-icon-mcp",            badgeBg: "bg-icon-mcp/10" },
 };
 
-const FEATURED_ICONS: Record<FeaturedItem["type"], typeof Code> = {
-  skill: Code,
-  template: Layers,
-  mcp: Server,
-};
+
 
 interface DashboardProps {
   onNavigate: (tab: string) => void;
@@ -386,26 +384,15 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           <div className="grid grid-cols-3 gap-3">
             {FEATURED_ITEMS.map((item) => {
               const colors = FEATURED_COLORS[item.type];
-              const Icon = FEATURED_ICONS[item.type];
               return (
                 <button
                   key={item.title}
                   onClick={() => onNavigate(item.navigateTo)}
-                  className={`bg-bg-input border rounded-lg p-5 text-left transition-all group flex flex-col gap-3 ${colors.border}`}
+                  className={`relative bg-bg-input border rounded-lg p-5 text-left transition-all group flex flex-col gap-3 ${colors.border}`}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className={`p-2 rounded-md ${colors.badgeBg}`}>
-                        <Icon size={16} className={colors.icon} />
-                      </div>
-                      <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${colors.badge} ${colors.badgeBg}`}>{item.badge}</span>
-                    </div>
-                    <ArrowRight size={13} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-semibold text-text-base">{item.title}</h4>
-                    <p className="text-[11px] text-text-muted mt-0.5">by {item.author || "the community"}</p>
-                  </div>
+                  <span className={`absolute top-3 right-3 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${colors.badge} ${colors.badgeBg}`}>{item.badge}</span>
+                  <h4 className="text-sm font-semibold text-text-base">{item.title}</h4>
+                  <AuthorPanel descriptor={item._author} />
                   <p className="text-[13px] text-text-muted leading-relaxed line-clamp-3">{item.description}</p>
                 </button>
               );
