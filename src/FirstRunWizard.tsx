@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { identifyOnboarding } from "./analytics";
+import { applyTheme, type Theme } from "./theme";
 import { ChevronRight, Check, FolderOpen } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import graphLogo from "../logos/graph_5.svg";
@@ -13,6 +14,7 @@ interface WizardAnswers {
   agents: string[];
   email: string;
   analyticsEnabled: boolean;
+  theme: Theme;
   createdProjectName?: string;
 }
 
@@ -409,10 +411,16 @@ function StepEmail({
 function StepPreferences({
   analyticsEnabled,
   onToggleAnalytics,
+  theme,
+  onToggleTheme,
 }: {
   analyticsEnabled: boolean;
   onToggleAnalytics: () => void;
+  theme: Theme;
+  onToggleTheme: () => void;
 }) {
+  const followSystem = theme === "system";
+
   return (
     <div>
       <h2 className="text-[22px] font-semibold text-text-base mb-1">
@@ -423,6 +431,31 @@ function StepPreferences({
       </p>
 
       <div className="space-y-3">
+        {/* Theme */}
+        <button
+          onClick={onToggleTheme}
+          className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all ${
+            followSystem
+              ? "border-brand bg-brand/10"
+              : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+          }`}
+        >
+          <div>
+            <div className="text-[13px] font-medium text-text-base">
+              Follow system appearance
+            </div>
+            <div className="text-[12px] text-text-muted mt-0.5 leading-relaxed">
+              {followSystem
+                ? "Automatically switches between Dark and Light based on your OS setting"
+                : "Using the Dark theme by default — change it any time in Settings"}
+            </div>
+          </div>
+          <div className="ml-4">
+            <Toggle enabled={followSystem} onToggle={onToggleTheme} />
+          </div>
+        </button>
+
+        {/* Analytics */}
         <button
           onClick={onToggleAnalytics}
           className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all ${
@@ -545,6 +578,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
     agents: [],
     email: "",
     analyticsEnabled: true,
+    theme: "system",
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -564,6 +598,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
           agents: settings?.onboarding?.agents ?? [],
           email: settings?.onboarding?.email ?? "",
           analyticsEnabled: settings?.analytics_enabled ?? true,
+          theme: (localStorage.getItem("automatic.theme") as Theme | null) ?? "system",
         });
       } catch (e) {
         console.error("[wizard] Failed to load saved settings:", e);
@@ -798,6 +833,14 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
                   analyticsEnabled: !a.analyticsEnabled,
                 }))
               }
+              theme={answers.theme}
+              onToggleTheme={() => {
+                // Toggle off -> always fall back to dark (default manual theme)
+                const next: Theme = answers.theme === "system" ? "dark" : "system";
+                localStorage.setItem("automatic.theme", next);
+                applyTheme(next);
+                setAnswers((a) => ({ ...a, theme: next }));
+              }}
             />
           )}
           {step === 5 && (

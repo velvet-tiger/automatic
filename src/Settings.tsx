@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { THEMES, applyTheme, Theme, resolveSystemTheme } from "./theme";
+import { THEMES, applyTheme, Theme } from "./theme";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -80,9 +80,8 @@ export default function Settings() {
 
   const handleFollowSystemToggle = () => {
     if (followSystem) {
-      // Switch to whichever explicit theme matches the current OS appearance
-      const resolved = resolveSystemTheme();
-      handleThemeChange(resolved);
+      // Fall back to the default dark theme when opting out of system following
+      handleThemeChange("dark");
     } else {
       handleThemeChange("system");
     }
