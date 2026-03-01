@@ -67,16 +67,16 @@
   --accent-light: #c4b5fd;
   --accent-hover-light: #ddd6fe;
 
-  --bg-base: #09090b;
-  --bg-sidebar: #000000;
-  --bg-input: #18181b;
-  --bg-input-dark: #09090b;
+  --bg-base: #18181b;
+  --bg-sidebar: #09090b;
+  --bg-input: #27272a;
+  --bg-input-dark: #18181b;
 
-  --surface: #18181b;
-  --surface-hover: #27272a;
-  --surface-active: #3f3f46;
+  --surface: #27272a;
+  --surface-hover: #3f3f46;
+  --surface-active: #52525b;
 
-  --border-strong: #27272a;
+  --border-strong: #3f3f46;
 
   --text-base: #fafafa;
   --text-muted: #a1a1aa;
