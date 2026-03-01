@@ -1,13 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::paths::is_valid_name;
+use super::paths::{get_automatic_dir, is_valid_name};
 
 // ── MCP Servers ──────────────────────────────────────────────────────────────
 
 pub fn get_mcp_servers_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".automatic/mcp_servers"))
+    Ok(get_automatic_dir()?.join("mcp_servers"))
 }
 
 pub fn list_mcp_server_configs() -> Result<Vec<String>, String> {

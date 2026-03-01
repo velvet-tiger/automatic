@@ -22,8 +22,7 @@ pub struct MemoryEntry {
 pub type MemoryDb = HashMap<String, MemoryEntry>;
 
 pub fn get_memory_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".automatic/memory"))
+    Ok(crate::core::get_automatic_dir()?.join("memory"))
 }
 
 fn get_project_memory_path(project_name: &str) -> Result<PathBuf, String> {

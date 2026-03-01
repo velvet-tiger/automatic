@@ -53,8 +53,7 @@ pub struct ProjectTemplate {
 }
 
 pub fn get_project_templates_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".automatic/project_templates"))
+    Ok(super::paths::get_automatic_dir()?.join("project_templates"))
 }
 
 pub fn list_project_templates() -> Result<Vec<String>, String> {

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 
+use super::paths::get_automatic_dir;
+
 // ── Settings (~/.automatic/settings.json) ────────────────────────────────────
 
 /// Onboarding answers captured by the first-run wizard.
@@ -56,8 +58,7 @@ impl Default for Settings {
 }
 
 pub fn read_settings() -> Result<Settings, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    let path = home.join(".automatic/settings.json");
+    let path = get_automatic_dir()?.join("settings.json");
     if !path.exists() {
         return Ok(Settings::default());
     }
@@ -66,8 +67,7 @@ pub fn read_settings() -> Result<Settings, String> {
 }
 
 pub fn write_settings(settings: &Settings) -> Result<(), String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    let path = home.join(".automatic/settings.json");
+    let path = get_automatic_dir()?.join("settings.json");
     if let Some(parent) = path.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;

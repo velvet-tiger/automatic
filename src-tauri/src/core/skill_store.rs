@@ -307,8 +307,7 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
 //   }
 
 fn get_skills_registry_path() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".automatic/skills.json"))
+    Ok(super::paths::get_automatic_dir()?.join("skills.json"))
 }
 
 /// Read the full registry.  Returns an empty map if the file doesn't exist.

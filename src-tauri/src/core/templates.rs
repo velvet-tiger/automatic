@@ -1,13 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::paths::{get_agents_skills_dir, is_valid_name};
+use super::paths::{get_agents_skills_dir, get_automatic_dir, is_valid_name};
 
 // ── Templates ────────────────────────────────────────────────────────────────
 
 pub fn get_templates_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".automatic/templates"))
+    Ok(get_automatic_dir()?.join("templates"))
 }
 
 pub fn list_templates() -> Result<Vec<String>, String> {

@@ -1,16 +1,16 @@
 use std::fs;
 use std::path::PathBuf;
 
+use super::paths::get_automatic_dir;
+
 // ── Plugins ──────────────────────────────────────────────────────────────────
 
 pub fn get_plugins_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".automatic/plugins"))
+    Ok(get_automatic_dir()?.join("plugins"))
 }
 
 pub fn get_sessions_path() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".automatic/sessions.json"))
+    Ok(get_automatic_dir()?.join("sessions.json"))
 }
 
 /// The name used in marketplace.json and for `claude plugin` commands.
@@ -51,10 +51,16 @@ const HOOKS_JSON: &str = r#"
 
 const REGISTER_SESSION_SH: &str = r#"#!/usr/bin/env bash
 # register-session.sh — Called by the SessionStart hook.
-# Reads hook JSON from stdin, writes an entry to ~/.automatic/sessions.json.
+# Reads hook JSON from stdin, writes an entry to the Automatic sessions file.
+# Uses .automatic-dev in debug builds (detected via AUTOMATIC_DEV env var),
+# otherwise uses .automatic.
 set -euo pipefail
 
-SESSIONS_FILE="$HOME/.automatic/sessions.json"
+if [ "${AUTOMATIC_DEV:-0}" = "1" ]; then
+  SESSIONS_FILE="$HOME/.automatic-dev/sessions.json"
+else
+  SESSIONS_FILE="$HOME/.automatic/sessions.json"
+fi
 
 # Read the full hook input from stdin
 INPUT=$(cat)
@@ -113,10 +119,16 @@ exit 0
 
 const DEREGISTER_SESSION_SH: &str = r#"#!/usr/bin/env bash
 # deregister-session.sh — Called by the SessionEnd hook.
-# Removes the session entry from ~/.automatic/sessions.json.
+# Removes the session entry from the Automatic sessions file.
+# Uses .automatic-dev in debug builds (detected via AUTOMATIC_DEV env var),
+# otherwise uses .automatic.
 set -euo pipefail
 
-SESSIONS_FILE="$HOME/.automatic/sessions.json"
+if [ "${AUTOMATIC_DEV:-0}" = "1" ]; then
+  SESSIONS_FILE="$HOME/.automatic-dev/sessions.json"
+else
+  SESSIONS_FILE="$HOME/.automatic/sessions.json"
+fi
 
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
@@ -243,7 +255,7 @@ fn write_automatic_plugin(plugin_dir: &std::path::Path) -> Result<(), String> {
 /// marketplace.json and the full Automatic plugin.
 ///
 /// Layout:
-///   ~/.automatic/plugins/
+///   ~/.automatic[-dev]/plugins/
 ///   ├── .claude-plugin/
 ///   │   └── marketplace.json
 ///   └── automatic/

@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use super::paths::get_automatic_dir;
+
 // ── Rules ────────────────────────────────────────────────────────────────────
 
 /// A rule stored as JSON in `~/.automatic/rules/{machine_name}.json`.
@@ -53,8 +55,7 @@ pub fn is_valid_machine_name(name: &str) -> bool {
 }
 
 pub fn get_rules_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".automatic/rules"))
+    Ok(get_automatic_dir()?.join("rules"))
 }
 
 pub fn list_rules() -> Result<Vec<RuleEntry>, String> {

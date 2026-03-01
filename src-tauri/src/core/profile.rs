@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 
+use super::paths::get_automatic_dir;
+
 // ── User Profile (~/.automatic/profile.json) ─────────────────────────────────
 //
 // Stores the local user identity.  Authentication is handled externally (a
@@ -32,8 +34,7 @@ pub struct UserProfile {
 }
 
 fn get_profile_path() -> Result<std::path::PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    Ok(home.join(".automatic/profile.json"))
+    Ok(get_automatic_dir()?.join("profile.json"))
 }
 
 /// Returns the local user profile, bootstrapping a default one on first run.
@@ -79,10 +80,17 @@ pub fn save_profile(profile: &UserProfile) -> Result<(), String> {
     let mut to_save = profile.clone();
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Preserve original created_at if the file already exists
-    if let Ok(Some(existing)) = read_profile() {
-        if !existing.created_at.is_empty() {
-            to_save.created_at = existing.created_at;
+    // Preserve original created_at if the file already exists.
+    // Read the file directly instead of calling read_profile() to avoid
+    // mutual recursion (read_profile → save_profile → read_profile → …)
+    // which causes a stack overflow on first run when no profile exists.
+    if path.exists() {
+        if let Ok(raw) = fs::read_to_string(&path) {
+            if let Ok(existing) = serde_json::from_str::<UserProfile>(&raw) {
+                if !existing.created_at.is_empty() {
+                    to_save.created_at = existing.created_at;
+                }
+            }
         }
     }
     if to_save.created_at.is_empty() {
