@@ -43,6 +43,11 @@
     ],
     "macOS": {
       "signingIdentity": "Developer ID Application: Christopher Skene (668BQY2X33)"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   }
 }
