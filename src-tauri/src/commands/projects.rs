@@ -287,6 +287,7 @@ pub(crate) fn prune_mcp_server_from_projects(server_name: &str) {
     });
 }
 
+#[allow(dead_code)]
 pub(crate) fn sync_projects_referencing_rule(rule_name: &str) {
     with_each_project_mut(|project_name, project| {
         let references_rule = project
