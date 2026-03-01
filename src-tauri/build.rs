@@ -45,5 +45,12 @@ fn main() {
     println!("cargo:rerun-if-env-changed=ATTIO_API_KEY");
     println!("cargo:rerun-if-env-changed=AMPLITUDE_API_KEY");
 
+    // Force an 8MB stack size on Windows MSVC to prevent 0xc00000fd
+    // stack overflow crashes when parsing large JSON / include_str! payloads.
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if target.contains("windows-msvc") {
+        println!("cargo:rustc-link-arg=/STACK:8388608");
+    }
+
     tauri_build::build()
 }
