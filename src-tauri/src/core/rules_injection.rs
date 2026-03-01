@@ -88,6 +88,38 @@ pub fn save_project_file_with_rules(
     save_project_file(directory, filename, &full_content)
 }
 
+/// Read-only check: returns `true` if the on-disk file already contains the
+/// rules section that would be generated from the given rule names.
+/// Used to show green/yellow status in the Rules UI without writing anything.
+pub fn is_project_file_rules_current(
+    directory: &str,
+    filename: &str,
+    rule_names: &[String],
+) -> Result<bool, String> {
+    if directory.is_empty() {
+        return Ok(true);
+    }
+
+    let path = PathBuf::from(directory).join(filename);
+    if !path.exists() {
+        // File doesn't exist yet — not current.
+        return Ok(false);
+    }
+
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let user_content = strip_rules_section(&strip_managed_section(&raw));
+
+    let rules_section = build_rules_section(rule_names)?;
+
+    let expected = if rules_section.is_empty() {
+        user_content
+    } else {
+        format!("{}\n\n{}\n", user_content.trim_end(), rules_section)
+    };
+
+    Ok(expected == raw)
+}
+
 /// Re-inject rules into an existing project file.  Reads the file, strips
 /// any existing rules section, rebuilds it from the provided rule names,
 /// and writes back.  Used during sync to keep rules current.

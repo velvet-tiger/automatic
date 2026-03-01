@@ -24,18 +24,31 @@ The React frontend:
 
 - **`src/App.tsx`** -- Shell (sidebar + tab routing)
 - **`src/Skills.tsx`**, **`src/Projects.tsx`** -- Configuration views
+- **`src/Dashboard.tsx`** -- Overview dashboard
+- **`src/Settings.tsx`** -- App settings with sub-page navigation
 
 ## What Exists
 
 | Feature | Frontend | Backend | Status |
 |---------|----------|---------|--------|
 | Navigation shell | `App.tsx` | -- | Done |
+| Dashboard | `Dashboard.tsx` | -- | Done |
 | Skills CRUD | `Skills.tsx` | `core::list_skills`, `core::read_skill`, `core::save_skill`, `core::delete_skill` | Done |
+| Skills Store (skills.sh) | `SkillStore.tsx` | `core::search_skills`, `core::install_skill` | Done |
 | Projects CRUD | `Projects.tsx` | `core::list_projects`, `core::read_project`, `core::save_project`, `core::delete_project` | Done |
-| MCP config read | Used in `Projects.tsx` | `core::list_mcp_servers` | Done |
-| MCP Server | -- | `mcp.rs` (5 tools, stdio) | Done |
-| MCP Server config editing | Empty state in `App.tsx` | -- | Not started |
-| Settings | Placeholder in `App.tsx` | -- | Not started |
+| Project Templates | `ProjectTemplates.tsx` | `core::list_project_templates`, `core::read_project_template`, `core::save_project_template` | Done |
+| MCP Server config CRUD | `McpServers.tsx` | `core::list_mcp_server_configs`, `core::read_mcp_server_config`, `core::save_mcp_server_config`, `core::delete_mcp_server_config` | Done |
+| MCP Server (stdio) | -- | `mcp.rs` (AutomaticMcpServer, 15+ tools) | Done |
+| Agents view | `Agents.tsx` | `core::list_agents_with_projects` | Done |
+| Rules CRUD | `Rules.tsx` | `core::list_rules`, `core::read_rule`, `core::save_rule`, `core::delete_rule` | Done |
+| Instruction templates | `Templates.tsx` | `core::list_templates`, `core::read_template`, `core::save_template`, `core::delete_template` | Done |
+| Settings | `Settings.tsx` | `core::read_settings`, `core::save_settings` | Done |
+| First-run wizard | `FirstRunWizard.tsx` | `core::save_settings` | Done |
+| Drift detection | `Projects.tsx` (banner) | `sync::check_project_drift` | Done |
+| Analytics (Amplitude) | `analytics.ts` | `core::send_analytics_event` | Done |
+| Auto-update | `Settings.tsx` | `tauri-plugin-updater` | Done |
+| Memory tools | -- | `mcp.rs` (store/get/list/search/delete/clear) | Done |
+| Project context module | -- | `context.rs` (implemented, not wired up) | Backend only |
 
 ## Making Changes
 
@@ -99,7 +112,7 @@ Use the memory tools to persist and retrieve project-specific context across ses
 
 Before finishing a session, call `automatic_store_memory` to capture any new project-specific rules, pitfalls, setup steps, or decisions discovered during the session. This prevents knowledge loss across sessions.
 
-# Operational Checklist (Preflight)
+# Operational Checklist
 
 1. Have I confirmed what I’m building?
 2. Do I fully understand the local context and dependencies?
@@ -111,6 +124,7 @@ Before finishing a session, call `automatic_store_memory` to capture any new pro
 8. Does my design follow project conventions?
 9. Have I declared uncertainty or missing context clearly?
 10. Have I presented the result truthfully, without exaggeration?
+11. Have I ensured there are no security gaps?
 
 You are a senior developer. IT is your job to check inputs and outputs. Insert debugging when required. Don't make assumptions. Debug, investigate, then test.
 
@@ -186,4 +200,6 @@ This Constitution establishes rules to prevent common modes of failure in autono
 - **Never self-validate.** Do not assert that your output is correct without verifiable checks.
 - **Always request review.** Submit code with a summary of reasoning and open questions.
 - **Learn from rejection.** When a human corrects or rejects your output, incorporate that feedback pattern permanently.
+
+## 14. Always be nice
 <!-- automatic:rules:end -->

@@ -112,7 +112,7 @@ Use the memory tools to persist and retrieve project-specific context across ses
 
 Before finishing a session, call `automatic_store_memory` to capture any new project-specific rules, pitfalls, setup steps, or decisions discovered during the session. This prevents knowledge loss across sessions.
 
-# Operational Checklist (Preflight)
+# Operational Checklist
 
 1. Have I confirmed what I’m building?
 2. Do I fully understand the local context and dependencies?
@@ -124,6 +124,7 @@ Before finishing a session, call `automatic_store_memory` to capture any new pro
 8. Does my design follow project conventions?
 9. Have I declared uncertainty or missing context clearly?
 10. Have I presented the result truthfully, without exaggeration?
+11. Have I ensured there are no security gaps?
 
 You are a senior developer. IT is your job to check inputs and outputs. Insert debugging when required. Don't make assumptions. Debug, investigate, then test.
 
@@ -199,4 +200,6 @@ This Constitution establishes rules to prevent common modes of failure in autono
 - **Never self-validate.** Do not assert that your output is correct without verifiable checks.
 - **Always request review.** Submit code with a summary of reasoning and open questions.
 - **Learn from rejection.** When a human corrects or rejects your output, incorporate that feedback pattern permanently.
+
+## 14. Always be nice
 <!-- automatic:rules:end -->

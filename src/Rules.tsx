@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { Plus, X, Edit2, FileText, Check, ScrollText } from "lucide-react";
+import { Plus, X, Edit2, FileText, Check, ScrollText, RefreshCw, FolderGit2 } from "lucide-react";
 import { ICONS } from "./icons";
+import { AuthorSection } from "./AuthorPanel";
 
 interface RuleEntry {
   id: string;
@@ -14,6 +15,18 @@ interface Rule {
   content: string;
 }
 
+interface RuleProjectStatus {
+  name: string;
+  synced: boolean;
+}
+
+// Per-project sync state.
+// "needs-sync" = rule has changed, project not yet updated (shown yellow).
+// "syncing"    = update in progress.
+// "synced"     = project is up to date with the current rule content (green).
+// "error"      = last sync attempt failed.
+type SyncState = "needs-sync" | "syncing" | "synced" | "error";
+
 export default function Rules() {
   const [rules, setRules] = useState<RuleEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -24,6 +37,11 @@ export default function Rules() {
   const [newMachineName, setNewMachineName] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  // Projects referencing this rule
+  const [referencingProjects, setReferencingProjects] = useState<string[]>([]);
+  const [projectSyncState, setProjectSyncState] = useState<Record<string, SyncState>>({});
+  const [syncAllState, setSyncAllState] = useState<SyncState>("needs-sync");
 
   useEffect(() => {
     loadRules();
@@ -39,6 +57,25 @@ export default function Rules() {
     }
   };
 
+  // Load referencing projects with their actual on-disk sync status.
+  const loadReferencingProjects = async (id: string) => {
+    try {
+      const statuses: RuleProjectStatus[] = await invoke("get_projects_referencing_rule", { ruleName: id });
+      const sorted = statuses.sort((a, b) => a.name.localeCompare(b.name));
+      setReferencingProjects(sorted.map(s => s.name));
+      const initial: Record<string, SyncState> = {};
+      for (const s of sorted) initial[s.name] = s.synced ? "synced" : "needs-sync";
+      setProjectSyncState(initial);
+      // Aggregate: all synced → "synced", otherwise "needs-sync".
+      const allSynced = sorted.length > 0 && sorted.every(s => s.synced);
+      setSyncAllState(allSynced ? "synced" : "needs-sync");
+    } catch (err: any) {
+      // Non-fatal — the usage panel just won't show.
+      console.error("Failed to load referencing projects:", err);
+      setReferencingProjects([]);
+    }
+  };
+
   const loadRule = async (id: string) => {
     try {
       const raw: string = await invoke("read_rule", { machineName: id });
@@ -49,9 +86,20 @@ export default function Rules() {
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
+      await loadReferencingProjects(id);
     } catch (err: any) {
       setError(`Failed to read rule: ${err}`);
     }
+  };
+
+  // Mark all referencing projects as needing a sync (called after saving the rule).
+  const markAllNeedsSync = () => {
+    setProjectSyncState(prev => {
+      const next: Record<string, SyncState> = {};
+      for (const p of Object.keys(prev)) next[p] = "needs-sync";
+      return next;
+    });
+    setSyncAllState("needs-sync");
   };
 
   const handleSave = async () => {
@@ -61,11 +109,21 @@ export default function Rules() {
       if (!id || !name) return;
       try {
         await invoke("save_rule", { machineName: id, name, content: ruleContent });
-        setIsEditing(false);
+        // Insert into the sidebar list in-place (sorted), then select — no
+        // loadRules() call so there is no async gap that could lose selection.
+        const newEntry: RuleEntry = { id, name };
+        setRules(prev =>
+          [...prev.filter(r => r.id !== id), newEntry].sort((a, b) =>
+            a.name.localeCompare(b.name)
+          )
+        );
         setIsCreating(false);
-        await loadRules();
+        setIsEditing(false);
         setSelectedId(id);
         setDisplayName(name);
+        setReferencingProjects([]);
+        setProjectSyncState({});
+        setSyncAllState("needs-sync");
         setError(null);
       } catch (err: any) {
         setError(`Failed to save rule: ${err}`);
@@ -74,8 +132,14 @@ export default function Rules() {
       try {
         await invoke("save_rule", { machineName: selectedId, name: displayName, content: ruleContent });
         setIsEditing(false);
-        // Update sidebar entry in-place
-        setRules(prev => prev.map(r => r.id === selectedId ? { ...r, name: displayName } : r));
+        // Update sidebar entry in-place — no loadRules so selection is preserved.
+        setRules(prev =>
+          prev
+            .map(r => (r.id === selectedId ? { ...r, name: displayName } : r))
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
+        // Rule content changed — all referencing projects need re-syncing.
+        markAllNeedsSync();
         setError(null);
       } catch (err: any) {
         setError(`Failed to save rule: ${err}`);
@@ -94,6 +158,9 @@ export default function Rules() {
         setDisplayName("");
         setRuleContent("");
         setIsEditing(false);
+        setReferencingProjects([]);
+        setProjectSyncState({});
+        setSyncAllState("needs-sync");
       }
       await loadRules();
       setError(null);
@@ -110,6 +177,48 @@ export default function Rules() {
     setIsEditing(true);
     setNewMachineName("");
     setNewDisplayName("");
+    setReferencingProjects([]);
+    setProjectSyncState({});
+    setSyncAllState("needs-sync");
+  };
+
+  const handleSyncProject = async (projectName: string) => {
+    if (!selectedId) return;
+    setProjectSyncState(prev => ({ ...prev, [projectName]: "syncing" }));
+    try {
+      await invoke("sync_rule_to_project", { ruleName: selectedId, projectName });
+      setProjectSyncState(prev => ({ ...prev, [projectName]: "synced" }));
+      // Recalculate aggregate state.
+      setSyncAllState(prev => {
+        if (prev === "syncing") return "syncing";
+        // Check if all are now synced.
+        return "synced";
+      });
+    } catch (err: any) {
+      setProjectSyncState(prev => ({ ...prev, [projectName]: "error" }));
+      setError(`Failed to sync rule to project "${projectName}": ${err}`);
+    }
+  };
+
+  const handleSyncAll = async () => {
+    if (!selectedId || referencingProjects.length === 0) return;
+    setSyncAllState("syncing");
+    const initialStates: Record<string, SyncState> = {};
+    for (const p of referencingProjects) initialStates[p] = "syncing";
+    setProjectSyncState(initialStates);
+
+    let hadError = false;
+    for (const projectName of referencingProjects) {
+      try {
+        await invoke("sync_rule_to_project", { ruleName: selectedId, projectName });
+        setProjectSyncState(prev => ({ ...prev, [projectName]: "synced" }));
+      } catch (err: any) {
+        setProjectSyncState(prev => ({ ...prev, [projectName]: "error" }));
+        hadError = true;
+        setError(`Failed to sync rule to project "${projectName}": ${err}`);
+      }
+    }
+    setSyncAllState(hadError ? "error" : "synced");
   };
 
   const selectedEntry = rules.find(r => r.id === selectedId);
@@ -189,9 +298,9 @@ export default function Rules() {
         )}
 
         {(selectedId || isCreating) ? (
-          <div className="flex-1 flex flex-col h-full">
+          <div className="flex-1 flex flex-col h-full min-h-0">
             {/* Header */}
-            <div className="min-h-[44px] px-6 border-b border-border-strong/40 flex justify-between items-center gap-4 py-2">
+            <div className="min-h-[44px] px-6 border-b border-border-strong/40 flex justify-between items-center gap-4 py-2 flex-shrink-0">
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <FileText size={14} className={ICONS.rule.iconColor + " flex-shrink-0"} />
                 {isCreating ? (
@@ -266,20 +375,97 @@ export default function Rules() {
               </div>
             </div>
 
-            {/* Editor Body */}
-            <div className="flex-1 relative">
+            {/* Editor Body — flex column so the projects panel is always pinned at the bottom */}
+            <div className="flex-1 min-h-0 flex flex-col">
               {isEditing ? (
                 <textarea
                   value={ruleContent}
                   onChange={(e) => setRuleContent(e.target.value)}
-                  className="absolute inset-0 w-full h-full p-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30"
+                  className="flex-1 w-full p-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30"
                   placeholder="Write your rule content here in Markdown. Rules are reusable content blocks that can be appended to project instruction files..."
                   spellCheck={false}
                 />
               ) : (
-                <div className="absolute inset-0 overflow-y-auto p-6 font-mono text-[13px] whitespace-pre-wrap text-text-base leading-relaxed custom-scrollbar">
-                  {ruleContent || <span className="text-text-muted italic">This rule is empty. Click edit to add content.</span>}
-                </div>
+                <>
+                  {/* Scrollable content area */}
+                  <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+                    {/* Author section */}
+                    <div className="px-6 pt-4 pb-3 border-b border-border-strong/40">
+                      <AuthorSection descriptor={{ type: "local" }} />
+                    </div>
+                    <div className="p-6 font-mono text-[13px] whitespace-pre-wrap text-text-base leading-relaxed">
+                      {ruleContent || <span className="text-text-muted italic">This rule is empty. Click edit to add content.</span>}
+                    </div>
+                  </div>
+
+                  {/* Used by projects panel — pinned at bottom, always visible */}
+                  {!isCreating && referencingProjects.length > 0 && (
+                    <div className="flex-shrink-0 border-t border-border-strong/40 px-6 py-4 bg-bg-input/30">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <FolderGit2 size={13} className="text-text-muted" />
+                          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
+                            Used in {referencingProjects.length} {referencingProjects.length === 1 ? "project" : "projects"}
+                          </span>
+                        </div>
+                        {syncAllState === "synced" ? (
+                          <span className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-medium text-success">
+                            In sync
+                          </span>
+                        ) : (
+                          <button
+                            onClick={handleSyncAll}
+                            disabled={syncAllState === "syncing"}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-medium transition-colors ${
+                              syncAllState === "error"
+                                ? "text-danger bg-danger/10"
+                                : syncAllState === "needs-sync"
+                                ? "text-warning bg-warning/10 hover:bg-warning/20"
+                                : "text-text-muted hover:text-text-base hover:bg-bg-sidebar"
+                            } disabled:opacity-50 disabled:cursor-not-allowed`}
+                            title="Push this rule's latest content to all referencing projects"
+                          >
+                            <RefreshCw size={11} className={syncAllState === "syncing" ? "animate-spin" : ""} />
+                            {syncAllState === "error" ? "Some failed" : "Update all"}
+                          </button>
+                        )}
+                      </div>
+                      {/* Max 3 rows visible; scrollable if more */}
+                      <ul className="space-y-1.5 max-h-[108px] overflow-y-auto custom-scrollbar">
+                        {referencingProjects.map(projectName => {
+                          const state = projectSyncState[projectName] ?? "needs-sync";
+                          return (
+                            <li key={projectName} className="flex items-center justify-between gap-3 py-1">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                                  state === "synced" ? "bg-success" : state === "error" ? "bg-danger" : "bg-warning"
+                                }`} />
+                                <span className="text-[13px] text-text-base truncate">{projectName}</span>
+                              </div>
+                              {state !== "synced" && (
+                                <button
+                                  onClick={() => handleSyncProject(projectName)}
+                                  disabled={state === "syncing"}
+                                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors flex-shrink-0 ${
+                                    state === "error"
+                                      ? "text-danger bg-danger/10"
+                                      : state === "needs-sync"
+                                      ? "text-warning bg-warning/10 hover:bg-warning/20"
+                                      : "text-text-muted hover:text-text-base hover:bg-bg-sidebar"
+                                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                  title={`Push rule to ${projectName}`}
+                                >
+                                  <RefreshCw size={10} className={state === "syncing" ? "animate-spin" : ""} />
+                                  {state === "error" ? "Failed" : "Update"}
+                                </button>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
