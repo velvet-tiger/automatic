@@ -639,6 +639,19 @@ body {
   animation: dot-shimmer 6s ease-in-out infinite;
 }
 
+/* Rule pill — selected state: solid fill with guaranteed contrast */
+.rule-pill-selected {
+  background-color: var(--brand);
+  border-color: var(--brand-active);
+  color: #ffffff;
+}
+
+[data-theme="corporate-dark"] .rule-pill-selected {
+  background-color: var(--icon-rule);
+  border-color: var(--border-strong);
+  color: var(--bg-base);
+}
+
 /* SVG connecting lines (network graph) */
 .dashboard-bg__grid {
   position: absolute;

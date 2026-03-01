@@ -2629,7 +2629,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       onClick={() => handleToggleRule(rule.id)}
                                       className={`px-2.5 py-1 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
                                         isSelected
-                                          ? "bg-accent-hover/8 border-accent-hover/25 text-accent-hover/75"
+                                          ? "rule-pill-selected font-medium"
                                           : "bg-bg-sidebar border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
                                       }`}
                                     >
