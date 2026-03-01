@@ -227,7 +227,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             <div className="mt-6 bg-bg-input border border-border-strong/40 rounded-lg p-5 text-[13px] text-text-base leading-relaxed space-y-3">
               <p>Hi,</p>
               <p>
-                I'm Chris, the developer of Automatic. Automatic was built to solve a problem I experienced working with AI tools — it keeps your shared project instructions, skills, MCP servers and other AI config in sync and up to date.
+                I'm Chris, the developer of Automatic. Automatic was built to solve a problem I experienced working with AI tools — it keeps your shared project instructions, skills, MCP servers and other AI config in sync and up to date across all your projects and agents.
               </p>
               <p>
                 If you find it useful, please{" "}
@@ -242,7 +242,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                 and tell your friends about us.
               </p>
               <p>
-                We've got heaps of plans for Automatic, and we can't wait to show you what we're working on.
+                We've got exciting plans for Automatic, and we can't wait to show you what we're working on.
               </p>
               <p className="text-text-base font-medium">— Chris</p>
             </div>
