@@ -66,19 +66,11 @@ pub fn import_local_skill(name: &str, skill_name: &str) -> Result<String, String
 /// Returns the list of files written.
 #[tauri::command]
 pub async fn sync_local_skills(name: String) -> Result<String, String> {
-    let handle = std::thread::Builder::new()
-        .name("sync_local_skills_thread".into())
-        .stack_size(8 * 1024 * 1024)
-        .spawn(move || {
-            let raw = core::read_project(&name)?;
-            let project: core::Project =
-                serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-            let written = sync::sync_local_skills_across_agents(&project)?;
-            serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
-        })
-        .map_err(|e| e.to_string())?;
-
-    handle.join().unwrap_or_else(|_| Err("sync_local_skills thread panicked".to_string()))
+    let raw = core::read_project(&name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let written = sync::sync_local_skills_across_agents(&project)?;
+    serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
 }
 
 /// Read the SKILL.md content of a local skill from the project directory.
