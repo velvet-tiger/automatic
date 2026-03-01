@@ -41,15 +41,19 @@ function initials(name: string): string {
   return ((words[0]![0] ?? "") + (words[words.length - 1]![0] ?? "")).toUpperCase();
 }
 
-/** Consistent background colour for the initials avatar, derived from the name. */
+/** Consistent background colour for the initials avatar, derived from the name.
+ *  Colors are read from the active theme's CSS variables so the avatar palette
+ *  automatically matches whichever theme is applied to the document root. */
 function avatarColor(name: string): string {
+  const root = document.documentElement;
+  const style = getComputedStyle(root);
   const palette = [
-    "#5E6AD2", // brand purple
-    "#6EC6C6", // teal
-    "#D2875E", // amber
-    "#7CB884", // green
-    "#A87EC8", // lavender
-    "#C86E7C", // rose
+    style.getPropertyValue("--avatar-0").trim(),
+    style.getPropertyValue("--avatar-1").trim(),
+    style.getPropertyValue("--avatar-2").trim(),
+    style.getPropertyValue("--avatar-3").trim(),
+    style.getPropertyValue("--avatar-4").trim(),
+    style.getPropertyValue("--avatar-5").trim(),
   ];
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;

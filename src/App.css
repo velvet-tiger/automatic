@@ -1,6 +1,13 @@
 @import "tailwindcss";
 
 @theme {
+  --color-avatar-0: var(--avatar-0);
+  --color-avatar-1: var(--avatar-1);
+  --color-avatar-2: var(--avatar-2);
+  --color-avatar-3: var(--avatar-3);
+  --color-avatar-4: var(--avatar-4);
+  --color-avatar-5: var(--avatar-5);
+
   --color-brand: var(--brand);
   --color-brand-hover: var(--brand-hover);
   --color-brand-active: var(--brand-active);
@@ -42,6 +49,14 @@
 
 :root {
   /* Default: Dark */
+  /* Avatar palette — focus on indigo and violet */
+  --avatar-0: var(--brand);
+  --avatar-1: var(--accent);
+  --avatar-2: var(--brand-active);
+  --avatar-3: var(--brand-hover);
+  --avatar-4: var(--accent-hover);
+  --avatar-5: #4f46e5; /* deep indigo */
+
   --brand: #6366f1; /* Indigo */
   --brand-hover: #818cf8;
   --brand-active: #4f46e5;
@@ -82,11 +97,19 @@
 }
 
 [data-theme="corporate-dark"] {
-  --icon-agent: var(--brand);
-  --icon-skill: var(--success);
-  --icon-mcp: var(--warning);
-  --icon-file-template: var(--accent);
-  --icon-rule: var(--accent-hover);
+  --icon-agent: var(--text-muted);
+  --icon-skill: #d4d4d4;
+  --icon-mcp: #d4d4d4;
+  --icon-file-template: #d4d4d4;
+  --icon-rule: #d4d4d4;
+
+  /* Avatar palette — monochrome grey shades to match the no-colour theme */
+  --avatar-0: #4a4a4a;
+  --avatar-1: #5a5a5a;
+  --avatar-2: #6b6b6b;
+  --avatar-3: #7a7a7a;
+  --avatar-4: #3a3a3a;
+  --avatar-5: #8a8a8a;
 
   /* Corporate Dark: monochrome black / dark grey / white — no colour */
   --brand: #2a2a2a;
@@ -129,6 +152,14 @@
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
 
+  /* Avatar palette — matches type colors but uses readable darker variants for white text */
+  --avatar-0: var(--brand-active);   /* Agent (deeper cyan) */
+  --avatar-1: var(--success-active); /* Skill (deeper green) */
+  --avatar-2: #d97706;               /* MCP (dark amber instead of unreadable neon yellow) */
+  --avatar-3: var(--accent);         /* File Template (purple) */
+  --avatar-4: var(--danger);         /* Rule (red) */
+  --avatar-5: #9333ea;               /* deep purple */
+
   --brand: #00f0ff; /* Cyan */
   --brand-hover: #5eead4;
   --brand-active: #0891b2;
@@ -169,6 +200,14 @@
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
 
+  /* Avatar palette — synthwave magenta/purple tones */
+  --avatar-0: var(--brand);
+  --avatar-1: var(--brand-active);
+  --avatar-2: var(--surface-active);
+  --avatar-3: #8b5cf6; /* violet */
+  --avatar-4: #d946ef; /* fuchsia */
+  --avatar-5: var(--bg-input);
+
   --brand: #ec4899; /* Magenta */
   --brand-hover: #f472b6;
   --brand-active: #db2777;
@@ -208,6 +247,14 @@
   --icon-mcp: var(--warning);
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
+
+  /* Avatar palette — coral/orange and slate tones */
+  --avatar-0: var(--brand);
+  --avatar-1: var(--brand-active);
+  --avatar-2: var(--accent);
+  --avatar-3: var(--accent-hover);
+  --avatar-4: var(--surface-active);
+  --avatar-5: #c2410c; /* deep coral */
 
   --brand: #f97316; /* Coral/Orange */
   --brand-hover: #fb923c;
@@ -252,6 +299,14 @@
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
 
+  /* Avatar palette — pale blues and teals */
+  --avatar-0: var(--brand);
+  --avatar-1: var(--accent);
+  --avatar-2: var(--brand-active);
+  --avatar-3: var(--brand-hover);
+  --avatar-4: var(--accent-hover);
+  --avatar-5: #0369a1; /* deep sky */
+
   --brand: #0ea5e9; /* Sky Blue */
   --brand-hover: #38bdf8;
   --brand-active: #0284c7;
@@ -286,11 +341,19 @@
 }
 
 [data-theme="corporate-light"] {
-  --icon-agent: var(--brand);
-  --icon-skill: var(--success);
-  --icon-mcp: var(--warning);
-  --icon-file-template: var(--accent);
-  --icon-rule: var(--accent-hover);
+  --icon-agent: var(--text-muted);
+  --icon-skill: #3a3a3a;
+  --icon-mcp: #6b6b6b;
+  --icon-file-template: #8a8a8a;
+  --icon-rule: #5a5a5a;
+
+  /* Avatar palette — monochrome grey shades for the no-colour light theme */
+  --avatar-0: #3a3a3a;
+  --avatar-1: #4a4a4a;
+  --avatar-2: #5a5a5a;
+  --avatar-3: #6b6b6b;
+  --avatar-4: #2a2a2a;
+  --avatar-5: #7a7a7a;
 
   /* Corporate Light: grayscale light inverse of Sleek — no colour */
   --brand: #2a2a2a;
@@ -333,6 +396,14 @@
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
 
+  /* Avatar palette — tracks the semantic colors selected for the types */
+  --avatar-0: var(--brand);        /* Agent */
+  --avatar-1: var(--success);      /* Skill */
+  --avatar-2: var(--warning);      /* MCP */
+  --avatar-3: var(--accent);       /* File Template */
+  --avatar-4: var(--accent-hover); /* Rule */
+  --avatar-5: var(--brand-active);
+
   /* Accessible: WCAG AA+, CVD-safe blue palette, no red/green reliance */
   --brand: #1d4ed8;        /* Blue-700 — 5.9:1 on white */
   --brand-hover: #1e40af;  /* Blue-800 — deeper on hover */
@@ -369,6 +440,14 @@
 }
 
 [data-theme="light"] {
+  /* Avatar palette — focus on indigo and violet */
+  --avatar-0: var(--brand);
+  --avatar-1: var(--accent);
+  --avatar-2: var(--brand-active);
+  --avatar-3: var(--brand-hover);
+  --avatar-4: var(--accent-hover);
+  --avatar-5: #4338ca; /* deep indigo */
+
   --brand: #4f46e5; /* Indigo */
   --brand-hover: #6366f1;
   --brand-active: #4338ca;
