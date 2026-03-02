@@ -686,27 +686,6 @@
     }
   },
   {
-    "slug": "lauriewired-ghidra",
-    "name": "com.pulsemcp.mirror/lauriewired-ghidra",
-    "title": "Ghidra",
-    "description": "Decompile and analyze binaries in Ghidra.",
-    "provider": "Laurie Wired",
-    "classification": "community",
-    "repository_url": "https://github.com/lauriewired/ghidramcp",
-    "remote": null,
-    "local": {
-      "registry": "github",
-      "package": "lauriewired/ghidramcp",
-      "version": null,
-      "transport": "stdio",
-      "command": "python bridge_mcp_ghidra.py --ghidra-server http://127.0.0.1:8080/"
-    },
-    "auth": {
-      "method": "none",
-      "env_vars": []
-    }
-  },
-  {
     "slug": "czlonkowski-n8n",
     "name": "com.pulsemcp.mirror/czlonkowski-n8n",
     "title": "n8n",
@@ -862,39 +841,6 @@
     }
   },
   {
-    "slug": "tavily-search",
-    "name": "io.github.tavily-ai/tavily-mcp",
-    "title": "Tavily Search",
-    "description": "MCP server for advanced web search using Tavily",
-    "provider": "Tavily",
-    "icon": "tavily.com",
-    "classification": "official",
-    "repository_url": "https://github.com/tavily-ai/tavily-mcp",
-    "remote": null,
-    "local": {
-      "registry": "npm",
-      "package": "tavily-mcp",
-      "version": "0.2.15",
-      "transport": "stdio",
-      "command": "npx -y tavily-mcp"
-    },
-    "auth": {
-      "method": "api_key",
-      "env_vars": [
-        {
-          "name": "TAVILY_API_KEY",
-          "description": "Your Tavily API key from tavily.com",
-          "secret": true
-        },
-        {
-          "name": "DEFAULT_PARAMETERS",
-          "description": "JSON string with default search parameters (e.g., {\"include_images\": true, \"max_results\": 15})",
-          "secret": false
-        }
-      ]
-    }
-  },
-  {
     "slug": "zapier",
     "name": "com.pulsemcp.mirror/zapier",
     "title": "Zapier",
@@ -936,87 +882,6 @@
     }
   },
   {
-    "slug": "mrexodio-ida-pro",
-    "name": "com.pulsemcp.mirror/mrexodio-ida-pro",
-    "title": "IDA Pro",
-    "description": "Automated reverse engineering with IDA Pro.",
-    "provider": "Duncan Ogilvie",
-    "classification": "community",
-    "repository_url": null,
-    "remote": null,
-    "local": {
-      "registry": "pypi",
-      "package": "ida-pro-mcp",
-      "version": null,
-      "transport": "stdio",
-      "command": "pip install https://github.com/mrexodia/ida-pro-mcp/archive/refs/heads/main.zip"
-    },
-    "auth": {
-      "method": "none",
-      "env_vars": []
-    }
-  },
-  {
-    "slug": "search-1",
-    "name": "io.github.airweave-ai/search",
-    "title": "Airweave Search",
-    "description": "MCP server for searching Airweave collections with natural language queries.",
-    "provider": "airweave-ai",
-    "icon": "airweave.ai",
-    "classification": "official",
-    "repository_url": "https://github.com/airweave-ai/airweave",
-    "remote": {
-      "transport": "streamable-http",
-      "url": "https://mcp.airweave.ai/mcp"
-    },
-    "local": {
-      "registry": "npm",
-      "package": "airweave-mcp-search",
-      "version": "0.8.99",
-      "transport": "stdio",
-      "command": "npx -y airweave-mcp-search"
-    },
-    "auth": {
-      "method": "api_key",
-      "env_vars": [
-        {
-          "name": "AIRWEAVE_API_KEY",
-          "description": "Your Airweave API key for authentication",
-          "secret": true
-        },
-        {
-          "name": "AIRWEAVE_COLLECTION",
-          "description": "The Airweave collection to search",
-          "secret": false
-        },
-        {
-          "name": "AIRWEAVE_BASE_URL",
-          "description": "Airweave API base URL (defaults to https://api.airweave.ai)",
-          "secret": false
-        }
-      ]
-    }
-  },
-  {
-    "slug": "klavis-strata",
-    "name": "ai.klavis/strata",
-    "title": "Strata",
-    "description": "MCP server for progressive tool usage at any scale (see https://klavis.ai)",
-    "provider": "Klavis AI",
-    "icon": "klavis.ai",
-    "classification": "official",
-    "repository_url": "https://github.com/Klavis-AI/klavis",
-    "remote": {
-      "transport": "streamable-http",
-      "url": "https://strata.klavis.ai/mcp/"
-    },
-    "local": null,
-    "auth": {
-      "method": "none",
-      "env_vars": []
-    }
-  },
-  {
     "slug": "desktop-commander",
     "name": "io.github.wonderwhy-er/desktop-commander",
     "title": "Desktop Commander",
@@ -1051,28 +916,6 @@
       "url": "https://mcp.webflow.com/mcp"
     },
     "local": null,
-    "auth": {
-      "method": "none",
-      "env_vars": []
-    }
-  },
-  {
-    "slug": "praisonai",
-    "name": "io.github.MervinPraison/praisonai",
-    "title": "PraisonAI",
-    "description": "AI Agents Framework with Self Reflection and MCP support",
-    "provider": "Mervin Praison",
-    "icon": "praisonai.com",
-    "classification": "official",
-    "repository_url": "https://github.com/MervinPraison/PraisonAI",
-    "remote": null,
-    "local": {
-      "registry": "pypi",
-      "package": "praisonai",
-      "version": "2.3.42",
-      "transport": "stdio",
-      "command": "uvx praisonai"
-    },
     "auth": {
       "method": "none",
       "env_vars": []
