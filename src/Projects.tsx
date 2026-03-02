@@ -725,6 +725,7 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
 
 interface ProjectsOverviewProps {
   projects: string[];
+  projectsLoading: boolean;
   projectDetails: Map<string, Project>;
   driftByProject: Record<string, boolean>;
   onSelect: (name: string) => void;
@@ -748,7 +749,10 @@ function ProjectStatusBadge({ drift }: { drift: boolean | undefined }) {
       </span>
     );
   }
-  return null;
+  // Reserve the same vertical space as the badge so cards don't shift height
+  // once drift is determined. The span is invisible but occupies the same
+  // line-height as the real badge (py-0.5 + text-[10px]).
+  return <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] border border-transparent invisible">–</span>;
 }
 
 function ProjectCard({
@@ -845,7 +849,7 @@ function ProjectCard({
   );
 }
 
-function ProjectsOverview({ projects, projectDetails, driftByProject, onSelect, onCreate }: ProjectsOverviewProps) {
+function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, onSelect, onCreate }: ProjectsOverviewProps) {
   // Sort: drifted first, then by updated_at desc
   const sorted = [...projects].sort((a, b) => {
     const aDrift = driftByProject[a] === true ? 0 : 1;
@@ -887,7 +891,7 @@ function ProjectsOverview({ projects, projectDetails, driftByProject, onSelect, 
         )}
 
         {/* Card grid */}
-        {projects.length === 0 ? (
+        {!projectsLoading && projects.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <div className="w-16 h-16 rounded-2xl border border-dashed border-border-strong flex items-center justify-center mb-5">
               <FolderOpen size={24} className="text-text-muted" />
@@ -943,6 +947,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   }, []);
   const [projects, setProjects] = useState<string[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(true);
   // Always start on the overview — do not restore a previously selected project.
   const [selectedName, setSelectedName] = useState<string | null>(null);
 
@@ -1290,6 +1295,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setProjectDetailsMap(new Map(entries.filter(Boolean) as [string, Project][]));
     } catch (err: any) {
       setError(`Failed to load projects: ${err}`);
+    } finally {
+      setProjectsLoading(false);
     }
   };
 
@@ -1932,6 +1939,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       <>
         <ProjectsOverview
           projects={projects}
+          projectsLoading={projectsLoading}
           projectDetails={projectDetailsMap}
           driftByProject={driftByProject}
           onSelect={(name) => {
