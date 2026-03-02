@@ -78,7 +78,20 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
     try {
       const raw: string = await invoke("list_agents_with_projects");
       const parsed: AgentWithProjects[] = JSON.parse(raw);
-      parsed.sort((a, b) => a.label.localeCompare(b.label));
+      parsed.sort((a, b) => {
+        const aCount = a.projects.length;
+        const bCount = b.projects.length;
+        // Both have projects: sort by count desc, then alpha
+        if (aCount > 0 && bCount > 0) {
+          if (bCount !== aCount) return bCount - aCount;
+          return a.label.localeCompare(b.label);
+        }
+        // One has projects, one doesn't: projects-first
+        if (aCount > 0) return -1;
+        if (bCount > 0) return 1;
+        // Neither has projects: alphabetical
+        return a.label.localeCompare(b.label);
+      });
       setAgents(parsed);
       setError(null);
     } catch (err: any) {
