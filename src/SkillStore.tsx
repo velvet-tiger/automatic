@@ -604,13 +604,13 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
       <div className="w-[264px] flex-shrink-0 border-r border-border-strong/40 flex flex-col">
         {/* Back + search box */}
         <div className="p-3 border-b border-border-strong/40">
-          <button
-            onClick={() => { setQuery(""); setSelected(null); setRawContent(""); setPreviewError(null); setResults([]); }}
-            className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-base transition-colors mb-2"
-          >
-            <ArrowLeft size={11} />
-            Skill Store
-          </button>
+           <button
+             onClick={() => { setQuery(""); setSelected(null); setRawContent(""); setPreviewError(null); setResults([]); }}
+             className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-base transition-colors mb-2"
+           >
+             <ArrowLeft size={11} />
+             Skills Marketplace
+           </button>
           <div className="relative">
             <Search
               size={13}

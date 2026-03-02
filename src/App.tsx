@@ -249,7 +249,7 @@ function App() {
             </div>
             <ul className="space-y-0.5">
               <NavItem id="template-marketplace" icon={Layers} label="Templates" />
-              <NavItem id="skill-store" icon={Store} label="Skills.sh" />
+              <NavItem id="skill-store" icon={Store} label="Skills" />
               <NavItem id="mcp-marketplace" icon={Server} label="MCP Servers" />
             </ul>
           </div>
