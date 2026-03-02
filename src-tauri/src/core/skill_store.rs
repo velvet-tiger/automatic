@@ -334,14 +334,17 @@ fn write_skill_sources(
     fs::write(&path, json).map_err(|e| e.to_string())
 }
 
-/// Record that a skill was imported from a remote source.
-pub fn record_skill_source(name: &str, source: &str, id: &str) -> Result<(), String> {
+/// Record that a skill was imported from a remote source, or is bundled with
+/// the app.  `kind` is "github" for registry-imported skills, "bundled" for
+/// skills shipped with Automatic.
+pub fn record_skill_source(name: &str, source: &str, id: &str, kind: &str) -> Result<(), String> {
     let mut registry = read_skill_sources()?;
     registry.insert(
         name.to_string(),
         SkillSource {
             source: source.to_string(),
             id: id.to_string(),
+            kind: kind.to_string(),
         },
     );
     write_skill_sources(&registry)

@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::paths::{get_agents_skills_dir, get_automatic_dir, is_valid_name};
+use super::skill_store::record_skill_source;
 
 // ── Templates ────────────────────────────────────────────────────────────────
 
@@ -86,6 +87,42 @@ const AUTO_INSTALL_SKILLS: &[(&str, &str)] = &[
         "github-workflow-automation",
         include_str!("../../skills/github-workflow-automation/SKILL.md"),
     ),
+    (
+        "automatic-debugging",
+        include_str!("../../skills/automatic-debugging/SKILL.md"),
+    ),
+    (
+        "automatic-testing",
+        include_str!("../../skills/automatic-testing/SKILL.md"),
+    ),
+    (
+        "automatic-code-review",
+        include_str!("../../skills/automatic-code-review/SKILL.md"),
+    ),
+    (
+        "automatic-refactoring",
+        include_str!("../../skills/automatic-refactoring/SKILL.md"),
+    ),
+    (
+        "automatic-security-review",
+        include_str!("../../skills/automatic-security-review/SKILL.md"),
+    ),
+    (
+        "automatic-api-design",
+        include_str!("../../skills/automatic-api-design/SKILL.md"),
+    ),
+    (
+        "automatic-documentation",
+        include_str!("../../skills/automatic-documentation/SKILL.md"),
+    ),
+    (
+        "automatic-performance",
+        include_str!("../../skills/automatic-performance/SKILL.md"),
+    ),
+    (
+        "automatic-database-design",
+        include_str!("../../skills/automatic-database-design/SKILL.md"),
+    ),
 ];
 
 /// Skills bundled with the app but only installed on demand (e.g. when a user
@@ -121,6 +158,8 @@ const TEMPLATE_SKILLS: &[(&str, &str)] = &[
 
 /// Write any missing auto-install skills to `~/.agents/skills/`.
 /// Existing files are left untouched, so user edits are always preserved.
+/// Each skill is recorded in the skills registry with source "automatic/automatic-app"
+/// so the UI resolves the author as "Automatic" rather than "You".
 pub fn install_default_skills() -> Result<(), String> {
     let agents_dir = get_agents_skills_dir()?;
 
@@ -133,6 +172,11 @@ pub fn install_default_skills() -> Result<(), String> {
         if !skill_path.exists() {
             fs::write(&skill_path, content).map_err(|e| e.to_string())?;
         }
+        // Register source so the UI shows "Automatic" as the author.
+        // This is a best-effort write; failures are intentionally ignored so a
+        // registry I/O error does not prevent skills from being installed.
+        let id = format!("automatic/automatic-app/{}", name);
+        let _ = record_skill_source(name, "automatic/automatic-app", &id, "bundled");
     }
 
     Ok(())

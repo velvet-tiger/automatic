@@ -7,8 +7,6 @@ import {
   trackSkillCreated,
   trackSkillUpdated,
   trackSkillDeleted,
-  trackSkillSynced,
-  trackAllSkillsSynced,
 } from "./analytics";
 import {
   Plus,
@@ -17,7 +15,6 @@ import {
   Code,
   FileText,
   Check,
-  RefreshCw,
   Globe,
   HardDrive,
   Github,
@@ -30,6 +27,7 @@ import { ICONS } from "./icons";
 interface SkillSource {
   source: string; // "owner/repo"
   id: string;     // "owner/repo/skill-name"
+  kind?: string;  // "github" | "bundled"
 }
 
 interface SkillEntry {
@@ -122,9 +120,13 @@ function SkillPreview({ content, source, resources }: SkillPreviewProps) {
   const hasResources =
     resources && (resources.dirs.length > 0 || resources.root_files.length > 0);
 
-  // Derive AuthorDescriptor from SkillSource (or lack thereof)
+  // Derive AuthorDescriptor from SkillSource (or lack thereof).
+  // "bundled" skills are shipped with the app — render as a provider entry
+  // rather than doing a GitHub lookup (which would resolve the wrong org).
   const authorDescriptor: AuthorDescriptor = source
-    ? { type: "github", repo: source.source }
+    ? source.kind === "bundled"
+      ? { type: "provider", name: "Automatic", url: "https://automatic.sh" }
+      : { type: "github", repo: source.source }
     : { type: "local" };
 
   // Track which directories are expanded
@@ -309,8 +311,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   const [filter, setFilter] = useState<"all" | "remote" | "local">("all");
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [syncingSkill, setSyncingSkill] = useState<string | null>(null);
-  const [syncingAll, setSyncingAll] = useState(false);
+
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const isDragging = useRef(false);
 
@@ -479,30 +480,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
     }
   };
 
-  const handleSyncSkill = async (name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSyncingSkill(name);
-    try {
-      await invoke("sync_skill", { name });
-      trackSkillSynced(name);
-      await loadSkills();
-      setError(null);
-    } catch (err: any) {
-      setError(`Failed to sync skill: ${err}`);
-    } finally { setSyncingSkill(null); }
-  };
 
-  const handleSyncAll = async () => {
-    setSyncingAll(true);
-    try {
-      await invoke("sync_all_skills");
-      await loadSkills();
-      trackAllSkillsSynced(skills.length);
-      setError(null);
-    } catch (err: any) {
-      setError(`Failed to sync skills: ${err}`);
-    } finally { setSyncingAll(false); }
-  };
 
   const startCreateNew = () => {
     setSelectedSkill(null);
@@ -519,8 +497,6 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
-  const isSynced = (skill: SkillEntry) => skill.in_agents && skill.in_claude;
-  const unsyncedCount = skills.filter(s => !isSynced(s)).length;
   const remoteCount = skills.filter(s => !!s.source).length;
   const localCount = skills.length - remoteCount;
 
@@ -549,16 +525,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
               Skills
             </span>
             <div className="flex items-center gap-1">
-              {unsyncedCount > 0 && (
-                <button
-                  onClick={handleSyncAll}
-                  disabled={syncingAll}
-                  className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded disabled:opacity-50"
-                  title={`Sync all (${unsyncedCount} unsynced)`}
-                >
-                  <RefreshCw size={13} className={syncingAll ? "animate-spin" : ""} />
-                </button>
-              )}
+
               <button
                 onClick={startCreateNew}
                 className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
@@ -629,7 +596,6 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
               )}
               {filteredSkills.map(skill => {
                 const isSelected = selectedSkill === skill.name && !isCreating;
-                const synced = isSynced(skill);
                 const isRemote = !!skill.source;
 
                 return (
@@ -651,16 +617,6 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                         </span>
                         {/* Hover actions */}
                         <span className="shrink-0 hidden group-hover:flex items-center gap-0.5">
-                          {!synced && (
-                            <span
-                              role="button"
-                              onClick={(e) => handleSyncSkill(skill.name, e)}
-                              className="p-0.5 text-text-muted hover:text-brand rounded transition-colors"
-                              title="Sync to both locations"
-                            >
-                              <RefreshCw size={11} className={syncingSkill === skill.name ? "animate-spin" : ""} />
-                            </span>
-                          )}
                           <span
                             role="button"
                             onClick={(e) => handleDelete(skill.name, e)}
@@ -685,16 +641,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                             <span>local</span>
                           </span>
                         )}
-                        <span className="text-[10px] text-text-muted">·</span>
-                        {skill.in_agents && (
-                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-brand/20 text-brand leading-none" title="~/.agents/skills/">A</span>
-                        )}
-                        {skill.in_claude && (
-                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-accent/20 text-accent leading-none" title="~/.claude/skills/">C</span>
-                        )}
-                        {!synced && (
-                          <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-warning/15 text-warning leading-none" title="Not synced to both locations">!</span>
-                        )}
+
                         {skill.has_resources && (
                           <span title="Has additional resources">
                             <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" className="text-text-muted">

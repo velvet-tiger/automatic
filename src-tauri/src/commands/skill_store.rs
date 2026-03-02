@@ -23,7 +23,7 @@ pub async fn import_remote_skill(
     id: String,
 ) -> Result<(), String> {
     core::save_skill(&name, &content)?;
-    core::record_skill_source(&name, &source, &id)?;
+    core::record_skill_source(&name, &source, &id, "github")?;
     sync_projects_referencing_skill(&name);
     // Mark getting-started flag; best-effort — never block the install.
     if let Err(e) = core::mark_skill_installed() {

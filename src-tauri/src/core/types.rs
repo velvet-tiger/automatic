@@ -2,14 +2,26 @@ use serde::{Deserialize, Serialize};
 
 // ── Data Structures ──────────────────────────────────────────────────────────
 
-/// Remote origin of a skill imported from skills.sh.
+/// Remote origin of a skill imported from skills.sh, or the bundled origin
+/// for skills shipped with the app.
 /// Stored in ~/.automatic/skills.json keyed by skill name.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SkillSource {
-    /// GitHub owner/repo, e.g. "vercel-labs/skills"
+    /// GitHub owner/repo, e.g. "vercel-labs/skills".
+    /// For bundled skills this is "automatic/automatic-app".
     pub source: String,
-    /// Full skills.sh id, e.g. "vercel-labs/skills/find-skills"
+    /// Full skills.sh id, e.g. "vercel-labs/skills/find-skills".
+    /// For bundled skills this is "automatic/automatic-app/<name>".
     pub id: String,
+    /// "github" for registry-imported skills; "bundled" for skills shipped
+    /// with the Automatic app.  Defaults to "github" when absent so existing
+    /// registry entries are not broken.
+    #[serde(default = "default_skill_source_kind")]
+    pub kind: String,
+}
+
+fn default_skill_source_kind() -> String {
+    "github".to_string()
 }
 
 /// A skill entry with its name and which global directories it exists in.
