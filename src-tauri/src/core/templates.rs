@@ -77,14 +77,21 @@ pub fn delete_template(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Built-in skills shipped with the app.  Each entry is (name, content).
-/// These are written to `~/.agents/skills/<name>/SKILL.md` on first run (or
-/// when the file is missing), but never overwrite existing files — user edits
-/// are always preserved.
-const DEFAULT_SKILLS: &[(&str, &str)] = &[
+/// Skills installed automatically on every launch.  These are written to
+/// `~/.agents/skills/<name>/SKILL.md` if the file does not already exist —
+/// user edits are never overwritten.
+const AUTO_INSTALL_SKILLS: &[(&str, &str)] = &[
     ("automatic", include_str!("../../skills/automatic/SKILL.md")),
-    // Skills required by bundled marketplace templates.
-    // Never overwrite existing user installations.
+    (
+        "github-workflow-automation",
+        include_str!("../../skills/github-workflow-automation/SKILL.md"),
+    ),
+];
+
+/// Skills bundled with the app but only installed on demand (e.g. when a user
+/// selects a project template that requires them).  They are never written to
+/// disk automatically — only via `install_skills_from_bundle`.
+const TEMPLATE_SKILLS: &[(&str, &str)] = &[
     (
         "vercel-react-best-practices",
         include_str!("../../skills/vercel-react-best-practices/SKILL.md"),
@@ -105,18 +112,19 @@ const DEFAULT_SKILLS: &[(&str, &str)] = &[
         "terraform-skill",
         include_str!("../../skills/terraform-skill/SKILL.md"),
     ),
+    ("php-pro", include_str!("../../skills/php-pro/SKILL.md")),
     (
-        "github-workflow-automation",
-        include_str!("../../skills/github-workflow-automation/SKILL.md"),
+        "python-pro",
+        include_str!("../../skills/python-pro/SKILL.md"),
     ),
 ];
 
-/// Write any missing default skills to `~/.agents/skills/`.
+/// Write any missing auto-install skills to `~/.agents/skills/`.
 /// Existing files are left untouched, so user edits are always preserved.
 pub fn install_default_skills() -> Result<(), String> {
     let agents_dir = get_agents_skills_dir()?;
 
-    for (name, content) in DEFAULT_SKILLS {
+    for (name, content) in AUTO_INSTALL_SKILLS {
         let skill_dir = agents_dir.join(name);
         if !skill_dir.exists() {
             fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
@@ -131,13 +139,15 @@ pub fn install_default_skills() -> Result<(), String> {
 }
 
 /// Install a subset of bundled skills by name, skipping any that are already
-/// present on disk.  Silently ignores names not found in DEFAULT_SKILLS.
+/// present on disk.  Searches both AUTO_INSTALL_SKILLS and TEMPLATE_SKILLS.
+/// Silently ignores names not found in either pool.
 pub fn install_skills_from_bundle(skill_names: &[String]) -> Result<(), String> {
     let agents_dir = get_agents_skills_dir()?;
 
     for name in skill_names {
-        // Only install if it's actually bundled.
-        let Some((_, content)) = DEFAULT_SKILLS.iter().find(|(n, _)| *n == name.as_str()) else {
+        // Search both pools.
+        let mut all_skills = AUTO_INSTALL_SKILLS.iter().chain(TEMPLATE_SKILLS.iter());
+        let Some((_, content)) = all_skills.find(|(n, _)| *n == name.as_str()) else {
             continue;
         };
         let skill_dir = agents_dir.join(name);
@@ -153,10 +163,14 @@ pub fn install_skills_from_bundle(skill_names: &[String]) -> Result<(), String> 
     Ok(())
 }
 
-/// Return the set of skill names that are shipped with the app (i.e. present
-/// in DEFAULT_SKILLS).
+/// Return the set of skill names that are shipped with the app (auto-install
+/// and template-only pools combined).
 pub fn bundled_skill_names() -> Vec<&'static str> {
-    DEFAULT_SKILLS.iter().map(|(name, _)| *name).collect()
+    AUTO_INSTALL_SKILLS
+        .iter()
+        .chain(TEMPLATE_SKILLS.iter())
+        .map(|(name, _)| *name)
+        .collect()
 }
 
 /// Built-in templates shipped with the app.  Each entry is (name, content).
