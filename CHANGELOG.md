@@ -2,6 +2,48 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.4.0] — 2026-03-02
+
+### Features
+
+#### Skills
+- Inline skill preview directly on the project Skills tab
+- Fork-to-local action to copy a marketplace skill into the local skill library
+- View-in-library shortcut to jump from a project skill to its Skills entry
+- "Used By" right sidebar on skills showing linked projects and templates as clickable badges
+
+#### Project Templates
+- "New project from template" action that opens the project wizard with the template pre-applied
+- Applied To project badges on template detail pages are now clickable links
+
+#### Theme
+- Follow system light/dark preference by default
+- Dark backgrounds lightened one zinc step for improved readability
+- Always apply dark theme when disabling follow-system (no accidental light flash)
+
+#### Dashboard
+- Getting Started section reorganised into a conditional right-column checklist
+- Welcome message copy improved
+
+#### Developer
+- Debug builds now use a separate `.automatic-dev` data directory to isolate dev state from production
+
+### Fixes
+- Stale marketplace plugin path resolved on fresh install
+- Inner border removed from Getting Started items (fixes bottom border clipping)
+- Unused `sync_projects_referencing_rule` function removed
+
+### Dependencies
+- Switched HTTP backend to `native-tls` and removed unused dependencies
+
+### Docs
+- Windows build workaround documented for Rust on Parallels
+
+### Chore
+- `.claude-flow` daemon state and PID files removed from repository
+
+---
+
 ## [0.3.0] — 2026-03-01
 
 ### Features
@@ -174,6 +216,7 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Warp removal correctly deletes `WARP.md` via owned config paths
 - Junie removal deletes the entire `.junie/` directory
 
+[0.4.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.4.0
 [0.3.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.3.0
 [0.2.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.2.0
 [0.1.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.1.0
