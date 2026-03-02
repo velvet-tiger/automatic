@@ -3022,6 +3022,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 throw new Error("Set a project directory before forking a skill to local.");
                               }
 
+                              // Derive a unique local name: "<name>-copy", then
+                              // "<name>-copy-2", "<name>-copy-3", … until we find one
+                              // that isn't already in local_skills or global skills.
+                              const taken = new Set([...project.skills, ...project.local_skills]);
+                              let copyName = `${skillName}-copy`;
+                              let n = 2;
+                              while (taken.has(copyName)) {
+                                copyName = `${skillName}-copy-${n}`;
+                                n++;
+                              }
+
                               // save_local_skill reads the project from disk, so flush
                               // current state first so agents/directory are up to date.
                               const toSave = {
@@ -3035,20 +3046,20 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               });
                               setDirty(false);
 
-                              // Write the skill content into the project's local skill directory
-                              await invoke("save_local_skill", { name: selectedName, skillName, content });
+                              // Write the skill content under the copy name into the
+                              // project's local skill directory.
+                              await invoke("save_local_skill", {
+                                name: selectedName,
+                                skillName: copyName,
+                                content,
+                              });
 
-                              // Promote: move from global skills → local_skills in project state + disk
-                              const updatedGlobalSkills = project.skills.filter((s) => s !== skillName);
-                              const alreadyLocal = project.local_skills.includes(skillName);
-                              const updatedLocalSkills = alreadyLocal
-                                ? project.local_skills
-                                : [...project.local_skills, skillName];
+                              // Add the copy to local_skills; the original global skill
+                              // is left untouched in project.skills.
                               const forkedProject = {
                                 ...project,
                                 name: selectedName,
-                                skills: updatedGlobalSkills,
-                                local_skills: updatedLocalSkills,
+                                local_skills: [...project.local_skills, copyName],
                                 updated_at: new Date().toISOString(),
                               };
                               await invoke("save_project", {
@@ -3057,8 +3068,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               });
                               setProject(forkedProject);
                               setDirty(false);
-                              setSyncStatus(`Forked "${skillName}" to local skills`);
-                              setTimeout(() => setSyncStatus(null), 4000);
+                              setSyncStatus(`Forked "${skillName}" → local skill "${copyName}"`);
+                              setTimeout(() => setSyncStatus(null), 5000);
                             } catch (err: any) {
                               setError(`Fork failed: ${err}`);
                             }
@@ -3148,7 +3159,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     <path d="M3 2l4 3-4 3V2z"/>
                                   </svg>
                                 </button>
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all ml-2">
+                                <div className="flex items-center gap-1 ml-2">
                                   <button
                                     onClick={async () => {
                                       if (!selectedName) return;

@@ -234,6 +234,11 @@ fn collect_skills_drift(
                         Some(n) => n.to_string(),
                         None => continue,
                     };
+                    // Local skills are user-managed — Automatic does not own them
+                    // and must never flag them as drifted.
+                    if local_skill_names.contains(&skill_name) {
+                        continue;
+                    }
                     let tmp_file = tmp_skill_path.join("SKILL.md");
                     let disk_file = skill_dir.join(&skill_name).join("SKILL.md");
                     let rel_path = format!("{}/{}/SKILL.md", relative.display(), skill_name);

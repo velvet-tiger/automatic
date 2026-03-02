@@ -82,8 +82,16 @@ pub fn save_local_skill(
         }
     }
 
+    // Fallback: if no agents are configured (or none resolved), write to the
+    // canonical hub directory so the skill is not lost.
     if written.is_empty() {
-        return Err("No agent skill directories found for this project".into());
+        let hub_dir = dir.join(".agents").join("skills").join(skill_name);
+        fs::create_dir_all(&hub_dir)
+            .map_err(|e| format!("Failed to create hub skill dir: {}", e))?;
+        let hub_file = hub_dir.join("SKILL.md");
+        fs::write(&hub_file, content)
+            .map_err(|e| format!("Failed to write skill to hub: {}", e))?;
+        written.push(hub_file.display().to_string());
     }
 
     Ok(written)
