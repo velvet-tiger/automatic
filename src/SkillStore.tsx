@@ -14,6 +14,7 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import featuredSkillsData from "./featured-skills.json";
+import { SkillAvatar } from "./SkillAvatar";
 
 interface RemoteSkillResult {
   id: string;
@@ -562,7 +563,6 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
               <div className="grid grid-cols-3 2xl:grid-cols-4 gap-4">
                 {featuredSkillsData.map((skill) => {
                   const alreadyImported = Object.values(registry).some((s) => s.id === skill.id);
-                  const letter = (skill.displayName || skill.name).charAt(0).toUpperCase();
                   return (
                     <button
                       key={skill.id}
@@ -572,13 +572,11 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       {/* Header */}
                       <div className="flex items-start justify-between gap-3 mb-3">
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <div
-                            className="flex-shrink-0 rounded-md flex items-center justify-center font-semibold bg-icon-skill/15 text-icon-skill"
-                            style={{ width: 36, height: 36, fontSize: 16 }}
-                            aria-hidden="true"
-                          >
-                            {letter}
-                          </div>
+                          <SkillAvatar
+                            name={skill.displayName || skill.name}
+                            source={skill.source}
+                            size={36}
+                          />
                           <div className="min-w-0">
                             <div className="text-[14px] font-semibold text-text-base leading-snug truncate">
                               {skill.displayName || skill.name}

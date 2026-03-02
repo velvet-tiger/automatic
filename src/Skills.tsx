@@ -23,6 +23,7 @@ import {
   LayoutTemplate,
 } from "lucide-react";
 import { ICONS } from "./icons";
+import { SkillAvatar } from "./SkillAvatar";
 
 interface SkillSource {
   source: string; // "owner/repo"
@@ -606,9 +607,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                         isSelected ? "bg-bg-sidebar" : "hover:bg-bg-sidebar/50"
                       }`}
                     >
-                      <div className={ICONS.skill.iconBox}>
-                        <Code size={15} className={ICONS.skill.iconColor} />
-                      </div>
+                      <SkillAvatar name={skill.name} source={skill.source?.source} size={32} />
                       <div className="flex-1 min-w-0">
                       {/* Top row: name + action buttons */}
                       <div className="flex items-center gap-2">
