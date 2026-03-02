@@ -504,7 +504,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
     return (
       <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-bg-base">
         <div className="flex flex-col px-6 pt-10 pb-10 w-full">
-          <div className="w-full max-w-4xl mx-auto">
+          <div className="w-full max-w-[1400px] mx-auto">
             {/* Icon + heading */}
             <div className="text-center mb-6 max-w-lg mx-auto">
               <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-icon-skill/10 border border-success/20 flex items-center justify-center">
@@ -557,7 +557,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
               <h3 className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
                 Featured
               </h3>
-              <div className="grid grid-cols-2 2xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-3 2xl:grid-cols-4 gap-4">
                 {featuredSkillsData.map((skill) => {
                   const alreadyImported = Object.values(registry).some((s) => s.id === skill.id);
                   const letter = (skill.displayName || skill.name).charAt(0).toUpperCase();
