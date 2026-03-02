@@ -16,6 +16,7 @@ import {
   ScrollText,
   Edit2,
   Files,
+  FolderPlus,
 } from "lucide-react";
 
 interface TemplateProjectFile {
@@ -69,7 +70,15 @@ function templateAccent(t: ProjectTemplate): { bg: string; icon: string } {
 }
 
 
-export default function ProjectTemplates({ initialTemplate }: { initialTemplate?: string | null }) {
+export default function ProjectTemplates({
+  initialTemplate,
+  onCreateProjectFromTemplate,
+  onNavigateToProject,
+}: {
+  initialTemplate?: string | null;
+  onCreateProjectFromTemplate?: (templateName: string) => void;
+  onNavigateToProject?: (projectName: string) => void;
+}) {
   const [templates, setTemplates] = useState<string[]>([]);
   // Map of template name → loaded data (for sidebar summaries)
   const [templateData, setTemplateData] = useState<Record<string, ProjectTemplate>>({});
@@ -648,6 +657,16 @@ export default function ProjectTemplates({ initialTemplate }: { initialTemplate?
                     >
                       <Copy size={12} /> Duplicate
                     </button>
+                    {/* New project from template */}
+                    {onCreateProjectFromTemplate && (
+                      <button
+                        onClick={() => onCreateProjectFromTemplate(selectedName)}
+                        className="flex h-[26px] items-center gap-1.5 px-2.5 bg-bg-input hover:bg-surface-hover text-text-base rounded text-[11px] font-medium border border-border-strong transition-colors shadow-sm"
+                        title="Create a new project using this template"
+                      >
+                        <FolderPlus size={12} /> New project...
+                      </button>
+                    )}
                     {/* Apply to project */}
                     <div className="relative">
                       <button
@@ -926,12 +945,13 @@ export default function ProjectTemplates({ initialTemplate }: { initialTemplate?
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {appliedProjects.map((p) => (
-                        <span
+                        <button
                           key={p.name}
-                          className="px-2.5 py-1 bg-bg-sidebar border border-border-strong/40 rounded-md text-[12px] text-text-base font-medium"
+                          onClick={() => onNavigateToProject?.(p.name)}
+                          className="px-2.5 py-1 bg-bg-sidebar border border-border-strong/40 rounded-md text-[12px] text-text-base font-medium hover:border-border-strong hover:text-text-base hover:bg-bg-hover transition-colors cursor-pointer"
                         >
                           {p.name}
-                        </span>
+                        </button>
                       ))}
                     </div>
                   </div>

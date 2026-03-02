@@ -67,6 +67,8 @@ function App() {
   });
   const [pendingProject, setPendingProject] = useState<string | null>(null);
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
+  const [pendingSkill, setPendingSkill] = useState<string | null>(null);
+  const [pendingCreateWithTemplate, setPendingCreateWithTemplate] = useState<string | null>(null);
   const [skillStoreResetKey, setSkillStoreResetKey] = useState(0);
   const [templateMarketplaceResetKey, setTemplateMarketplaceResetKey] = useState(0);
   const [mcpMarketplaceResetKey, setMcpMarketplaceResetKey] = useState(0);
@@ -141,6 +143,16 @@ function App() {
   const navigateToTemplate = (templateName: string) => {
     setPendingTemplate(templateName);
     setActiveTab("project-templates");
+  };
+
+  const navigateToSkill = (skillName: string) => {
+    setPendingSkill(skillName);
+    setActiveTab("skills");
+  };
+
+  const navigateToCreateWithTemplate = (templateName: string) => {
+    setPendingCreateWithTemplate(templateName);
+    setActiveTab("projects");
   };
 
   const MARKETPLACE_TABS: Record<string, () => void> = {
@@ -373,12 +385,22 @@ function App() {
           )}
           {activeTab === "projects" && (
             <div className="flex-1 h-full">
-              <Projects initialProject={pendingProject} onInitialProjectConsumed={() => setPendingProject(null)} />
+              <Projects
+                initialProject={pendingProject}
+                onInitialProjectConsumed={() => setPendingProject(null)}
+                onNavigateToSkill={navigateToSkill}
+                initialCreateWithTemplate={pendingCreateWithTemplate}
+                onInitialCreateWithTemplateConsumed={() => setPendingCreateWithTemplate(null)}
+              />
             </div>
           )}
           {activeTab === "project-templates" && (
             <div className="flex-1 h-full">
-              <ProjectTemplates initialTemplate={pendingTemplate} />
+              <ProjectTemplates
+                initialTemplate={pendingTemplate}
+                onCreateProjectFromTemplate={navigateToCreateWithTemplate}
+                onNavigateToProject={navigateToProject}
+              />
             </div>
           )}
           {activeTab === "agents" && (
@@ -388,7 +410,7 @@ function App() {
           )}
           {activeTab === "skills" && (
             <div className="flex-1 h-full">
-              <Skills />
+              <Skills initialSkill={pendingSkill} onInitialSkillConsumed={() => setPendingSkill(null)} />
             </div>
           )}
           {activeTab === "skill-store" && (
