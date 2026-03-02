@@ -7,7 +7,7 @@
     },
     "automatic": {
       "command": [
-        "/Users/xtfer/working/velvet-tiger/automatic/automatic-app/src-tauri/target/debug/automatic",
+        "/Applications/Automatic.app/Contents/MacOS/automatic",
         "mcp-serve"
       ],
       "environment": {

@@ -3,7 +3,7 @@ type = "http"
 url = "https://mcp.clerk.com/mcp"
 
 [mcp_servers.automatic]
-command = "/Users/xtfer/working/velvet-tiger/automatic/automatic-app/src-tauri/target/debug/automatic"
+command = "/Applications/Automatic.app/Contents/MacOS/automatic"
 args = ["mcp-serve"]
 
 [mcp_servers.automatic.env]

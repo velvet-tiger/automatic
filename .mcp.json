@@ -8,7 +8,7 @@
       "args": [
         "mcp-serve"
       ],
-      "command": "/Users/xtfer/working/velvet-tiger/automatic/automatic-app/src-tauri/target/debug/automatic",
+      "command": "/Applications/Automatic.app/Contents/MacOS/automatic",
       "env": {
         "AUTOMATIC_PROJECT": "automatic-app"
       }
