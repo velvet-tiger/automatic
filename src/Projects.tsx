@@ -46,6 +46,7 @@ import {
   Brain,
   RotateCcw,
   ChevronDown,
+  ChevronLeft,
   Copy,
 } from "lucide-react";
 
@@ -720,6 +721,208 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
   );
 }
 
+// ── Projects Overview (card grid) ────────────────────────────────────────────
+
+interface ProjectsOverviewProps {
+  projects: string[];
+  projectDetails: Map<string, Project>;
+  driftByProject: Record<string, boolean>;
+  onSelect: (name: string) => void;
+  onCreate: () => void;
+}
+
+function ProjectStatusBadge({ drift }: { drift: boolean | undefined }) {
+  if (drift === true) {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-warning/10 text-warning border border-warning/20">
+        <AlertCircle size={8} />
+        Drifted
+      </span>
+    );
+  }
+  if (drift === false) {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-success/10 text-success border border-success/20">
+        <Check size={8} />
+        Synced
+      </span>
+    );
+  }
+  return null;
+}
+
+function ProjectCard({
+  name,
+  project,
+  drift,
+  onSelect,
+}: {
+  name: string;
+  project: Project | undefined;
+  drift: boolean | undefined;
+  onSelect: (name: string) => void;
+}) {
+  const isDrifted = drift === true;
+  const isConfigured = !!(project?.directory && (project?.agents?.length ?? 0) > 0);
+
+  const borderClass = isDrifted
+    ? "border-warning/30 hover:border-warning/50"
+    : "border-border-strong/40 hover:border-border-strong/70";
+
+  const totalSkills = (project?.skills?.length ?? 0) + (project?.local_skills?.length ?? 0);
+  const mcpCount = project?.mcp_servers?.length ?? 0;
+
+  // Shorten home directory but let the path wrap naturally
+  const shortDir = project?.directory
+    ? project.directory.replace(/^\/Users\/[^/]+/, "~")
+    : null;
+
+  return (
+    <button
+      onClick={() => onSelect(name)}
+      className={`w-full text-left bg-bg-input border ${borderClass} rounded-xl p-4 flex flex-col gap-3 transition-all hover:bg-surface-hover`}
+    >
+      {/* Row 1: icon + name + status badge */}
+      <div className="flex items-center gap-2">
+        <FolderOpen
+          size={14}
+          className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-brand"}`}
+        />
+        <span className="text-[13px] font-semibold text-text-base flex-1 truncate">{name}</span>
+        {isConfigured && <ProjectStatusBadge drift={drift} />}
+      </div>
+
+      {/* Row 2: directory path — wraps on long paths */}
+      {shortDir ? (
+        <div className="flex items-start gap-1.5 text-[11px] text-text-muted font-mono leading-snug">
+          <FolderOpen size={10} className="flex-shrink-0 mt-0.5 text-text-muted/50" />
+          <span className="break-all">{shortDir}</span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1 text-[11px] text-warning/80">
+          <AlertCircle size={10} className="flex-shrink-0" />
+          <span>No directory set</span>
+        </div>
+      )}
+
+      {/* Row 3: agent chips */}
+      {(project?.agents?.length ?? 0) > 0 ? (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {(project?.agents ?? []).map((agentId) => (
+            <span
+              key={agentId}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[11px] text-text-muted"
+            >
+              <AgentIcon agentId={agentId} size={10} />
+              {agentId}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="flex items-center gap-1 text-[11px] text-warning/80">
+          <AlertCircle size={10} className="flex-shrink-0" />
+          <span>No agents configured</span>
+        </div>
+      )}
+
+      {/* Row 4: stats footer */}
+      <div className="flex items-center gap-3 pt-2 border-t border-border-strong/30 text-[11px] text-text-muted">
+        <span className="flex items-center gap-1">
+          <Code size={10} />
+          {totalSkills} skill{totalSkills !== 1 ? "s" : ""}
+        </span>
+        <span className="flex items-center gap-1">
+          <Server size={10} />
+          {mcpCount} MCP
+        </span>
+        {project?.updated_at && (
+          <span className="ml-auto">
+            {new Date(project.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+          </span>
+        )}
+      </div>
+    </button>
+  );
+}
+
+function ProjectsOverview({ projects, projectDetails, driftByProject, onSelect, onCreate }: ProjectsOverviewProps) {
+  // Sort: drifted first, then by updated_at desc
+  const sorted = [...projects].sort((a, b) => {
+    const aDrift = driftByProject[a] === true ? 0 : 1;
+    const bDrift = driftByProject[b] === true ? 0 : 1;
+    if (aDrift !== bDrift) return aDrift - bDrift;
+    const aTime = new Date(projectDetails.get(a)?.updated_at ?? 0).getTime();
+    const bTime = new Date(projectDetails.get(b)?.updated_at ?? 0).getTime();
+    return bTime - aTime;
+  });
+
+  const driftedCount = projects.filter((n) => driftByProject[n] === true).length;
+
+  return (
+    <div className="flex-1 h-full overflow-y-auto custom-scrollbar bg-bg-base">
+      {/* Top bar */}
+      <div className="h-11 px-6 border-b border-border-strong/40 flex items-center justify-between bg-bg-base/50 flex-shrink-0">
+        <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
+          Projects
+        </span>
+        <button
+          onClick={onCreate}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors shadow-sm"
+        >
+          <Plus size={12} /> New Project
+        </button>
+      </div>
+
+      <div className="p-6 space-y-5">
+        {/* Drift banner */}
+        {driftedCount > 0 && (
+          <div className="bg-warning/10 border border-warning/30 rounded-lg px-5 py-3 flex items-center gap-2.5 text-warning">
+            <AlertCircle size={14} className="flex-shrink-0" />
+            <span className="text-[13px] font-medium">
+              {driftedCount === 1
+                ? "1 project has drifted — agent config files are out of sync."
+                : `${driftedCount} projects have drifted — agent config files are out of sync.`}
+            </span>
+          </div>
+        )}
+
+        {/* Card grid */}
+        {projects.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-24 text-center">
+            <div className="w-16 h-16 rounded-2xl border border-dashed border-border-strong flex items-center justify-center mb-5">
+              <FolderOpen size={24} className="text-text-muted" />
+            </div>
+            <h2 className="text-[16px] font-semibold text-text-base mb-2">No projects yet</h2>
+            <p className="text-[13px] text-text-muted mb-6 leading-relaxed max-w-xs">
+              Projects group your agent configurations, skills, and MCP servers for a specific codebase.
+            </p>
+            <button
+              onClick={onCreate}
+              className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+            >
+              Create Project
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-4 gap-4 items-start">
+            {sorted.map((name) => (
+              <ProjectCard
+                key={name}
+                name={name}
+                project={projectDetails.get(name)}
+                drift={driftByProject[name]}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function Projects({ initialProject = null, onInitialProjectConsumed, onNavigateToSkill, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
@@ -740,9 +943,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   }, []);
   const [projects, setProjects] = useState<string[]>([]);
-  const [selectedName, setSelectedName] = useState<string | null>(() => {
-    return localStorage.getItem(LAST_PROJECT_KEY);
-  });
+  // Always start on the overview — do not restore a previously selected project.
+  const [selectedName, setSelectedName] = useState<string | null>(null);
 
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const isSidebarDragging = useRef(false);
@@ -811,6 +1013,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
   // Per-project drift indicator: true = drifted, false = clean, undefined = unknown
   const [driftByProject, setDriftByProject] = useState<Record<string, boolean>>({});
+
+  // Lightweight project details cache for the overview grid (name → Project)
+  const [projectDetailsMap, setProjectDetailsMap] = useState<Map<string, Project>>(new Map());
 
   // Drift diff modal state — null when closed
   const [driftDiffFile, setDriftDiffFile] = useState<{ file: DriftedFile; agentLabel: string } | null>(null);
@@ -901,21 +1106,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     return () => document.removeEventListener("mousedown", handler);
   }, [openInDropdownOpen]);
 
-  useEffect(() => {
-    // Skip when an external navigation (initialProject) is pending — let
-    // the initialProject effect handle selection instead of racing it.
-    if (projects.length === 0 || initialProject) {
-      return;
-    }
-
-    const preferred = selectedName && projects.includes(selectedName)
-      ? selectedName
-      : projects[0];
-
-    if (preferred && (!project || project.name !== preferred) && !isCreating) {
-      selectProject(preferred);
-    }
-  }, [projects]);
+  // No auto-select on load — the overview is the landing state.
+  // Projects are only selected via explicit user interaction or initialProject prop.
 
   // Navigate to a specific project when directed from another view (e.g. Agents)
   useEffect(() => {
@@ -1084,6 +1276,18 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       const ordered = applyStoredOrder(result);
       setProjects(ordered);
       setError(null);
+      // Populate the overview details map in the background
+      const entries = await Promise.all(
+        ordered.map(async (name) => {
+          try {
+            const raw: string = await invoke("read_project", { name });
+            return [name, JSON.parse(raw) as Project] as const;
+          } catch {
+            return null;
+          }
+        })
+      );
+      setProjectDetailsMap(new Map(entries.filter(Boolean) as [string, Project][]));
     } catch (err: any) {
       setError(`Failed to load projects: ${err}`);
     }
@@ -1334,6 +1538,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setSelectedName(name);
       localStorage.setItem(LAST_PROJECT_KEY, name);
       setProject(data);
+      setProjectDetailsMap((prev) => new Map(prev).set(name, data));
       setDirty(detectedDiffers);
       setIsCreating(false);
       setError(null);
@@ -1712,6 +1917,40 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
+  // Deselect: return to overview grid
+  const handleBackToOverview = () => {
+    setSelectedName(null);
+    localStorage.removeItem(LAST_PROJECT_KEY);
+    setProject(null);
+    setDirty(false);
+    setIsCreating(false);
+  };
+
+  // Show the full-width card grid when nothing is selected and we are not creating
+  if (!selectedName && !isCreating) {
+    return (
+      <>
+        <ProjectsOverview
+          projects={projects}
+          projectDetails={projectDetailsMap}
+          driftByProject={driftByProject}
+          onSelect={(name) => {
+            setSelectedName(name);
+            selectProject(name);
+          }}
+          onCreate={() => startCreate()}
+        />
+        {driftDiffFile && (
+          <DriftDiffModal
+            file={driftDiffFile.file}
+            agentLabel={driftDiffFile.agentLabel}
+            onClose={() => setDriftDiffFile(null)}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
     <>
     <div className="flex h-full w-full bg-bg-base">
@@ -1820,8 +2059,18 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         {project ? (
           <div className="flex-1 flex flex-col h-full">
             {/* Header */}
-            <div className="h-11 px-6 border-b border-border-strong/40 flex justify-between items-center">
-              <div className="flex items-center gap-3">
+            <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                {/* Back to overview */}
+                <button
+                  onClick={handleBackToOverview}
+                  className="flex items-center gap-1 text-text-muted hover:text-text-base transition-colors px-2 py-1 rounded hover:bg-bg-sidebar"
+                  title="Back to all projects"
+                >
+                  <ChevronLeft size={14} />
+                  <span className="text-[12px]">Projects</span>
+                </button>
+                <span className="text-border-strong/60 text-[12px]">/</span>
                 <FolderOpen size={14} className="text-text-muted" />
                 {isCreating ? (
                   <input
