@@ -204,6 +204,11 @@ function emptyProject(name: string): Project {
 interface ProjectsProps {
   initialProject?: string | null;
   onInitialProjectConsumed?: () => void;
+  /** Called when the user clicks "View in library" on a skill — navigates to the Skills page. */
+  onNavigateToSkill?: (skillName: string) => void;
+  /** When set, opens the new project wizard at step 3 with this template pre-selected. */
+  initialCreateWithTemplate?: string | null;
+  onInitialCreateWithTemplateConsumed?: () => void;
 }
 
 /**
@@ -715,7 +720,7 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
   );
 }
 
-export default function Projects({ initialProject = null, onInitialProjectConsumed }: ProjectsProps = {}) {
+export default function Projects({ initialProject = null, onInitialProjectConsumed, onNavigateToSkill, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
   const PROJECT_ORDER_KEY = "automatic.projects.order";
@@ -785,6 +790,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   const [wizardDiscovering, setWizardDiscovering] = useState(false);
   const [wizardDiscoveredAgents, setWizardDiscoveredAgents] = useState<string[]>([]);
+  /** Non-null when the wizard was launched from a "New project from template" action. */
+  const [wizardSourceTemplate, setWizardSourceTemplate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameName, setRenameName] = useState("");
@@ -917,6 +924,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       onInitialProjectConsumed?.();
     }
   }, [initialProject, projects]);
+
+  // Open the new-project wizard with a template pre-applied.
+  // (triggered from the "New project from template" action in ProjectTemplates)
+  useEffect(() => {
+    if (!initialCreateWithTemplate || availableProjectTemplates.length === 0) return;
+    const tmpl = availableProjectTemplates.find((t) => t.name === initialCreateWithTemplate);
+    if (!tmpl) return;
+    setWizardSourceTemplate(initialCreateWithTemplate);
+    onInitialCreateWithTemplateConsumed?.();
+    startCreate({ fromTemplate: tmpl });
+  }, [initialCreateWithTemplate, availableProjectTemplates]);
 
   // Reset drift state whenever the active project changes
   useEffect(() => {
@@ -1480,9 +1498,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
-  const startCreate = async () => {
+  const startCreate = async (opts?: { fromTemplate?: ProjectTemplate }) => {
     setSelectedName(null);
     localStorage.removeItem(LAST_PROJECT_KEY);
+    if (!opts?.fromTemplate) setWizardSourceTemplate(null);
     // Pre-populate agents from the "Default Agents" setting
     let defaultAgents: string[] = [];
     try {
@@ -1491,11 +1510,41 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     } catch {
       // Non-fatal — proceed with empty agents if settings can't be read
     }
-    setProject({ ...emptyProject(""), agents: defaultAgents });
+
+    // If launched from a template, merge its values into the initial project state
+    // so agents, skills, MCP servers etc. are pre-populated from the start.
+    const tmpl = opts?.fromTemplate;
+    const baseProject = { ...emptyProject(""), agents: defaultAgents };
+    const initialProject = tmpl
+      ? {
+          ...baseProject,
+          description: tmpl.description || "",
+          agents: [...new Set([...defaultAgents, ...tmpl.agents])],
+          skills: [...tmpl.skills],
+          mcp_servers: [...tmpl.mcp_servers],
+          providers: [...tmpl.providers],
+          ...(((tmpl.unified_instruction && tmpl.unified_instruction.trim()) || (tmpl.unified_rules || []).length > 0)
+            ? { instruction_mode: "unified" as const }
+            : {}),
+        }
+      : baseProject;
+
+    if (tmpl) {
+      const hasUnifiedContent = !!(tmpl.unified_instruction && tmpl.unified_instruction.trim());
+      const hasUnifiedRules = (tmpl.unified_rules || []).length > 0;
+      if (hasUnifiedContent || hasUnifiedRules) {
+        pendingUnifiedInstruction.current = {
+          content: tmpl.unified_instruction || "",
+          rules: tmpl.unified_rules || [],
+        };
+      }
+    }
+
+    setProject(initialProject);
     setDirty(true);
     setIsCreating(true);
     setNewName("");
-    setSelectedProjectTemplate(null);
+    setSelectedProjectTemplate(tmpl ? tmpl.name : null);
     setShowProjectTemplatePicker(false);
     setWizardStep(1);
     setWizardDiscoveredAgents([]);
@@ -1676,7 +1725,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
             Projects
           </span>
           <button
-            onClick={startCreate}
+            onClick={() => startCreate()}
             className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
             title="Create New Project"
           >
@@ -1824,7 +1873,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   </button>
                 )}
                 {/* Apply Template button */}
-                {!isCreating && availableProjectTemplates.length > 0 && (
+                {!isCreating && selectedName && (
                   <button
                     onClick={() => setShowProjectTemplatePicker((v) => !v)}
                     title="Apply a project template"
@@ -1958,7 +2007,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
             )}
 
             {/* ── Apply Template panel (shown from title bar button) ── */}
-            {!isCreating && showProjectTemplatePicker && availableProjectTemplates.length > 0 && (
+            {!isCreating && showProjectTemplatePicker && (
               <div className="border-b border-border-strong/40 bg-bg-input/50 px-6 py-3">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[12px] font-semibold text-text-base">Apply Project Template</span>
@@ -1969,32 +2018,38 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     <X size={13} />
                   </button>
                 </div>
-                <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
-                  {availableProjectTemplates.map((tmpl) => {
-                    const isSelected = selectedProjectTemplate === tmpl.name;
-                    return (
-                      <button
-                        key={tmpl.name}
-                        onClick={() => applyProjectTemplate(tmpl)}
-                        className={`text-left px-3 py-2 rounded-md transition-colors flex items-start gap-2 border ${
-                          isSelected ? "bg-brand/15 border-brand/40" : "bg-bg-sidebar hover:bg-surface border-border-strong/30 hover:border-border-strong"
-                        }`}
-                      >
-                        <LayoutTemplate size={13} className={`mt-0.5 shrink-0 ${isSelected ? "text-brand" : "text-text-muted"}`} />
-                        <div className="min-w-0">
-                          <div className="text-[12px] font-medium text-text-base truncate">{tmpl.name}</div>
-                          {tmpl.description && <div className="text-[11px] text-text-muted truncate">{tmpl.description}</div>}
-                          <div className="flex items-center gap-2 mt-1">
-                            {tmpl.agents.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.agents.length} agents</span>}
-                            {tmpl.skills.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.skills.length} skills</span>}
-                            {tmpl.mcp_servers.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.mcp_servers.length} MCP</span>}
+                {availableProjectTemplates.length === 0 ? (
+                  <p className="text-[12px] text-text-muted py-2">
+                    No project templates yet. Create one in the Project Templates section.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
+                    {availableProjectTemplates.map((tmpl) => {
+                      const isSelected = selectedProjectTemplate === tmpl.name;
+                      return (
+                        <button
+                          key={tmpl.name}
+                          onClick={() => applyProjectTemplate(tmpl)}
+                          className={`text-left px-3 py-2 rounded-md transition-colors flex items-start gap-2 border ${
+                            isSelected ? "bg-brand/15 border-brand/40" : "bg-bg-sidebar hover:bg-surface border-border-strong/30 hover:border-border-strong"
+                          }`}
+                        >
+                          <LayoutTemplate size={13} className={`mt-0.5 shrink-0 ${isSelected ? "text-brand" : "text-text-muted"}`} />
+                          <div className="min-w-0">
+                            <div className="text-[12px] font-medium text-text-base truncate">{tmpl.name}</div>
+                            {tmpl.description && <div className="text-[11px] text-text-muted truncate">{tmpl.description}</div>}
+                            <div className="flex items-center gap-2 mt-1">
+                              {tmpl.agents.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.agents.length} agents</span>}
+                              {tmpl.skills.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.skills.length} skills</span>}
+                              {tmpl.mcp_servers.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.mcp_servers.length} MCP</span>}
+                            </div>
                           </div>
-                        </div>
-                        {isSelected && <Check size={12} className="text-brand shrink-0 mt-0.5 ml-auto" />}
-                      </button>
-                    );
-                  })}
-                </div>
+                          {isSelected && <Check size={12} className="text-brand shrink-0 mt-0.5 ml-auto" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
@@ -2002,6 +2057,16 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
             {isCreating && (
               <div className="flex-1 flex flex-col items-center justify-center p-8">
                 <div className="w-full max-w-md">
+
+                  {/* Template source badge */}
+                  {wizardSourceTemplate && (
+                    <div className="flex items-center justify-center gap-2 mb-5">
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-brand/10 border border-brand/30 rounded-full">
+                        <LayoutTemplate size={12} className="text-brand" />
+                        <span className="text-[12px] text-brand font-medium">From template: {wizardSourceTemplate}</span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Step indicator */}
                   <div className="flex items-center justify-center gap-2 mb-8">
@@ -2084,18 +2149,30 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 // Run read-only autodetection
                                 const raw: string = await invoke("autodetect_project_dependencies", { name });
                                 const detected = JSON.parse(raw) as Project;
-                                // Merge default agents (already set on project from startCreate)
-                                // with autodetected agents so neither source is lost.
+                                // Merge: start from current project state (which holds any
+                                // template-applied skills/MCP/agents), then add autodetected
+                                // items on top. Use emptyProject only for structural defaults.
+                                const currentProject = project ?? emptyProject(name);
                                 const mergedAgents = [
-                                  ...new Set([...(project?.agents ?? []), ...detected.agents]),
+                                  ...new Set([...currentProject.agents, ...detected.agents]),
                                 ];
-                                // Pre-fill wizard project with discovered agents/skills/servers
+                                const mergedSkills = [
+                                  ...new Set([...currentProject.skills, ...detected.skills]),
+                                ];
+                                const mergedMcp = [
+                                  ...new Set([...currentProject.mcp_servers, ...detected.mcp_servers]),
+                                ];
+                                const mergedLocalSkills = [
+                                  ...new Set([...(currentProject.local_skills ?? []), ...detected.local_skills]),
+                                ];
                                 setProject({
-                                  ...stub,
+                                  ...currentProject,
+                                  name,
+                                  directory: dir,
                                   agents: mergedAgents,
-                                  skills: detected.skills,
-                                  local_skills: detected.local_skills,
-                                  mcp_servers: detected.mcp_servers,
+                                  skills: mergedSkills,
+                                  local_skills: mergedLocalSkills,
+                                  mcp_servers: mergedMcp,
                                 });
                                 setWizardDiscoveredAgents(detected.agents);
                                 setWizardStep(2);
@@ -2924,13 +3001,69 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <>
                     {/* Global Skills */}
                      <section>
-                       <SkillSelector
-                         skills={project.skills}
-                         availableSkills={availableSkills}
-                         onAdd={(s) => addItem("skills", s)}
-                         onRemove={(i) => removeItem("skills", i)}
-                         emptyMessage="No skills attached."
-                       />
+                        <SkillSelector
+                          skills={project.skills}
+                          availableSkills={availableSkills}
+                          onAdd={(s) => addItem("skills", s)}
+                          onRemove={(i) => removeItem("skills", i)}
+                          emptyMessage="No skills attached."
+                          onReadSkill={async (skillName) => {
+                            const content: string = await invoke("read_skill", { name: skillName });
+                            return content;
+                          }}
+                          onNavigateToSkill={onNavigateToSkill}
+                          onForkSkill={async (skillName, content) => {
+                            if (!selectedName) return;
+                            try {
+                              // A project directory is required so the skill file has
+                              // somewhere to live. Give a clear error rather than letting
+                              // the backend fail with a cryptic message.
+                              if (!project.directory) {
+                                throw new Error("Set a project directory before forking a skill to local.");
+                              }
+
+                              // save_local_skill reads the project from disk, so flush
+                              // current state first so agents/directory are up to date.
+                              const toSave = {
+                                ...project,
+                                name: selectedName,
+                                updated_at: new Date().toISOString(),
+                              };
+                              await invoke("save_project", {
+                                name: selectedName,
+                                data: JSON.stringify(toSave, null, 2),
+                              });
+                              setDirty(false);
+
+                              // Write the skill content into the project's local skill directory
+                              await invoke("save_local_skill", { name: selectedName, skillName, content });
+
+                              // Promote: move from global skills → local_skills in project state + disk
+                              const updatedGlobalSkills = project.skills.filter((s) => s !== skillName);
+                              const alreadyLocal = project.local_skills.includes(skillName);
+                              const updatedLocalSkills = alreadyLocal
+                                ? project.local_skills
+                                : [...project.local_skills, skillName];
+                              const forkedProject = {
+                                ...project,
+                                name: selectedName,
+                                skills: updatedGlobalSkills,
+                                local_skills: updatedLocalSkills,
+                                updated_at: new Date().toISOString(),
+                              };
+                              await invoke("save_project", {
+                                name: selectedName,
+                                data: JSON.stringify(forkedProject, null, 2),
+                              });
+                              setProject(forkedProject);
+                              setDirty(false);
+                              setSyncStatus(`Forked "${skillName}" to local skills`);
+                              setTimeout(() => setSyncStatus(null), 4000);
+                            } catch (err: any) {
+                              setError(`Fork failed: ${err}`);
+                            }
+                          }}
+                        />
                      </section>
 
                     {/* Local Skills */}
@@ -3327,7 +3460,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
               project.
             </p>
             <button
-              onClick={startCreate}
+              onClick={() => startCreate()}
               className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
             >
               Create Project
