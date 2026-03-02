@@ -556,10 +556,10 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
                             isDrifted ? "hover:bg-warning/5" : "hover:bg-surface-hover"
                           }`}
                         >
-                          <FolderOpen size={14} className={`shrink-0 ${isDrifted ? "text-warning" : "text-brand"}`} />
+                          <FolderOpen size={14} className={`shrink-0 ${isDrifted ? "text-warning" : "text-icon-agent"}`} />
 
                           <span className={`text-[12px] font-medium text-text-base truncate min-w-0 transition-colors ${
-                            isDrifted ? "group-hover:text-warning" : "group-hover:text-brand"
+                            isDrifted ? "group-hover:text-warning" : "group-hover:text-icon-agent"
                           }`}>{project.name}</span>
 
                           <div className="ml-auto flex items-center gap-2 shrink-0">

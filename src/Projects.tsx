@@ -786,7 +786,7 @@ function ProjectCard({
       <div className="flex items-center gap-2">
         <FolderOpen
           size={14}
-          className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-brand"}`}
+          className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-icon-agent"}`}
         />
         <span className="text-[13px] font-semibold text-text-base truncate flex-1">{name}</span>
         {isConfigured && <div className="flex-shrink-0 ml-auto"><ProjectStatusBadge drift={drift} /></div>}
