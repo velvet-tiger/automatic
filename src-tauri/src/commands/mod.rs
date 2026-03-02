@@ -1,4 +1,6 @@
+mod ai;
 mod credentials;
+mod flags;
 mod profile;
 mod settings;
 mod skills;
@@ -13,7 +15,9 @@ mod memory;
 mod misc;
 mod oauth;
 
+pub use ai::*;
 pub use credentials::*;
+pub use flags::*;
 pub use profile::*;
 pub use settings::*;
 pub use skills::*;

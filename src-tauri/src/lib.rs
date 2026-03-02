@@ -41,9 +41,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            ai_chat,
             resolve_author,
             read_profile,
             save_profile,
+            get_feature_flags,
             read_settings,
             write_settings,
             save_api_key,

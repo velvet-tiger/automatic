@@ -1,6 +1,8 @@
+pub mod ai;
 mod author;
 mod credentials;
 mod editors;
+mod flags;
 mod integrations;
 mod mcp_servers;
 mod paths;
@@ -19,6 +21,7 @@ mod types;
 
 pub use author::*;
 pub use credentials::*;
+pub use flags::*;
 pub use editors::*;
 pub use integrations::*;
 pub use mcp_servers::*;
