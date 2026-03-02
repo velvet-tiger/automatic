@@ -456,11 +456,10 @@ export default function McpServers() {
           <div className="bg-amber-500/10 text-amber-400 p-3 text-[13px] border-b border-amber-500/20 flex items-start gap-3">
             <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
             <div className="flex-1">
-              <div className="font-medium mb-1">MCP Access Issue with OpenCode</div>
+              <div className="font-medium mb-1">OpenCode Restart Required for New MCP Servers</div>
               <div className="text-[12px] text-amber-300/90 leading-relaxed">
                 The following project{opencodeWarning.length > 1 ? 's are' : ' is'} using OpenCode with MCP servers configured: <span className="font-medium">{opencodeWarning.join(", ")}</span>. 
-                MCP server access is currently broken in Claude when using OpenCode. 
-                MCP servers will be written to opencode.json but may not function correctly until this issue is resolved.
+                OpenCode requires a restart to pick up new MCP servers. After syncing, restart OpenCode for any newly added servers to become available.
               </div>
             </div>
             <button onClick={() => setOpencodeWarning([])} className="text-amber-300 hover:text-amber-200">

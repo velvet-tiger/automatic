@@ -143,7 +143,7 @@ impl Agent for OpenCode {
     // ── MCP capability ──────────────────────────────────────────────────
 
     fn mcp_note(&self) -> Option<&'static str> {
-        Some("MCP server access is currently broken in Claude when using OpenCode. MCP servers configured here will be written to opencode.json but may not function correctly until this issue is resolved.")
+        Some("OpenCode requires a restart to pick up new MCP servers. After syncing, restart OpenCode for any newly added MCP servers to become available.")
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

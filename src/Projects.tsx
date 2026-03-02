@@ -3404,6 +3404,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   const hasWarp = project.agents.includes("warp");
                   const warpOnly = hasWarp && project.agents.length === 1;
                   const warpNote = availableAgents.find((a) => a.id === "warp")?.mcp_note ?? null;
+                  const hasOpenCode = project.agents.includes("opencode");
+                  const openCodeNote = availableAgents.find((a) => a.id === "opencode")?.mcp_note ?? null;
                   return (
                   <section>
                     {/* Warp-only: MCP config not available */}
@@ -3424,6 +3426,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         <div>
                           <p className="text-[13px] font-medium text-warning mb-0.5">Warp requires manual MCP setup</p>
                           <p className="text-[12px] text-warning/80 leading-relaxed">{warpNote}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* OpenCode: restart required for new MCP servers */}
+                    {hasOpenCode && openCodeNote && (
+                      <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-warning/8 border border-warning/30 rounded-lg">
+                        <AlertCircle size={15} className="text-warning flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-[13px] font-medium text-warning mb-0.5">OpenCode restart required</p>
+                          <p className="text-[12px] text-warning/80 leading-relaxed">{openCodeNote}</p>
                         </div>
                       </div>
                     )}
