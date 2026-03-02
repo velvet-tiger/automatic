@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use crate::agent;
 use crate::core::Project;
 
-use super::helpers::{find_automatic_binary, load_mcp_server_configs, load_skill_contents};
+use super::helpers::{build_selected_servers, load_mcp_server_configs, load_skill_contents};
 
 // ── Drift types ───────────────────────────────────────────────────────────────
 
@@ -62,23 +62,10 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         });
     }
 
-    // Build the MCP server map that sync would use
+    // Build the MCP server map using the same logic as the sync engine
+    // (strips internal `_` fields, substitutes OAuth proxy configs).
     let mcp_config = load_mcp_server_configs()?;
-    let mut selected_servers = Map::new();
-    let automatic_binary = find_automatic_binary();
-    selected_servers.insert(
-        "automatic".to_string(),
-        json!({
-            "command": automatic_binary,
-            "args": ["mcp-serve"],
-            "env": { "AUTOMATIC_PROJECT": project.name }
-        }),
-    );
-    for server_name in &project.mcp_servers {
-        if let Some(server_config) = mcp_config.get(server_name) {
-            selected_servers.insert(server_name.clone(), server_config.clone());
-        }
-    }
+    let selected_servers = build_selected_servers(&project.name, &project.mcp_servers, &mcp_config);
 
     let skill_contents = load_skill_contents(&project.skills);
 

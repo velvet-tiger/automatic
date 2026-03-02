@@ -1,4 +1,3 @@
-use serde_json::{json, Map};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
@@ -8,7 +7,7 @@ use crate::core::Project;
 
 use super::autodetect::autodetect_inner;
 use super::helpers::{
-    clean_project_file, find_automatic_binary, load_mcp_server_configs, load_skill_contents,
+    build_selected_servers, clean_project_file, load_mcp_server_configs, load_skill_contents,
 };
 
 /// Discover MCP server configurations from specific agents' existing on-disk
@@ -81,33 +80,12 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
         let _ = crate::core::save_project(&project.name, &proj_str);
     }
 
-    // Read MCP server configs from the Automatic registry
+    // Read MCP server configs from the Automatic registry and build the
+    // selected server map (includes stripping internal fields and OAuth proxy
+    // substitution).  Uses the shared helper so drift detection produces
+    // identical output.
     let mcp_config = load_mcp_server_configs()?;
-
-    // Build the set of MCP servers this project uses (+ always include Automatic)
-    let mut selected_servers = Map::new();
-
-    // Always include Automatic MCP server
-    let automatic_binary = find_automatic_binary();
-    selected_servers.insert(
-        "automatic".to_string(),
-        json!({
-            "command": automatic_binary,
-            "args": ["mcp-serve"],
-            "env": {
-                "AUTOMATIC_PROJECT": project.name
-            }
-        }),
-    );
-
-    // Add project-selected MCP servers from the Automatic registry.
-    // Strip Automatic-internal fields (prefixed with `_`) before writing to agent files.
-    for server_name in &project.mcp_servers {
-        if let Some(server_config) = mcp_config.get(server_name) {
-            let cleaned = strip_internal_fields(server_config.clone());
-            selected_servers.insert(server_name.clone(), cleaned);
-        }
-    }
+    let selected_servers = build_selected_servers(&project.name, &project.mcp_servers, &mcp_config);
 
     // Read all skill contents from the global skill registry
     let skill_contents = load_skill_contents(&project.skills);
@@ -233,14 +211,4 @@ pub fn sync_project_without_autodetect(project: &Project) -> Result<Vec<String>,
     }
 
     Ok(written_files)
-}
-
-/// Remove fields whose names start with `_` from a JSON object.
-/// These are Automatic-internal metadata fields (e.g. `_author`) that should
-/// never be written to agent configuration files.
-fn strip_internal_fields(mut value: serde_json::Value) -> serde_json::Value {
-    if let serde_json::Value::Object(ref mut map) = value {
-        map.retain(|key, _| !key.starts_with('_'));
-    }
-    value
 }
