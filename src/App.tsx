@@ -410,7 +410,12 @@ function App() {
           )}
           {activeTab === "skills" && (
             <div className="flex-1 h-full">
-              <Skills initialSkill={pendingSkill} onInitialSkillConsumed={() => setPendingSkill(null)} />
+              <Skills
+                initialSkill={pendingSkill}
+                onInitialSkillConsumed={() => setPendingSkill(null)}
+                onNavigateToProject={navigateToProject}
+                onNavigateToTemplate={navigateToTemplate}
+              />
             </div>
           )}
           {activeTab === "skill-store" && (

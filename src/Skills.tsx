@@ -22,6 +22,8 @@ import {
   HardDrive,
   Github,
   Search,
+  FolderOpen,
+  LayoutTemplate,
 } from "lucide-react";
 import { ICONS } from "./icons";
 
@@ -36,6 +38,11 @@ interface SkillEntry {
   in_claude: boolean;
   source?: SkillSource;
   has_resources: boolean;
+}
+
+interface SkillUsedBy {
+  projects: string[];
+  templates: string[];
 }
 
 interface ResourceFile {
@@ -280,7 +287,18 @@ Write your skill instructions here. These will be loaded by agents when the skil
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function Skills() {
+interface SkillsProps {
+  /** Pre-select this skill when the component mounts / when it changes. */
+  initialSkill?: string | null;
+  /** Called once the initial skill has been applied so the parent can clear it. */
+  onInitialSkillConsumed?: () => void;
+  /** Navigate to the Projects tab, pre-selecting the given project. */
+  onNavigateToProject?: (name: string) => void;
+  /** Navigate to the Project Templates tab, pre-selecting the given template. */
+  onNavigateToTemplate?: (name: string) => void;
+}
+
+export default function Skills({ initialSkill = null, onInitialSkillConsumed, onNavigateToProject, onNavigateToTemplate }: SkillsProps = {}) {
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [skillContent, setSkillContent] = useState("");
@@ -299,6 +317,9 @@ export default function Skills() {
   // Companion resources for the selected skill
   const [skillResources, setSkillResources] = useState<SkillResources | null>(null);
 
+  // Projects and templates that reference the selected skill
+  const [skillUsedBy, setSkillUsedBy] = useState<SkillUsedBy | null>(null);
+
   // Frontmatter field state for the edit panel (existing skills)
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -307,6 +328,18 @@ export default function Skills() {
   const [editBody, setEditBody] = useState("");
 
   useEffect(() => { loadSkills(); }, []);
+
+  // Navigate to the skill specified by the parent (e.g. "View in library" from Projects)
+  useEffect(() => {
+    if (!initialSkill) return;
+    // Wait until skills are loaded, then select the requested one
+    if (skills.length === 0) return;
+    const exists = skills.some((s) => s.name === initialSkill);
+    if (exists) {
+      loadSkillContent(initialSkill);
+    }
+    onInitialSkillConsumed?.();
+  }, [initialSkill, skills]);
 
   // ── Resize ────────────────────────────────────────────────────────────────
 
@@ -348,13 +381,35 @@ export default function Skills() {
 
   const loadSkillContent = async (name: string) => {
     try {
-      const [content, resources] = await Promise.all([
+      const [content, resources, projectNames, templateNames] = await Promise.all([
         invoke<string>("read_skill", { name }),
         invoke<SkillResources>("get_skill_resources", { name }),
+        invoke<string[]>("get_projects"),
+        invoke<string[]>("get_project_templates"),
       ]);
       setSelectedSkill(name);
       setSkillContent(content);
       setSkillResources(resources);
+
+      // Resolve which projects and templates reference this skill.
+      // Both commands return a raw JSON string (double-encoded by Tauri), so we parse manually.
+      const [projectDetails, templateDetails] = await Promise.all([
+        Promise.all(projectNames.map(n =>
+          invoke<string>("read_project", { name: n })
+            .then(raw => { const p = JSON.parse(raw); return { name: n, skills: Array.isArray(p.skills) ? p.skills as string[] : [] }; })
+            .catch(() => null)
+        )),
+        Promise.all(templateNames.map(n =>
+          invoke<string>("read_project_template", { name: n })
+            .then(raw => { const t = JSON.parse(raw); return { name: n, skills: Array.isArray(t.skills) ? t.skills as string[] : [] }; })
+            .catch(() => null)
+        )),
+      ]);
+
+      const usingProjects = projectDetails.filter(p => p && p.skills.includes(name)).map(p => p!.name);
+      const usingTemplates = templateDetails.filter(t => t && t.skills.includes(name)).map(t => t!.name);
+      setSkillUsedBy({ projects: usingProjects, templates: usingTemplates });
+
       // Parse frontmatter into edit fields
       const { meta, body } = parseFrontmatter(content);
       setEditName(meta.name ?? name);
@@ -416,7 +471,7 @@ export default function Skills() {
     try {
       await invoke("delete_skill", { name });
       trackSkillDeleted(name);
-      if (selectedSkill === name) { setSelectedSkill(null); setSkillContent(""); setIsEditing(false); }
+      if (selectedSkill === name) { setSelectedSkill(null); setSkillContent(""); setSkillUsedBy(null); setIsEditing(false); }
       await loadSkills();
       setError(null);
     } catch (err: any) {
@@ -456,6 +511,7 @@ export default function Skills() {
     setEditBody(DEFAULT_SKILL_BODY);
     setSkillContent("");
     setSkillResources(null);
+    setSkillUsedBy(null);
     setFieldErrors({ name: null, description: null });
     setIsCreating(true);
     setIsEditing(true);
@@ -930,13 +986,67 @@ export default function Skills() {
                   </div>
                 </>
               ) : skillContent ? (
-                /* Rich preview for all skills */
-                <div className="h-full overflow-y-auto custom-scrollbar">
-                  <SkillPreview
-                    content={skillContent}
-                    source={selectedEntry?.source}
-                    resources={skillResources}
-                  />
+                /* Rich preview — skill content + right "Used By" sidebar */
+                <div className="flex h-full min-h-0">
+                  {/* Main scrollable content */}
+                  <div className="flex-1 overflow-y-auto custom-scrollbar min-w-0">
+                    <SkillPreview
+                      content={skillContent}
+                      source={selectedEntry?.source}
+                      resources={skillResources}
+                    />
+                  </div>
+
+                  {/* ── Right "Used By" sidebar ─────────────────────────── */}
+                  {skillUsedBy && (skillUsedBy.projects.length > 0 || skillUsedBy.templates.length > 0) && (
+                    <div className="w-52 flex-shrink-0 border-l border-border-strong/40 bg-bg-input/40 flex flex-col overflow-y-auto custom-scrollbar">
+                      <div className="px-3 py-2.5 border-b border-border-strong/40 shrink-0">
+                        <p className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">Used By</p>
+                      </div>
+
+                      <div className="flex-1 py-1">
+                        {/* Projects section */}
+                        {skillUsedBy.projects.length > 0 && (
+                          <div>
+                            <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-text-muted/70 tracking-wider uppercase">
+                              Projects
+                            </p>
+                            {skillUsedBy.projects.map(name => (
+                              <button
+                                key={`project-${name}`}
+                                onClick={() => onNavigateToProject?.(name)}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-bg-sidebar/60 transition-colors group"
+                                title={`Open project: ${name}`}
+                              >
+                                <FolderOpen size={12} className="shrink-0 text-brand" />
+                                <span className="flex-1 text-[12px] text-text-base truncate group-hover:text-brand transition-colors">{name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Templates section */}
+                        {skillUsedBy.templates.length > 0 && (
+                          <div className={skillUsedBy.projects.length > 0 ? "mt-1" : ""}>
+                            <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-text-muted/70 tracking-wider uppercase">
+                              Templates
+                            </p>
+                            {skillUsedBy.templates.map(name => (
+                              <button
+                                key={`template-${name}`}
+                                onClick={() => onNavigateToTemplate?.(name)}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-bg-sidebar/60 transition-colors group"
+                                title={`Open template: ${name}`}
+                              >
+                                <LayoutTemplate size={12} className="shrink-0 text-accent" />
+                                <span className="flex-1 text-[12px] text-text-base truncate group-hover:text-accent transition-colors">{name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="h-full flex items-center justify-center">
