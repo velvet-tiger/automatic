@@ -94,9 +94,9 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
       helpText:
         "Agents are AI tools like Claude Code, Cursor, or custom bots linked to your projects. Automatic syncs configuration to each agent's expected directory.",
       icon: Bot,
-      iconColorClass: "text-brand",
-      iconBgClass: "bg-brand/10 group-hover:bg-brand/20",
-      borderHoverClass: "hover:border-brand/50",
+      iconColorClass: "text-icon-agent",
+      iconBgClass: "bg-icon-agent/10 group-hover:bg-icon-agent/20",
+      borderHoverClass: "hover:border-icon-agent/50",
       count: counts.agents ?? null,
       countLabel: "configured",
       primaryAction: { label: "View Agents", tab: "agents" },
