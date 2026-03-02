@@ -254,6 +254,7 @@ export default function ProjectTemplates({
         project_files: parsed.project_files || [],
         unified_instruction: parsed.unified_instruction || "",
         unified_rules: parsed.unified_rules === undefined ? ["automatic-service"] : parsed.unified_rules,
+        _author: parsed._author,
       });
       setUnifiedEditing(false);
       setDirty(false);
@@ -269,7 +270,8 @@ export default function ProjectTemplates({
 
   const updateField = <K extends keyof ProjectTemplate>(key: K, value: ProjectTemplate[K]) => {
     if (!template) return;
-    setTemplate({ ...template, [key]: value });
+    // Editing the template transfers authorship to the local user — clear any imported author.
+    setTemplate({ ...template, [key]: value, _author: undefined });
     setDirty(true);
   };
 
