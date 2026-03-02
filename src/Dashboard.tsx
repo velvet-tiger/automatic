@@ -15,6 +15,9 @@ import {
   Download,
   Cloud,
   Monitor,
+  Zap,
+  Copy,
+  Compass,
 } from "lucide-react";
 import { SkillAvatar } from "./SkillAvatar";
 
@@ -252,6 +255,109 @@ function TypeBadge({ type }: { type: FeaturedItem["type"] }) {
       {meta.icon}
       {meta.label}
     </span>
+  );
+}
+
+// ── Use Cases Section ─────────────────────────────────────────────────────────
+
+interface UseCaseAction {
+  label: string;
+  tab: string;
+}
+
+interface UseCase {
+  icon: React.ReactNode;
+  accentBg: string;
+  accentText: string;
+  accentBorder: string;
+  title: string;
+  goal: string;
+  actions: UseCaseAction[];
+}
+
+const USE_CASES: UseCase[] = [
+  {
+    icon: <Zap size={18} />,
+    accentBg: "bg-brand/10",
+    accentText: "text-brand",
+    accentBorder: "border-brand/20",
+    title: "Ship higher-quality AI code",
+    goal: "Your agent produces inconsistent results and doesn't follow your conventions. Give it the context it needs to work the way you do.",
+    actions: [
+      { label: "Create a project", tab: "projects" },
+      { label: "Add skills for your stack", tab: "skills" },
+      { label: "Write rules & instructions", tab: "rules" },
+    ],
+  },
+  {
+    icon: <Copy size={18} />,
+    accentBg: "bg-icon-file-template/10",
+    accentText: "text-icon-file-template",
+    accentBorder: "border-icon-file-template/20",
+    title: "Reuse your setup everywhere",
+    goal: "You've found patterns that work, but rebuilding them for each project wastes time. Capture them once and share them across every agent and project.",
+    actions: [
+      { label: "Create reusable instructions", tab: "templates" },
+      { label: "Define shared rules", tab: "rules" },
+      { label: "Build project templates", tab: "project-templates" },
+    ],
+  },
+  {
+    icon: <Compass size={18} />,
+    accentBg: "bg-icon-mcp/10",
+    accentText: "text-icon-mcp",
+    accentBorder: "border-icon-mcp/20",
+    title: "Discover the best tools",
+    goal: "The ecosystem moves fast. Find proven skills, pre-built project setups, and MCP servers that give your agents new capabilities without starting from scratch.",
+    actions: [
+      { label: "Browse the skill library", tab: "skill-store" },
+      { label: "Explore project templates", tab: "template-marketplace" },
+      { label: "Connect MCP servers", tab: "mcp-marketplace" },
+    ],
+  },
+];
+
+function UseCasesSection({ onNavigate }: { onNavigate: (tab: string) => void }) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <Sparkles size={13} className="text-brand" />
+        <h2 className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">How Automatic helps</h2>
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        {USE_CASES.map((uc) => (
+          <div
+            key={uc.title}
+            className="bg-bg-input border border-border-strong/40 rounded-xl p-5 flex flex-col"
+          >
+            {/* Icon + title */}
+            <div className="flex items-start gap-3 mb-3">
+              <div className={`p-2 rounded-lg flex-shrink-0 ${uc.accentBg} border ${uc.accentBorder}`}>
+                <span className={uc.accentText}>{uc.icon}</span>
+              </div>
+              <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">{uc.title}</h3>
+            </div>
+
+            {/* Problem framing */}
+            <p className="text-[12px] text-text-muted leading-relaxed flex-1 mb-4">{uc.goal}</p>
+
+            {/* Action steps */}
+            <div className="space-y-1">
+              {uc.actions.map((action) => (
+                <button
+                  key={action.label}
+                  onClick={() => onNavigate(action.tab)}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-[12px] font-medium transition-all group bg-bg-sidebar border border-transparent hover:border-border-strong/60 hover:bg-surface-hover ${uc.accentText}`}
+                >
+                  <span className="text-text-base group-hover:text-text-base transition-colors">{action.label}</span>
+                  <ArrowRight size={11} className={`flex-shrink-0 opacity-40 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all ${uc.accentText}`} />
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -555,7 +661,11 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
           </div>
         </div>
 
-        {/* Featured Section */}
+        {/* Use Cases Section */}
+        <UseCasesSection onNavigate={onNavigate} />
+
+        {/* Featured Section — hidden for now */}
+        {false && (
         <div>
           <div className="flex items-center gap-2 mb-3">
             <Star size={13} className="text-brand" />
@@ -573,6 +683,7 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
             ))}
           </div>
         </div>
+        )}
 
         {/* Discover & Extend — full-width across the bottom */}
         <div>
