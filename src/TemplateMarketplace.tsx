@@ -668,24 +668,26 @@ export default function TemplateMarketplace({ resetKey, onNavigateToTemplate }: 
           </div>
 
           {/* Search */}
-          <div className="relative mb-6">
-            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by name, category, or tag…"
-              autoFocus
-              className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-xl pl-11 pr-10 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm"
-            />
-            {query && (
-              <button
-                onClick={() => setQuery("")}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
-              >
-                <X size={14} />
-              </button>
-            )}
+          <div className="max-w-2xl mx-auto w-full mb-6">
+            <div className="relative">
+              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by name, category, or tag…"
+                autoFocus
+                className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-xl pl-11 pr-10 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm"
+              />
+              {query && (
+                <button
+                  onClick={() => setQuery("")}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Results */}

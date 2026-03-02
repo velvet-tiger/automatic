@@ -525,31 +525,33 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
               </p>
             </div>
 
-            {/* Big search box */}
-            <div className="relative mb-3">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search for skills…"
-                autoFocus
-                className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-xl pl-11 pr-4 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm"
-              />
-            </div>
+            {/* Search + sample chips */}
+            <div className="max-w-2xl mx-auto w-full mb-6">
+              <div className="relative mb-3">
+                <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search for skills…"
+                  autoFocus
+                  className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-icon-skill rounded-xl pl-11 pr-4 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm"
+                />
+              </div>
 
-            {/* Sample searches */}
-            <div className="flex flex-wrap gap-2 justify-center mb-6">
-              {SAMPLE_SEARCHES.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setQuery(s)}
-                  className="px-3 py-1.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[12px] text-text-muted hover:text-text-base hover:border-border-strong transition-colors"
-                >
-                  {s}
-                </button>
-              ))}
+              {/* Sample searches */}
+              <div className="flex flex-wrap gap-2 justify-center">
+                {SAMPLE_SEARCHES.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setQuery(s)}
+                    className="px-3 py-1.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[12px] text-text-muted hover:text-text-base hover:border-border-strong transition-colors"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Featured skills */}
