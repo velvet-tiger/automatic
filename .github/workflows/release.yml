@@ -101,6 +101,8 @@ jobs:
           AC_USERNAME: ${{ secrets.APPLE_ID }}
           AC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           AC_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Brandfetch CDN client ID — inlined into the JS bundle at build time by Vite
+          VITE_BRANDFETCH_CLIENT_ID: ${{ secrets.VITE_BRANDFETCH_CLIENT_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Automatic ${{ github.ref_name }}
@@ -123,5 +125,7 @@ jobs:
           AC_USERNAME: ${{ secrets.APPLE_ID }}
           AC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           AC_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Brandfetch CDN client ID — inlined into the JS bundle at build time by Vite
+          VITE_BRANDFETCH_CLIENT_ID: ${{ secrets.VITE_BRANDFETCH_CLIENT_ID }}
         with:
           args: ${{ matrix.args }}
