@@ -1077,5 +1077,45 @@
       "method": "none",
       "env_vars": []
     }
+  },
+  {
+    "slug": "amplitude",
+    "name": "com.amplitude/mcp",
+    "title": "Amplitude",
+    "description": "Query and create Amplitude content including charts, dashboards, experiments, and cohorts using natural language.",
+    "provider": "Amplitude",
+    "icon": "amplitude.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://amplitude.com/docs/amplitude-ai/amplitude-mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.amplitude.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "amplitude-eu",
+    "name": "com.amplitude/mcp-eu",
+    "title": "Amplitude (EU)",
+    "description": "Query and create Amplitude content including charts, dashboards, experiments, and cohorts using natural language. For Amplitude accounts with EU data residency.",
+    "provider": "Amplitude",
+    "icon": "amplitude.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://amplitude.com/docs/amplitude-ai/amplitude-mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.eu.amplitude.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
   }
 ]

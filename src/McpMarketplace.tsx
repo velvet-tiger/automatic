@@ -20,6 +20,7 @@ import {
   Download,
   CheckCircle2,
   Loader2,
+  BookOpen,
 } from "lucide-react";
 import serversData from "./featured-mcp-servers.json";
 
@@ -41,6 +42,8 @@ interface McpServer {
   icon?: string;
   classification: string;
   repository_url: string | null;
+  /** Optional link to the provider's documentation or setup guide for this server */
+  docs_url?: string | null;
   remote: { transport: string; url: string } | null;
   local: {
     registry: string;
@@ -395,6 +398,19 @@ export default function McpMarketplace({
                   <ExternalLink size={10} />
                 </a>
               )}
+              {selected.docs_url && (
+                <a
+                  href={selected.docs_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-[12px] hover:text-text-base transition-colors"
+                  style={{ color: ACCENT }}
+                >
+                  <BookOpen size={12} />
+                  Documentation
+                  <ExternalLink size={10} />
+                </a>
+              )}
               <div className="flex items-center gap-1.5 text-[12px] text-text-muted">
                 {hasRemote(selected) && (
                   <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-icon-mcp/10 text-icon-mcp text-[10px] font-medium">
@@ -478,6 +494,33 @@ export default function McpMarketplace({
                       <CopyButton text={selected.remote.url} />
                     </div>
                   </div>
+
+                  {/* OAuth callout */}
+                  {selected.auth.method === "oauth" && (
+                    <div className="flex gap-3 rounded-lg border border-brand/25 bg-brand/8 px-4 py-3">
+                      <Shield size={14} className="text-brand mt-0.5 shrink-0" />
+                      <div className="space-y-1">
+                        <p className="text-[12px] font-medium text-text-base">
+                          Authentication required after install
+                        </p>
+                        <p className="text-[11px] text-text-muted leading-relaxed">
+                          This server uses OAuth. After syncing to your agent, complete the authentication flow inside your agent tool before making requests.
+                        </p>
+                        {selected.docs_url && (
+                          <a
+                            href={selected.docs_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] text-brand hover:text-brand/80 transition-colors"
+                          >
+                            <BookOpen size={11} />
+                            View setup documentation
+                            <ExternalLink size={10} />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Example config */}
                   <div>
