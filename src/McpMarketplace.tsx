@@ -345,7 +345,7 @@ export default function McpMarketplace({
                     <button
                       onClick={() => handleInstall(selected)}
                       disabled={installing}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-icon-mcp hover:bg-icon-mcp-hover text-bg-input font-medium text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-icon-mcp hover:bg-icon-mcp-hover text-white font-medium text-[13px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {installing ? (
                         <>
