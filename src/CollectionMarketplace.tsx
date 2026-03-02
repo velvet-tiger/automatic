@@ -89,6 +89,14 @@ function CollectionIcon({
 }) {
   const [imgError, setImgError] = useState(false);
 
+  // Bundled/provider collections have no meaningful remote logo — use SkillAvatar
+  // which renders a letter fallback with the correct skill icon styling.
+  if (collection.author.type === "provider") {
+    return (
+      <SkillAvatar name={collection.name} kind="bundled" size={size} />
+    );
+  }
+
   if (collection.icon && BRANDFETCH_CLIENT_ID && !imgError) {
     return (
       <img
@@ -133,7 +141,7 @@ function SkillRow({
 }) {
   return (
     <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-bg-input border border-border-strong/40">
-      <SkillAvatar name={skill.display_name} source={skill.source} size={32} />
+      <SkillAvatar name={skill.display_name} source={skill.source} kind={skill.kind} size={32} />
       <div className="flex-1 min-w-0">
         <div className="text-[13px] font-medium text-text-base leading-snug">
           {skill.display_name}

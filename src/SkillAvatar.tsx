@@ -14,6 +14,13 @@ interface SkillAvatarProps {
    */
   source?: string;
   /**
+   * Source kind — "github" fetches an owner avatar; "bundled" (or any other
+   * value) skips the network fetch and goes straight to the letter fallback.
+   * When omitted and `source` is present, we assume "github" for backwards
+   * compatibility.
+   */
+  kind?: string;
+  /**
    * Side length in pixels.  Defaults to 32 (matching the existing sidebar icon
    * box size).
    */
@@ -26,12 +33,16 @@ interface SkillAvatarProps {
  * Displays a skill's avatar.
  *
  * Priority:
- *  1. GitHub owner avatar derived from `source` ("owner/repo")
+ *  1. GitHub owner avatar derived from `source` ("owner/repo"), only when
+ *     `kind` is "github" (or unset with a source present).
  *  2. First-letter avatar (tinted with the skill icon colour)
  *  3. Generic <Code> lucide icon (only if name is somehow empty)
  */
-export function SkillAvatar({ name, source, size = 32, className = "" }: SkillAvatarProps) {
-  const owner = source ? source.split("/")[0] : null;
+export function SkillAvatar({ name, source, kind, size = 32, className = "" }: SkillAvatarProps) {
+  // Only attempt a GitHub avatar fetch for genuine GitHub-hosted skills.
+  // Bundled skills have no repository and must use the letter fallback.
+  const isGitHub = source && kind !== "bundled";
+  const owner = isGitHub ? source.split("/")[0] : null;
   const avatarUrl = owner ? `https://github.com/${owner}.png?size=${size * 2}` : null;
 
   const [broken, setBroken] = useState(false);
