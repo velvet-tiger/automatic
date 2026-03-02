@@ -65,21 +65,29 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
     let entries = all_names
         .into_iter()
         .map(|name| {
-            // Check for resources in the canonical location (agents first, then claude)
-            let has_resources = {
-                let agents_dir = agents_dir.join(&name);
-                let claude_dir = claude_dir.join(&name);
-                if agents_dir.exists() {
-                    skill_has_resources(&agents_dir)
+            // Resolve the canonical skill directory (agents first, then claude)
+            let canonical_dir = {
+                let a = agents_dir.join(&name);
+                if a.exists() {
+                    a
                 } else {
-                    skill_has_resources(&claude_dir)
+                    claude_dir.join(&name)
                 }
             };
+
+            let has_resources = skill_has_resources(&canonical_dir);
+
+            // Extract license from SKILL.md frontmatter (best-effort, no error on failure)
+            let license = fs::read_to_string(canonical_dir.join("SKILL.md"))
+                .ok()
+                .and_then(|c| super::skill_store::extract_frontmatter_license(&c));
+
             SkillEntry {
                 in_agents: agents_names.contains(&name),
                 in_claude: claude_names.contains(&name),
                 source: registry.get(&name).cloned(),
                 has_resources,
+                license,
                 name,
             }
         })

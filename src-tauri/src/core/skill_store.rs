@@ -77,13 +77,15 @@ pub async fn search_remote_skills(query: &str) -> Result<Vec<RemoteSkillResult>,
         .collect())
 }
 
-/// Extract the value of a YAML frontmatter field from raw SKILL.md text.
+/// Extract the value of a named YAML frontmatter field from raw SKILL.md text.
 /// Handles the `---\nkey: value\n---` block at the top of the file.
-fn extract_frontmatter_name(content: &str) -> Option<String> {
+/// Only handles simple scalar values (not block scalars or nested YAML).
+fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
     let inner = content.strip_prefix("---")?.trim_start_matches('\n').trim_start_matches('\r');
     let end = inner.find("\n---")?;
+    let prefix = format!("{}:", field);
     for line in inner[..end].lines() {
-        if let Some(rest) = line.strip_prefix("name:") {
+        if let Some(rest) = line.strip_prefix(&*prefix) {
             let val = rest.trim().trim_matches('"').trim_matches('\'');
             if !val.is_empty() {
                 return Some(val.to_string());
@@ -91,6 +93,16 @@ fn extract_frontmatter_name(content: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Convenience wrapper — extracts the `name:` frontmatter field.
+fn extract_frontmatter_name(content: &str) -> Option<String> {
+    extract_frontmatter_field(content, "name")
+}
+
+/// Extracts the `license:` frontmatter field from a SKILL.md.
+pub fn extract_frontmatter_license(content: &str) -> Option<String> {
+    extract_frontmatter_field(content, "license")
 }
 
 /// Fetch the SKILL.md content for a remote skill by constructing the GitHub

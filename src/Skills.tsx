@@ -37,6 +37,7 @@ interface SkillEntry {
   in_claude: boolean;
   source?: SkillSource;
   has_resources: boolean;
+  license?: string;
 }
 
 interface SkillUsedBy {
@@ -111,12 +112,17 @@ interface SkillPreviewProps {
   content: string;
   source?: SkillSource;
   resources?: SkillResources | null;
+  license?: string;
 }
 
-function SkillPreview({ content, source, resources }: SkillPreviewProps) {
+function SkillPreview({ content, source, resources, license }: SkillPreviewProps) {
   const { meta, body } = parseFrontmatter(content);
   const displayName = meta.name || "";
   const description = meta.description || "";
+  // Prefer the SkillEntry license (already extracted server-side) but fall
+  // back to the frontmatter field parsed client-side so the preview is
+  // consistent even when the entry is not yet refreshed.
+  const displayLicense = license ?? meta.license;
 
   const hasResources =
     resources && (resources.dirs.length > 0 || resources.root_files.length > 0);
@@ -154,9 +160,21 @@ function SkillPreview({ content, source, resources }: SkillPreviewProps) {
         )}
 
         {/* Author section — always shown */}
-        <div className="mb-4">
+        <div className={displayLicense ? "mb-2" : "mb-4"}>
           <AuthorSection descriptor={authorDescriptor} />
         </div>
+
+        {/* License badge */}
+        {displayLicense && (
+          <div className="mb-4">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-text-muted">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className="shrink-0 text-text-muted/70">
+                <path d="M8.75.75V2h.985c.304 0 .603.08.867.231l1.29.736c.038.022.08.033.124.033h2.234a.75.75 0 0 1 0 1.5h-.427l2.111 4.692a.75.75 0 0 1-.154.838l-.53-.53.529.531-.001.002-.002.002-.006.006-.006.005-.01.01-.045.04c-.21.176-.441.327-.686.45C14.556 10.78 13.88 11 13 11a4.498 4.498 0 0 1-2.023-.454 3.544 3.544 0 0 1-.686-.45l-.045-.04-.016-.015-.006-.006-.004-.004v-.001a.75.75 0 0 1-.154-.838L12.178 4.5h-.162c-.305 0-.604-.079-.868-.231l-1.29-.736a.245.245 0 0 0-.124-.033H8.75V13h2.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1 0-1.5h2.5V3.5h-.984a.245.245 0 0 0-.124.033l-1.29.736c-.264.152-.563.231-.868.231h-.162l2.112 4.692a.75.75 0 0 1-.154.838l-.53-.53.529.531-.001.002-.002.002-.006.006-.016.015-.045.04c-.21.176-.441.327-.686.45C4.556 10.78 3.88 11 3 11a4.498 4.498 0 0 1-2.023-.454 3.544 3.544 0 0 1-.686-.45l-.045-.04-.016-.015-.006-.006-.004-.004v-.001a.75.75 0 0 1-.154-.838L2.178 4.5H1.75a.75.75 0 0 1 0-1.5h2.234a.249.249 0 0 0 .125-.033l1.29-.736c.263-.152.562-.231.866-.231H7.25V.75a.75.75 0 0 1 1.5 0Z"/>
+              </svg>
+              {displayLicense}
+            </span>
+          </div>
+        )}
 
         {/* Companion resources */}
         {hasResources && (
@@ -607,7 +625,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                         isSelected ? "bg-bg-sidebar" : "hover:bg-bg-sidebar/50"
                       }`}
                     >
-                      <SkillAvatar name={skill.name} source={skill.source?.source} size={32} />
+                      <SkillAvatar name={skill.name} source={skill.source?.source} kind={skill.source?.kind} size={32} />
                       <div className="flex-1 min-w-0">
                       {/* Top row: name + action buttons */}
                       <div className="flex items-center gap-2">
@@ -940,6 +958,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                       content={skillContent}
                       source={selectedEntry?.source}
                       resources={skillResources}
+                      license={selectedEntry?.license}
                     />
                   </div>
 

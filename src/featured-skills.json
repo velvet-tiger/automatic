@@ -21,7 +21,8 @@
     "id": "squirrelscan/skills/audit-website",
     "displayName": "Website Audit",
     "description": "Audits websites for SEO, performance, security and accessibility issues across 230+ rules using squirrelscan.",
-    "installs": 27100
+    "installs": 27100,
+    "license": "MIT"
   },
   {
     "name": "systematic-debugging",
@@ -29,7 +30,8 @@
     "id": "obra/superpowers/systematic-debugging",
     "displayName": "Systematic Debugging",
     "description": "Enforces root-cause investigation before any fix attempt — no patches without understanding the problem first.",
-    "installs": 16200
+    "installs": 16200,
+    "license": "MIT"
   },
   {
     "name": "brainstorming",
@@ -37,7 +39,8 @@
     "id": "obra/superpowers/brainstorming",
     "displayName": "Brainstorming",
     "description": "Turns ideas into fully formed designs through collaborative dialogue — explores context, asks questions, proposes approaches, and produces a design doc.",
-    "installs": 36500
+    "installs": 36500,
+    "license": "MIT"
   },
   {
     "name": "seo-audit",
@@ -45,6 +48,7 @@
     "id": "coreyhaines31/marketingskills/seo-audit",
     "displayName": "SEO Audit",
     "description": "Comprehensive SEO audit covering crawlability, technical foundations, on-page optimization, content quality, and actionable recommendations.",
-    "installs": 30400
+    "installs": 30400,
+    "license": "MIT"
   }
 ]

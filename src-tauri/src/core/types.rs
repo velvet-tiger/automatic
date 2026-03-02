@@ -38,6 +38,9 @@ pub struct SkillEntry {
     /// True if the skill directory contains any files or subdirectories besides SKILL.md
     #[serde(default)]
     pub has_resources: bool,
+    /// License from the SKILL.md frontmatter `license:` field, if present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

@@ -322,7 +322,7 @@ interface SkillSource {
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export default function SkillStore({ resetKey }: { resetKey?: number }) {
+export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdConsumed }: { resetKey?: number; initialSkillId?: string | null; onInitialSkillIdConsumed?: () => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<RemoteSkillResult[]>([]);
   const [selected, setSelected] = useState<RemoteSkillResult | null>(null);
@@ -423,6 +423,17 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
     [selected]
   );
 
+  // ── Auto-select from deep-link ───────────────────────────────────────────
+  // Uses featured-skills data (synchronously available) to open an item on mount.
+  useEffect(() => {
+    if (!initialSkillId) return;
+    const skill = featuredSkillsData.find((s) => s.id === initialSkillId);
+    if (skill) {
+      handleSelect({ id: skill.id, name: skill.name, source: skill.source, installs: skill.installs });
+    }
+    onInitialSkillIdConsumed?.();
+  }, [initialSkillId, handleSelect, onInitialSkillIdConsumed]);
+
   // ── Import ──────────────────────────────────────────────────────────────
 
   const importSkill = useCallback(async () => {
@@ -486,6 +497,20 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
   const { meta, body } = rawContent ? parseFrontmatter(rawContent) : { meta: {}, body: "" };
   const displayName = meta.name || selected?.name || "";
   const description = meta.description || "";
+
+  // Resolve the license to display in the sidebar.
+  // 1. Use meta.license only if it looks like a concise SPDX identifier (no spaces,
+  //    or short tokens like "Apache-2.0"), not freeform prose like "See LICENSE file...".
+  // 2. Fall back to the license declared in featured-skills.json for the selected skill.
+  const featuredEntry = selected
+    ? featuredSkillsData.find((f) => f.id === selected.id)
+    : null;
+  const metaLicenseIsClean = meta.license
+    ? meta.license.length <= 30 && !/\s{2,}|see |complete terms/i.test(meta.license)
+    : false;
+  const resolvedLicense: string | null =
+    (metaLicenseIsClean ? meta.license : null) ??
+    ("license" in (featuredEntry ?? {}) ? (featuredEntry as { license?: string }).license ?? null : null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -567,10 +592,10 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                     <button
                       key={skill.id}
                       onClick={() => handleSelect({ id: skill.id, name: skill.name, source: skill.source, installs: skill.installs })}
-                      className="group text-left p-5 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-all flex flex-col"
+                      className="group w-full h-full text-left p-5 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-all flex flex-col"
                     >
                       {/* Header */}
-                      <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-start justify-between gap-3 mb-4 min-h-[52px]">
                         <div className="flex items-center gap-2.5 min-w-0">
                           <SkillAvatar
                             name={skill.displayName || skill.name}
@@ -598,9 +623,11 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       </div>
 
                       {/* Description */}
-                      <p className="text-[12px] text-text-muted leading-relaxed line-clamp-3 flex-1">
-                        {skill.description}
-                      </p>
+                      <div className="flex-1 min-h-0">
+                        <p className="text-[12px] text-text-muted leading-relaxed line-clamp-3">
+                          {skill.description}
+                        </p>
+                      </div>
 
                       {/* Pills */}
                       <div className="flex flex-wrap gap-1.5 mt-3">
@@ -608,6 +635,14 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                           <Download size={10} />
                           {formatInstalls(skill.installs)} installs
                         </span>
+                        {"license" in skill && skill.license && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] text-text-muted">
+                            <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor">
+                              <path d="M8.75.75V2h.985c.304 0 .603.08.867.231l1.29.736c.038.022.08.033.124.033h2.234a.75.75 0 0 1 0 1.5h-.427l2.111 4.692a.75.75 0 0 1-.154.838l-.53-.53.529.531-.001.002-.002.002-.006.006-.006.005-.01.01-.045.04c-.21.176-.441.327-.686.45C14.556 10.78 13.88 11 13 11a4.498 4.498 0 0 1-2.023-.454 3.544 3.544 0 0 1-.686-.45l-.045-.04-.016-.015-.006-.006-.004-.004v-.001a.75.75 0 0 1-.154-.838L12.178 4.5h-.162c-.305 0-.604-.079-.868-.231l-1.29-.736a.245.245 0 0 0-.124-.033H8.75V13h2.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1 0-1.5h2.5V3.5h-.984a.245.245 0 0 0-.124.033l-1.29.736c-.264.152-.563.231-.868.231h-.162l2.112 4.692a.75.75 0 0 1-.154.838l-.53-.53.529.531-.001.002-.002.002-.006.006-.016.015-.045.04c-.21.176-.441.327-.686.45C4.556 10.78 3.88 11 3 11a4.498 4.498 0 0 1-2.023-.454 3.544 3.544 0 0 1-.686-.45l-.045-.04-.016-.015-.006-.006-.004-.004v-.001a.75.75 0 0 1-.154-.838L2.178 4.5H1.75a.75.75 0 0 1 0-1.5h2.234a.249.249 0 0 0 .125-.033l1.29-.736c.263-.152.562-.231.866-.231H7.25V.75a.75.75 0 0 1 1.5 0Z"/>
+                            </svg>
+                            {(skill as { license: string }).license}
+                          </span>
+                        )}
                       </div>
 
                       {/* Footer */}
@@ -685,11 +720,11 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                   const alreadyImported = Object.values(registry).some((s) => s.id === skill.id);
                   return (
                     <button
-                      key={skill.id}
-                      onClick={() => handleSelect(skill)}
-                      className={`w-full text-left px-3 py-2.5 border-b border-border-strong/40/40 transition-colors ${
-                        isActive ? "bg-bg-sidebar" : "hover:bg-bg-sidebar/50"
-                      } ${isDuplicate ? "opacity-50" : ""}`}
+                       key={skill.id}
+                       onClick={() => handleSelect(skill)}
+                       className={`w-full text-left px-3 py-2.5 transition-colors ${
+                         isActive ? "bg-bg-sidebar" : "hover:bg-bg-sidebar/50"
+                       } ${isDuplicate ? "opacity-50" : ""}`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <span className={`text-[13px] font-medium leading-snug break-all ${isDuplicate ? "text-text-muted" : "text-text-base"}`}>
@@ -718,9 +753,9 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                 })}
                 {duplicateCount > 0 && (
                   <button
-                    onClick={() => setShowDuplicates((v) => !v)}
-                    className="w-full text-center px-3 py-2 text-[11px] text-text-muted hover:text-text-muted transition-colors border-b border-border-strong/40/40"
-                  >
+                     onClick={() => setShowDuplicates((v) => !v)}
+                     className="w-full text-center px-3 py-2 text-[11px] text-text-muted hover:text-text-muted transition-colors"
+                   >
                     {showDuplicates
                       ? "Hide duplicates"
                       : `${duplicateCount} likely duplicate${duplicateCount === 1 ? "" : "s"} hidden`}
@@ -971,6 +1006,21 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
                       <div className="flex items-center gap-1.5 text-[12px] text-text-base">
                         <Package size={12} className="flex-shrink-0 text-text-muted" />
                         <span className="truncate">{selected.name}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* License */}
+                  {resolvedLicense && (
+                    <div>
+                      <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">
+                        License
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[12px] text-text-base">
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className="flex-shrink-0 text-text-muted">
+                          <path d="M8.75.75V2h.985c.304 0 .603.08.867.231l1.29.736c.038.022.08.033.124.033h2.234a.75.75 0 0 1 0 1.5h-.427l2.111 4.692a.75.75 0 0 1-.154.838l-.53-.53.529.531-.001.002-.002.002-.006.006-.006.005-.01.01-.045.04c-.21.176-.441.327-.686.45C14.556 10.78 13.88 11 13 11a4.498 4.498 0 0 1-2.023-.454 3.544 3.544 0 0 1-.686-.45l-.045-.04-.016-.015-.006-.006-.004-.004v-.001a.75.75 0 0 1-.154-.838L12.178 4.5h-.162c-.305 0-.604-.079-.868-.231l-1.29-.736a.245.245 0 0 0-.124-.033H8.75V13h2.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1 0-1.5h2.5V3.5h-.984a.245.245 0 0 0-.124.033l-1.29.736c-.264.152-.563.231-.868.231h-.162l2.112 4.692a.75.75 0 0 1-.154.838l-.53-.53.529.531-.001.002-.002.002-.006.006-.016.015-.045.04c-.21.176-.441.327-.686.45C4.556 10.78 3.88 11 3 11a4.498 4.498 0 0 1-2.023-.454 3.544 3.544 0 0 1-.686-.45l-.045-.04-.016-.015-.006-.006-.004-.004v-.001a.75.75 0 0 1-.154-.838L2.178 4.5H1.75a.75.75 0 0 1 0-1.5h2.234a.249.249 0 0 0 .125-.033l1.29-.736c.263-.152.562-.231.866-.231H7.25V.75a.75.75 0 0 1 1.5 0Z"/>
+                        </svg>
+                        <span className="truncate">{resolvedLicense}</span>
                       </div>
                     </div>
                   )}
