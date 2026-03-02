@@ -6,6 +6,7 @@ import { ProfileProvider } from "./ProfileContext";
 import { useCurrentUser } from "./ProfileContext";
 import { initAnalytics, setAnalyticsEnabled, trackNavigation } from "./analytics";
 import Dashboard from "./Dashboard";
+import ConfigurationDashboard from "./ConfigurationDashboard";
 import Skills from "./Skills";
 import SkillStore from "./SkillStore";
 import Projects from "./Projects";
@@ -20,7 +21,7 @@ import McpMarketplace from "./McpMarketplace";
 import CollectionMarketplace from "./CollectionMarketplace";
 import TechMeshBackground from "./TechMeshBackground";
 import FirstRunWizard from "./FirstRunWizard";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle } from "lucide-react";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard } from "lucide-react";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
 
@@ -254,6 +255,7 @@ function App() {
               <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
             <ul className="space-y-0.5">
+              <NavItem id="configuration" icon={LayoutDashboard} label="Overview" />
               <NavItem id="agents" icon={Bot} label="Agents" />
               <NavItem id="project-templates" icon={Layers} label="Templates" />
               <NavItem id="templates" icon={LayoutTemplate} label="Instructions" />
@@ -425,6 +427,11 @@ function App() {
                 onCreateProjectFromTemplate={navigateToCreateWithTemplate}
                 onNavigateToProject={navigateToProject}
               />
+            </div>
+          )}
+          {activeTab === "configuration" && (
+            <div className="flex-1 h-full">
+              <ConfigurationDashboard onNavigate={setActiveTab} />
             </div>
           )}
           {activeTab === "agents" && (
