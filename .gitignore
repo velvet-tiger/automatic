@@ -17,6 +17,9 @@ dist-ssr
 .env.local
 .env.*.local
 
+# Local dev Tauri config (machine-specific signing identity)
+src-tauri/tauri.dev.conf.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
