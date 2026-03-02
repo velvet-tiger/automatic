@@ -27,7 +27,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-/.claude/settings.local.json
-/.automatic/project.json
-/.automatic/project.json
-/.gitignore
+# AI agent configuration
+/.agents/
+/.claude/
+/.codex/
+/.mcp.json
+/.automatic/
