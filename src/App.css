@@ -266,19 +266,22 @@
   --accent-light: #cbd5e1;
   --accent-hover-light: #e2e8f0;
 
-  --bg-base: #18181b;
-  --bg-sidebar: #09090b;
-  --bg-input: #27272a;
-  --bg-input-dark: #18181b;
+  /* Backgrounds — warm coral undertone instead of neutral zinc */
+  --bg-base: #1c1714;
+  --bg-sidebar: #120f0d;
+  --bg-input: #2a2320;
+  --bg-input-dark: #1c1714;
 
-  --surface: #27272a;
-  --surface-hover: #3f3f46;
-  --surface-active: #52525b;
+  /* Surfaces — warm-tinted panels */
+  --surface: #2e2522;
+  --surface-hover: #3d3330;
+  --surface-active: #52443f;
 
-  --border-strong: #3f3f46;
+  /* Borders — coral-warm tint */
+  --border-strong: #4a3d39;
 
-  --text-base: #fafafa;
-  --text-muted: #a1a1aa;
+  --text-base: #fdf8f6;
+  --text-muted: #b8a9a4;
 
   --success: #22c55e;
   --success-light: #4ade80;
