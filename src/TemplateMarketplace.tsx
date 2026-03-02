@@ -653,7 +653,7 @@ export default function TemplateMarketplace({ resetKey, onNavigateToTemplate }: 
   return (
     <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-bg-base">
       <div className="flex flex-col px-6 pt-10 pb-10 w-full">
-        <div className="w-full max-w-4xl mx-auto">
+        <div className="w-full max-w-[1400px] mx-auto">
 
           {/* Heading */}
           <div className="text-center mb-6 max-w-lg mx-auto">
@@ -714,7 +714,7 @@ export default function TemplateMarketplace({ resetKey, onNavigateToTemplate }: 
                   <span className="text-[11px] text-brand">{importedNames.size} imported</span>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 2xl:grid-cols-4 gap-4">
                 {results.map((t) => (
                   <TemplateCard
                     key={t.name}
