@@ -93,37 +93,29 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   // Map of project name → drift report (undefined = not yet checked, null = not applicable)
   const [driftMap, setDriftMap] = useState<Record<string, DriftReport | null>>({});
 
-  // Visited flags — read once on mount; updated reactively when the user navigates
-  const [visitedTemplates, setVisitedTemplates] = useState(
-    () => !!localStorage.getItem("automatic.visited.template-marketplace")
-  );
-  const [visitedSkills, setVisitedSkills] = useState(
-    () => !!localStorage.getItem("automatic.visited.skill-store")
-  );
+  // Getting-started flags — persisted in settings.json via the backend.
+  const [skillInstalled, setSkillInstalled] = useState(false);
+  const [templateImported, setTemplateImported] = useState(false);
 
   useEffect(() => {
     loadData();
   }, []);
 
-  // Re-read visited flags whenever the window regains focus (user may have
-  // navigated away and come back to the dashboard tab)
-  useEffect(() => {
-    const sync = () => {
-      setVisitedTemplates(!!localStorage.getItem("automatic.visited.template-marketplace"));
-      setVisitedSkills(!!localStorage.getItem("automatic.visited.skill-store"));
-    };
-    window.addEventListener("focus", sync);
-    return () => window.removeEventListener("focus", sync);
-  }, []);
-
   const loadData = async () => {
     setLoading(true);
     try {
-      // Get project names + MCP server configs in parallel
-      const [names, mcpNames] = await Promise.all([
+      // Get project names + MCP server configs + settings in parallel
+      const [names, mcpNames, settings] = await Promise.all([
         invoke<string[]>("get_projects"),
         invoke<string[]>("list_mcp_server_configs").catch(() => [] as string[]),
+        invoke<any>("read_settings").catch(() => null),
       ]);
+
+      // Seed getting-started flags from persisted settings
+      if (settings?.getting_started) {
+        setSkillInstalled(!!settings.getting_started.skill_installed);
+        setTemplateImported(!!settings.getting_started.template_imported);
+      }
       setMcpServerCount(mcpNames.length);
 
       // Load details for each project
@@ -328,16 +320,16 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                   hoverBorder: "hover:border-brand/50",
                 },
                 {
-                  show: !visitedTemplates,
-                  label: "Browse project templates",
-                  description: "Start from a pre-built setup.",
+                  show: !templateImported,
+                  label: "Import a template",
+                  description: "Start from a pre-built project setup.",
                   action: () => onNavigate("template-marketplace"),
                   actionLabel: "Browse Templates",
                   color: "text-icon-file-template",
                   hoverBorder: "hover:border-icon-file-template/50",
                 },
                 {
-                  show: !visitedSkills,
+                  show: !skillInstalled,
                   label: "Install a skill",
                   description: "Load specialised capabilities into your agents.",
                   action: () => onNavigate("skill-store"),
