@@ -229,7 +229,12 @@ function TemplateCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
-          {imported && <CheckCircle2 size={13} className="text-brand" />}
+          {imported && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand/10 border border-brand/20 text-[10px] font-medium text-brand">
+              <CheckCircle2 size={10} />
+              Imported
+            </span>
+          )}
           <ArrowRight size={13} className="text-surface group-hover:text-text-muted transition-colors" />
         </div>
       </div>
