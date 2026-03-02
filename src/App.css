@@ -67,12 +67,12 @@
   --accent-light: #c4b5fd;
   --accent-hover-light: #ddd6fe;
 
-  --bg-base: #18181b;
-  --bg-sidebar: #09090b;
-  --bg-input: #27272a;
-  --bg-input-dark: #18181b;
+  --bg-base: #232328;
+  --bg-sidebar: #18181b;
+  --bg-input: #2e2e34;
+  --bg-input-dark: #232328;
 
-  --surface: #27272a;
+  --surface: #2e2e34;
   --surface-hover: #3f3f46;
   --surface-active: #52525b;
 
@@ -122,19 +122,19 @@
   --accent-light: #2a2a2a;
   --accent-hover-light: #1a1a1a;
 
-  --bg-base: #0a0a0a;
-  --bg-sidebar: #000000;
-  --bg-input: #1a1a1a;
-  --bg-input-dark: #0a0a0a;
+  --bg-base: #232328;
+  --bg-sidebar: #18181b;
+  --bg-input: #2e2e34;
+  --bg-input-dark: #232328;
 
-  --surface: #1a1a1a;
-  --surface-hover: #2a2a2a;
-  --surface-active: #3a3a3a;
+  --surface: #2e2e34;
+  --surface-hover: #3a3a3f;
+  --surface-active: #46464d;
 
-  --border-strong: #2a2a2a;
+  --border-strong: #3a3a3f;
 
-  --text-base: #f8fafc;
-  --text-muted: #a3a3a3;
+  --text-base: #ffffff;
+  --text-muted: #c8c8c8;
 
   --success: #a3a3a3;
   --success-light: #d4d4d4;
