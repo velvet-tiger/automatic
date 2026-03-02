@@ -34,12 +34,12 @@
     "license": "MIT"
   },
   {
-    "name": "brainstorming",
-    "source": "obra/superpowers",
-    "id": "obra/superpowers/brainstorming",
-    "displayName": "Brainstorming",
-    "description": "Turns ideas into fully formed designs through collaborative dialogue — explores context, asks questions, proposes approaches, and produces a design doc.",
-    "installs": 36500,
+    "name": "code-review-excellence",
+    "source": "wshobson/agents",
+    "id": "wshobson/agents/code-review-excellence",
+    "displayName": "Code Review Excellence",
+    "description": "Comprehensive code review skill from wshobson/agents — provides systematic, multi-perspective code analysis and feedback.",
+    "installs": 29900,
     "license": "MIT"
   },
   {
