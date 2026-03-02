@@ -788,8 +788,8 @@ function ProjectCard({
           size={14}
           className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-brand"}`}
         />
-        <span className="text-[13px] font-semibold text-text-base flex-1 truncate">{name}</span>
-        {isConfigured && <ProjectStatusBadge drift={drift} />}
+        <span className="text-[13px] font-semibold text-text-base truncate flex-1">{name}</span>
+        {isConfigured && <div className="flex-shrink-0 ml-auto"><ProjectStatusBadge drift={drift} /></div>}
       </div>
 
       {/* Row 2: directory path — wraps on long paths */}
