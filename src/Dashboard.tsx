@@ -278,9 +278,9 @@ interface UseCase {
 const USE_CASES: UseCase[] = [
   {
     icon: <Zap size={18} />,
-    accentBg: "bg-brand/10",
-    accentText: "text-brand",
-    accentBorder: "border-brand/20",
+    accentBg: "bg-icon-agent/10",
+    accentText: "text-icon-agent",
+    accentBorder: "border-icon-agent/20",
     title: "Ship higher-quality AI code",
     goal: "Your agent produces inconsistent results and doesn't follow your conventions. Give it the context it needs to work the way you do.",
     actions: [
@@ -322,7 +322,7 @@ function UseCasesSection({ onNavigate }: { onNavigate: (tab: string) => void }) 
     <div>
       <div className="flex items-center gap-2 mb-3">
         <Sparkles size={13} className="text-brand" />
-        <h2 className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">How Automatic helps</h2>
+        <h2 className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">What's your goal?</h2>
       </div>
       <div className="grid grid-cols-3 gap-4">
         {USE_CASES.map((uc) => (
