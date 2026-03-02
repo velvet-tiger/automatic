@@ -20,7 +20,7 @@ import McpMarketplace from "./McpMarketplace";
 import CollectionMarketplace from "./CollectionMarketplace";
 import TechMeshBackground from "./TechMeshBackground";
 import FirstRunWizard from "./FirstRunWizard";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen } from "lucide-react";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle } from "lucide-react";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
 
@@ -271,7 +271,7 @@ function App() {
             <ul className="space-y-0.5">
               <NavItem id="collection-marketplace" icon={PackageOpen} label="Collections" />
               <NavItem id="template-marketplace" icon={Layers} label="Templates" />
-              <NavItem id="skill-store" icon={Store} label="Skills" />
+              <NavItem id="skill-store" icon={Puzzle} label="Skills" />
               <NavItem id="mcp-marketplace" icon={Server} label="MCP Servers" />
             </ul>
           </div>
