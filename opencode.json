@@ -5,9 +5,17 @@
       "type": "remote",
       "url": "https://mcp.clerk.com/mcp"
     },
+    "amplitude-eu": {
+      "command": [
+        "/Users/xtfer/working/velvet-tiger/automatic/automatic-app/src-tauri/target/debug/automatic",
+        "mcp-proxy",
+        "amplitude-eu"
+      ],
+      "type": "local"
+    },
     "automatic": {
       "command": [
-        "/Applications/Automatic.app/Contents/MacOS/automatic",
+        "/Users/xtfer/working/velvet-tiger/automatic/automatic-app/src-tauri/target/debug/automatic",
         "mcp-serve"
       ],
       "environment": {

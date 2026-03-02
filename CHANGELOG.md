@@ -2,7 +2,7 @@
 
 All notable changes to Automatic are documented here.
 
-## [0.4.0] — 2026-03-02
+## [0.4.0] — 2026-03-03
 
 ### Features
 
@@ -11,36 +11,80 @@ All notable changes to Automatic are documented here.
 - Fork-to-local action to copy a marketplace skill into the local skill library
 - View-in-library shortcut to jump from a project skill to its Skills entry
 - "Used By" right sidebar on skills showing linked projects and templates as clickable badges
+- GitHub owner avatar displayed as skill logo with letter fallback
+- License field support on skills
+- Bundled Automatic skills with correct authorship attribution
+- Core skills auto-installed on first run; template skills installed on demand
 
 #### Project Templates
 - "New project from template" action that opens the project wizard with the template pre-applied
 - Applied To project badges on template detail pages are now clickable links
+- Imported pill shown on template marketplace cards
+
+#### Marketplaces
+- Collections marketplace added, featuring the Automatic Skills collection
+- Amplitude and Amplitude EU MCP servers added to the MCP Marketplace
+- Marketplace-imported MCP server core settings are now locked to prevent accidental edits
+- Skills marketplace renamed from "Skills Store" throughout the UI
+- Consistent 3→4 column responsive grid across all three marketplaces
+- Standardised search box layout across marketplaces
+
+#### MCP Servers
+- OAuth 2.1 PKCE proxy for authenticating remote MCP servers
+
+#### Dashboard
+- "How Automatic helps" use cases section added
+- Featured section reworked with marketplace card template
+- Getting Started section reorganised into a conditional right-column checklist
+- Getting Started checklist flags persisted to `settings.json`
+- Welcome message copy improved
+
+#### Configuration
+- Configuration Overview dashboard showing a summary of all configured resources
+
+#### Projects
+- Project overview replaced with full-width card grid layout
+- Sync status badge pinned to the right edge of card headers
 
 #### Theme
 - Follow system light/dark preference by default
 - Dark backgrounds lightened one zinc step for improved readability
 - Always apply dark theme when disabling follow-system (no accidental light flash)
-
-#### Dashboard
-- Getting Started section reorganised into a conditional right-column checklist
-- Welcome message copy improved
+- Coral theme extended with a warm-tinted neutral palette
+- Dark and corporate-dark theme backgrounds lightened; corporate-dark text brightened
+- Muted text contrast improved in dark and cyberpunk themes
 
 #### Developer
 - Debug builds now use a separate `.automatic-dev` data directory to isolate dev state from production
+- Minimal feature flag framework added (`flag()` helper in `flags.ts`)
+- AI Playground view added (behind `ai_playground` feature flag)
 
 ### Fixes
 - Stale marketplace plugin path resolved on fresh install
 - Inner border removed from Getting Started items (fixes bottom border clipping)
+- GitHub avatar fetch skipped for bundled skills (avoids 404 noise)
+- Drift detection and sync now use a unified server map (eliminates false drift reports)
+- Template `_author` propagated correctly on import and cleared on manual edit
+- OpenCode MCP warning updated to note a restart is required for new servers
+- MCP Marketplace "Add to MCP Servers" button uses white text in dark theme
+- Folder icon colour on corporate-dark theme uses `icon-agent` token
+- Traffic light position aligned to OS standard position
+- Ship icon uses `icon-agent` colour token for theme consistency
+- Projects sync badge pinned to right edge of card header
 - Unused `sync_projects_referencing_rule` function removed
 
 ### Dependencies
 - Switched HTTP backend to `native-tls` and removed unused dependencies
+
+### CI
+- `VITE_BRANDFETCH_CLIENT_ID` passed to `tauri-action` build steps
 
 ### Docs
 - Windows build workaround documented for Rust on Parallels
 
 ### Chore
 - `.claude-flow` daemon state and PID files removed from repository
+- `github-release-management` skill removed from repository
 
 ---
 

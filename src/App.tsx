@@ -19,9 +19,11 @@ import Settings from "./Settings";
 import TemplateMarketplace from "./TemplateMarketplace";
 import McpMarketplace from "./McpMarketplace";
 import CollectionMarketplace from "./CollectionMarketplace";
+import AiPlayground from "./AiPlayground";
 import TechMeshBackground from "./TechMeshBackground";
 import FirstRunWizard from "./FirstRunWizard";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard } from "lucide-react";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical } from "lucide-react";
+import { flag } from "./flags";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
 
@@ -262,6 +264,7 @@ function App() {
               <NavItem id="rules" icon={ScrollText} label="Rules" />
               <NavItem id="skills" icon={Code} label="Skills" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
+              {flag("ai_playground") && <NavItem id="ai-playground" icon={FlaskConical} label="AI Playground" />}
             </ul>
           </div>
 
@@ -500,6 +503,11 @@ function App() {
           {activeTab === "settings" && (
             <div className="flex-1 h-full">
               <Settings />
+            </div>
+          )}
+          {flag("ai_playground") && activeTab === "ai-playground" && (
+            <div className="flex-1 h-full">
+              <AiPlayground />
             </div>
           )}
         </div>
