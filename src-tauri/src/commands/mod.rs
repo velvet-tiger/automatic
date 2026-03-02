@@ -11,6 +11,7 @@ mod mcp_servers;
 mod agents;
 mod memory;
 mod misc;
+mod oauth;
 
 pub use credentials::*;
 pub use profile::*;
@@ -25,3 +26,4 @@ pub use mcp_servers::*;
 pub use agents::*;
 pub use memory::*;
 pub use misc::*;
+pub use oauth::*;

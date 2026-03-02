@@ -504,7 +504,7 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
     return (
       <div className="flex h-full flex-col overflow-y-auto custom-scrollbar bg-bg-base">
         <div className="flex flex-col px-6 pt-10 pb-10 w-full">
-          <div className="w-full max-w-2xl mx-auto">
+          <div className="w-full max-w-4xl mx-auto">
             {/* Icon + heading */}
             <div className="text-center mb-6 max-w-lg mx-auto">
               <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-icon-skill/10 border border-success/20 flex items-center justify-center">
@@ -557,35 +557,62 @@ export default function SkillStore({ resetKey }: { resetKey?: number }) {
               <h3 className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
                 Featured
               </h3>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 2xl:grid-cols-4 gap-4">
                 {featuredSkillsData.map((skill) => {
                   const alreadyImported = Object.values(registry).some((s) => s.id === skill.id);
+                  const letter = (skill.displayName || skill.name).charAt(0).toUpperCase();
                   return (
                     <button
                       key={skill.id}
                       onClick={() => handleSelect({ id: skill.id, name: skill.name, source: skill.source, installs: skill.installs })}
-                      className="group text-left p-4 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-colors"
+                      className="group text-left p-5 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-all flex flex-col"
                     >
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <span className="text-[13px] font-medium text-text-base leading-snug">
-                          {skill.displayName}
-                        </span>
+                      {/* Header */}
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div
+                            className="flex-shrink-0 rounded-md flex items-center justify-center font-semibold bg-icon-skill/15 text-icon-skill"
+                            style={{ width: 36, height: 36, fontSize: 16 }}
+                            aria-hidden="true"
+                          >
+                            {letter}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[14px] font-semibold text-text-base leading-snug truncate">
+                              {skill.displayName || skill.name}
+                            </div>
+                            <span className="text-[10px] font-medium text-icon-skill truncate block">
+                              {skill.source}
+                            </span>
+                          </div>
+                        </div>
                         <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
                           {alreadyImported && (
-                            <CheckCircle2 size={12} className="text-icon-skill" />
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-icon-skill/10 border border-icon-skill/20 text-[10px] font-medium text-icon-skill">
+                              <CheckCircle2 size={10} />
+                              Installed
+                            </span>
                           )}
-                          <ArrowRight size={12} className="text-surface group-hover:text-text-muted transition-colors" />
+                          <ArrowRight size={13} className="text-surface group-hover:text-text-muted transition-colors" />
                         </div>
                       </div>
-                      <p className="text-[12px] text-text-muted leading-relaxed mb-3 line-clamp-2">
+
+                      {/* Description */}
+                      <p className="text-[12px] text-text-muted leading-relaxed line-clamp-3 flex-1">
                         {skill.description}
                       </p>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-text-muted truncate">{skill.source}</span>
-                        <span className="text-[10px] text-text-muted">·</span>
-                        <span className="text-[10px] text-icon-skill flex-shrink-0">
-                          {formatInstalls(skill.installs)}
+
+                      {/* Pills */}
+                      <div className="flex flex-wrap gap-1.5 mt-3">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] text-text-muted">
+                          <Download size={10} />
+                          {formatInstalls(skill.installs)} installs
                         </span>
+                      </div>
+
+                      {/* Footer */}
+                      <div className="flex items-center gap-2 mt-2.5 pt-2.5 border-t border-border-strong/40">
+                        <span className="text-[10px] text-text-muted truncate">{skill.source}</span>
                       </div>
                     </button>
                   );

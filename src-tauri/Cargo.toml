@@ -24,15 +24,23 @@ tauri-plugin-dialog = "2"
 tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-keyring = "3.6.3"
+keyring = { version = "3.6.3", features = ["apple-native", "linux-native", "windows-native"] }
 dirs = "6.0.0"
 chrono = { version = "0.4", features = ["serde"] }
-rmcp = { version = "0.16", features = ["server", "transport-io"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
+rmcp = { version = "0.16", features = [
+    "server", "transport-io",
+    "client", "transport-streamable-http-client-reqwest",
+    "auth", "reqwest-native-tls",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "net"] }
+url = "2"
 tempfile = "3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 urlencoding = "2"
 toml = "1.0.3"
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+open = "5"
+rand = "0.9"
 

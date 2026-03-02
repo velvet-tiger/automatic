@@ -2,6 +2,8 @@ pub mod agent;
 pub mod core;
 pub mod mcp;
 pub mod memory;
+pub mod oauth;
+pub mod proxy;
 pub mod sync;
 pub mod context;
 
@@ -116,6 +118,10 @@ pub fn run() {
             track_event,
             restart_app,
             subscribe_newsletter,
+            authorize_mcp_server,
+            has_mcp_oauth_token,
+            revoke_mcp_oauth_token,
+            refresh_mcp_oauth_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -13,6 +13,16 @@ fn main() {
                 std::process::exit(1);
             }
         });
+    } else if args.len() > 2 && args[1] == "mcp-proxy" {
+        // Run as a transparent MCP proxy: stdio ↔ remote HTTP with keychain auth
+        let server_name = args[2].clone();
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        rt.block_on(async {
+            if let Err(e) = automatic_lib::proxy::run_proxy(&server_name).await {
+                eprintln!("MCP proxy error: {}", e);
+                std::process::exit(1);
+            }
+        });
     } else {
         // Default: launch Tauri desktop app
         automatic_lib::run();

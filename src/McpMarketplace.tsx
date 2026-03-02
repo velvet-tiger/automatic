@@ -5,6 +5,7 @@ import {
   Search,
   Server,
   ArrowLeft,
+  ArrowRight,
   ExternalLink,
   Github,
   Copy,
@@ -504,7 +505,9 @@ export default function McpMarketplace({
                           Authentication required after install
                         </p>
                         <p className="text-[11px] text-text-muted leading-relaxed">
-                          This server uses OAuth. After syncing to your agent, complete the authentication flow inside your agent tool before making requests.
+                          This server uses OAuth. After adding it, open the MCP Servers page and click
+                          <strong> Authenticate</strong> to complete the OAuth flow. Your token will be stored
+                          securely in the system keychain and agents will connect through a local proxy.
                         </p>
                         {selected.docs_url && (
                           <a
@@ -801,7 +804,7 @@ export default function McpMarketplace({
         </div>
 
         {/* Search + filters — constrained */}
-        <div className="max-w-xl mx-auto w-full mb-6">
+        <div className="max-w-2xl mx-auto w-full mb-6">
           <div className="relative mb-3">
             <Search
               size={16}
@@ -838,20 +841,9 @@ export default function McpMarketplace({
           <h3 className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             {filtered.length} Server{filtered.length !== 1 ? "s" : ""}
           </h3>
-          <div className="flex items-center gap-3 text-[10px] text-text-muted">
-            <span className="flex items-center gap-1">
-              <Cloud size={9} />
-              Remote
-            </span>
-            <span className="flex items-center gap-1">
-              <Monitor size={9} />
-              Local
-            </span>
-            <span className="flex items-center gap-1">
-              <Lock size={9} />
-              Auth
-            </span>
-          </div>
+          {installedServers.size > 0 && (
+            <span className="text-[11px] text-success">{installedServers.size} added</span>
+          )}
         </div>
 
         {/* Server grid — full width */}
@@ -866,51 +858,73 @@ export default function McpMarketplace({
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-3 gap-4 items-stretch">
-            {filtered.map((server) => (
-              <button
-                key={server.slug}
-                onClick={() => handleSelect(server)}
-                className="group flex flex-col text-left p-5 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-colors"
-              >
-                {/* Header: icon + title + badge */}
-                <div className="flex gap-3 mb-3">
-                  <McpServerIcon server={server} size={36} />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <span className="text-[14px] font-medium text-text-base leading-snug truncate">
-                        {server.title}
-                      </span>
-                      {installedServers.has(configName(server)) && (
-                        <CheckCircle2 size={13} className="text-success flex-shrink-0" />
-                      )}
+          <div className="grid grid-cols-3 2xl:grid-cols-4 gap-4">
+            {filtered.map((server) => {
+              const isInstalled = installedServers.has(configName(server));
+              return (
+                <button
+                  key={server.slug}
+                  onClick={() => handleSelect(server)}
+                  className="group text-left p-5 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-all flex flex-col"
+                >
+                  {/* Header: icon + title + category + installed badge + arrow */}
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <McpServerIcon server={server} size={36} />
+                      <div className="min-w-0">
+                        <div className="text-[14px] font-semibold text-text-base leading-snug truncate">
+                          {server.title}
+                        </div>
+                        {classificationBadge(server.classification)}
+                      </div>
                     </div>
-                    {classificationBadge(server.classification)}
+                    <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
+                      {isInstalled && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/10 border border-success/20 text-[10px] font-medium text-success">
+                          <CheckCircle2 size={10} />
+                          Added
+                        </span>
+                      )}
+                      <ArrowRight size={13} className="text-surface group-hover:text-text-muted transition-colors" />
+                    </div>
                   </div>
-                </div>
-                {/* Description */}
-                <p className="text-[12px] text-text-muted leading-relaxed line-clamp-3 flex-1">
-                  {server.description}
-                </p>
-                {/* Footer — pinned to bottom */}
-                <div className="flex items-center justify-between gap-4 mt-3 pt-2.5 border-t border-border-strong/40/40">
-                  <span className="text-[11px] text-text-muted truncate">
-                    {server.provider}
-                  </span>
-                  <div className="flex items-center gap-2.5 flex-shrink-0">
+
+                  {/* Description */}
+                  <p className="text-[12px] text-text-muted leading-relaxed line-clamp-3 flex-1">
+                    {server.description}
+                  </p>
+
+                  {/* Transport pills */}
+                  <div className="flex flex-wrap gap-1.5 mt-3">
                     {hasRemote(server) && (
-                      <Cloud size={11} className="text-icon-mcp/60" />
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] text-text-muted">
+                        <Cloud size={10} />
+                        Remote
+                      </span>
                     )}
                     {hasLocal(server) && (
-                      <Monitor size={11} className="text-success/60" />
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] text-text-muted">
+                        <Monitor size={10} />
+                        Local
+                      </span>
                     )}
                     {hasAuth(server) && (
-                      <Lock size={11} className="text-danger/60" />
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] text-text-muted">
+                        <Lock size={10} />
+                        Auth
+                      </span>
                     )}
                   </div>
-                </div>
-              </button>
-            ))}
+
+                  {/* Footer — provider */}
+                  <div className="flex items-center justify-between gap-2 mt-2.5 pt-2.5 border-t border-border-strong/40">
+                    <span className="text-[10px] text-text-muted truncate">
+                      {server.provider}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
