@@ -213,10 +213,10 @@ function TemplateCard({
   return (
     <button
       onClick={onClick}
-      className="group text-left p-5 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-all flex flex-col"
+      className="group w-full h-full text-left p-5 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-all flex flex-col"
     >
       {/* Header */}
-      <div className="flex items-start justify-between gap-3 mb-3">
+      <div className="flex items-start justify-between gap-3 mb-4 min-h-[52px]">
         <div className="flex items-center gap-2.5 min-w-0">
           <TemplateIcon template={template} size={36} />
           <div className="min-w-0">
@@ -240,9 +240,11 @@ function TemplateCard({
       </div>
 
       {/* Description */}
-      <p className="text-[12px] text-text-muted leading-relaxed line-clamp-3 flex-1">
-        {template.description}
-      </p>
+      <div className="flex-1 min-h-0">
+        <p className="text-[12px] text-text-muted leading-relaxed line-clamp-3">
+          {template.description}
+        </p>
+      </div>
 
       {/* Content pills */}
       <div className="flex flex-wrap gap-1.5 mt-3">
@@ -556,7 +558,7 @@ function TemplateDetail({
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function TemplateMarketplace({ resetKey, onNavigateToTemplate }: { resetKey?: number; onNavigateToTemplate?: (name: string) => void }) {
+export default function TemplateMarketplace({ resetKey, onNavigateToTemplate, initialTemplateName, onInitialTemplateConsumed }: { resetKey?: number; onNavigateToTemplate?: (name: string) => void; initialTemplateName?: string | null; onInitialTemplateConsumed?: () => void }) {
   const [allTemplates, setAllTemplates] = useState<BundledProjectTemplate[]>([]);
   const [results, setResults] = useState<BundledProjectTemplate[]>([]);
   const [query, setQuery] = useState("");
@@ -593,6 +595,17 @@ export default function TemplateMarketplace({ resetKey, onNavigateToTemplate }: 
       setLoading(false);
     })();
   }, []);
+
+  // ── Auto-select from deep-link ───────────────────────────────────────────
+  // Fires once allTemplates is loaded (async) and an initialTemplateName was given.
+  useEffect(() => {
+    if (!initialTemplateName || allTemplates.length === 0) return;
+    const template = allTemplates.find((t) => t.name === initialTemplateName);
+    if (template) {
+      setSelected(template);
+      onInitialTemplateConsumed?.();
+    }
+  }, [initialTemplateName, allTemplates, onInitialTemplateConsumed]);
 
   const doSearch = useCallback(
     async (q: string) => {

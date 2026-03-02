@@ -207,8 +207,12 @@ function buildConfig(server: McpServer): Record<string, unknown> {
 
 export default function McpMarketplace({
   resetKey,
+  initialSlug,
+  onInitialSlugConsumed,
 }: {
   resetKey?: number;
+  initialSlug?: string | null;
+  onInitialSlugConsumed?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [classification, setClassification] = useState<string>("all");
@@ -290,6 +294,15 @@ export default function McpMarketplace({
       setSetupTab("local");
     }
   }, []);
+
+  // ── Auto-select from deep-link ───────────────────────────────────────────
+  // servers array is synchronously available from the imported JSON.
+  useEffect(() => {
+    if (!initialSlug) return;
+    const server = servers.find((s) => s.slug === initialSlug);
+    if (server) handleSelect(server);
+    onInitialSlugConsumed?.();
+  }, [initialSlug, handleSelect, onInitialSlugConsumed]);
 
   // ── Detail view ──────────────────────────────────────────────────────────
 
@@ -865,10 +878,10 @@ export default function McpMarketplace({
                 <button
                   key={server.slug}
                   onClick={() => handleSelect(server)}
-                  className="group text-left p-5 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-all flex flex-col"
+                  className="group w-full h-full text-left p-5 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-all flex flex-col"
                 >
                   {/* Header: icon + title + category + installed badge + arrow */}
-                  <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="flex items-start justify-between gap-3 mb-4 min-h-[52px]">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <McpServerIcon server={server} size={36} />
                       <div className="min-w-0">
@@ -890,9 +903,11 @@ export default function McpMarketplace({
                   </div>
 
                   {/* Description */}
-                  <p className="text-[12px] text-text-muted leading-relaxed line-clamp-3 flex-1">
-                    {server.description}
-                  </p>
+                  <div className="flex-1 min-h-0">
+                    <p className="text-[12px] text-text-muted leading-relaxed line-clamp-3">
+                      {server.description}
+                    </p>
+                  </div>
 
                   {/* Transport pills */}
                   <div className="flex flex-wrap gap-1.5 mt-3">

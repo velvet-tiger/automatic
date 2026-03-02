@@ -12,8 +12,18 @@ import {
   Layers,
   Sparkles,
   Star,
+  Download,
+  Cloud,
+  Monitor,
 } from "lucide-react";
-import { AuthorPanel, type AuthorDescriptor } from "./AuthorPanel";
+import { SkillAvatar } from "./SkillAvatar";
+
+const BRANDFETCH_CLIENT_ID = import.meta.env.VITE_BRANDFETCH_CLIENT_ID as string | undefined;
+
+function brandfetchUrl(domain: string, px: number): string {
+  const s = Math.min(px * 2, 64);
+  return `https://cdn.brandfetch.io/${encodeURIComponent(domain)}/w/${s}/h/${s}/theme/dark/fallback/lettermark/type/icon?c=${BRANDFETCH_CLIENT_ID ?? ""}`;
+}
 
 interface Project {
   name: string;
@@ -37,13 +47,26 @@ interface DriftReport {
   }[];
 }
 
+type PillIcon = "download" | "cloud" | "monitor" | "code" | "server";
+
 interface FeaturedItem {
   type: "skill" | "template" | "mcp";
   title: string;
   description: string;
-  navigateTo: string;
-  badge: string;
-  _author?: AuthorDescriptor;
+  provider: string;
+  /** Unique identifier passed to the marketplace to pre-select this item:
+   *  skill → skill store ID (e.g. "owner/repo/name")
+   *  template → template name slug (e.g. "nextjs-saas-starter")
+   *  mcp → server slug (e.g. "github") */
+  itemId: string;
+  /** For skills: "owner/repo" source slug used by SkillAvatar */
+  source?: string;
+  /** For templates/MCP: brand domain for Brandfetch icon, e.g. "nextjs.org" */
+  icon?: string;
+  /** Classification badge label (MCP only) */
+  classification?: string;
+  /** Metadata pills to show below description */
+  pills?: { label: string; icon: PillIcon }[];
 }
 
 const FEATURED_ITEMS: FeaturedItem[] = [
@@ -51,41 +74,195 @@ const FEATURED_ITEMS: FeaturedItem[] = [
     type: "skill",
     title: "Web Interface Guidelines",
     description: "Audits files for compliance with Vercel's web interface guidelines, fetching the latest rules from the source.",
-    navigateTo: "skill-store",
-    badge: "Skill",
-    _author: { type: "provider", name: "Vercel Labs" },
+    provider: "vercel-labs/agent-skills",
+    itemId: "vercel-labs/agent-skills/web-design-guidelines",
+    source: "vercel-labs/agent-skills",
+    pills: [{ label: "112k installs", icon: "download" }],
   },
   {
     type: "template",
     title: "Next.js SaaS Starter",
-    description: "Full-stack SaaS boilerplate with App Router, Tailwind, Prisma, and NextAuth. Ready for rapid product development.",
-    navigateTo: "template-marketplace",
-    badge: "Template",
-    _author: { type: "provider", name: "Automatic", url: "https://automatic.sh" },
+    description: "A full-stack SaaS boilerplate with Next.js App Router, Tailwind CSS, Prisma ORM, and NextAuth.js. Includes authentication flows, dashboard layout, billing hooks, and a component library ready for rapid product development.",
+    provider: "Automatic",
+    itemId: "nextjs-saas-starter",
+    icon: "nextjs.org",
+    pills: [{ label: "2 skills", icon: "code" }],
   },
   {
     type: "mcp",
     title: "GitHub",
-    description: "Manage repos, issues, PRs, and workflows through natural language via the official GitHub MCP server.",
-    navigateTo: "mcp-marketplace",
-    badge: "MCP Server",
-    _author: { type: "provider", name: "GitHub", url: "https://github.com" },
+    description: "Connect AI assistants to GitHub — manage repos, issues, PRs, and workflows through natural language.",
+    provider: "GitHub",
+    itemId: "github",
+    icon: "github.com",
+    classification: "official",
+    pills: [{ label: "Remote", icon: "cloud" }, { label: "Local", icon: "monitor" }],
   },
 ];
 
-const FEATURED_COLORS: Record<FeaturedItem["type"], { icon: string; border: string; badge: string; badgeBg: string }> = {
-  skill:    { icon: "text-icon-skill",          border: "border-icon-skill/30 hover:border-icon-skill/60",          badge: "text-icon-skill",          badgeBg: "bg-icon-skill/10" },
-  template: { icon: "text-icon-file-template",  border: "border-icon-file-template/30 hover:border-icon-file-template/60",  badge: "text-icon-file-template",  badgeBg: "bg-icon-file-template/10" },
-  mcp:      { icon: "text-icon-mcp",            border: "border-icon-mcp/30 hover:border-icon-mcp/60",            badge: "text-icon-mcp",            badgeBg: "bg-icon-mcp/10" },
+// ── Featured card icon ────────────────────────────────────────────────────────
+
+function FeaturedIcon({ item, size }: { item: FeaturedItem; size: number }) {
+  const [imgError, setImgError] = useState(false);
+
+  if (item.type === "skill") {
+    return (
+      <SkillAvatar
+        name={item.title}
+        source={item.source}
+        size={size}
+      />
+    );
+  }
+
+  if (item.icon && BRANDFETCH_CLIENT_ID && !imgError) {
+    return (
+      <img
+        src={brandfetchUrl(item.icon, size)}
+        alt={item.title}
+        width={size}
+        height={size}
+        onError={() => setImgError(true)}
+        className="flex-shrink-0 rounded-md object-contain"
+        style={{ width: size, height: size }}
+        draggable={false}
+      />
+    );
+  }
+
+  // Letter fallback
+  const letter = item.title.charAt(0).toUpperCase();
+  const fontSize = Math.round(size * 0.45);
+  const bg = item.type === "mcp" ? "bg-icon-mcp/10" : "bg-brand/10";
+  const color = item.type === "mcp" ? "text-icon-mcp" : "text-brand";
+  return (
+    <div
+      className={`flex-shrink-0 rounded-md flex items-center justify-center font-semibold ${bg} ${color}`}
+      style={{ width: size, height: size, fontSize }}
+      aria-hidden="true"
+    >
+      {letter}
+    </div>
+  );
+}
+
+// ── Featured card ─────────────────────────────────────────────────────────────
+
+const PILL_ICONS: Record<PillIcon, React.ReactNode> = {
+  download: <Download size={10} />,
+  cloud:    <Cloud size={10} />,
+  monitor:  <Monitor size={10} />,
+  code:     <Code size={10} />,
+  server:   <Server size={10} />,
 };
 
+const CLASSIFICATION_COLORS: Record<string, string> = {
+  official:  "bg-brand/15 text-brand border-brand/20",
+  reference: "bg-accent/15 text-accent border-accent/20",
+  community: "bg-accent-hover/15 text-accent-hover border-accent-hover/20",
+};
 
+function FeaturedCard({
+  item,
+  onNavigateToSkillStore,
+  onNavigateToMcpMarketplace,
+  onNavigateToTemplateMarketplace,
+}: {
+  item: FeaturedItem;
+  onNavigateToSkillStore?: (id: string) => void;
+  onNavigateToMcpMarketplace?: (slug: string) => void;
+  onNavigateToTemplateMarketplace?: (name: string) => void;
+}) {
+  const handleClick = () => {
+    if (item.type === "skill") onNavigateToSkillStore?.(item.itemId);
+    else if (item.type === "mcp") onNavigateToMcpMarketplace?.(item.itemId);
+    else if (item.type === "template") onNavigateToTemplateMarketplace?.(item.itemId);
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      className="group w-full h-full text-left p-5 rounded-xl bg-bg-input border border-border-strong/40 hover:border-border-strong hover:bg-surface-hover transition-all flex flex-col"
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3 mb-4 min-h-[52px]">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <FeaturedIcon item={item} size={36} />
+          <div className="min-w-0">
+            <div className="text-[14px] font-semibold text-text-base leading-snug truncate">
+              {item.title}
+            </div>
+            {item.classification ? (
+              <span
+                className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${CLASSIFICATION_COLORS[item.classification] ?? "bg-surface text-text-muted border-border-strong/40"}`}
+              >
+                {item.classification}
+              </span>
+            ) : (
+              <span className="text-[10px] font-medium text-text-muted truncate block">
+                {item.provider}
+              </span>
+            )}
+          </div>
+        </div>
+        <ArrowRight size={13} className="text-surface group-hover:text-text-muted transition-colors flex-shrink-0 mt-0.5" />
+      </div>
+
+      {/* Description — flex-1 pushes pills+footer to bottom */}
+      <div className="flex-1 min-h-0">
+        <p className="text-[12px] text-text-muted leading-relaxed line-clamp-3">
+          {item.description}
+        </p>
+      </div>
+
+      {/* Pills */}
+      {item.pills && item.pills.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-3">
+          {item.pills.map((pill) => (
+            <span
+              key={pill.label}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] text-text-muted"
+            >
+              {PILL_ICONS[pill.icon]}
+              {pill.label}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Footer — type badge + provider */}
+      <div className="flex items-center justify-between gap-2 mt-2.5 pt-2.5 border-t border-border-strong/40">
+        <TypeBadge type={item.type} />
+        <span className="text-[10px] text-text-muted truncate">{item.provider}</span>
+      </div>
+    </button>
+  );
+}
+
+const TYPE_META: Record<FeaturedItem["type"], { label: string; icon: React.ReactNode; bg: string; text: string }> = {
+  skill:    { label: "Skill",    icon: <Code size={10} />,   bg: "bg-icon-skill/15",          text: "text-icon-skill" },
+  template: { label: "Template", icon: <Layers size={10} />, bg: "bg-icon-file-template/15",  text: "text-icon-file-template" },
+  mcp:      { label: "MCP",      icon: <Server size={10} />, bg: "bg-icon-mcp/15",            text: "text-icon-mcp" },
+};
+
+function TypeBadge({ type }: { type: FeaturedItem["type"] }) {
+  const meta = TYPE_META[type];
+  return (
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${meta.bg} ${meta.text}`}>
+      {meta.icon}
+      {meta.label}
+    </span>
+  );
+}
 
 interface DashboardProps {
   onNavigate: (tab: string) => void;
+  onNavigateToSkillStore?: (skillId: string) => void;
+  onNavigateToMcpMarketplace?: (slug: string) => void;
+  onNavigateToTemplateMarketplace?: (templateName: string) => void;
 }
 
-export default function Dashboard({ onNavigate }: DashboardProps) {
+export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNavigateToMcpMarketplace, onNavigateToTemplateMarketplace }: DashboardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [mcpServerCount, setMcpServerCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -384,22 +561,16 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             <Star size={13} className="text-brand" />
             <h2 className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">Featured</h2>
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            {FEATURED_ITEMS.map((item) => {
-              const colors = FEATURED_COLORS[item.type];
-              return (
-                <button
-                  key={item.title}
-                  onClick={() => onNavigate(item.navigateTo)}
-                  className={`relative bg-bg-input border rounded-lg p-5 text-left transition-all group flex flex-col gap-3 ${colors.border}`}
-                >
-                  <span className={`absolute top-3 right-3 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${colors.badge} ${colors.badgeBg}`}>{item.badge}</span>
-                  <h4 className="text-sm font-semibold text-text-base">{item.title}</h4>
-                  <AuthorPanel descriptor={item._author} />
-                  <p className="text-[13px] text-text-muted leading-relaxed line-clamp-3">{item.description}</p>
-                </button>
-              );
-            })}
+          <div className="grid grid-cols-3 gap-4">
+            {FEATURED_ITEMS.map((item) => (
+              <FeaturedCard
+                key={item.title}
+                item={item}
+                onNavigateToSkillStore={onNavigateToSkillStore}
+                onNavigateToMcpMarketplace={onNavigateToMcpMarketplace}
+                onNavigateToTemplateMarketplace={onNavigateToTemplateMarketplace}
+              />
+            ))}
           </div>
         </div>
 

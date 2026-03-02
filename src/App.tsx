@@ -17,9 +17,10 @@ import Agents from "./Agents";
 import Settings from "./Settings";
 import TemplateMarketplace from "./TemplateMarketplace";
 import McpMarketplace from "./McpMarketplace";
+import CollectionMarketplace from "./CollectionMarketplace";
 import TechMeshBackground from "./TechMeshBackground";
 import FirstRunWizard from "./FirstRunWizard";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles } from "lucide-react";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen } from "lucide-react";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
 
@@ -72,6 +73,10 @@ function App() {
   const [skillStoreResetKey, setSkillStoreResetKey] = useState(0);
   const [templateMarketplaceResetKey, setTemplateMarketplaceResetKey] = useState(0);
   const [mcpMarketplaceResetKey, setMcpMarketplaceResetKey] = useState(0);
+  const [collectionMarketplaceResetKey, setCollectionMarketplaceResetKey] = useState(0);
+  const [pendingSkillStoreId, setPendingSkillStoreId] = useState<string | null>(null);
+  const [pendingMcpSlug, setPendingMcpSlug] = useState<string | null>(null);
+  const [pendingMarketplaceTemplate, setPendingMarketplaceTemplate] = useState<string | null>(null);
 
   // ── App version ─────────────────────────────────────────────────────────
   const [appVersion, setAppVersion] = useState<string>("");
@@ -155,10 +160,26 @@ function App() {
     setActiveTab("projects");
   };
 
+  const navigateToSkillStore = (skillId: string) => {
+    setPendingSkillStoreId(skillId);
+    setActiveTab("skill-store");
+  };
+
+  const navigateToMcpMarketplace = (slug: string) => {
+    setPendingMcpSlug(slug);
+    setActiveTab("mcp-marketplace");
+  };
+
+  const navigateToTemplateMarketplace = (templateName: string) => {
+    setPendingMarketplaceTemplate(templateName);
+    setActiveTab("template-marketplace");
+  };
+
   const MARKETPLACE_TABS: Record<string, () => void> = {
     "skill-store": () => setSkillStoreResetKey((k) => k + 1),
     "template-marketplace": () => setTemplateMarketplaceResetKey((k) => k + 1),
     "mcp-marketplace": () => setMcpMarketplaceResetKey((k) => k + 1),
+    "collection-marketplace": () => setCollectionMarketplaceResetKey((k) => k + 1),
   };
 
   const handleTabClick = (id: string) => {
@@ -248,6 +269,7 @@ function App() {
               <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
             <ul className="space-y-0.5">
+              <NavItem id="collection-marketplace" icon={PackageOpen} label="Collections" />
               <NavItem id="template-marketplace" icon={Layers} label="Templates" />
               <NavItem id="skill-store" icon={Store} label="Skills" />
               <NavItem id="mcp-marketplace" icon={Server} label="MCP Servers" />
@@ -377,7 +399,12 @@ function App() {
               {!["corporate-light", "corporate-dark", "accessible"].includes(activeTheme) && (
                 <TechMeshBackground />
               )}
-              <Dashboard onNavigate={setActiveTab} />
+              <Dashboard
+                onNavigate={setActiveTab}
+                onNavigateToSkillStore={navigateToSkillStore}
+                onNavigateToMcpMarketplace={navigateToMcpMarketplace}
+                onNavigateToTemplateMarketplace={navigateToTemplateMarketplace}
+              />
             </div>
           )}
           {activeTab === "projects" && (
@@ -417,17 +444,35 @@ function App() {
           )}
           {activeTab === "skill-store" && (
             <div className="flex-1 h-full">
-              <SkillStore resetKey={skillStoreResetKey} />
+              <SkillStore
+                resetKey={skillStoreResetKey}
+                initialSkillId={pendingSkillStoreId}
+                onInitialSkillIdConsumed={() => setPendingSkillStoreId(null)}
+              />
             </div>
           )}
           {activeTab === "template-marketplace" && (
             <div className="flex-1 h-full">
-              <TemplateMarketplace resetKey={templateMarketplaceResetKey} onNavigateToTemplate={navigateToTemplate} />
+              <TemplateMarketplace
+                resetKey={templateMarketplaceResetKey}
+                onNavigateToTemplate={navigateToTemplate}
+                initialTemplateName={pendingMarketplaceTemplate}
+                onInitialTemplateConsumed={() => setPendingMarketplaceTemplate(null)}
+              />
             </div>
           )}
           {activeTab === "mcp-marketplace" && (
             <div className="flex-1 h-full">
-              <McpMarketplace resetKey={mcpMarketplaceResetKey} />
+              <McpMarketplace
+                resetKey={mcpMarketplaceResetKey}
+                initialSlug={pendingMcpSlug}
+                onInitialSlugConsumed={() => setPendingMcpSlug(null)}
+              />
+            </div>
+          )}
+          {activeTab === "collection-marketplace" && (
+            <div className="flex-1 h-full">
+              <CollectionMarketplace resetKey={collectionMarketplaceResetKey} />
             </div>
           )}
           {activeTab === "templates" && (
