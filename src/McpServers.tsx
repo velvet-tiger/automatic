@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { trackMcpServerCreated, trackMcpServerUpdated, trackMcpServerDeleted } from "./analytics";
@@ -15,6 +15,9 @@ import {
   ToggleLeft,
   ToggleRight,
   AlertTriangle,
+  Shield,
+  ShieldCheck,
+  Loader2,
 } from "lucide-react";
 import { ICONS } from "./icons";
 
@@ -174,6 +177,135 @@ function KvList({
         </li>
       ))}
     </ul>
+  );
+}
+
+// ── OAuth Authentication Section ────────────────────────────────────────────
+
+function OAuthSection({ serverName, url }: { serverName: string; url: string }) {
+  const [hasToken, setHasToken] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(true);
+  // Track whether the user cancelled so we can ignore the late-arriving invoke result.
+  const cancelledRef = useRef(false);
+
+  // Check for existing token on mount and when serverName changes.
+  useEffect(() => {
+    if (!serverName) return;
+    setChecking(true);
+    invoke<boolean>("has_mcp_oauth_token", { serverName })
+      .then(setHasToken)
+      .catch(() => setHasToken(false))
+      .finally(() => setChecking(false));
+  }, [serverName]);
+
+  const handleAuthorize = async () => {
+    if (!serverName || !url) return;
+    cancelledRef.current = false;
+    setLoading(true);
+    setError(null);
+    try {
+      await invoke("authorize_mcp_server", { serverName, mcpUrl: url });
+      if (!cancelledRef.current) setHasToken(true);
+    } catch (e) {
+      if (!cancelledRef.current) setError(String(e));
+    } finally {
+      if (!cancelledRef.current) setLoading(false);
+    }
+  };
+
+  const handleCancel = () => {
+    cancelledRef.current = true;
+    setLoading(false);
+    setError(null);
+  };
+
+  const handleRevoke = async () => {
+    if (!serverName) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await invoke("revoke_mcp_oauth_token", { serverName });
+      setHasToken(false);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (checking) return null;
+
+  return (
+    <section>
+      <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
+        OAuth Authentication
+      </label>
+
+      {hasToken ? (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 rounded-lg border border-green-500/25 bg-green-500/8 px-4 py-3">
+            <ShieldCheck size={14} className="text-green-500 shrink-0" />
+            <div className="flex-1">
+              <p className="text-[12px] font-medium text-text-base">Authenticated</p>
+              <p className="text-[11px] text-text-muted">
+                OAuth token stored in system keychain. Agents will connect through the Automatic proxy.
+              </p>
+            </div>
+            <button
+              onClick={handleRevoke}
+              disabled={loading}
+              className="px-3 py-1.5 text-[11px] font-medium text-text-muted hover:text-danger border border-surface hover:border-danger/30 rounded transition-colors disabled:opacity-50"
+            >
+              {loading ? <Loader2 size={12} className="animate-spin" /> : "Revoke"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 rounded-lg border border-brand/25 bg-brand/8 px-4 py-3">
+            <Shield size={14} className="text-brand shrink-0" />
+            <div className="flex-1">
+              <p className="text-[12px] font-medium text-text-base">Authentication required</p>
+              <p className="text-[11px] text-text-muted">
+                This server requires OAuth. Authenticate to store the token securely in your system keychain.
+                Agents will connect through a local proxy — no secrets are written to project files.
+              </p>
+            </div>
+            {loading ? (
+              <div className="flex items-center gap-2">
+                <span className="flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-medium text-text-muted whitespace-nowrap">
+                  <Loader2 size={12} className="animate-spin" /> Waiting...
+                </span>
+                <button
+                  onClick={handleCancel}
+                  className="px-3 py-1.5 text-[11px] font-medium text-text-muted hover:text-danger border border-surface hover:border-danger/30 rounded transition-colors whitespace-nowrap"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleAuthorize}
+                disabled={!url}
+                className="px-4 py-1.5 text-[12px] font-medium bg-brand hover:bg-brand-hover text-white rounded shadow-sm transition-colors disabled:opacity-50 whitespace-nowrap"
+              >
+                Authenticate
+              </button>
+            )}
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 rounded-lg border border-danger/25 bg-danger/8 px-4 py-3">
+              <AlertTriangle size={12} className="text-danger mt-0.5 shrink-0" />
+              <p className="text-[11px] text-danger">{error}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+    </section>
   );
 }
 
@@ -372,6 +504,8 @@ export default function McpServers() {
   };
 
   const isStdio = config?.type === "stdio";
+  /** Server was installed from the MCP Directory — lock core settings. */
+  const isManaged = !!config?._author;
 
   return (
     <div className="flex h-full w-full bg-bg-base">
@@ -536,22 +670,24 @@ export default function McpServers() {
                   </div>
                   <div className="flex gap-1.5">
                     <button
-                      onClick={() => setTransport("stdio")}
+                      onClick={() => !isManaged && setTransport("stdio")}
+                      disabled={isManaged}
                       className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                         isStdio
                           ? "bg-brand border-brand text-white"
                           : "bg-bg-input border-surface text-text-muted hover:border-border-strong hover:text-text-base"
-                      }`}
+                      } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                     >
                       Local
                     </button>
                     <button
-                      onClick={() => setTransport(config.type === "sse" ? "sse" : "http")}
+                      onClick={() => !isManaged && setTransport(config.type === "sse" ? "sse" : "http")}
+                      disabled={isManaged}
                       className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                         !isStdio
                           ? "bg-brand border-brand text-white"
                           : "bg-bg-input border-surface text-text-muted hover:border-border-strong hover:text-text-base"
-                      }`}
+                      } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                     >
                       Remote
                     </button>
@@ -571,22 +707,24 @@ export default function McpServers() {
                     </label>
                     <div className="flex gap-1.5">
                       <button
-                        onClick={() => setTransport("http")}
+                        onClick={() => !isManaged && setTransport("http")}
+                        disabled={isManaged}
                         className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                           config.type === "http"
                             ? "bg-bg-sidebar border-border-strong text-text-base"
                             : "bg-bg-input border-surface text-text-muted hover:border-border-strong hover:text-text-base"
-                        }`}
+                        } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                       >
                         Streamable HTTP
                       </button>
                       <button
-                        onClick={() => setTransport("sse")}
+                        onClick={() => !isManaged && setTransport("sse")}
+                        disabled={isManaged}
                         className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                           config.type === "sse"
                             ? "bg-bg-sidebar border-border-strong text-text-base"
                             : "bg-bg-input border-surface text-text-muted hover:border-border-strong hover:text-text-base"
-                        }`}
+                        } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                       >
                         SSE (legacy)
                       </button>
@@ -606,34 +744,37 @@ export default function McpServers() {
                       <input
                         type="text"
                         value={config.command || ""}
-                        onChange={(e) => updateConfig({ command: e.target.value })}
+                        onChange={(e) => !isManaged && updateConfig({ command: e.target.value })}
+                        readOnly={isManaged}
                         placeholder="e.g. npx, node, /usr/local/bin/mcp-server"
-                        className={inputClass}
+                        className={`${inputClass} ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                       />
                     </section>
 
+                    {(config.args || []).length > 0 && (
                     <section>
                       <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
                         Arguments
                       </label>
-                      {(config.args || []).length > 0 && (
-                        <ul className="space-y-1 mb-2">
-                          {(config.args || []).map((arg, i) => (
-                            <li
-                              key={i}
-                              className="group flex items-center justify-between px-3 py-1.5 bg-bg-input rounded-md border border-surface text-[13px] text-text-base font-mono"
-                            >
-                              <span className="truncate">{arg}</span>
+                      <ul className="space-y-1 mb-2">
+                        {(config.args || []).map((arg, i) => (
+                          <li
+                            key={i}
+                            className={`group flex items-center justify-between px-3 py-1.5 bg-bg-input rounded-md border border-surface text-[13px] text-text-base font-mono ${isManaged ? "opacity-60" : ""}`}
+                          >
+                            <span className="truncate">{arg}</span>
+                            {!isManaged && (
                               <button
                                 onClick={() => removeArg(i)}
                                 className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all flex-shrink-0 ml-2"
                               >
                                 <Trash2 size={12} />
                               </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      {!isManaged && (
                       <div className="flex gap-2">
                         <input
                           type="text"
@@ -652,8 +793,11 @@ export default function McpServers() {
                           Add
                         </button>
                       </div>
+                      )}
                     </section>
+                    )}
 
+                    {(!isManaged || config.cwd) && (
                     <section>
                       <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
                         Working Directory
@@ -661,11 +805,13 @@ export default function McpServers() {
                       <input
                         type="text"
                         value={config.cwd || ""}
-                        onChange={(e) => updateConfig({ cwd: e.target.value })}
+                        onChange={(e) => !isManaged && updateConfig({ cwd: e.target.value })}
+                        readOnly={isManaged}
                         placeholder="Optional — defaults to system default"
-                        className={inputClass}
+                        className={`${inputClass} ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                       />
                     </section>
+                    )}
 
                     <section>
                       <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
@@ -719,25 +865,28 @@ export default function McpServers() {
                       <input
                         type="text"
                         value={config.url || ""}
-                        onChange={(e) => updateConfig({ url: e.target.value })}
+                        onChange={(e) => !isManaged && updateConfig({ url: e.target.value })}
+                        readOnly={isManaged}
                         placeholder={
                           config.type === "sse"
                             ? "https://example.com/sse"
                             : "https://example.com/mcp"
                         }
-                        className={inputClass}
+                        className={`${inputClass} ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                       />
                     </section>
 
+                    {(!isManaged || Object.keys(config.headers || {}).length > 0) && (
                     <section>
                       <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
                         HTTP Headers
                       </label>
                       <KvList
                         entries={Object.entries(config.headers || {})}
-                        onRemove={removeHeader}
+                        onRemove={isManaged ? () => {} : removeHeader}
                         colorKey
                       />
+                      {!isManaged && (
                       <div className="flex gap-2">
                         <input
                           type="text"
@@ -767,60 +916,17 @@ export default function McpServers() {
                           Add
                         </button>
                       </div>
+                      )}
                     </section>
+                    )}
 
                     {/* OAuth Authentication */}
-                    <section>
-                      <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
-                        OAuth Authentication (Optional)
-                      </label>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-[11px] text-text-muted mb-1">Client ID</label>
-                          <input
-                            type="text"
-                            value={config.oauth?.clientId || ""}
-                            onChange={(e) => config && updateConfig({ oauth: { ...(config.oauth || {}), clientId: e.target.value } })}
-                            placeholder="OAuth Client ID"
-                            className={inputClass}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] text-text-muted mb-1">Client Secret</label>
-                          <input
-                            type="password"
-                            value={config.oauth?.clientSecret || ""}
-                            onChange={(e) => config && updateConfig({ oauth: { ...(config.oauth || {}), clientSecret: e.target.value } })}
-                            placeholder="OAuth Client Secret"
-                            className={inputClass}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] text-text-muted mb-1">Scope</label>
-                          <input
-                            type="text"
-                            value={config.oauth?.scope || ""}
-                            onChange={(e) => config && updateConfig({ oauth: { ...(config.oauth || {}), scope: e.target.value } })}
-                            placeholder="e.g. read write"
-                            className={inputClass}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] text-text-muted mb-1">Callback Port</label>
-                          <input
-                            type="number"
-                            value={config.oauth?.callbackPort || ""}
-                            onChange={(e) => config && updateConfig({ oauth: { ...(config.oauth || {}), callbackPort: e.target.value ? parseInt(e.target.value) : undefined } })}
-                            placeholder="e.g. 3000"
-                            className={inputClass}
-                          />
-                        </div>
-                      </div>
-                    </section>
+                    <OAuthSection key={selectedName || ""} serverName={selectedName || ""} url={config.url || ""} />
                   </>
                 )}
 
                 {/* ── Timeout (common) ────────────────────────────────────── */}
+                {(!isManaged || config.timeout) && (
                 <section>
                   <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
                     Timeout (ms)
@@ -829,14 +935,16 @@ export default function McpServers() {
                     type="number"
                     value={config.timeout ?? ""}
                     onChange={(e) =>
-                      updateConfig({
+                      !isManaged && updateConfig({
                         timeout: e.target.value ? parseInt(e.target.value, 10) : undefined,
                       })
                     }
+                    readOnly={isManaged}
                     placeholder="Optional — e.g. 5000"
-                    className="w-48 bg-bg-input border border-surface hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors"
+                    className={`w-48 bg-bg-input border border-surface hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                   />
                 </section>
+                )}
               </div>
             </div>
           </div>
