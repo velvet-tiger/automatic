@@ -780,12 +780,16 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
 
   if (loading) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg-base" />
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg-base">
+        <div data-tauri-drag-region className="absolute top-0 inset-x-0 h-11 select-none" />
+      </div>
     );
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg-base">
+      {/* Drag region — covers the full-screen overlay so the window remains draggable during setup */}
+      <div data-tauri-drag-region className="absolute top-0 inset-x-0 h-11 select-none" />
       <div className="w-full max-w-xl px-6 py-10">
         {/* Logo */}
         <div className="flex items-center gap-2 mb-8">
