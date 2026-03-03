@@ -2,6 +2,56 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.5.0] — 2026-03-03
+
+### Features
+
+#### Onboarding Wizard
+- Auto-detect installed agents and import global MCP server configs during first-run setup
+
+#### Project Templates
+- Software Defaults added as a bundled project template
+
+#### Projects
+- Search filter on the projects overview
+- Sort toggle with last-activity ordering
+- Inline MCP config preview with deep-link to the server detail page
+- Redesigned project detail page layout
+
+#### Activity
+- Activity logging API and frontend integration with Recent Activity display on the dashboard
+
+#### MCP Servers
+- 67 additional servers from the Anthropic registry added to the MCP Marketplace, sorted alphabetically with contextual counts and expanded transport filters
+- Environment variable values encrypted at rest; shell environment variable inheritance supported
+- Per-row reveal toggle to mask/unmask env var values in the editor
+- Beta notice banner shown on library MCP server detail views
+
+#### Settings
+- Reset and erase data actions
+
+#### AI Playground (feature flag)
+- `read_file` tool with sandboxed file access added to the AI Playground
+
+### Style
+- Dashboard Discover & Extend cards aligned with use case card layout
+- Animated TechMeshBackground removed from the dashboard
+- OpenCode restart notice downgraded from warning to info
+
+### Fixes
+- Configuration dashboard updated to 3-column grid; MCP server sidebar border tokens corrected
+- Window drag region restored during first-run wizard
+- Card layout improved and status pill aligned in project card footer
+- Dashboard row heights made consistent between Activity and Projects panels
+- Sync button no longer navigates back to the projects list after syncing
+- Empty state flash and badge height shift prevented on projects overview
+- Dark theme icon colours corrected
+
+### Refactoring
+- `KvList` and input class constants extracted into shared `KvField.tsx` component
+
+---
+
 ## [0.4.0] — 2026-03-03
 
 ### Features
@@ -260,6 +310,7 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Warp removal correctly deletes `WARP.md` via owned config paths
 - Junie removal deletes the entire `.junie/` directory
 
+[0.5.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.5.0
 [0.4.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.4.0
 [0.3.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.3.0
 [0.2.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.2.0
