@@ -830,63 +830,69 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
 
         {/* Discover & Extend — full-width across the bottom */}
         <div>
-          <h2 className="text-lg font-medium text-text-base mb-4">Discover &amp; Extend</h2>
+          <h2 className="text-[13px] font-semibold text-text-muted tracking-wide uppercase mb-4">Discover &amp; Extend</h2>
           <div className="grid grid-cols-3 gap-4">
             {/* Skills Marketplace */}
             <button
               onClick={() => onNavigate("skill-store")}
-              className="bg-bg-input border border-border-strong/40 rounded-lg p-6 text-left hover:border-icon-skill/50 hover:bg-bg-input transition-all group flex flex-col justify-between"
+              className="bg-bg-input border border-border-strong/40 rounded-xl p-5 text-left hover:border-icon-skill/50 hover:bg-surface-hover transition-all group flex flex-col"
             >
-              <div>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="p-2.5 bg-icon-skill/10 rounded-lg group-hover:bg-icon-skill/20 transition-colors">
-                    <Code size={20} className="text-icon-skill" />
-                  </div>
-                  <h3 className="font-semibold text-text-base">Skills Marketplace</h3>
+              <div className="flex items-start gap-3 mb-3">
+                <div className="p-2 bg-icon-skill/10 rounded-lg border border-icon-skill/20 flex-shrink-0 group-hover:bg-icon-skill/20 transition-colors">
+                  <Code size={18} className="text-icon-skill" />
                 </div>
-                <p className="text-sm text-text-muted">Discover and install pre-built skills, prompts, and workflows from the community.</p>
+                <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">Skills Marketplace</h3>
               </div>
-              <div className="flex items-center gap-1.5 text-[12px] font-medium text-icon-skill group-hover:gap-2 transition-all mt-4">
-                Browse Skills <ArrowRight size={14} />
-              </div>
+              <p className="text-[12px] text-text-muted leading-relaxed flex-1 mb-4">Discover and install pre-built skills, prompts, and workflows from the community.</p>
+              <button
+                onClick={() => onNavigate("skill-store")}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-[12px] font-medium transition-all group/btn bg-bg-sidebar border border-transparent hover:border-border-strong/60 hover:bg-surface-hover text-icon-skill"
+              >
+                <span className="text-text-base group-hover/btn:text-text-base transition-colors">Browse Skills</span>
+                <ArrowRight size={11} className="flex-shrink-0 opacity-40 group-hover/btn:opacity-100 group-hover/btn:translate-x-0.5 transition-all text-icon-skill" />
+              </button>
             </button>
 
             {/* Templates Marketplace */}
             <button
               onClick={() => onNavigate("template-marketplace")}
-              className="bg-bg-input border border-border-strong/40 rounded-lg p-6 text-left hover:border-icon-file-template/50 hover:bg-bg-input transition-all group flex flex-col justify-between"
+              className="bg-bg-input border border-border-strong/40 rounded-xl p-5 text-left hover:border-icon-file-template/50 hover:bg-surface-hover transition-all group flex flex-col"
             >
-              <div>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="p-2.5 bg-icon-file-template/10 rounded-lg group-hover:bg-icon-file-template/20 transition-colors">
-                    <Layers size={20} className="text-icon-file-template" />
-                  </div>
-                  <h3 className="font-semibold text-text-base">Templates Marketplace</h3>
+              <div className="flex items-start gap-3 mb-3">
+                <div className="p-2 bg-icon-file-template/10 rounded-lg border border-icon-file-template/20 flex-shrink-0 group-hover:bg-icon-file-template/20 transition-colors">
+                  <Layers size={18} className="text-icon-file-template" />
                 </div>
-                <p className="text-sm text-text-muted">Explore project templates and file scaffolds to jumpstart your development.</p>
+                <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">Templates Marketplace</h3>
               </div>
-              <div className="flex items-center gap-1.5 text-[12px] font-medium text-icon-file-template group-hover:gap-2 transition-all mt-4">
-                Browse Templates <ArrowRight size={14} />
-              </div>
+              <p className="text-[12px] text-text-muted leading-relaxed flex-1 mb-4">Explore project templates and file scaffolds to jumpstart your development.</p>
+              <button
+                onClick={() => onNavigate("template-marketplace")}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-[12px] font-medium transition-all group/btn bg-bg-sidebar border border-transparent hover:border-border-strong/60 hover:bg-surface-hover text-icon-file-template"
+              >
+                <span className="text-text-base group-hover/btn:text-text-base transition-colors">Browse Templates</span>
+                <ArrowRight size={11} className="flex-shrink-0 opacity-40 group-hover/btn:opacity-100 group-hover/btn:translate-x-0.5 transition-all text-icon-file-template" />
+              </button>
             </button>
 
             {/* MCP Servers Marketplace */}
             <button
               onClick={() => onNavigate("mcp-marketplace")}
-              className="bg-bg-input border border-border-strong/40 rounded-lg p-6 text-left hover:border-icon-mcp/50 hover:bg-bg-input transition-all group flex flex-col justify-between"
+              className="bg-bg-input border border-border-strong/40 rounded-xl p-5 text-left hover:border-icon-mcp/50 hover:bg-surface-hover transition-all group flex flex-col"
             >
-              <div>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="p-2.5 bg-icon-mcp/10 rounded-lg group-hover:bg-icon-mcp/20 transition-colors">
-                    <Server size={20} className="text-icon-mcp" />
-                  </div>
-                  <h3 className="font-semibold text-text-base">MCP Servers Marketplace</h3>
+              <div className="flex items-start gap-3 mb-3">
+                <div className="p-2 bg-icon-mcp/10 rounded-lg border border-icon-mcp/20 flex-shrink-0 group-hover:bg-icon-mcp/20 transition-colors">
+                  <Server size={18} className="text-icon-mcp" />
                 </div>
-                <p className="text-sm text-text-muted">Connect AI-powered integrations and extend your agents with MCP servers.</p>
+                <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">MCP Servers Marketplace</h3>
               </div>
-              <div className="flex items-center gap-1.5 text-[12px] font-medium text-icon-mcp group-hover:gap-2 transition-all mt-4">
-                Browse Servers <ArrowRight size={14} />
-              </div>
+              <p className="text-[12px] text-text-muted leading-relaxed flex-1 mb-4">Connect AI-powered integrations and extend your agents with MCP servers.</p>
+              <button
+                onClick={() => onNavigate("mcp-marketplace")}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-[12px] font-medium transition-all group/btn bg-bg-sidebar border border-transparent hover:border-border-strong/60 hover:bg-surface-hover text-icon-mcp"
+              >
+                <span className="text-text-base group-hover/btn:text-text-base transition-colors">Browse Servers</span>
+                <ArrowRight size={11} className="flex-shrink-0 opacity-40 group-hover/btn:opacity-100 group-hover/btn:translate-x-0.5 transition-all text-icon-mcp" />
+              </button>
             </button>
           </div>
         </div>
