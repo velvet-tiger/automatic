@@ -50,6 +50,7 @@ import {
   ChevronRight,
   Copy,
   History,
+  Search,
 } from "lucide-react";
 
 interface Project {
@@ -980,6 +981,8 @@ function ProjectCard({
 }
 
 function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, onSelect, onCreate }: ProjectsOverviewProps) {
+  const [searchQuery, setSearchQuery] = useState("");
+
   // Sort: drifted first, then by updated_at desc
   const sorted = [...projects].sort((a, b) => {
     const aDrift = driftByProject[a] === true ? 0 : 1;
@@ -990,6 +993,17 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
     return bTime - aTime;
   });
 
+  const query = searchQuery.trim().toLowerCase();
+  const filtered = query
+    ? sorted.filter((name) => {
+        const details = projectDetails.get(name);
+        const inName = name.toLowerCase().includes(query);
+        const inDirectory = (details?.directory ?? "").toLowerCase().includes(query);
+        const inAgents = (details?.agents ?? []).some((agent) => agent.toLowerCase().includes(query));
+        return inName || inDirectory || inAgents;
+      })
+    : sorted;
+
   const driftedCount = projects.filter((n) => driftByProject[n] === true).length;
 
   return (
@@ -999,12 +1013,23 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
         <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
           Projects
         </span>
-        <button
-          onClick={onCreate}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors shadow-sm"
-        >
-          <Plus size={12} /> New Project
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted" />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search projects"
+              className="h-7 w-44 rounded-md border border-border-strong/50 bg-bg-input pl-7 pr-2 text-[12px] text-text-base placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60"
+            />
+          </div>
+          <button
+            onClick={onCreate}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors shadow-sm"
+          >
+            <Plus size={12} /> New Project
+          </button>
+        </div>
       </div>
 
       <div className="p-6 space-y-5">
@@ -1037,9 +1062,14 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
               Create Project
             </button>
           </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center border border-border-strong/30 rounded-lg bg-bg-input/40">
+            <p className="text-[13px] text-text-base mb-1">No matching projects</p>
+            <p className="text-[12px] text-text-muted">Try another search term.</p>
+          </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 items-stretch auto-rows-fr">
-            {sorted.map((name) => (
+            {filtered.map((name) => (
               <ProjectCard
                 key={name}
                 name={name}
