@@ -107,17 +107,17 @@ function GlobalActivityFeed({
             return (
               <div
                 key={item.id}
-                className={`flex items-center gap-3 px-4 py-2.5 ${i < entries.length - 1 ? "border-b border-border-strong/20" : ""}`}
+                className={`flex items-center gap-3 px-4 h-[42px] ${i < entries.length - 1 ? "border-b border-border-strong/20" : ""}`}
               >
                 <div className="flex-shrink-0 leading-[0]">{icon}</div>
-                <div className="flex-1 min-w-0 leading-none">
-                  <span className="text-[11px] text-text-muted font-medium mr-1.5">[{item.project}]</span>
-                  <span className="text-[12px] text-text-base">{item.label}</span>
+                <div className="flex-1 min-w-0 leading-none flex items-center gap-0 truncate">
+                  <span className="text-[11px] text-text-muted font-medium mr-1.5 shrink-0">[{item.project}]</span>
+                  <span className="text-[12px] text-text-base truncate">{item.label}</span>
                   {item.detail && (
-                    <span className="text-[12px] text-text-muted ml-1.5">{item.detail}</span>
+                    <span className="text-[12px] text-text-muted ml-1.5 shrink-0">{item.detail}</span>
                   )}
                 </div>
-                <span className="text-[11px] text-text-muted flex-shrink-0 leading-none">{relativeTime(item.timestamp)}</span>
+                <span className="text-[11px] text-text-muted flex-shrink-0 leading-none ml-3">{relativeTime(item.timestamp)}</span>
               </div>
             );
           })
@@ -702,7 +702,7 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
                         <div
                           key={project.name}
                           onClick={() => handleProjectClick(project.name)}
-                          className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors group ${
+                          className={`flex items-center gap-3 px-4 h-[42px] cursor-pointer transition-colors group ${
                             isDrifted ? "hover:bg-warning/5" : "hover:bg-surface-hover"
                           }`}
                         >
