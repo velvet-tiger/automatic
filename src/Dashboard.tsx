@@ -103,7 +103,7 @@ function GlobalActivityFeed({
           </div>
         ) : (
           entries.map((item, i) => {
-            const { icon, dot } = activityEntryMeta(item.event);
+            const { icon } = activityEntryMeta(item.event);
             return (
               <div
                 key={item.id}
@@ -424,10 +424,6 @@ const USE_CASES: UseCase[] = [
 function UseCasesSection({ onNavigate }: { onNavigate: (tab: string) => void }) {
   return (
     <div>
-      <div className="flex items-center gap-2 mb-3">
-        <Sparkles size={13} className="text-brand" />
-        <h2 className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">What's your goal?</h2>
-      </div>
       <div className="grid grid-cols-3 gap-4">
         {USE_CASES.map((uc) => (
           <div
@@ -494,7 +490,7 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
   const loadActivity = async () => {
     setLoadingActivity(true);
     try {
-      const raw: string = await invoke("get_all_activity", { limit: 5 });
+      const raw: string = await invoke("get_all_activity", { limit: 100 });
       setActivityEntries(JSON.parse(raw) as ActivityEntry[]);
     } catch (e) {
       console.error("Failed to load global activity:", e);
@@ -664,7 +660,7 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
 
             {activityEntries.length > 0 && (
               <GlobalActivityFeed
-                entries={activityEntries}
+                entries={activityEntries.slice(0, 6)}
                 loading={loadingActivity}
               />
             )}
@@ -691,7 +687,14 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
                 <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
                 <div className="divide-y divide-border-strong/30">
                   {projects
-                    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+                    .slice()
+                    .sort((a, b) => {
+                      const latestFor = (p: typeof a) => {
+                        const entry = activityEntries.find(e => e.project === p.name);
+                        return entry ? new Date(entry.timestamp).getTime() : new Date(p.updated_at).getTime();
+                      };
+                      return latestFor(b) - latestFor(a);
+                    })
                     .slice(0, 6)
                     .map(project => {
                       const drift = driftMap[project.name];
