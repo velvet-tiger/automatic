@@ -317,7 +317,14 @@ interface Project {
   mcp_servers: string[];
 }
 
-export default function McpServers() {
+interface McpServersProps {
+  /** When set, auto-selects this server on mount (used when navigating from Projects). */
+  initialServer?: string | null;
+  /** Called after the initialServer has been consumed so the parent can clear it. */
+  onInitialServerConsumed?: () => void;
+}
+
+export default function McpServers({ initialServer = null, onInitialServerConsumed }: McpServersProps = {}) {
   const [servers, setServers] = useState<string[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [config, setConfig] = useState<McpServerConfig | null>(null);
@@ -338,6 +345,15 @@ export default function McpServers() {
     loadServers();
     checkOpencodeProjects();
   }, []);
+
+  // When navigated here from another page (e.g. Projects), auto-select the
+  // requested server once the list has loaded.
+  useEffect(() => {
+    if (initialServer && servers.includes(initialServer)) {
+      selectServer(initialServer);
+      onInitialServerConsumed?.();
+    }
+  }, [initialServer, servers]);
 
   const loadServers = async () => {
     try {

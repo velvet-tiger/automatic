@@ -80,6 +80,7 @@ function App() {
   const [pendingSkillStoreId, setPendingSkillStoreId] = useState<string | null>(null);
   const [pendingMcpSlug, setPendingMcpSlug] = useState<string | null>(null);
   const [pendingMarketplaceTemplate, setPendingMarketplaceTemplate] = useState<string | null>(null);
+  const [pendingMcpServer, setPendingMcpServer] = useState<string | null>(null);
 
   // ── App version ─────────────────────────────────────────────────────────
   const [appVersion, setAppVersion] = useState<string>("");
@@ -161,6 +162,11 @@ function App() {
   const navigateToCreateWithTemplate = (templateName: string) => {
     setPendingCreateWithTemplate(templateName);
     setActiveTab("projects");
+  };
+
+  const navigateToMcpServer = (serverName: string) => {
+    setPendingMcpServer(serverName);
+    setActiveTab("mcp");
   };
 
   const navigateToSkillStore = (skillId: string) => {
@@ -418,6 +424,7 @@ function App() {
                 initialProject={pendingProject}
                 onInitialProjectConsumed={() => setPendingProject(null)}
                 onNavigateToSkill={navigateToSkill}
+                onNavigateToMcpServer={navigateToMcpServer}
                 initialCreateWithTemplate={pendingCreateWithTemplate}
                 onInitialCreateWithTemplateConsumed={() => setPendingCreateWithTemplate(null)}
               />
@@ -497,7 +504,10 @@ function App() {
           )}
           {activeTab === "mcp" && (
             <div className="flex-1 h-full">
-              <McpServers />
+              <McpServers
+                initialServer={pendingMcpServer}
+                onInitialServerConsumed={() => setPendingMcpServer(null)}
+              />
             </div>
           )}
           {activeTab === "settings" && (

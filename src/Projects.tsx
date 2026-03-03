@@ -207,6 +207,8 @@ interface ProjectsProps {
   onInitialProjectConsumed?: () => void;
   /** Called when the user clicks "View in library" on a skill — navigates to the Skills page. */
   onNavigateToSkill?: (skillName: string) => void;
+  /** Called when the user clicks "View full configuration" on an MCP server — navigates to the MCP Servers page. */
+  onNavigateToMcpServer?: (serverName: string) => void;
   /** When set, opens the new project wizard at step 3 with this template pre-selected. */
   initialCreateWithTemplate?: string | null;
   onInitialCreateWithTemplateConsumed?: () => void;
@@ -927,7 +929,7 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Projects({ initialProject = null, onInitialProjectConsumed, onNavigateToSkill, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
+export default function Projects({ initialProject = null, onInitialProjectConsumed, onNavigateToSkill, onNavigateToMcpServer, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
   const PROJECT_ORDER_KEY = "automatic.projects.order";
@@ -1574,8 +1576,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     setDirty(true);
   };
 
-  // Reload project state from disk and refresh all dependent UI
-   const reloadProject = async (name: string) => {
+  // Reload project state from disk and refresh all dependent UI.
+  // Always re-affirms selectedName so that any async state race between
+  // isCreating=false and the reload completing cannot drop back to the overview.
+  const reloadProject = async (name: string) => {
     try {
       const raw: string = await invoke("read_project", { name });
       const parsed = JSON.parse(raw);
@@ -1593,6 +1597,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         file_rules: parsed.file_rules || {},
         instruction_mode: parsed.instruction_mode || "per-agent",
       };
+      setSelectedName(name);
+      setIsCreating(false);
       setProject(data);
       setDirty(false);
 
@@ -3705,6 +3711,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       onRemove={(i) => removeItem("mcp_servers", i)}
                       disableAdd={warpOnly}
                       emptyMessage={warpOnly ? "Add other agent tools to enable MCP server syncing." : "No MCP servers attached."}
+                      onNavigateToMcpServer={onNavigateToMcpServer}
                     />
                   </section>
                   );

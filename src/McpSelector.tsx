@@ -1,5 +1,35 @@
 import { useState } from "react";
-import { Plus, Search, Server, Trash2, X } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import {
+  Plus,
+  Search,
+  Server,
+  Trash2,
+  X,
+  ChevronDown,
+  ChevronRight,
+  Terminal,
+  Globe,
+  Variable,
+  ArrowUpRight,
+  Loader2,
+} from "lucide-react";
+
+// ── Minimal config shape (mirrors McpServers.tsx) ──────────────────────────
+
+interface McpServerConfig {
+  type: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  timeout?: number;
+}
+
+// ── Props ──────────────────────────────────────────────────────────────────
 
 interface McpSelectorProps {
   /** Currently selected MCP server names */
@@ -16,13 +46,184 @@ interface McpSelectorProps {
   label?: string;
   /** Empty-state message (default: "No MCP servers configured.") */
   emptyMessage?: string;
+  /**
+   * Optional callback to navigate to the full MCP server config page.
+   * When provided, the inline card shows a "View full configuration" link.
+   */
+  onNavigateToMcpServer?: (serverName: string) => void;
 }
+
+// ── Inline read-only config card ───────────────────────────────────────────
+
+interface McpConfigCardProps {
+  name: string;
+  onNavigate?: (name: string) => void;
+}
+
+function McpConfigCard({ name, onNavigate }: McpConfigCardProps) {
+  const [config, setConfig] = useState<McpServerConfig | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  // Kick off a single load on first render
+  if (!loaded && !loading) {
+    setLoading(true);
+    invoke<string>("read_mcp_server_config", { name })
+      .then((raw) => {
+        setConfig(JSON.parse(raw) as McpServerConfig);
+        setLoaded(true);
+        setLoading(false);
+      })
+      .catch((err) => {
+        setError(String(err));
+        setLoaded(true);
+        setLoading(false);
+      });
+  }
+
+  const isStdio = config?.type === "stdio";
+  const envEntries = Object.entries(config?.env ?? {});
+  const headerEntries = Object.entries(config?.headers ?? {});
+
+  return (
+    <div className="text-[12px] divide-y divide-border-strong/30">
+      {loading && (
+        <div className="flex items-center gap-2 px-4 py-3 text-text-muted">
+          <Loader2 size={12} className="animate-spin" />
+          <span>Loading config…</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="px-4 py-3 text-danger">{error}</div>
+      )}
+
+      {config && !loading && (
+        <>
+          {/* Type + enabled badge */}
+          <div className="flex items-center justify-between px-4 py-2.5">
+            <div className="flex items-center gap-1.5">
+              {isStdio ? (
+                <Terminal size={11} className="text-text-muted" />
+              ) : (
+                <Globe size={11} className="text-text-muted" />
+              )}
+              <span className="text-text-muted uppercase tracking-wider text-[10px] font-semibold">
+                {config.type}
+              </span>
+            </div>
+            <span
+              className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                config.enabled === false
+                  ? "bg-text-muted/10 text-text-muted"
+                  : "bg-success/10 text-success"
+              }`}
+            >
+              {config.enabled === false ? "Disabled" : "Enabled"}
+            </span>
+          </div>
+
+          {/* stdio: command + args */}
+          {isStdio && config.command && (
+            <div className="px-4 py-2.5">
+              <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1">
+                Command
+              </p>
+              <code className="text-text-base font-mono text-[12px] break-all">
+                {config.command}
+                {(config.args ?? []).length > 0 && (
+                  <span className="text-text-muted"> {config.args!.join(" ")}</span>
+                )}
+              </code>
+            </div>
+          )}
+
+          {/* stdio: working dir */}
+          {isStdio && config.cwd && (
+            <div className="px-4 py-2.5">
+              <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1">
+                Working Dir
+              </p>
+              <code className="text-text-base font-mono text-[12px] break-all">{config.cwd}</code>
+            </div>
+          )}
+
+          {/* stdio: env vars */}
+          {isStdio && envEntries.length > 0 && (
+            <div className="px-4 py-2.5">
+              <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                <Variable size={10} /> Env vars
+              </p>
+              <ul className="space-y-1">
+                {envEntries.map(([k, v]) => (
+                  <li key={k} className="flex items-center gap-2 font-mono">
+                    <span className="text-brand text-[11px]">{k}</span>
+                    <span className="text-text-muted text-[11px]">=</span>
+                    <span className="text-text-base text-[11px] truncate">
+                      {v !== "" ? v : <em className="text-text-muted/60">empty</em>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* http/sse: url */}
+          {!isStdio && config.url && (
+            <div className="px-4 py-2.5">
+              <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1">
+                URL
+              </p>
+              <code className="text-text-base font-mono text-[12px] break-all">{config.url}</code>
+            </div>
+          )}
+
+          {/* http/sse: headers */}
+          {!isStdio && headerEntries.length > 0 && (
+            <div className="px-4 py-2.5">
+              <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5">
+                Headers
+              </p>
+              <ul className="space-y-1">
+                {headerEntries.map(([k, v]) => (
+                  <li key={k} className="flex items-center gap-2 font-mono">
+                    <span className="text-brand text-[11px]">{k}</span>
+                    <span className="text-text-muted text-[11px]">:</span>
+                    <span className="text-text-base text-[11px] truncate">{v}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Footer: link to full config */}
+          {onNavigate && (
+            <div className="px-4 py-2.5">
+              <button
+                onClick={() => onNavigate(name)}
+                className="flex items-center gap-1 text-brand hover:text-brand-hover text-[11px] font-medium transition-colors"
+              >
+                View full configuration
+                <ArrowUpRight size={11} />
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────────────────────
 
 /**
  * Shared MCP server selector used by both Projects and ProjectTemplates.
  * Renders:
  *   - A section header with an "Add" button (hidden when disableAdd=true)
  *   - The current list of servers as styled card rows
+ *   - Clicking a server expands an inline read-only config card with a link
+ *     back to the full MCP server configuration page
  *   - A searchable dropdown panel when adding
  */
 export function McpSelector({
@@ -33,9 +234,11 @@ export function McpSelector({
   disableAdd = false,
   label = "MCP Servers",
   emptyMessage = "No MCP servers configured.",
+  onNavigateToMcpServer,
 }: McpSelectorProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
+  const [expandedServer, setExpandedServer] = useState<string | null>(null);
 
   const unaddedServers = availableServers.filter((s) => !servers.includes(s));
   const filteredServers = search.trim()
@@ -51,6 +254,10 @@ export function McpSelector({
   function handleCancel() {
     setAdding(false);
     setSearch("");
+  }
+
+  function toggleExpand(srv: string) {
+    setExpandedServer((prev) => (prev === srv ? null : srv));
   }
 
   return (
@@ -79,26 +286,52 @@ export function McpSelector({
       )}
 
       {/* Current servers list */}
-      <div className="space-y-2">
-        {servers.map((srv, idx) => (
-          <div
-            key={srv}
-            className="flex items-center gap-3 px-3 py-3 bg-bg-input border border-border-strong/40 rounded-lg group"
-          >
-            <div className="w-8 h-8 rounded-md bg-icon-mcp/12 flex items-center justify-center flex-shrink-0">
-              <Server size={15} className="text-icon-mcp" />
+      <div className="space-y-1.5">
+        {servers.map((srv, idx) => {
+          const isExpanded = expandedServer === srv;
+          return (
+            <div key={srv}>
+              {/* Row — clicking toggles inline card */}
+              <div
+                className={`flex items-center gap-3 px-3 py-3 bg-bg-input border group cursor-pointer transition-colors ${
+                  isExpanded
+                    ? "border-border-strong rounded-t-lg rounded-b-none"
+                    : "border-border-strong/40 rounded-lg hover:border-border-strong/70"
+                }`}
+                onClick={() => toggleExpand(srv)}
+              >
+                <span className="text-text-muted flex-shrink-0">
+                  {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                </span>
+
+                <div className="w-7 h-7 rounded-md bg-icon-mcp/12 flex items-center justify-center flex-shrink-0">
+                  <Server size={14} className="text-icon-mcp" />
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-medium text-text-base">{srv}</div>
+                </div>
+
+                <button
+                  onClick={(e) => { e.stopPropagation(); onRemove(idx); }}
+                  className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+
+              {/* Inline config card */}
+              {isExpanded && (
+                <div className="border border-t-0 border-border-strong rounded-b-lg overflow-hidden bg-bg-input">
+                  <McpConfigCard
+                    name={srv}
+                    onNavigate={onNavigateToMcpServer}
+                  />
+                </div>
+              )}
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-[13px] font-medium text-text-base">{srv}</div>
-            </div>
-            <button
-              onClick={() => onRemove(idx)}
-              className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded"
-            >
-              <Trash2 size={12} />
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Searchable add dropdown */}
