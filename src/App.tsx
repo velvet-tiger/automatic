@@ -20,7 +20,6 @@ import TemplateMarketplace from "./TemplateMarketplace";
 import McpMarketplace from "./McpMarketplace";
 import CollectionMarketplace from "./CollectionMarketplace";
 import AiPlayground from "./AiPlayground";
-import TechMeshBackground from "./TechMeshBackground";
 import FirstRunWizard from "./FirstRunWizard";
 import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical } from "lucide-react";
 import { flag } from "./flags";
@@ -406,10 +405,7 @@ function App() {
         {/* Content Area */}
         <div className="flex-1 overflow-hidden flex flex-col">
           {activeTab === "dashboard" && (
-            <div className="relative flex-1 h-full">
-              {!["corporate-light", "corporate-dark", "accessible"].includes(activeTheme) && (
-                <TechMeshBackground />
-              )}
+            <div className="flex-1 h-full">
               <Dashboard
                 onNavigate={setActiveTab}
                 onNavigateToSkillStore={navigateToSkillStore}
