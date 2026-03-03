@@ -1,6 +1,7 @@
 pub mod ai;
 mod author;
 mod credentials;
+mod env_crypto;
 mod editors;
 mod flags;
 mod integrations;
