@@ -73,6 +73,17 @@ const CLASSIFICATION_LABELS: Record<string, string> = {
   community: "Community",
 };
 
+// ── Transport filters ──────────────────────────────────────────────────────
+
+const TRANSPORT_FILTERS = ["remote", "local", "auth"] as const;
+type TransportFilter = (typeof TRANSPORT_FILTERS)[number];
+
+const TRANSPORT_LABELS: Record<TransportFilter, string> = {
+  remote: "Remote",
+  local: "Local",
+  auth: "Auth Required",
+};
+
 const CLASSIFICATION_COLORS: Record<string, string> = {
   official: "bg-brand/15 text-brand border-brand/20",
   reference: "bg-accent/15 text-accent border-accent/20",
@@ -216,6 +227,7 @@ export default function McpMarketplace({
 }) {
   const [query, setQuery] = useState("");
   const [classification, setClassification] = useState<string>("all");
+  const [transportFilter, setTransportFilter] = useState<TransportFilter | null>(null);
   const [selected, setSelected] = useState<McpServer | null>(null);
   const [setupTab, setSetupTab] = useState<"remote" | "local" | "auth">(
     "local"
@@ -242,6 +254,7 @@ export default function McpMarketplace({
       setSelected(null);
       setQuery("");
       setClassification("all");
+      setTransportFilter(null);
       setInstallError(null);
     }
   }, [resetKey]);
@@ -262,24 +275,57 @@ export default function McpMarketplace({
     }
   }, []);
 
-  // Filter servers
+  // Base list after applying the search query only (used for cross-filter counts)
+  const queryFiltered = useMemo(() => {
+    if (!query.trim()) return servers;
+    const q = query.toLowerCase();
+    return servers.filter(
+      (s) =>
+        s.title.toLowerCase().includes(q) ||
+        s.description.toLowerCase().includes(q) ||
+        s.provider.toLowerCase().includes(q) ||
+        s.slug.toLowerCase().includes(q)
+    );
+  }, [query]);
+
+  // Classification badge counts: how many match each classification given the
+  // active transport filter (+ query), so clicking a badge shows a truthful count.
+  const tagCounts = useMemo(() => {
+    const base = transportFilter === "remote" ? queryFiltered.filter(hasRemote)
+               : transportFilter === "local"  ? queryFiltered.filter(hasLocal)
+               : transportFilter === "auth"   ? queryFiltered.filter(hasAuth)
+               : queryFiltered;
+    const counts: Record<string, number> = { all: base.length };
+    for (const s of base) {
+      counts[s.classification] = (counts[s.classification] ?? 0) + 1;
+    }
+    return counts;
+  }, [queryFiltered, transportFilter]);
+
+  // Transport badge counts: how many match each transport given the active
+  // classification filter (+ query), so clicking a badge shows a truthful count.
+  const transportCounts = useMemo(() => {
+    const base = classification === "all"
+      ? queryFiltered
+      : queryFiltered.filter((s) => s.classification === classification);
+    return {
+      remote: base.filter(hasRemote).length,
+      local:  base.filter(hasLocal).length,
+      auth:   base.filter(hasAuth).length,
+    };
+  }, [queryFiltered, classification]);
+
+  // Final filtered + sorted list
   const filtered = useMemo(() => {
-    let list = servers;
+    let list = queryFiltered;
     if (classification !== "all") {
       list = list.filter((s) => s.classification === classification);
     }
-    if (query.trim()) {
-      const q = query.toLowerCase();
-      list = list.filter(
-        (s) =>
-          s.title.toLowerCase().includes(q) ||
-          s.description.toLowerCase().includes(q) ||
-          s.provider.toLowerCase().includes(q) ||
-          s.slug.toLowerCase().includes(q)
-      );
-    }
-    return list;
-  }, [query, classification]);
+    if (transportFilter === "remote") list = list.filter(hasRemote);
+    if (transportFilter === "local")  list = list.filter(hasLocal);
+    if (transportFilter === "auth")   list = list.filter(hasAuth);
+    return [...list].sort((a, b) => a.title.localeCompare(b.title));
+  }, [queryFiltered, classification, transportFilter]);
 
   // When selecting a server, pick the best default tab
   const handleSelect = useCallback((server: McpServer) => {
@@ -832,18 +878,62 @@ export default function McpMarketplace({
               className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-icon-mcp rounded-xl pl-11 pr-4 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm"
             />
           </div>
-          <div className="flex gap-2 justify-center">
+
+          {/* Classification filters */}
+          <div className="flex gap-2 flex-wrap justify-center mb-2">
             {CLASSIFICATIONS.map((c) => (
               <button
                 key={c}
                 onClick={() => setClassification(c)}
-                className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${
                   classification === c
                     ? "bg-icon-mcp/15 text-icon-mcp border-icon-mcp/30"
                     : "bg-bg-sidebar border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
                 }`}
               >
                 {CLASSIFICATION_LABELS[c]}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                  classification === c
+                    ? "bg-icon-mcp/20 text-icon-mcp"
+                    : "bg-border-strong/20 text-text-muted"
+                }`}>
+                  {tagCounts[c] ?? 0}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* Transport / capability filters */}
+          <div className="flex gap-2 flex-wrap justify-center">
+            {TRANSPORT_FILTERS.map((f) => (
+              <button
+                key={f}
+                onClick={() => setTransportFilter(transportFilter === f ? null : f)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${
+                  transportFilter === f
+                    ? f === "remote"
+                      ? "bg-icon-mcp/15 text-icon-mcp border-icon-mcp/30"
+                      : f === "local"
+                      ? "bg-success/15 text-success border-success/30"
+                      : "bg-danger/15 text-danger border-danger/30"
+                    : "bg-bg-sidebar border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
+                }`}
+              >
+                {f === "remote" && <Cloud size={11} />}
+                {f === "local"  && <Monitor size={11} />}
+                {f === "auth"   && <Lock size={11} />}
+                {TRANSPORT_LABELS[f]}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
+                  transportFilter === f
+                    ? f === "remote"
+                      ? "bg-icon-mcp/20 text-icon-mcp"
+                      : f === "local"
+                      ? "bg-success/20 text-success"
+                      : "bg-danger/20 text-danger"
+                    : "bg-border-strong/20 text-text-muted"
+                }`}>
+                  {transportCounts[f]}
+                </span>
               </button>
             ))}
           </div>
@@ -852,7 +942,10 @@ export default function McpMarketplace({
         {/* Results count — full width */}
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
-            {filtered.length} Server{filtered.length !== 1 ? "s" : ""}
+            {filtered.length !== servers.length
+              ? <>{filtered.length} <span className="text-text-muted/50 font-normal normal-case">of</span> {servers.length} servers</>
+              : <>{servers.length} server{servers.length !== 1 ? "s" : ""}</>
+            }
           </h3>
           {installedServers.size > 0 && (
             <span className="text-[11px] text-success">{installedServers.size} added</span>
