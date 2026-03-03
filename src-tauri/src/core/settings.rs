@@ -97,6 +97,27 @@ pub fn write_settings(settings: &Settings) -> Result<(), String> {
     fs::write(&path, raw).map_err(|e| e.to_string())
 }
 
+pub fn reset_settings() -> Result<(), String> {
+    write_settings(&Settings::default())
+}
+
+pub fn erase_app_data() -> Result<(), String> {
+    let automatic_dir = get_automatic_dir()?;
+    if automatic_dir.exists() {
+        fs::remove_dir_all(&automatic_dir).map_err(|e| e.to_string())?;
+    }
+
+    // Recreate a clean baseline immediately so the app still has bundled
+    // defaults (rules/instruction templates/skill registry metadata) without
+    // requiring a restart.
+    write_settings(&Settings::default())?;
+    super::install_default_rules()?;
+    super::install_default_templates()?;
+    super::install_default_skills()?;
+
+    Ok(())
+}
+
 /// Mark a getting-started flag as completed and persist settings.
 /// This is a best-effort operation — errors are logged but not propagated
 /// so that the primary action (install / import) is never blocked.

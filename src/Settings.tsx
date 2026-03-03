@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { THEMES, applyTheme, Theme } from "./theme";
 
 import { getVersion } from "@tauri-apps/api/app";
@@ -11,7 +12,7 @@ import {
   trackUpdateInstalled,
 } from "./analytics";
 import { AgentSelector, type AgentInfo } from "./AgentSelector";
-import { Code2, Bot, AppWindow } from "lucide-react";
+import { Code2, Bot, AppWindow, X } from "lucide-react";
 
 type UpdateStatus =
   | "idle"
@@ -60,6 +61,9 @@ export default function Settings() {
   });
   const [loading, setLoading] = useState(true);
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
+  const [showEraseDataModal, setShowEraseDataModal] = useState(false);
+  const [eraseInput, setEraseInput] = useState("");
+  const [erasingData, setErasingData] = useState(false);
 
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
     let saved = localStorage.getItem("automatic.theme") as string;
@@ -203,6 +207,60 @@ export default function Settings() {
 
   function restartApp() {
     invoke("restart_app");
+  }
+
+  async function resetToFactorySettings() {
+    const confirmed = await ask(
+      "Reset all app settings to factory defaults? This will reset theme, analytics, default agents, and onboarding preferences.",
+      { title: "Reset App Settings", kind: "warning" }
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await invoke("reset_settings");
+      const defaults: AppSettings = {
+        skill_sync_mode: "symlink",
+        analytics_enabled: true,
+        default_agents: [],
+      };
+      setSettings(defaults);
+      setAnalyticsEnabled(true);
+      setCurrentTheme("system");
+      localStorage.setItem("automatic.theme", "system");
+      applyTheme("system");
+    } catch (e) {
+      console.error("Failed to reset settings", e);
+    }
+  }
+
+  async function eraseAllData() {
+    if (eraseInput.trim() !== "erase") {
+      return;
+    }
+
+    setErasingData(true);
+    try {
+      await invoke("erase_app_data");
+      const defaults: AppSettings = {
+        skill_sync_mode: "symlink",
+        analytics_enabled: true,
+        default_agents: [],
+      };
+      setSettings(defaults);
+      setAnalyticsEnabled(true);
+      setCurrentTheme("system");
+      localStorage.setItem("automatic.theme", "system");
+      applyTheme("system");
+      setShowEraseDataModal(false);
+      setEraseInput("");
+    } catch (e) {
+      console.error("Failed to erase app data", e);
+    } finally {
+      setErasingData(false);
+    }
   }
 
   if (loading) {
@@ -527,11 +585,104 @@ export default function Settings() {
                   </button>
                 )}
               </div>
+
+              {/* Reset */}
+              <div className="mb-8">
+                <h3 className="text-sm font-medium mb-2 text-text-base">Reset</h3>
+                <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
+                  Restore Automatic to factory defaults for app settings.
+                </p>
+                <button
+                  onClick={resetToFactorySettings}
+                  className="px-4 py-2 rounded-lg border border-danger/60 bg-danger/10 text-[13px] text-danger hover:bg-danger/20 transition-all"
+                >
+                  Reset to Factory Settings
+                </button>
+
+                <div className="mt-4">
+                  <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
+                    Permanently delete all local Automatic app data.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setEraseInput("");
+                      setShowEraseDataModal(true);
+                    }}
+                    className="px-4 py-2 rounded-lg border border-danger bg-danger/20 text-[13px] text-danger hover:bg-danger/30 transition-all"
+                  >
+                    Erase Data
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
         </div>
       </div>
+
+      {showEraseDataModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !erasingData) {
+              setShowEraseDataModal(false);
+              setEraseInput("");
+            }
+          }}
+        >
+          <div className="w-full max-w-md mx-4 rounded-xl border border-border-strong/40 bg-bg-input p-5 shadow-2xl">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[14px] font-semibold text-text-base">Erase App Data</h3>
+              <button
+                onClick={() => {
+                  if (erasingData) return;
+                  setShowEraseDataModal(false);
+                  setEraseInput("");
+                }}
+                className="p-1 rounded text-text-muted hover:text-text-base transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <p className="text-[12px] text-text-muted leading-relaxed mb-3">
+              This permanently deletes local Automatic data (projects registry, memories, activity, and plugin/session files) and restores bundled default rules and instruction templates.
+            </p>
+            <p className="text-[12px] text-text-muted leading-relaxed mb-3">
+              To confirm, type <span className="font-mono text-text-base">erase</span> below.
+            </p>
+
+            <input
+              type="text"
+              value={eraseInput}
+              onChange={(e) => setEraseInput(e.target.value)}
+              placeholder="type erase"
+              className="w-full text-[13px] text-text-base font-mono bg-bg-base border border-border-strong/40 rounded px-3 py-2 focus:outline-none focus:border-danger"
+              autoFocus
+            />
+
+            <div className="flex items-center justify-end gap-2 mt-4">
+              <button
+                onClick={() => {
+                  if (erasingData) return;
+                  setShowEraseDataModal(false);
+                  setEraseInput("");
+                }}
+                className="px-3 py-1.5 text-[12px] font-medium rounded bg-bg-sidebar text-text-muted hover:text-text-base hover:bg-surface-hover transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={eraseAllData}
+                disabled={erasingData || eraseInput.trim() !== "erase"}
+                className="px-3 py-1.5 text-[12px] font-medium rounded bg-danger text-white hover:bg-danger/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {erasingData ? "Erasing..." : "Erase Data"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

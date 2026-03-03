@@ -50,6 +50,8 @@ pub fn run() {
             get_feature_flags,
             read_settings,
             write_settings,
+            reset_settings,
+            erase_app_data,
             dismiss_welcome,
             save_api_key,
             get_api_key,
