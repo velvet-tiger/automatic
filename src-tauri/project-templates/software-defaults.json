@@ -1,0 +1,26 @@
+{
+  "name": "software-defaults",
+  "display_name": "Software Defaults",
+  "description": "Common defaults for software development projects. Includes code review, debugging, documentation, refactoring, and testing skills with general-purpose coding rules.",
+  "category": "General",
+  "tags": ["general", "coding", "defaults", "best-practices", "review", "testing", "documentation"],
+  "skills": [
+    "automatic-code-review",
+    "automatic-debugging",
+    "automatic-documentation",
+    "automatic-refactoring",
+    "automatic-testing"
+  ],
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "",
+  "unified_rules": [
+    "automatic-service",
+    "automatic-checklist",
+    "automatic-code-style",
+    "automatic-general"
+  ],
+  "_author": { "type": "provider", "name": "Automatic", "url": "https://automatic.sh" }
+}

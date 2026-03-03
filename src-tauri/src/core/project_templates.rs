@@ -197,6 +197,10 @@ pub struct BundledProjectTemplate {
 /// All bundled marketplace templates, compiled in at build time.
 const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
     (
+        "software-defaults",
+        include_str!("../../project-templates/software-defaults.json"),
+    ),
+    (
         "nextjs-saas-starter",
         include_str!("../../project-templates/nextjs-saas-starter.json"),
     ),
