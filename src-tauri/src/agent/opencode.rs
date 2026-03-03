@@ -161,6 +161,44 @@ impl Agent for OpenCode {
 
         result
     }
+
+    fn detect_global_install(&self) -> bool {
+        super::cli_available("opencode")
+            || super::home_dir()
+                .map(|h| h.join(".config").join("opencode").exists())
+                .unwrap_or(false)
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        let mut result = Map::new();
+
+        // ~/.opencode.json or ~/opencode.json — global OpenCode config in home dir
+        for filename in &[".opencode.json", "opencode.json"] {
+            let path = home.join(filename);
+            if path.exists() {
+                result.extend(discover_mcp_servers_from_json(
+                    &path,
+                    "mcp",
+                    normalise_import,
+                ));
+            }
+        }
+
+        // ~/.config/opencode/config.json — XDG-style global config
+        let xdg_path = home.join(".config").join("opencode").join("config.json");
+        if xdg_path.exists() {
+            result.extend(discover_mcp_servers_from_json(
+                &xdg_path,
+                "mcp",
+                normalise_import,
+            ));
+        }
+
+        result
+    }
 }
 
 /// Convert an OpenCode MCP server config to Automatic's canonical format.

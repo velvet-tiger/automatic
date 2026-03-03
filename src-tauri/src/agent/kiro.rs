@@ -130,6 +130,21 @@ impl Agent for Kiro {
         }
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn detect_global_install(&self) -> bool {
+        super::home_dir()
+            .map(|h| h.join(".kiro").exists())
+            .unwrap_or(false)
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        // ~/.kiro/settings/mcp.json — user-level Kiro MCP config
+        let path = home.join(".kiro").join("settings").join("mcp.json");
+        discover_mcp_servers_from_json(&path, "mcpServers", identity)
+    }
 }
 
 /// Pass-through normaliser: Kiro's format is already canonical.

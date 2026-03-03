@@ -174,6 +174,25 @@ impl Agent for GitHubCopilot {
         // VS Code uses "servers" key instead of "mcpServers"
         discover_mcp_servers_from_json(&path, "servers", identity)
     }
+
+    fn detect_global_install(&self) -> bool {
+        // VS Code or Cursor (which also uses Copilot) must be present.
+        std::path::Path::new("/Applications/Visual Studio Code.app").exists()
+            || std::path::Path::new("/Applications/Cursor.app").exists()
+            || super::cli_available("code")
+            || super::home_dir()
+                .map(|h| h.join(".vscode").exists())
+                .unwrap_or(false)
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        // ~/.vscode/mcp.json — user-level VS Code MCP config
+        let path = home.join(".vscode").join("mcp.json");
+        discover_mcp_servers_from_json(&path, "servers", identity)
+    }
 }
 
 /// Pass-through normaliser: VS Code/Copilot format is close to canonical.

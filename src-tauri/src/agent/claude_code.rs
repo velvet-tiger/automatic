@@ -107,6 +107,39 @@ impl Agent for ClaudeCode {
         // Claude's format is already canonical — no normalisation needed.
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn detect_global_install(&self) -> bool {
+        // The `claude` binary on PATH, or the ~/.claude config directory.
+        super::cli_available("claude")
+            || super::home_dir()
+                .map(|h| h.join(".claude").exists())
+                .unwrap_or(false)
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        let mut result = Map::new();
+
+        // ~/.claude/settings.json  — user-level Claude Code settings
+        let settings_path = home.join(".claude").join("settings.json");
+        result.extend(discover_mcp_servers_from_json(
+            &settings_path,
+            "mcpServers",
+            identity,
+        ));
+
+        // ~/.mcp.json  — user-level MCP config (also read by Claude Code)
+        let user_mcp_path = home.join(".mcp.json");
+        result.extend(discover_mcp_servers_from_json(
+            &user_mcp_path,
+            "mcpServers",
+            identity,
+        ));
+
+        result
+    }
 }
 
 /// Pass-through normaliser: Claude's format is already canonical.

@@ -185,6 +185,116 @@ impl Agent for CodexCli {
         // Codex TOML import not implemented yet
         Map::new()
     }
+
+    fn detect_global_install(&self) -> bool {
+        super::cli_available("codex")
+            || super::home_dir()
+                .map(|h| h.join(".codex").exists())
+                .unwrap_or(false)
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        // ~/.codex/config.toml — user-level Codex CLI config
+        let path = home.join(".codex").join("config.toml");
+        discover_codex_global_config(&path)
+    }
+}
+
+// ── Global config discovery ──────────────────────────────────────────────────
+
+/// Parse `~/.codex/config.toml` and return any `[mcp_servers.*]` entries as
+/// Automatic canonical MCP server configs.
+fn discover_codex_global_config(path: &std::path::Path) -> Map<String, Value> {
+    use serde_json::Value;
+    use std::fs;
+
+    let mut result = Map::new();
+
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return result,
+    };
+
+    let doc: toml::Value = match toml::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return result,
+    };
+
+    let servers = match doc.get("mcp_servers").and_then(|v| v.as_table()) {
+        Some(t) => t,
+        None => return result,
+    };
+
+    for (name, entry) in servers {
+        if !crate::core::is_valid_name(name) || name == "automatic" || name == "nexus" {
+            continue;
+        }
+        let table = match entry.as_table() {
+            Some(t) => t,
+            None => continue,
+        };
+
+        let transport = table
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("stdio");
+
+        let mut server = serde_json::Map::new();
+
+        match transport {
+            "http" | "sse" => {
+                server.insert("type".to_string(), Value::String(transport.to_string()));
+                if let Some(url) = table.get("url").and_then(|v| v.as_str()) {
+                    server.insert("url".to_string(), Value::String(url.to_string()));
+                }
+                if let Some(headers) = table.get("headers").and_then(|v| v.as_table()) {
+                    let hmap: serde_json::Map<String, Value> = headers
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            v.as_str()
+                                .map(|s| (k.clone(), Value::String(s.to_string())))
+                        })
+                        .collect();
+                    server.insert("headers".to_string(), Value::Object(hmap));
+                }
+            }
+            _ => {
+                if let Some(cmd) = table.get("command").and_then(|v| v.as_str()) {
+                    server.insert("command".to_string(), Value::String(cmd.to_string()));
+                }
+                if let Some(args) = table.get("args").and_then(|v| v.as_array()) {
+                    let arr: Vec<Value> = args
+                        .iter()
+                        .filter_map(|a| a.as_str().map(|s| Value::String(s.to_string())))
+                        .collect();
+                    if !arr.is_empty() {
+                        server.insert("args".to_string(), Value::Array(arr));
+                    }
+                }
+                if let Some(env) = table.get("env").and_then(|v| v.as_table()) {
+                    let emap: serde_json::Map<String, Value> = env
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            v.as_str()
+                                .map(|s| (k.clone(), Value::String(s.to_string())))
+                        })
+                        .collect();
+                    if !emap.is_empty() {
+                        server.insert("env".to_string(), Value::Object(emap));
+                    }
+                }
+            }
+        }
+
+        if !server.is_empty() {
+            result.insert(name.clone(), Value::Object(server));
+        }
+    }
+
+    result
 }
 
 // ── TOML Helpers ────────────────────────────────────────────────────────────

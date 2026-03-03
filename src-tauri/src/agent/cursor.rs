@@ -114,6 +114,24 @@ impl Agent for Cursor {
         // Cursor's format matches Claude's — no normalisation needed.
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn detect_global_install(&self) -> bool {
+        // Cursor ships as an app bundle (macOS) and optionally a CLI.
+        std::path::Path::new("/Applications/Cursor.app").exists()
+            || super::cli_available("cursor")
+            || super::home_dir()
+                .map(|h| h.join(".cursor").exists())
+                .unwrap_or(false)
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        // ~/.cursor/mcp.json — user-level Cursor MCP config
+        let path = home.join(".cursor").join("mcp.json");
+        discover_mcp_servers_from_json(&path, "mcpServers", identity)
+    }
 }
 
 /// Pass-through normaliser: Cursor's format is already canonical.

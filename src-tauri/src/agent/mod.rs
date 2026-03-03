@@ -165,6 +165,43 @@ pub trait Agent: Send + Sync {
     /// Returns configs normalised to Automatic's canonical format.
     fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value>;
 
+    /// Returns `true` if this agent appears to be installed at the user level
+    /// (binary present, or a global config directory exists in the home dir).
+    ///
+    /// Used during first-run to pre-filter which agents are worth scanning for
+    /// global config.  The default implementation always returns `true` so that
+    /// agents without a reliable global install check still participate.
+    fn detect_global_install(&self) -> bool {
+        true
+    }
+
+    /// Scan this agent's user-level (home-directory) config files for MCP
+    /// server definitions that already exist outside of any project.
+    ///
+    /// Returns configs normalised to Automatic's canonical format, identical
+    /// to what [`discover_mcp_servers`] returns for project-level files.
+    ///
+    /// The default implementation returns an empty map.  Agents with known
+    /// global config paths should override this to read those files.
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        Map::new()
+    }
+
+    /// Return home-directory skill directories that this agent uses
+    /// **outside** of the two directories Automatic already tracks
+    /// (`~/.agents/skills/` and `~/.claude/skills/`).
+    ///
+    /// Only paths that are genuinely additional need to be listed here —
+    /// i.e. agent-specific global skill locations (e.g. `~/.cline/skills/`).
+    /// Skills already in `~/.agents/skills/` or `~/.claude/skills/` are
+    /// already visible in Automatic's registry and do not need re-importing.
+    ///
+    /// The default implementation returns an empty vec.  Agents with extra
+    /// home-directory skill locations should override this.
+    fn extra_global_skill_dirs(&self) -> Vec<PathBuf> {
+        vec![]
+    }
+
     // ── Cleanup ─────────────────────────────────────────────────────────
 
     /// Paths of MCP config files that are exclusively owned by Automatic for
@@ -581,6 +618,67 @@ pub(crate) fn cleanup_agent_preview(
     }
 
     preview
+}
+
+/// Scan the agent-specific extra global skill directories returned by
+/// [`Agent::extra_global_skill_dirs`] and return skills not already present
+/// in Automatic's global registry (`~/.agents/skills/` / `~/.claude/skills/`).
+///
+/// Returns `(name, content)` pairs — the skill name and its `SKILL.md` content —
+/// ready to be saved via `core::save_skill`.
+pub(crate) fn collect_new_skills_from_extra_dirs(agent: &dyn Agent) -> Vec<(String, String)> {
+    let known_names: std::collections::HashSet<String> = crate::core::list_skill_names()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+    let mut results: Vec<(String, String)> = Vec::new();
+
+    for dir in agent.extra_global_skill_dirs() {
+        if !dir.exists() {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !crate::core::is_valid_name(name) || known_names.contains(name) {
+                continue;
+            }
+            let skill_file = path.join("SKILL.md");
+            if let Ok(content) = fs::read_to_string(&skill_file) {
+                results.push((name.to_string(), content));
+            }
+        }
+    }
+
+    results
+}
+
+/// Return the user's home directory, or `None` if it cannot be determined.
+///
+/// Thin wrapper around [`dirs::home_dir`] used by agent implementations to
+/// resolve global config paths (e.g. `~/.claude/settings.json`).
+pub(crate) fn home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
+}
+
+/// Return `true` if `cli_name` resolves to an executable on `$PATH`.
+///
+/// Uses the system `which` command to avoid depending on an additional crate.
+pub(crate) fn cli_available(cli_name: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(cli_name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Read a JSON config file containing MCP server definitions, extract them,

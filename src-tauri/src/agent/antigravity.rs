@@ -131,6 +131,22 @@ impl Agent for Antigravity {
         }
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn detect_global_install(&self) -> bool {
+        std::path::Path::new("/Applications/Antigravity.app").exists()
+            || super::home_dir()
+                .map(|h| h.join(".antigravity").exists())
+                .unwrap_or(false)
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        // ~/.antigravity/mcp.json — speculative global config path
+        let path = home.join(".antigravity").join("mcp.json");
+        discover_mcp_servers_from_json(&path, "mcpServers", identity)
+    }
 }
 
 /// Pass-through normaliser: Antigravity's format is already canonical.

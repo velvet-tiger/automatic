@@ -173,6 +173,22 @@ impl Agent for GeminiCli {
         }
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn detect_global_install(&self) -> bool {
+        super::cli_available("gemini")
+            || super::home_dir()
+                .map(|h| h.join(".gemini").exists())
+                .unwrap_or(false)
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        // ~/.gemini/settings.json — user-level Gemini CLI config
+        let path = home.join(".gemini").join("settings.json");
+        discover_mcp_servers_from_json(&path, "mcpServers", identity)
+    }
 }
 
 /// Pass-through normaliser: Gemini's format is already canonical.

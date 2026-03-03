@@ -112,6 +112,67 @@ impl Agent for Cline {
         }
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn extra_global_skill_dirs(&self) -> Vec<std::path::PathBuf> {
+        // Cline stores skills in ~/.cline/skills/ at user level —
+        // not covered by the standard ~/.agents/skills/ or ~/.claude/skills/ scan.
+        match super::home_dir() {
+            Some(home) => vec![home.join(".cline").join("skills")],
+            None => vec![],
+        }
+    }
+
+    fn detect_global_install(&self) -> bool {
+        // Cline is a VS Code extension; VS Code must be installed.
+        std::path::Path::new("/Applications/Visual Studio Code.app").exists()
+            || super::cli_available("code")
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        // Cline stores its global MCP config in VS Code's extension globalStorage.
+        // The base directory is OS-specific; compute it once then append the
+        // extension-specific suffix.
+        let base: Option<std::path::PathBuf> = {
+            #[cfg(target_os = "macos")]
+            {
+                dirs::home_dir().map(|h| {
+                    h.join("Library")
+                        .join("Application Support")
+                        .join("Code")
+                        .join("User")
+                        .join("globalStorage")
+                })
+            }
+            #[cfg(target_os = "windows")]
+            {
+                dirs::data_dir().map(|d| d.join("Code").join("User").join("globalStorage"))
+            }
+            #[cfg(target_os = "linux")]
+            {
+                dirs::home_dir().map(|h| {
+                    h.join(".config")
+                        .join("Code")
+                        .join("User")
+                        .join("globalStorage")
+                })
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+            {
+                None
+            }
+        };
+
+        match base {
+            Some(gs) => {
+                let path = gs
+                    .join("saoudrizwan.claude-dev")
+                    .join("settings")
+                    .join("cline_mcp_settings.json");
+                discover_mcp_servers_from_json(&path, "mcpServers", identity)
+            }
+            None => Map::new(),
+        }
+    }
 }
 
 /// Pass-through normaliser: Cline's format is already canonical.

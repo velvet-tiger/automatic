@@ -131,6 +131,29 @@ impl Agent for Junie {
         // Junie's format matches Claude's — no normalisation needed.
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn detect_global_install(&self) -> bool {
+        // Junie is a JetBrains plugin; check for a JetBrains IDE.
+        std::path::Path::new("/Applications/IntelliJ IDEA.app").exists()
+            || std::path::Path::new("/Applications/GoLand.app").exists()
+            || std::path::Path::new("/Applications/WebStorm.app").exists()
+            || std::path::Path::new("/Applications/PyCharm.app").exists()
+            || std::path::Path::new("/Applications/PhpStorm.app").exists()
+            || std::path::Path::new("/Applications/CLion.app").exists()
+            || std::path::Path::new("/Applications/Rider.app").exists()
+            || super::home_dir()
+                .map(|h| h.join(".junie").exists())
+                .unwrap_or(false)
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        // ~/.junie/mcp.json — speculative global config path (not yet documented)
+        let path = home.join(".junie").join("mcp.json");
+        discover_mcp_servers_from_json(&path, "mcpServers", identity)
+    }
 }
 
 /// Pass-through normaliser: Junie's format is already canonical.

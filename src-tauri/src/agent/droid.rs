@@ -114,6 +114,21 @@ impl Agent for Droid {
         }
         discover_mcp_servers_from_json(&path, "mcpServers", normalise_import)
     }
+
+    fn detect_global_install(&self) -> bool {
+        super::home_dir()
+            .map(|h| h.join(".factory").exists())
+            .unwrap_or(false)
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        // ~/.factory/mcp.json — speculative global config path
+        let path = home.join(".factory").join("mcp.json");
+        discover_mcp_servers_from_json(&path, "mcpServers", normalise_import)
+    }
 }
 
 /// Normalise Droid's explicit "type" field to Automatic's canonical format.

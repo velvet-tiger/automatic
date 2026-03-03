@@ -114,14 +114,14 @@ const AGENT_OPTIONS = [
   { id: "antigravity", label: "Antigravity" },
   { id: "claude", label: "Claude Code" },
   { id: "cline", label: "Cline" },
-  { id: "codex_cli", label: "Codex CLI" },
+  { id: "codex", label: "Codex CLI" },
   { id: "cursor", label: "Cursor" },
   { id: "droid", label: "Droid" },
-  { id: "gemini_cli", label: "Gemini CLI" },
-  { id: "github_copilot", label: "GitHub Copilot" },
+  { id: "gemini", label: "Gemini CLI" },
+  { id: "copilot", label: "GitHub Copilot" },
   { id: "goose", label: "Goose" },
   { id: "junie", label: "Junie" },
-  { id: "kilo_code", label: "Kilo Code" },
+  { id: "kilo", label: "Kilo Code" },
   { id: "kiro", label: "Kiro" },
   { id: "opencode", label: "OpenCode" },
   { id: "warp", label: "Warp" },
@@ -335,18 +335,42 @@ function StepAiUsage({
   );
 }
 
+interface AgentGlobalConfig {
+  agent_id: string;
+  agent_label: string;
+  server_count: number;
+  server_names: string[];
+  skill_count: number;
+  skill_names: string[];
+}
+
 function StepAgents({
   value,
   onChange,
+  globalConfigs,
+  detectingGlobal,
+  autoDetectedIds,
 }: {
   value: string[];
   onChange: (v: string[]) => void;
+  globalConfigs: AgentGlobalConfig[];
+  detectingGlobal: boolean;
+  autoDetectedIds: string[];
 }) {
   const toggle = (id: string) => {
     onChange(
       value.includes(id) ? value.filter((a) => a !== id) : [...value, id]
     );
   };
+
+  const totalServers = globalConfigs.reduce((sum, c) => sum + c.server_count, 0);
+  const totalSkills  = globalConfigs.reduce((sum, c) => sum + c.skill_count,  0);
+  const totalDiscovered = totalServers + totalSkills;
+
+  // Only show results for agents the user actually selected
+  const relevantConfigs = globalConfigs.filter(
+    c => value.includes(c.agent_id) && (c.server_count > 0 || c.skill_count > 0)
+  );
 
   return (
     <div>
@@ -367,6 +391,50 @@ function StepAgents({
           />
         ))}
       </div>
+
+      {/* Auto-detect note — shown only when agents were pre-ticked by install detection */}
+      {autoDetectedIds.length > 0 && (
+        <p className="mt-3 text-[12px] text-text-muted italic">
+          Pre-selected based on agents detected on this machine. Deselect any you don't want to use with Automatic.
+        </p>
+      )}
+
+      {/* Global config detection summary */}
+      {value.length > 0 && !value.every(id => id === "other") && (
+        <div className="mt-4">
+          {detectingGlobal ? (
+            <p className="text-[12px] text-text-muted italic">
+              Scanning for existing skills and MCP server configs...
+            </p>
+          ) : totalDiscovered > 0 ? (
+            <div className="rounded-lg border border-border-strong/40 bg-surface-hover px-4 py-3 space-y-1.5">
+              <p className="text-[12px] font-medium text-text-base">
+                Found existing configs — these will be imported into Automatic automatically.
+              </p>
+              {relevantConfigs.map(c => (
+                <div key={c.agent_id} className="text-[12px] text-text-muted space-y-0.5">
+                  <span className="text-text-base font-medium">{c.agent_label}</span>
+                  {c.server_count > 0 && (
+                    <p>
+                      MCP servers: {c.server_names.join(", ")}
+                    </p>
+                  )}
+                  {c.skill_count > 0 && (
+                    <p>
+                      Skills: {c.skill_names.join(", ")}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[12px] text-text-muted italic">
+              No existing global skills or MCP server configs found for the selected agents.
+            </p>
+          )}
+        </div>
+      )}
+
       {value.length === 0 && (
         <p className="mt-4 text-[12px] text-text-muted italic">
           Select at least one agent to continue, or skip this step.
@@ -583,19 +651,41 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [subscribeError, setSubscribeError] = useState<string | null>(null);
+  const [globalConfigs, setGlobalConfigs] = useState<AgentGlobalConfig[]>([]);
+  const [detectingGlobal, setDetectingGlobal] = useState(false);
+  // IDs pre-ticked via install detection (used to show the "auto-detected" note).
+  const [autoDetectedIds, setAutoDetectedIds] = useState<string[]>([]);
   const [templates, setTemplates] = useState<BundledTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [projectDir, setProjectDir] = useState("");
 
   // Pre-populate answers from any previously saved onboarding data.
+  // On a fresh first run (no saved agents) also auto-detect installed agents.
   useEffect(() => {
     async function loadSaved() {
       try {
         const settings: any = await invoke("read_settings");
+        const savedAgents: string[] = settings?.onboarding?.agents ?? [];
+
+        let initialAgents = savedAgents;
+        if (savedAgents.length === 0) {
+          // Fresh run — pre-tick agents detected as installed.
+          try {
+            const raw: string = await invoke("detect_installed_agents");
+            const detected: string[] = JSON.parse(raw);
+            if (detected.length > 0) {
+              initialAgents = detected;
+              setAutoDetectedIds(detected);
+            }
+          } catch (e) {
+            console.error("[wizard] Agent install detection failed:", e);
+          }
+        }
+
         setAnswers({
           role: settings?.onboarding?.role ?? "",
           aiUsage: settings?.onboarding?.ai_usage ?? "",
-          agents: settings?.onboarding?.agents ?? [],
+          agents: initialAgents,
           email: settings?.onboarding?.email ?? "",
           analyticsEnabled: settings?.analytics_enabled ?? true,
           theme: (localStorage.getItem("automatic.theme") as Theme | null) ?? "system",
@@ -621,6 +711,29 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
     }
     loadTemplates();
   }, []);
+
+  // Detect existing global MCP server configs whenever the selected agents
+  // change and we're on (or have passed) the agents step.
+  useEffect(() => {
+    const realAgents = answers.agents.filter((id) => id !== "other");
+    if (realAgents.length === 0) {
+      setGlobalConfigs([]);
+      return;
+    }
+    let cancelled = false;
+    setDetectingGlobal(true);
+    invoke<string>("detect_agent_global_configs", { agentIds: realAgents })
+      .then((raw) => {
+        if (!cancelled) setGlobalConfigs(JSON.parse(raw));
+      })
+      .catch((e) => {
+        console.error("[wizard] Global config detection failed:", e);
+      })
+      .finally(() => {
+        if (!cancelled) setDetectingGlobal(false);
+      });
+    return () => { cancelled = true; };
+  }, [answers.agents]);
 
   const totalSteps = STEPS.length;
   const isLast = step === totalSteps - 1;
@@ -648,10 +761,14 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
     try {
       // Read current settings, patch wizard fields, write back.
       const current: any = await invoke("read_settings");
+      // Promote wizard selections (excluding the catch-all "other") to the
+      // global default_agents list so new projects are pre-populated.
+      const realAgents = answers.agents.filter((id) => id !== "other");
       const updated = {
         ...current,
         wizard_completed: true,
         analytics_enabled: answers.analyticsEnabled,
+        default_agents: realAgents,
         onboarding: {
           role: answers.role,
           ai_usage: answers.aiUsage,
@@ -660,6 +777,21 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
         },
       };
       await invoke("write_settings", { settings: updated });
+
+      // Import MCP server configs and skills discovered in the agents' global
+      // config files into Automatic's registry.
+      if (realAgents.length > 0) {
+        try {
+          await invoke("import_agent_global_configs", { agentIds: realAgents });
+        } catch (e) {
+          console.error("[wizard] Failed to import global agent MCP configs:", e);
+        }
+        try {
+          await invoke("import_agent_global_skills", { agentIds: realAgents });
+        } catch (e) {
+          console.error("[wizard] Failed to import global agent skills:", e);
+        }
+      }
 
       identifyOnboarding({
         role: answers.role,
@@ -820,6 +952,9 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
             <StepAgents
               value={answers.agents}
               onChange={(v) => setAnswers((a) => ({ ...a, agents: v }))}
+              globalConfigs={globalConfigs}
+              detectingGlobal={detectingGlobal}
+              autoDetectedIds={autoDetectedIds}
             />
           )}
           {step === 3 && (

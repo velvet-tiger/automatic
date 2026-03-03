@@ -116,6 +116,56 @@ impl Agent for KiloCode {
         }
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn detect_global_install(&self) -> bool {
+        // Kilo Code is a VS Code extension.
+        std::path::Path::new("/Applications/Visual Studio Code.app").exists()
+            || super::cli_available("code")
+    }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        // Kilo Code stores its global MCP config in VS Code's extension globalStorage.
+        let base: Option<std::path::PathBuf> = {
+            #[cfg(target_os = "macos")]
+            {
+                dirs::home_dir().map(|h| {
+                    h.join("Library")
+                        .join("Application Support")
+                        .join("Code")
+                        .join("User")
+                        .join("globalStorage")
+                })
+            }
+            #[cfg(target_os = "windows")]
+            {
+                dirs::data_dir().map(|d| d.join("Code").join("User").join("globalStorage"))
+            }
+            #[cfg(target_os = "linux")]
+            {
+                dirs::home_dir().map(|h| {
+                    h.join(".config")
+                        .join("Code")
+                        .join("User")
+                        .join("globalStorage")
+                })
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+            {
+                None
+            }
+        };
+
+        match base {
+            Some(gs) => {
+                let path = gs
+                    .join("kilocode.kilo-code")
+                    .join("settings")
+                    .join("kilo_mcp_settings.json");
+                discover_mcp_servers_from_json(&path, "mcpServers", identity)
+            }
+            None => Map::new(),
+        }
+    }
 }
 
 /// Pass-through normaliser: Kilo Code's format is already canonical.
