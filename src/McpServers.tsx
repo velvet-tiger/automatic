@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { trackMcpServerCreated, trackMcpServerUpdated, trackMcpServerDeleted } from "./analytics";
 import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
+import { KvList, inputClass, smallInputClass, addBtnClass } from "./KvField";
 import {
   Plus,
   X,
@@ -136,49 +137,7 @@ function cleanConfig(config: McpServerConfig): Record<string, unknown> {
 }
 
 // ── Reusable field components ──────────────────────────────────────────────
-
-const inputClass =
-  "w-full bg-bg-input border border-surface hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors";
-
-const smallInputClass =
-  "flex-1 bg-bg-input border border-surface hover:border-border-strong focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors";
-
-const addBtnClass =
-  "px-3 py-1.5 bg-bg-sidebar hover:bg-surface text-text-base text-[12px] font-medium rounded border border-surface-hover transition-colors disabled:opacity-30 disabled:cursor-not-allowed";
-
-function KvList({
-  entries,
-  onRemove,
-  colorKey,
-}: {
-  entries: [string, string][];
-  onRemove: (key: string) => void;
-  colorKey?: boolean;
-}) {
-  if (entries.length === 0) return null;
-  return (
-    <ul className="space-y-1 mb-2">
-      {entries.map(([key, val]) => (
-        <li
-          key={key}
-          className="group flex items-center justify-between px-3 py-1.5 bg-bg-input rounded-md border border-surface text-[13px] font-mono"
-        >
-          <span className="truncate">
-            <span className={colorKey ? "text-brand" : "text-text-base"}>{key}</span>
-            <span className="text-text-muted mx-1">=</span>
-            <span className="text-text-base">{val}</span>
-          </span>
-          <button
-            onClick={() => onRemove(key)}
-            className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all flex-shrink-0 ml-2"
-          >
-            <Trash2 size={12} />
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
+// KvList, inputClass, smallInputClass, addBtnClass are imported from KvField.tsx
 
 // ── OAuth Authentication Section ────────────────────────────────────────────
 
@@ -492,6 +451,11 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     if (!config) return;
     const { [key]: _, ...rest } = config.env || {};
     updateConfig({ env: rest });
+  };
+
+  const editEnv = (key: string, value: string) => {
+    if (!config) return;
+    updateConfig({ env: { ...(config.env || {}), [key]: value } });
   };
 
   const addHeader = () => {
@@ -838,6 +802,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       <KvList
                         entries={Object.entries(config.env || {})}
                         onRemove={removeEnv}
+                        onEdit={editEnv}
                         colorKey
                       />
                       <div className="flex gap-2">
