@@ -108,6 +108,7 @@ jobs:
           releaseName: Automatic ${{ github.ref_name }}
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
+          updaterJsonKeepUniversal: true
           args: ${{ matrix.args }}
 
       - name: Build Tauri app (branch / dispatch)
