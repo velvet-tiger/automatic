@@ -51,6 +51,7 @@ import {
   Copy,
   History,
   Search,
+  Info,
 } from "lucide-react";
 
 interface Project {
@@ -3923,13 +3924,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </div>
                     )}
 
-                    {/* OpenCode: restart required for new MCP servers */}
+                    {/* OpenCode: restart notice for new MCP servers */}
                     {hasOpenCode && openCodeNote && (
-                      <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-warning/8 border border-warning/30 rounded-lg">
-                        <AlertCircle size={15} className="text-warning flex-shrink-0 mt-0.5" />
+                      <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-muted/40 border border-border rounded-lg">
+                        <Info size={15} className="text-muted-foreground flex-shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-[13px] font-medium text-warning mb-0.5">OpenCode restart required</p>
-                          <p className="text-[12px] text-warning/80 leading-relaxed">{openCodeNote}</p>
+                          <p className="text-[13px] font-medium text-foreground mb-0.5">You may need to restart OpenCode</p>
+                          <p className="text-[12px] text-muted-foreground leading-relaxed">{openCodeNote}</p>
                         </div>
                       </div>
                     )}
