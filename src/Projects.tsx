@@ -2072,52 +2072,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
         {project ? (
           <div className="flex-1 flex flex-col h-full">
-            {/* Header */}
-            <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                {/* Back to overview */}
-                <button
-                  onClick={handleBackToOverview}
-                  className="flex items-center gap-1 text-text-muted hover:text-text-base transition-colors px-2 py-1 rounded hover:bg-bg-sidebar"
-                  title="Back to all projects"
-                >
-                  <ChevronLeft size={14} />
-                  <span className="text-[12px]">Projects</span>
-                </button>
-                <span className="text-border-strong/60 text-[12px]">/</span>
-                <FolderOpen size={14} className="text-text-muted" />
-                {isCreating ? (
-                  <input
-                    type="text"
-                    placeholder="project-name (no spaces/slashes)"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-64"
-                  />
-                ) : isRenaming ? (
-                  <input
-                    type="text"
-                    value={renameName}
-                    onChange={(e) => setRenameName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleRename();
-                      if (e.key === "Escape") setIsRenaming(false);
-                    }}
-                    onBlur={handleRename}
-                    autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-64"
-                  />
-                ) : (
-                  <h3
-                    className="text-[14px] font-medium text-text-base cursor-text"
-                    onDoubleClick={startRename}
-                    title="Double-click to rename"
-                  >
-                    {selectedName}
-                  </h3>
-                )}
-              </div>
+            {/* ── Top action bar: back + buttons ─────────────────── */}
+            <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center flex-shrink-0">
+              {/* Back to overview */}
+              <button
+                onClick={handleBackToOverview}
+                className="flex items-center gap-1 text-text-muted hover:text-text-base transition-colors px-2 py-1 rounded hover:bg-bg-sidebar"
+                title="Back to all projects"
+              >
+                <ChevronLeft size={14} />
+                <span className="text-[12px]">Projects</span>
+              </button>
 
               <div className="flex items-center gap-2">
                 {syncStatus && (
@@ -2229,6 +2194,71 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 )}
               </div>
             </div>
+
+            {/* ── Project title ───────────────────────────────────── */}
+            {!isCreating && (
+              <div className="px-6 pt-5 pb-4 border-b border-border-strong/40 flex-shrink-0 flex items-start justify-between gap-4">
+                {/* Left: name + directory */}
+                <div className="min-w-0 flex-1">
+                  {isRenaming ? (
+                    <input
+                      type="text"
+                      value={renameName}
+                      onChange={(e) => setRenameName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleRename();
+                        if (e.key === "Escape") setIsRenaming(false);
+                      }}
+                      onBlur={handleRename}
+                      autoFocus
+                      className="bg-transparent border-none outline-none text-[22px] font-semibold text-text-base placeholder-text-muted/50 w-full"
+                    />
+                  ) : (
+                    <h1
+                      className="text-[22px] font-semibold text-text-base cursor-text leading-tight"
+                      onDoubleClick={startRename}
+                      title="Double-click to rename"
+                    >
+                      {selectedName}
+                    </h1>
+                  )}
+                  {/* Directory path — click to change */}
+                  <button
+                    onClick={async () => {
+                      const selected = await open({ directory: true, multiple: false, title: "Select project directory" });
+                      if (selected) updateField("directory", selected as string);
+                    }}
+                    className="mt-1 flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text-base font-mono transition-colors group"
+                    title="Click to change directory"
+                  >
+                    <FolderOpen size={11} className="flex-shrink-0 text-text-muted/60 group-hover:text-text-muted transition-colors" />
+                    {project.directory
+                      ? <span className="truncate max-w-[480px]">{project.directory.replace(/^\/Users\/[^/]+/, "~")}</span>
+                      : <span className="italic text-text-muted/50">No directory set — click to choose</span>
+                    }
+                  </button>
+                </div>
+
+                {/* Right: agent icons */}
+                {project.agents.length > 0 && (
+                  <button
+                    onClick={() => setProjectTab("agents")}
+                    className="flex items-center gap-1.5 flex-shrink-0 mt-1 group"
+                    title="Agents — click to manage"
+                  >
+                    {project.agents.map((agentId) => (
+                      <span
+                        key={agentId}
+                        className="opacity-70 group-hover:opacity-100 transition-opacity"
+                        title={availableAgents.find(a => a.id === agentId)?.label ?? agentId}
+                      >
+                        <AgentIcon agentId={agentId} size={20} />
+                      </span>
+                    ))}
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* ── Drift warning banner ─────────────────────────────── */}
             {driftReport?.drifted && !dirty && !isCreating && project.directory && project.agents.length > 0 && (
@@ -2649,7 +2679,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
             {/* Tab bar + content (hidden while in new-project setup) */}
             {!isCreating && <>
-            <div className="flex flex-wrap items-center gap-0 px-6 border-b border-border-strong/40 bg-bg-base">
+            <div className="flex flex-wrap items-center gap-0 px-6 border-b border-border-strong/40 flex-shrink-0">
               {([
                  { id: "summary" as ProjectTab, label: "Summary" },
                  { id: "agents" as ProjectTab, label: "Agents" },
@@ -2661,7 +2691,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 <button
                   key={tab.id}
                   onClick={() => setProjectTab(tab.id)}
-                  className={`px-3 py-2 text-[13px] font-medium transition-colors relative ${
+                  className={`px-3 py-2.5 text-[13px] font-medium transition-colors relative ${
                     projectTab === tab.id
                       ? "text-text-base"
                       : "text-text-muted hover:text-text-base"
@@ -3013,85 +3043,18 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                 {/* ── Summary tab ──────────────────────────────────────── */}
                 {projectTab === "summary" && (
-                  <div className="space-y-5">
-
-                    {/* ── Directory ─────────────────────────────────────── */}
-                    <section className="bg-bg-input border border-border-strong/40 rounded-lg p-4">
-                      <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
-                        <span className="flex items-center gap-1.5"><FolderOpen size={12} /> Project Directory</span>
-                      </label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={project.directory}
-                          onChange={(e) => updateField("directory", e.target.value)}
-                          placeholder="/path/to/your/project"
-                          className="flex-1 bg-bg-base border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors"
-                        />
-                        <button
-                          onClick={async () => {
-                            const selected = await open({ directory: true, multiple: false, title: "Select project directory" });
-                            if (selected) updateField("directory", selected as string);
-                          }}
-                          className="px-3 py-2 bg-bg-input hover:bg-surface-hover text-text-base text-[12px] font-medium rounded border border-border-strong transition-colors shadow-sm whitespace-nowrap"
-                        >
-                          Browse
-                        </button>
-                      </div>
-                      <p className="mt-1.5 text-[11px] text-text-muted">Agent configs will be written to this directory when you sync.</p>
-                    </section>
-
-                    {/* ── Agents ────────────────────────────────────────── */}
-                    <section className="bg-bg-input border border-border-strong/40 rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <div className="p-1.5 bg-brand/10 rounded"><Bot size={13} className="text-brand" /></div>
-                          <span className="text-[13px] font-semibold text-text-base">Agents</span>
-                          <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-2 py-0.5">
-                            {project.agents.length}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => setProjectTab("agents")}
-                          className="flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium"
-                        >
-                          <Plus size={11} /> Add
-                        </button>
-                      </div>
-                      {project.agents.length === 0 ? (
-                        <p className="text-[12px] text-text-muted italic">No agent tools configured. <button onClick={() => setProjectTab("agents")} className="text-brand hover:text-brand-hover underline">Add agents</button> to enable config sync.</p>
-                      ) : (
-                        <div className="flex flex-wrap gap-2">
-                          {project.agents.map((a, idx) => {
-                            const info = availableAgents.find((ag) => ag.id === a);
-                            return (
-                              <div key={a} className="group relative flex items-center gap-1.5 px-3 py-1 bg-bg-sidebar border border-border-strong/40 hover:border-border-strong rounded-full text-[12px] text-text-base transition-colors">
-                                <AgentIcon agentId={a} size={13} />
-                                <span>{info?.label ?? a}</span>
-                                <button
-                                  onClick={() => handleRemoveAgent(idx)}
-                                  className="absolute -top-1 -right-1 p-0.5 bg-bg-sidebar border border-border-strong/40 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all rounded-full"
-                                  title="Remove"
-                                >
-                                  <X size={9} />
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </section>
+                  <div className="space-y-6">
 
                     {/* ── Resources: Skills · MCP Servers · Memory ──────── */}
                     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
 
                       {/* Skills */}
-                      <section className="bg-bg-input border border-border-strong/40 rounded-lg p-4 flex flex-col gap-3">
-                        <div className="flex items-center justify-between">
+                      <section className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden flex flex-col">
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40">
                           <div className="flex items-center gap-2">
-                            <div className="p-1.5 bg-icon-skill/10 rounded"><Code size={13} className="text-icon-skill" /></div>
+                            <div className="p-1 bg-icon-skill/10 rounded"><Code size={12} className="text-icon-skill" /></div>
                             <span className="text-[13px] font-semibold text-text-base">Skills</span>
-                            <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-2 py-0.5">
+                            <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-1.5 py-0.5 leading-none">
                               {project.skills.length + project.local_skills.length}
                             </span>
                           </div>
@@ -3103,12 +3066,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           </button>
                         </div>
                         {project.skills.length === 0 && project.local_skills.length === 0 ? (
-                          <p className="text-[12px] text-text-muted italic">No skills attached</p>
+                          <div className="px-4 py-4 flex-1">
+                            <p className="text-[12px] text-text-muted italic">No skills attached</p>
+                          </div>
                         ) : (
-                          <ul className="space-y-1">
+                          <ul className="divide-y divide-border-strong/20 flex-1">
                             {project.skills.map((s) => (
-                              <li key={s} className="flex items-center justify-between gap-2 group">
-                                <span className="text-[12px] text-text-base truncate">{s}</span>
+                              <li key={s} className="flex items-center justify-between gap-2 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Code size={11} className="text-icon-skill flex-shrink-0" />
+                                  <span className="text-[12px] text-text-base truncate">{s}</span>
+                                </div>
                                 <button
                                   onClick={() => removeItem("skills", project.skills.indexOf(s))}
                                   className="p-0.5 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all shrink-0"
@@ -3119,9 +3087,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               </li>
                             ))}
                             {project.local_skills.map((s) => (
-                              <li key={s} className="flex items-center justify-between gap-2 group">
-                                <span className="text-[12px] text-text-base truncate">{s}</span>
-                                <span className="text-[10px] text-text-muted bg-bg-sidebar rounded px-1.5 py-0.5 shrink-0">local</span>
+                              <li key={s} className="flex items-center justify-between gap-2 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Code size={11} className="text-icon-skill flex-shrink-0" />
+                                  <span className="text-[12px] text-text-base truncate">{s}</span>
+                                  <span className="text-[10px] text-text-muted bg-bg-sidebar rounded px-1.5 py-0.5 shrink-0 leading-none">local</span>
+                                </div>
                                 <button
                                   onClick={() => updateField("local_skills", project.local_skills.filter((ls) => ls !== s))}
                                   className="p-0.5 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all shrink-0"
@@ -3136,12 +3107,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </section>
 
                       {/* MCP Servers */}
-                      <section className="bg-bg-input border border-border-strong/40 rounded-lg p-4 flex flex-col gap-3">
-                        <div className="flex items-center justify-between">
+                      <section className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden flex flex-col">
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40">
                           <div className="flex items-center gap-2">
-                            <div className="p-1.5 bg-icon-mcp/10 rounded"><Server size={13} className="text-icon-mcp" /></div>
+                            <div className="p-1 bg-icon-mcp/10 rounded"><Server size={12} className="text-icon-mcp" /></div>
                             <span className="text-[13px] font-semibold text-text-base">MCP Servers</span>
-                            <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-2 py-0.5">
+                            <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-1.5 py-0.5 leading-none">
                               {project.mcp_servers.length}
                             </span>
                           </div>
@@ -3153,12 +3124,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           </button>
                         </div>
                         {project.mcp_servers.length === 0 ? (
-                          <p className="text-[12px] text-text-muted italic">No servers configured</p>
+                          <div className="px-4 py-4 flex-1">
+                            <p className="text-[12px] text-text-muted italic">No servers configured</p>
+                          </div>
                         ) : (
-                          <ul className="space-y-1">
+                          <ul className="divide-y divide-border-strong/20 flex-1">
                             {project.mcp_servers.map((s) => (
-                              <li key={s} className="flex items-center justify-between gap-2 group">
-                                <span className="text-[12px] text-text-base truncate">{s}</span>
+                              <li key={s} className="flex items-center justify-between gap-2 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Server size={11} className="text-icon-mcp flex-shrink-0" />
+                                  <span className="text-[12px] text-text-base truncate">{s}</span>
+                                </div>
                                 <button
                                   onClick={() => removeItem("mcp_servers", project.mcp_servers.indexOf(s))}
                                   className="p-0.5 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all shrink-0"
@@ -3175,23 +3151,49 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       {/* Memory */}
                       <button
                         onClick={() => setProjectTab("memory")}
-                        className="group bg-bg-input border border-border-strong/40 hover:border-icon-rule/50 rounded-lg p-4 flex flex-col gap-3 text-left transition-all"
+                        className="group w-full bg-bg-input border border-border-strong/40 hover:border-icon-rule/50 rounded-lg overflow-hidden flex flex-col text-left transition-all"
                       >
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40 flex-shrink-0">
                           <div className="flex items-center gap-2">
-                            <div className="p-1.5 bg-icon-rule/10 rounded group-hover:bg-icon-rule/20 transition-colors"><Brain size={13} className="text-icon-rule" /></div>
+                            <div className="p-1 bg-icon-rule/10 rounded group-hover:bg-icon-rule/20 transition-colors"><Brain size={12} className="text-icon-rule" /></div>
                             <span className="text-[13px] font-semibold text-text-base">Memory</span>
                           </div>
                           <ArrowRight size={13} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
                         </div>
-                        <div>
-                          <div className="text-2xl font-semibold text-text-base leading-none mb-1">{Object.keys(memories).length}</div>
-                          <div className="text-[11px] text-text-muted">
+                        <div className="px-4 py-2.5 flex items-center gap-3">
+                          <span className="text-[28px] font-semibold text-text-base leading-none tabular-nums">{Object.keys(memories).length}</span>
+                          <span className="text-[12px] text-text-muted">
                             {Object.keys(memories).length === 0 ? "No memories stored" : `entr${Object.keys(memories).length === 1 ? "y" : "ies"}`}
-                          </div>
+                          </span>
                         </div>
                       </button>
                     </div>
+
+                    {/* ── Activity (mock) ───────────────────────────────── */}
+                    <section>
+                      <div className="flex items-center gap-2 mb-3">
+                        <RefreshCw size={13} className="text-text-muted" />
+                        <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Recent Activity</span>
+                      </div>
+                      <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+                        {[
+                          { icon: <Check size={12} className="text-success" />, label: "Synced agent configs", detail: "3 files written", time: "2 hours ago", dot: "bg-success" },
+                          { icon: <Code size={12} className="text-icon-skill" />, label: "Skill added", detail: "git-commit", time: "Yesterday", dot: "bg-icon-skill" },
+                          { icon: <Server size={12} className="text-icon-mcp" />, label: "MCP server added", detail: "amplitude-eu", time: "2 days ago", dot: "bg-icon-mcp" },
+                          { icon: <Bot size={12} className="text-brand" />, label: "Agent added", detail: "Claude Code", time: "3 days ago", dot: "bg-brand" },
+                        ].map((item, i) => (
+                          <div key={i} className={`flex items-center gap-3 px-4 py-3 ${i < 3 ? "border-b border-border-strong/20" : ""}`}>
+                            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${item.dot}`} />
+                            <div className="flex-shrink-0 text-text-muted">{item.icon}</div>
+                            <div className="flex-1 min-w-0">
+                              <span className="text-[12px] text-text-base">{item.label}</span>
+                              <span className="text-[12px] text-text-muted ml-1.5">{item.detail}</span>
+                            </div>
+                            <span className="text-[11px] text-text-muted flex-shrink-0">{item.time}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
 
                     {/* ── Getting Started callout (incomplete setup) ────── */}
                     {!isCreating && (!project.directory || project.agents.length === 0) && (
@@ -3210,8 +3212,16 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     <span className="text-[10px] text-brand">1</span>
                                   </div>
                                   <div>
-                                    <span className="text-text-base font-medium">Set project directory</span>
-                                    <div className="text-[11px] text-text-muted mt-0.5">Choose where agent configs will be synced</div>
+                                    <button
+                                      onClick={async () => {
+                                        const selected = await open({ directory: true, multiple: false, title: "Select project directory" });
+                                        if (selected) updateField("directory", selected as string);
+                                      }}
+                                      className="text-brand hover:text-brand-hover transition-colors font-medium"
+                                    >
+                                      Set project directory
+                                    </button>
+                                    <div className="text-[11px] text-text-muted mt-0.5">Click the path below the project name, or click here</div>
                                   </div>
                                 </li>
                               )}
