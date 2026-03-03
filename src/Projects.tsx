@@ -47,7 +47,9 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Copy,
+  History,
 } from "lucide-react";
 
 interface Project {
@@ -181,6 +183,109 @@ function validateLocalSkillDescription(value: string): string | null {
 function buildLocalSkillFrontmatter(name: string, description: string): string {
   const safeDesc = description.includes(":") ? `"${description.replace(/"/g, '\\"')}"` : description;
   return `---\nname: ${name}\ndescription: ${safeDesc}\n---\n`;
+}
+
+// ── Activity ──────────────────────────────────────────────────────────────────
+
+interface ActivityEntry {
+  id: number;
+  project: string;
+  event: string;
+  label: string;
+  detail: string;
+  timestamp: string;
+}
+
+/** Returns a relative time string ("just now", "5 min ago", "2 days ago", etc.) */
+function relativeTime(iso: string): string {
+  const now = Date.now();
+  const then = new Date(iso).getTime();
+  const diffMs = now - then;
+  if (diffMs < 0) return "just now";
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return "just now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} min ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay === 1) return "Yesterday";
+  if (diffDay < 7) return `${diffDay} days ago`;
+  const diffWk = Math.floor(diffDay / 7);
+  if (diffWk === 1) return "1 week ago";
+  if (diffWk < 5) return `${diffWk} weeks ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Returns icon + dot colour for a given event kind */
+function activityMeta(event: string): { icon: React.ReactNode; dot: string } {
+  switch (event) {
+    case "sync":
+      return { icon: <Check size={12} className="text-success" />, dot: "bg-success" };
+    case "skill_added":
+      return { icon: <Code size={12} className="text-icon-skill" />, dot: "bg-icon-skill" };
+    case "skill_removed":
+      return { icon: <Code size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+    case "mcp_server_added":
+      return { icon: <Server size={12} className="text-icon-mcp" />, dot: "bg-icon-mcp" };
+    case "mcp_server_removed":
+      return { icon: <Server size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+    case "agent_added":
+      return { icon: <Bot size={12} className="text-brand" />, dot: "bg-brand" };
+    case "agent_removed":
+      return { icon: <Bot size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+    case "project_created":
+      return { icon: <FolderOpen size={12} className="text-brand" />, dot: "bg-brand" };
+    case "project_updated":
+      return { icon: <RefreshCw size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+    default:
+      return { icon: <History size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+  }
+}
+
+interface ActivityFeedProps {
+  entries: ActivityEntry[];
+  loading: boolean;
+}
+
+function ActivityFeed({ entries, loading }: ActivityFeedProps) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-3">
+        <History size={13} className="text-text-muted" />
+        <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Recent Activity</span>
+      </div>
+      <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+        {loading ? (
+          <div className="px-4 py-6 text-center text-[12px] text-text-muted">Loading activity…</div>
+        ) : entries.length === 0 ? (
+          <div className="px-4 py-6 text-center text-[12px] text-text-muted italic">
+            No activity yet. Save or sync the project to start recording events.
+          </div>
+        ) : (
+          entries.map((item, i) => {
+            const { icon, dot } = activityMeta(item.event);
+            return (
+              <div
+                key={item.id}
+                className={`flex items-center gap-3 px-4 py-3 ${i < entries.length - 1 ? "border-b border-border-strong/20" : ""}`}
+              >
+                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
+                <div className="flex-shrink-0 text-text-muted">{icon}</div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-[12px] text-text-base">{item.label}</span>
+                  {item.detail && (
+                    <span className="text-[12px] text-text-muted ml-1.5">{item.detail}</span>
+                  )}
+                </div>
+                <span className="text-[11px] text-text-muted flex-shrink-0">{relativeTime(item.timestamp)}</span>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1046,12 +1151,22 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "memory";
+  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "memory" | "activity";
   const [projectTab, setProjectTab] = useState<ProjectTab>("summary");
 
   // Memory state
   const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
   const [loadingMemories, setLoadingMemories] = useState(false);
+
+  // Activity state
+  const [activityEntries, setActivityEntries] = useState<ActivityEntry[]>([]);
+  const [loadingActivity, setLoadingActivity] = useState(false);
+  // Activity tab pagination (50 per page, 0-based page index)
+  const [activityPage, setActivityPage] = useState(0);
+  const [activityTotalCount, setActivityTotalCount] = useState(0);
+  const [activityPageEntries, setActivityPageEntries] = useState<ActivityEntry[]>([]);
+  const [loadingActivityPage, setLoadingActivityPage] = useState(false);
+  const ACTIVITY_PAGE_SIZE = 50;
 
   // Local skill editing state
   const [localSkillEditing, setLocalSkillEditing] = useState<string | null>(null); // skill name being edited
@@ -1375,6 +1490,40 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
+  const loadActivity = async (projectName: string) => {
+    try {
+      setLoadingActivity(true);
+      const raw: string = await invoke("get_project_activity", { project: projectName, limit: 5 });
+      setActivityEntries(JSON.parse(raw) as ActivityEntry[]);
+    } catch (err: any) {
+      console.error("Failed to load activity:", err);
+    } finally {
+      setLoadingActivity(false);
+    }
+  };
+
+  const loadActivityPage = async (projectName: string, page: number) => {
+    try {
+      setLoadingActivityPage(true);
+      const offset = page * ACTIVITY_PAGE_SIZE;
+      const [raw, count] = await Promise.all([
+        invoke<string>("get_project_activity_paged", {
+          project: projectName,
+          limit: ACTIVITY_PAGE_SIZE,
+          offset,
+        }),
+        invoke<number>("get_project_activity_count", { project: projectName }),
+      ]);
+      setActivityPageEntries(JSON.parse(raw) as ActivityEntry[]);
+      setActivityTotalCount(count);
+      setActivityPage(page);
+    } catch (err: any) {
+      console.error("Failed to load activity page:", err);
+    } finally {
+      setLoadingActivityPage(false);
+    }
+  };
+
   const applyProjectTemplate = (tmpl: ProjectTemplate) => {
     if (!project) return;
     // Merge: add template values, preserving anything already on the project
@@ -1562,6 +1711,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         setProjectFileDirty(false);
       }
       await loadMemories(name);
+      await loadActivity(name);
+      // Reset activity tab pagination for the newly selected project
+      setActivityPage(0);
+      setActivityPageEntries([]);
+      setActivityTotalCount(0);
     } catch (err: any) {
       setError(`Failed to read project: ${err}`);
     }
@@ -1605,6 +1759,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       await loadAvailableSkills();
       await loadAvailableMcpServers();
       await loadMemories(name);
+      await loadActivity(name);
+      // Reset activity tab pagination on project reload
+      setActivityPage(0);
+      setActivityPageEntries([]);
+      setActivityTotalCount(0);
 
       if (data.directory && data.agents.length > 0) {
         await loadProjectFiles(name);
@@ -1912,7 +2071,6 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setSyncStatus(`Sync failed: ${err}`);
     }
 
-    await reloadProject(name);
     setTimeout(() => setSyncStatus(null), 4000);
   };
 
@@ -2687,10 +2845,16 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 { id: "mcp_servers" as ProjectTab, label: "MCP Servers" },
                 { id: "project_file" as ProjectTab, label: "Project Instructions" },
                 { id: "memory" as ProjectTab, label: "Memory" },
+                { id: "activity" as ProjectTab, label: "Activity" },
               ]).map((tab) => (
                 <button
                   key={tab.id}
-                  onClick={() => setProjectTab(tab.id)}
+                  onClick={() => {
+                    setProjectTab(tab.id);
+                    if (tab.id === "activity" && selectedName) {
+                      loadActivityPage(selectedName, 0);
+                    }
+                  }}
                   className={`px-3 py-2.5 text-[13px] font-medium transition-colors relative ${
                     projectTab === tab.id
                       ? "text-text-base"
@@ -3169,31 +3333,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </button>
                     </div>
 
-                    {/* ── Activity (mock) ───────────────────────────────── */}
-                    <section>
-                      <div className="flex items-center gap-2 mb-3">
-                        <RefreshCw size={13} className="text-text-muted" />
-                        <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Recent Activity</span>
-                      </div>
-                      <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
-                        {[
-                          { icon: <Check size={12} className="text-success" />, label: "Synced agent configs", detail: "3 files written", time: "2 hours ago", dot: "bg-success" },
-                          { icon: <Code size={12} className="text-icon-skill" />, label: "Skill added", detail: "git-commit", time: "Yesterday", dot: "bg-icon-skill" },
-                          { icon: <Server size={12} className="text-icon-mcp" />, label: "MCP server added", detail: "amplitude-eu", time: "2 days ago", dot: "bg-icon-mcp" },
-                          { icon: <Bot size={12} className="text-brand" />, label: "Agent added", detail: "Claude Code", time: "3 days ago", dot: "bg-brand" },
-                        ].map((item, i) => (
-                          <div key={i} className={`flex items-center gap-3 px-4 py-3 ${i < 3 ? "border-b border-border-strong/20" : ""}`}>
-                            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${item.dot}`} />
-                            <div className="flex-shrink-0 text-text-muted">{item.icon}</div>
-                            <div className="flex-1 min-w-0">
-                              <span className="text-[12px] text-text-base">{item.label}</span>
-                              <span className="text-[12px] text-text-muted ml-1.5">{item.detail}</span>
-                            </div>
-                            <span className="text-[11px] text-text-muted flex-shrink-0">{item.time}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
+                    {/* ── Activity ─────────────────────────────────────── */}
+                    <ActivityFeed entries={activityEntries} loading={loadingActivity} />
 
                     {/* ── Getting Started callout (incomplete setup) ────── */}
                     {!isCreating && (!project.directory || project.agents.length === 0) && (
@@ -3737,6 +3878,90 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     onError={(msg) => setError(msg)}
                   />
                 )}
+
+                {/* ── Activity tab ─────────────────────────────────── */}
+                {projectTab === "activity" && selectedName && (() => {
+                  const totalPages = Math.max(1, Math.ceil(activityTotalCount / ACTIVITY_PAGE_SIZE));
+                  return (
+                    <section className="flex flex-col gap-0">
+                      {/* Header row */}
+                      <div className="flex items-center justify-between px-1 pb-3 flex-shrink-0">
+                        <div className="flex items-center gap-2">
+                          <History size={13} className="text-text-muted" />
+                          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Activity Log</span>
+                          {activityTotalCount > 0 && (
+                            <span className="text-[11px] text-text-muted">({activityTotalCount} total)</span>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => loadActivityPage(selectedName, activityPage)}
+                          disabled={loadingActivityPage}
+                          className="text-[11px] text-text-muted hover:text-text-base transition-colors flex items-center gap-1 disabled:opacity-40"
+                        >
+                          <RefreshCw size={11} className={loadingActivityPage ? "animate-spin" : ""} />
+                          Refresh
+                        </button>
+                      </div>
+
+                      {/* Entries list */}
+                      <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+                        {loadingActivityPage ? (
+                          <div className="px-4 py-8 text-center text-[12px] text-text-muted">
+                            <RefreshCw size={14} className="animate-spin mx-auto mb-2" />
+                            Loading activity…
+                          </div>
+                        ) : activityPageEntries.length === 0 ? (
+                          <div className="px-4 py-8 text-center text-[12px] text-text-muted italic">
+                            No activity recorded yet. Save or sync the project to start logging events.
+                          </div>
+                        ) : (
+                          activityPageEntries.map((item, i) => {
+                            const { icon, dot } = activityMeta(item.event);
+                            return (
+                              <div
+                                key={item.id}
+                                className={`flex items-center gap-3 px-4 py-3 ${i < activityPageEntries.length - 1 ? "border-b border-border-strong/20" : ""}`}
+                              >
+                                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
+                                <div className="flex-shrink-0 text-text-muted">{icon}</div>
+                                <div className="flex-1 min-w-0">
+                                  <span className="text-[12px] text-text-base">{item.label}</span>
+                                  {item.detail && (
+                                    <span className="text-[12px] text-text-muted ml-1.5">{item.detail}</span>
+                                  )}
+                                </div>
+                                <span className="text-[11px] text-text-muted flex-shrink-0">{relativeTime(item.timestamp)}</span>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Pagination controls */}
+                      {totalPages > 1 && (
+                        <div className="flex items-center justify-between pt-3 flex-shrink-0">
+                          <button
+                            onClick={() => loadActivityPage(selectedName, activityPage - 1)}
+                            disabled={activityPage === 0 || loadingActivityPage}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text-base border border-border-strong/40 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <ChevronLeft size={13} /> Previous
+                          </button>
+                          <span className="text-[12px] text-text-muted">
+                            Page {activityPage + 1} of {totalPages}
+                          </span>
+                          <button
+                            onClick={() => loadActivityPage(selectedName, activityPage + 1)}
+                            disabled={activityPage >= totalPages - 1 || loadingActivityPage}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text-base border border-border-strong/40 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          >
+                            Next <ChevronRight size={13} />
+                          </button>
+                        </div>
+                      )}
+                    </section>
+                  );
+                })()}
 
               </div>
             </div>
