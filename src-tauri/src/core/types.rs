@@ -66,6 +66,10 @@ pub struct Project {
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
+    /// Most recent project activity timestamp (ISO 8601 UTC). Updated whenever
+    /// an activity row is appended for this project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity: Option<String>,
     /// Clerk user ID of the user who created this project.  Populated by the
     /// frontend from the useProfile hook.  Used for future team/cloud sync.
     #[serde(default, skip_serializing_if = "Option::is_none")]

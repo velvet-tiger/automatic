@@ -64,6 +64,7 @@ interface Project {
   agents: string[];
   created_at: string;
   updated_at: string;
+  last_activity?: string;
   created_by?: string;
   file_rules?: Record<string, string[]>;
   instruction_mode?: string;
@@ -982,14 +983,22 @@ function ProjectCard({
 
 function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, onSelect, onCreate }: ProjectsOverviewProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortOrder, setSortOrder] = useState<"alphabetical" | "created" | "updated" | "last_activity">("updated");
 
-  // Sort: drifted first, then by updated_at desc
+  const getSortTimestamp = (project: Project | undefined, key: "created" | "updated" | "last_activity"): number => {
+    if (!project) return 0;
+    if (key === "created") return new Date(project.created_at ?? 0).getTime();
+    if (key === "updated") return new Date(project.updated_at ?? 0).getTime();
+    return new Date(project.last_activity ?? project.updated_at ?? project.created_at ?? 0).getTime();
+  };
+
+  // Sort according to selected order.
   const sorted = [...projects].sort((a, b) => {
-    const aDrift = driftByProject[a] === true ? 0 : 1;
-    const bDrift = driftByProject[b] === true ? 0 : 1;
-    if (aDrift !== bDrift) return aDrift - bDrift;
-    const aTime = new Date(projectDetails.get(a)?.updated_at ?? 0).getTime();
-    const bTime = new Date(projectDetails.get(b)?.updated_at ?? 0).getTime();
+    if (sortOrder === "alphabetical") {
+      return a.localeCompare(b);
+    }
+    const aTime = getSortTimestamp(projectDetails.get(a), sortOrder);
+    const bTime = getSortTimestamp(projectDetails.get(b), sortOrder);
     return bTime - aTime;
   });
 
@@ -1021,6 +1030,23 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search projects"
               className="h-7 w-44 rounded-md border border-border-strong/50 bg-bg-input pl-7 pr-2 text-[12px] text-text-base placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60"
+            />
+          </div>
+          <div className="relative">
+            <select
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value as "alphabetical" | "created" | "updated" | "last_activity")}
+              className="h-7 min-w-[120px] appearance-none rounded-md border border-border-strong/50 bg-bg-input px-2.5 pr-7 text-[12px] text-text-base shadow-none focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60"
+              aria-label="Sort projects"
+            >
+              <option value="alphabetical">Alphabetical</option>
+              <option value="created">Created</option>
+              <option value="updated">Updated</option>
+              <option value="last_activity">Last Activity</option>
+            </select>
+            <ChevronDown
+              size={12}
+              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-muted"
             />
           </div>
           <button

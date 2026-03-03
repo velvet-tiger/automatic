@@ -145,6 +145,17 @@ fn log_inner(project: &str, event: ActivityEvent, label: &str, detail: &str) -> 
     )
     .map_err(|e| format!("Failed to purge old activity entries: {}", e))?;
 
+    // Keep project's last_activity in sync with the newest activity timestamp.
+    // This is best-effort metadata update and should not fail activity logging.
+    if let Ok(raw) = crate::core::read_project(project) {
+        if let Ok(mut parsed) = serde_json::from_str::<crate::core::Project>(&raw) {
+            parsed.last_activity = Some(ts);
+            if let Ok(updated) = serde_json::to_string_pretty(&parsed) {
+                let _ = crate::core::save_project(project, &updated);
+            }
+        }
+    }
+
     Ok(())
 }
 
