@@ -18,10 +18,114 @@ import {
   Zap,
   Copy,
   Compass,
+  History,
+  Check,
 } from "lucide-react";
 import { SkillAvatar } from "./SkillAvatar";
 
 const BRANDFETCH_CLIENT_ID = import.meta.env.VITE_BRANDFETCH_CLIENT_ID as string | undefined;
+
+// ── Activity feed ─────────────────────────────────────────────────────────────
+
+interface ActivityEntry {
+  id: number;
+  project: string;
+  event: string;
+  label: string;
+  detail: string;
+  timestamp: string;
+}
+
+function relativeTime(iso: string): string {
+  const now = Date.now();
+  const then = new Date(iso).getTime();
+  const diffMs = now - then;
+  if (diffMs < 0) return "just now";
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return "just now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} min ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay === 1) return "Yesterday";
+  if (diffDay < 7) return `${diffDay} days ago`;
+  const diffWk = Math.floor(diffDay / 7);
+  if (diffWk === 1) return "1 week ago";
+  if (diffWk < 5) return `${diffWk} weeks ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function activityEntryMeta(event: string): { icon: React.ReactNode; dot: string } {
+  switch (event) {
+    case "sync":
+      return { icon: <Check size={12} className="text-success" />, dot: "bg-success" };
+    case "skill_added":
+      return { icon: <Code size={12} className="text-icon-skill" />, dot: "bg-icon-skill" };
+    case "skill_removed":
+      return { icon: <Code size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+    case "mcp_server_added":
+      return { icon: <Server size={12} className="text-icon-mcp" />, dot: "bg-icon-mcp" };
+    case "mcp_server_removed":
+      return { icon: <Server size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+    case "agent_added":
+      return { icon: <Bot size={12} className="text-brand" />, dot: "bg-brand" };
+    case "agent_removed":
+      return { icon: <Bot size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+    case "project_created":
+      return { icon: <FolderOpen size={12} className="text-brand" />, dot: "bg-brand" };
+    case "project_updated":
+      return { icon: <RefreshCw size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+    default:
+      return { icon: <History size={12} className="text-text-muted" />, dot: "bg-text-muted" };
+  }
+}
+
+function GlobalActivityFeed({
+  entries,
+  loading,
+}: {
+  entries: ActivityEntry[];
+  loading: boolean;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <History size={13} className="text-text-muted" />
+        <h2 className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">Recent Activity</h2>
+      </div>
+      <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+        {loading ? (
+          <div className="px-4 py-6 text-center text-[12px] text-text-muted">Loading activity…</div>
+        ) : entries.length === 0 ? (
+          <div className="px-4 py-6 text-center text-[12px] text-text-muted italic">
+            No activity yet. Save or sync a project to start recording events.
+          </div>
+        ) : (
+          entries.map((item, i) => {
+            const { icon, dot } = activityEntryMeta(item.event);
+            return (
+              <div
+                key={item.id}
+                className={`flex items-center gap-3 px-4 py-2.5 ${i < entries.length - 1 ? "border-b border-border-strong/20" : ""}`}
+              >
+                <div className="flex-shrink-0 leading-[0]">{icon}</div>
+                <div className="flex-1 min-w-0 leading-none">
+                  <span className="text-[11px] text-text-muted font-medium mr-1.5">[{item.project}]</span>
+                  <span className="text-[12px] text-text-base">{item.label}</span>
+                  {item.detail && (
+                    <span className="text-[12px] text-text-muted ml-1.5">{item.detail}</span>
+                  )}
+                </div>
+                <span className="text-[11px] text-text-muted flex-shrink-0 leading-none">{relativeTime(item.timestamp)}</span>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
 
 function brandfetchUrl(domain: string, px: number): string {
   const s = Math.min(px * 2, 64);
@@ -375,17 +479,35 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
   const [error, setError] = useState<string | null>(null);
   // Map of project name → drift report (undefined = not yet checked, null = not applicable)
   const [driftMap, setDriftMap] = useState<Record<string, DriftReport | null>>({});
+  const [activityEntries, setActivityEntries] = useState<ActivityEntry[]>([]);
+  const [loadingActivity, setLoadingActivity] = useState(true);
 
   // Getting-started flags — persisted in settings.json via the backend.
   const [skillInstalled, setSkillInstalled] = useState(false);
   const [templateImported, setTemplateImported] = useState(false);
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
 
   useEffect(() => {
     loadData();
   }, []);
 
+  const loadActivity = async () => {
+    setLoadingActivity(true);
+    try {
+      const raw: string = await invoke("get_all_activity", { limit: 5 });
+      setActivityEntries(JSON.parse(raw) as ActivityEntry[]);
+    } catch (e) {
+      console.error("Failed to load global activity:", e);
+      setActivityEntries([]);
+    } finally {
+      setLoadingActivity(false);
+    }
+  };
+
   const loadData = async () => {
     setLoading(true);
+    // Load activity independently so it doesn't block the main data load
+    loadActivity();
     try {
       // Get project names + MCP server configs + settings in parallel
       const [names, mcpNames, settings] = await Promise.all([
@@ -399,6 +521,7 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
         setSkillInstalled(!!settings.getting_started.skill_installed);
         setTemplateImported(!!settings.getting_started.template_imported);
       }
+      setWelcomeDismissed(!!settings?.welcome_dismissed);
       setMcpServerCount(mcpNames.length);
 
       // Load details for each project
@@ -447,6 +570,15 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
     onNavigate("projects");
   };
 
+  const handleDismissWelcome = async () => {
+    setWelcomeDismissed(true);
+    try {
+      await invoke("dismiss_welcome");
+    } catch (e) {
+      console.error("Failed to persist welcome dismissal:", e);
+    }
+  };
+
   const driftedCount = Object.values(driftMap).filter((r) => r?.drifted).length;
 
   if (loading) {
@@ -491,63 +623,81 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
           </div>
         )}
 
-        {/* Top row: Header + Chris note (left) | Recent Projects + Getting Started (right) */}
+        {/* Two-column grid: Left = Welcome + Activity | Right = Projects + Onboarding */}
         <div className="grid grid-cols-[1fr_320px] gap-6 items-start">
 
-          {/* Left column: title + Chris note */}
-          <div>
-            <h1 className="text-2xl font-semibold text-text-base mb-2">Welcome to Automatic</h1>
-            <p className="text-text-muted text-sm">Manage your AI agent configurations and projects</p>
-
-            <div className="mt-6 bg-bg-input border border-border-strong/40 rounded-lg p-5 text-[13px] text-text-base leading-relaxed space-y-3">
-              <p>Hi,</p>
-              <p>
-                I'm Chris, the developer of Automatic. Automatic was built to solve a problem I experienced working with AI tools — it keeps your shared project instructions, skills, MCP servers and other AI config in sync and up to date across all your projects and agents.
-              </p>
-              <p>
-                If you find it useful, please{" "}
-                <a
-                  href="https://github.com/velvet-tiger/automatic"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-text-base hover:text-text-base underline decoration-text-muted/40 hover:decoration-text-base/60 font-medium transition-colors"
-                >
-                  give us a star on GitHub
-                </a>{" "}
-                and tell your friends about us.
-              </p>
-              <p>
-                We've got exciting plans for Automatic, and we can't wait to show you what we're working on.
-              </p>
-              <p className="text-text-base font-medium">— Chris</p>
-            </div>
-          </div>
-
-          {/* Right column: Recent Projects + conditional Getting Started checklist */}
+          {/* Left column: Welcome (dismissable) → Activity (hidden when empty) */}
           <div className="flex flex-col gap-4">
 
-            {/* Recent Projects — hidden when empty */}
-            {projects.length > 0 && (
-            <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
-              <div className="flex items-center justify-between px-4 pt-4 pb-3">
-                <h2 className="text-sm font-semibold text-text-base">Recent Projects</h2>
-                <button
-                  onClick={() => onNavigate("projects")}
-                  className="text-xs text-brand hover:text-brand-hover flex items-center gap-1 transition-colors"
-                >
-                  View all <ArrowRight size={12} />
-                </button>
+            {!welcomeDismissed && (
+              <div className="bg-bg-input border border-border-strong/40 rounded-lg p-5 text-[13px] text-text-base leading-relaxed">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-3 flex-1">
+                    <p>Hi,</p>
+                    <p>
+                      I'm Chris, the developer of Automatic. Automatic was built to solve a problem I experienced working with AI tools — it keeps your shared project instructions, skills, MCP servers and other AI config in sync and up to date across all your projects and agents.
+                    </p>
+                    <p>
+                      If you find it useful, please{" "}
+                      <a
+                        href="https://github.com/velvet-tiger/automatic"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-text-base hover:text-text-base underline decoration-text-muted/40 hover:decoration-text-base/60 font-medium transition-colors"
+                      >
+                        give us a star on GitHub
+                      </a>{" "}
+                      and tell your friends about us.
+                    </p>
+                    <p>We've got exciting plans for Automatic, and we can't wait to show you what we're working on.</p>
+                    <p className="text-text-base font-medium">— Chris</p>
+                  </div>
+                  <button
+                    onClick={handleDismissWelcome}
+                    className="text-[12px] text-text-muted hover:text-text-base transition-colors shrink-0 underline decoration-text-muted/40 hover:decoration-text-base/60 mt-0.5"
+                  >
+                    Dismiss
+                  </button>
+                </div>
               </div>
-              <div className="divide-y divide-border-strong/30 border-t border-border-strong/30">
-                {projects
-                  .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-                  .slice(0, 6)
-                  .map(project => {
+            )}
+
+            {activityEntries.length > 0 && (
+              <GlobalActivityFeed
+                entries={activityEntries}
+                loading={loadingActivity}
+              />
+            )}
+
+          </div>
+
+          {/* Right column: Recent Projects (hidden when empty) → Onboarding checklist */}
+          <div className="flex flex-col gap-4">
+
+            {projects.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <FolderOpen size={13} className="text-text-muted" />
+                    <h2 className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">Recent Projects</h2>
+                  </div>
+                  <button
+                    onClick={() => onNavigate("projects")}
+                    className="text-xs text-brand hover:text-brand-hover flex items-center gap-1 transition-colors"
+                  >
+                    View all <ArrowRight size={12} />
+                  </button>
+                </div>
+                <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+                <div className="divide-y divide-border-strong/30">
+                  {projects
+                    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+                    .slice(0, 6)
+                    .map(project => {
                       const drift = driftMap[project.name];
                       const isDrifted = drift?.drifted === true;
                       const isInSync = drift !== undefined && drift !== null && !drift.drifted;
                       const isConfigured = !!project.directory && project.agents.length > 0;
-
                       return (
                         <div
                           key={project.name}
@@ -557,18 +707,15 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
                           }`}
                         >
                           <FolderOpen size={14} className={`shrink-0 ${isDrifted ? "text-warning" : "text-icon-agent"}`} />
-
                           <span className={`text-[12px] font-medium text-text-base truncate min-w-0 transition-colors ${
                             isDrifted ? "group-hover:text-warning" : "group-hover:text-icon-agent"
                           }`}>{project.name}</span>
-
                           <div className="ml-auto flex items-center gap-2 shrink-0">
                             <div className="flex items-center gap-2 text-[10px] text-text-muted">
                               <span className="flex items-center gap-0.5"><Bot size={10} />{project.agents.length}</span>
                               <span className="flex items-center gap-0.5"><Code size={10} />{project.skills.length + project.local_skills.length}</span>
                               <span className="flex items-center gap-0.5"><Server size={10} />{project.mcp_servers.length}</span>
                             </div>
-
                             {isConfigured && (
                               isDrifted ? (
                                 <span className="flex items-center gap-0.5 text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded font-semibold">
@@ -586,11 +733,12 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
                         </div>
                       );
                     })}
+                </div>
               </div>
-            </div>
+              </div>
             )}
 
-            {/* Getting Started checklist — only shown while any item is incomplete */}
+            {/* Onboarding checklist — only shown while any item is incomplete */}
             {(() => {
               const items = [
                 {
@@ -598,36 +746,28 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
                   label: "Create a project",
                   description: "Link a directory to an agent configuration.",
                   action: () => onNavigate("projects"),
-                  actionLabel: "Go to Projects",
                   color: "text-brand",
-                  hoverBorder: "hover:border-brand/50",
                 },
                 {
                   show: !templateImported,
                   label: "Import a template",
                   description: "Start from a pre-built project setup.",
                   action: () => onNavigate("template-marketplace"),
-                  actionLabel: "Browse Templates",
                   color: "text-icon-file-template",
-                  hoverBorder: "hover:border-icon-file-template/50",
                 },
                 {
                   show: !skillInstalled,
                   label: "Install a skill",
                   description: "Load specialised capabilities into your agents.",
                   action: () => onNavigate("skill-store"),
-                  actionLabel: "Browse Skills",
                   color: "text-icon-skill",
-                  hoverBorder: "hover:border-icon-skill/50",
                 },
                 {
                   show: mcpServerCount === 0,
                   label: "Connect MCP servers",
                   description: "Extend your agents with powerful integrations.",
                   action: () => onNavigate("mcp-marketplace"),
-                  actionLabel: "Browse Servers",
                   color: "text-icon-mcp",
-                  hoverBorder: "hover:border-icon-mcp/50",
                 },
               ].filter(i => i.show);
 
@@ -644,7 +784,7 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
                       <button
                         key={item.label}
                         onClick={item.action}
-                        className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-all group hover:bg-surface-hover`}
+                        className="w-full flex items-start gap-3 px-4 py-2.5 text-left transition-all group hover:bg-surface-hover"
                       >
                         <div className="flex-1 min-w-0">
                           <p className={`text-[12px] font-medium text-text-base group-hover:${item.color} transition-colors`}>{item.label}</p>

@@ -11,3 +11,8 @@ pub fn read_settings() -> Result<core::Settings, String> {
 pub fn write_settings(settings: core::Settings) -> Result<(), String> {
     core::write_settings(&settings)
 }
+
+#[tauri::command]
+pub fn dismiss_welcome() -> Result<(), String> {
+    core::dismiss_welcome()
+}

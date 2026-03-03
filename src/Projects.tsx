@@ -268,7 +268,7 @@ function ActivityFeed({ entries, loading }: ActivityFeedProps) {
             return (
               <div
                 key={item.id}
-                className={`flex items-center gap-3 px-4 py-3 ${i < entries.length - 1 ? "border-b border-border-strong/20" : ""}`}
+                className={`flex items-center gap-3 px-4 py-2.5 ${i < entries.length - 1 ? "border-b border-border-strong/20" : ""}`}
               >
                 <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
                 <div className="flex-shrink-0 text-text-muted">{icon}</div>
@@ -3920,7 +3920,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             return (
                               <div
                                 key={item.id}
-                                className={`flex items-center gap-3 px-4 py-3 ${i < activityPageEntries.length - 1 ? "border-b border-border-strong/20" : ""}`}
+                                className={`flex items-center gap-3 px-4 py-2.5 ${i < activityPageEntries.length - 1 ? "border-b border-border-strong/20" : ""}`}
                               >
                                 <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
                                 <div className="flex-shrink-0 text-text-muted">{icon}</div>

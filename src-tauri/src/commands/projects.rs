@@ -1,3 +1,4 @@
+use crate::activity::{self, ActivityEvent};
 use crate::core;
 use crate::sync;
 
@@ -48,10 +49,28 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
         // Nothing is deleted during this step -- autodetect only adds findings.
         core::save_project(name, data)?;
 
+        // Log project creation.
+        activity::log(name, ActivityEvent::ProjectCreated, "Project created", name);
+
         // Errors are intentionally swallowed: partial success (project saved
         // but no agent configs written because the directory has no AI tools)
         // is better than returning a hard error to the frontend.
-        let _ = sync::sync_project(&incoming);
+        let written = sync::sync_project(&incoming);
+        if let Ok(ref files) = written {
+            if !files.is_empty() {
+                let detail = format!(
+                    "{} file{}",
+                    files.len(),
+                    if files.len() == 1 { "" } else { "s" }
+                );
+                activity::log(
+                    name,
+                    ActivityEvent::ProjectSynced,
+                    "Synced agent configs",
+                    &detail,
+                );
+            }
+        }
     } else {
         // ── Case 2 / ongoing saves: Existing project update ───────────────
         //
@@ -69,7 +88,65 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
 
         let mut enriched = incoming.clone();
 
-        if let Some(existing) = existing_project {
+        if let Some(ref existing) = existing_project {
+            // ── Diff and log agent changes ───────────────────────────────
+            for agent in incoming
+                .agents
+                .iter()
+                .filter(|a| !existing.agents.contains(a))
+            {
+                activity::log(name, ActivityEvent::AgentAdded, "Agent added", agent);
+            }
+            for agent in existing
+                .agents
+                .iter()
+                .filter(|a| !incoming.agents.contains(a))
+            {
+                activity::log(name, ActivityEvent::AgentRemoved, "Agent removed", agent);
+            }
+
+            // ── Diff and log skill changes ───────────────────────────────
+            for skill in incoming
+                .skills
+                .iter()
+                .filter(|s| !existing.skills.contains(s))
+            {
+                activity::log(name, ActivityEvent::SkillAdded, "Skill added", skill);
+            }
+            for skill in existing
+                .skills
+                .iter()
+                .filter(|s| !incoming.skills.contains(s))
+            {
+                activity::log(name, ActivityEvent::SkillRemoved, "Skill removed", skill);
+            }
+
+            // ── Diff and log MCP server changes ──────────────────────────
+            for server in incoming
+                .mcp_servers
+                .iter()
+                .filter(|s| !existing.mcp_servers.contains(s))
+            {
+                activity::log(
+                    name,
+                    ActivityEvent::McpServerAdded,
+                    "MCP server added",
+                    server,
+                );
+            }
+            for server in existing
+                .mcp_servers
+                .iter()
+                .filter(|s| !incoming.mcp_servers.contains(s))
+            {
+                activity::log(
+                    name,
+                    ActivityEvent::McpServerRemoved,
+                    "MCP server removed",
+                    server,
+                );
+            }
+
             let new_agent_ids: Vec<String> = incoming
                 .agents
                 .iter()
@@ -98,7 +175,20 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
         core::save_project(name, &enriched_data)?;
 
         if !enriched.agents.is_empty() {
-            sync::sync_project_without_autodetect(&enriched)?;
+            let written = sync::sync_project_without_autodetect(&enriched)?;
+            if !written.is_empty() {
+                let detail = format!(
+                    "{} file{}",
+                    written.len(),
+                    if written.len() == 1 { "" } else { "s" }
+                );
+                activity::log(
+                    name,
+                    ActivityEvent::ProjectSynced,
+                    "Synced agent configs",
+                    &detail,
+                );
+            }
         }
     }
 
@@ -114,8 +204,30 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
     if !project.directory.is_empty() && !project.agents.is_empty() {
-        sync::sync_project(&project)?;
+        let written = sync::sync_project(&project);
+        if let Ok(ref files) = written {
+            if !files.is_empty() {
+                let detail = format!(
+                    "{} file{}",
+                    files.len(),
+                    if files.len() == 1 { "" } else { "s" }
+                );
+                activity::log(
+                    new_name,
+                    ActivityEvent::ProjectSynced,
+                    "Synced agent configs",
+                    &detail,
+                );
+            }
+        }
+        written?;
     }
+    activity::log(
+        new_name,
+        ActivityEvent::ProjectUpdated,
+        "Project renamed",
+        &format!("{} → {}", old_name, new_name),
+    );
 
     Ok(())
 }
@@ -133,6 +245,19 @@ pub fn sync_project(name: &str) -> Result<String, String> {
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
     let written = sync::sync_project(&project)?;
+    if !written.is_empty() {
+        let detail = format!(
+            "{} file{}",
+            written.len(),
+            if written.len() == 1 { "" } else { "s" }
+        );
+        activity::log(
+            name,
+            ActivityEvent::ProjectSynced,
+            "Synced agent configs",
+            &detail,
+        );
+    }
     serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
 }
 
@@ -157,6 +282,7 @@ pub fn remove_agent_from_project(name: &str, agent_id: &str) -> Result<String, S
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
     let removed = sync::remove_agent_from_project(&mut project, agent_id)?;
+    activity::log(name, ActivityEvent::AgentRemoved, "Agent removed", agent_id);
     serde_json::to_string(&removed).map_err(|e| e.to_string())
 }
 

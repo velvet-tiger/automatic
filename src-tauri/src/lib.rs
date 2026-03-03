@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod agent;
 pub mod core;
 pub mod mcp;
@@ -49,6 +50,7 @@ pub fn run() {
             get_feature_flags,
             read_settings,
             write_settings,
+            dismiss_welcome,
             save_api_key,
             get_api_key,
             list_agents,
@@ -118,6 +120,10 @@ pub fn run() {
             check_installed_editors,
             open_in_editor,
             get_editor_icon,
+            get_project_activity,
+            get_project_activity_paged,
+            get_project_activity_count,
+            get_all_activity,
             track_event,
             restart_app,
             subscribe_newsletter,

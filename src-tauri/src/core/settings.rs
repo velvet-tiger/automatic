@@ -54,6 +54,9 @@ pub struct Settings {
     /// Tracks which getting-started checklist items the user has completed.
     #[serde(default)]
     pub getting_started: GettingStartedFlags,
+    /// Set to true once the user dismisses the welcome message on the dashboard.
+    #[serde(default)]
+    pub welcome_dismissed: bool,
 }
 
 fn default_analytics_enabled() -> bool {
@@ -69,6 +72,7 @@ impl Default for Settings {
             onboarding: OnboardingData::default(),
             default_agents: Vec::new(),
             getting_started: GettingStartedFlags::default(),
+            welcome_dismissed: false,
         }
     }
 }
@@ -109,6 +113,15 @@ pub fn mark_template_imported() -> Result<(), String> {
     let mut settings = read_settings()?;
     if !settings.getting_started.template_imported {
         settings.getting_started.template_imported = true;
+        write_settings(&settings)?;
+    }
+    Ok(())
+}
+
+pub fn dismiss_welcome() -> Result<(), String> {
+    let mut settings = read_settings()?;
+    if !settings.welcome_dismissed {
+        settings.welcome_dismissed = true;
         write_settings(&settings)?;
     }
     Ok(())

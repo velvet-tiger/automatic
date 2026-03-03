@@ -1,3 +1,4 @@
+mod activity;
 mod ai;
 mod credentials;
 mod flags;
@@ -15,6 +16,7 @@ mod memory;
 mod misc;
 mod oauth;
 
+pub use activity::*;
 pub use ai::*;
 pub use credentials::*;
 pub use flags::*;
