@@ -19,6 +19,7 @@ import {
   Shield,
   ShieldCheck,
   Loader2,
+  Info,
 } from "lucide-react";
 import { ICONS } from "./icons";
 
@@ -580,6 +581,17 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
             {/* Body */}
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div className="max-w-2xl space-y-8">
+
+                {/* Beta notice — library servers only */}
+                {isManaged && (
+                  <div className="flex items-start gap-3 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                    <Info size={15} className="flex-shrink-0 mt-0.5 text-amber-400" />
+                    <p className="text-[12px] leading-relaxed text-amber-200">
+                      <span className="font-semibold">MCP configuration and authorisation is in beta.</span>{" "}
+                      Some settings may change and certain authentication flows are not yet fully supported.
+                    </p>
+                  </div>
+                )}
 
                 {/* Author */}
                 {(() => {
