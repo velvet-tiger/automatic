@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { trackMcpServerCreated, trackMcpServerUpdated, trackMcpServerDeleted } from "./analytics";
 import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
-import { KvList, inputClass, smallInputClass, addBtnClass } from "./KvField";
+import { KvEditor, inputClass, smallInputClass, addBtnClass } from "./KvField";
 import {
   Plus,
   X,
@@ -295,10 +295,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
   // Inline add state
   const [newArg, setNewArg] = useState("");
-  const [newEnvKey, setNewEnvKey] = useState("");
-  const [newEnvVal, setNewEnvVal] = useState("");
-  const [newHeaderKey, setNewHeaderKey] = useState("");
-  const [newHeaderVal, setNewHeaderVal] = useState("");
+
 
   useEffect(() => {
     loadServers();
@@ -363,10 +360,6 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
   const resetInlineState = () => {
     setNewArg("");
-    setNewEnvKey("");
-    setNewEnvVal("");
-    setNewHeaderKey("");
-    setNewHeaderVal("");
   };
 
   const updateConfig = (patch: Partial<McpServerConfig>) => {
@@ -438,37 +431,6 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const removeArg = (idx: number) => {
     if (!config) return;
     updateConfig({ args: (config.args || []).filter((_, i) => i !== idx) });
-  };
-
-  const addEnv = () => {
-    if (!config || !newEnvKey.trim()) return;
-    updateConfig({ env: { ...(config.env || {}), [newEnvKey.trim()]: newEnvVal } });
-    setNewEnvKey("");
-    setNewEnvVal("");
-  };
-
-  const removeEnv = (key: string) => {
-    if (!config) return;
-    const { [key]: _, ...rest } = config.env || {};
-    updateConfig({ env: rest });
-  };
-
-  const editEnv = (key: string, value: string) => {
-    if (!config) return;
-    updateConfig({ env: { ...(config.env || {}), [key]: value } });
-  };
-
-  const addHeader = () => {
-    if (!config || !newHeaderKey.trim()) return;
-    updateConfig({ headers: { ...(config.headers || {}), [newHeaderKey.trim()]: newHeaderVal } });
-    setNewHeaderKey("");
-    setNewHeaderVal("");
-  };
-
-  const removeHeader = (key: string) => {
-    if (!config) return;
-    const { [key]: _, ...rest } = config.headers || {};
-    updateConfig({ headers: rest });
   };
 
   const setTransport = (type: TransportType) => {
@@ -799,37 +761,14 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                           <Variable size={12} /> Environment Variables
                         </span>
                       </label>
-                      <KvList
-                        entries={Object.entries(config.env || {})}
-                        onRemove={removeEnv}
-                        onEdit={editEnv}
+                      <KvEditor
+                        entries={config.env || {}}
+                        onChange={(updated) => updateConfig({ env: updated })}
+                        keyPlaceholder="KEY"
+                        valuePlaceholder="value"
                         colorKey
+                        maskValue
                       />
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={newEnvKey}
-                          onChange={(e) => setNewEnvKey(e.target.value)}
-                          placeholder="KEY"
-                          className="w-40 bg-bg-input border border-surface hover:border-border-strong focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors"
-                        />
-                        <input
-                          type="text"
-                          value={newEnvVal}
-                          onChange={(e) => setNewEnvVal(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && newEnvKey.trim()) {
-                              e.preventDefault();
-                              addEnv();
-                            }
-                          }}
-                          placeholder="value"
-                          className={smallInputClass}
-                        />
-                        <button onClick={addEnv} disabled={!newEnvKey.trim()} className={addBtnClass}>
-                          Add
-                        </button>
-                      </div>
                     </section>
                   </>
                 )}
@@ -862,42 +801,14 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
                         HTTP Headers
                       </label>
-                      <KvList
-                        entries={Object.entries(config.headers || {})}
-                        onRemove={isManaged ? () => {} : removeHeader}
+                      <KvEditor
+                        entries={config.headers || {}}
+                        onChange={(updated) => updateConfig({ headers: updated })}
+                        readOnly={isManaged}
+                        keyPlaceholder="Header-Name"
+                        valuePlaceholder="value"
                         colorKey
                       />
-                      {!isManaged && (
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={newHeaderKey}
-                          onChange={(e) => setNewHeaderKey(e.target.value)}
-                          placeholder="Header-Name"
-                          className="w-48 bg-bg-input border border-surface hover:border-border-strong focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors"
-                        />
-                        <input
-                          type="text"
-                          value={newHeaderVal}
-                          onChange={(e) => setNewHeaderVal(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && newHeaderKey.trim()) {
-                              e.preventDefault();
-                              addHeader();
-                            }
-                          }}
-                          placeholder="value"
-                          className={smallInputClass}
-                        />
-                        <button
-                          onClick={addHeader}
-                          disabled={!newHeaderKey.trim()}
-                          className={addBtnClass}
-                        >
-                          Add
-                        </button>
-                      </div>
-                      )}
                     </section>
                     )}
 
