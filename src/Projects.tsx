@@ -882,6 +882,7 @@ function ProjectCard({
 
   const totalSkills = (project?.skills?.length ?? 0) + (project?.local_skills?.length ?? 0);
   const mcpCount = project?.mcp_servers?.length ?? 0;
+  const agentCount = project?.agents?.length ?? 0;
 
   // Shorten home directory but let the path wrap naturally
   const shortDir = project?.directory
@@ -891,26 +892,38 @@ function ProjectCard({
   return (
     <button
       onClick={() => onSelect(name)}
-      className={`w-full text-left bg-bg-input border ${borderClass} rounded-xl p-4 flex flex-col gap-3 transition-all hover:bg-surface-hover`}
+      className={`group relative w-full h-full text-left bg-bg-input border ${borderClass} rounded-xl p-4 flex flex-col gap-3 transition-all hover:bg-surface-hover hover:-translate-y-0.5`}
     >
-      {/* Row 1: icon + name + status badge */}
-      <div className="flex items-center gap-2">
-        <FolderOpen
-          size={14}
-          className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-icon-agent"}`}
-        />
-        <span className="text-[13px] font-semibold text-text-base truncate flex-1">{name}</span>
-        {isConfigured && <div className="flex-shrink-0 ml-auto"><ProjectStatusBadge drift={drift} /></div>}
+      {/* Row 1: title + status */}
+      <div className="flex items-start gap-3">
+        <div
+          className={`mt-0.5 flex h-7 w-7 items-center justify-center rounded-md border ${
+            isDrifted
+              ? "border-warning/30 bg-warning/10"
+              : "border-border-strong/40 bg-bg-sidebar"
+          }`}
+        >
+          <FolderOpen
+            size={14}
+            className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-icon-agent"}`}
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] font-semibold text-text-base truncate">{name}</div>
+          <div className="text-[11px] text-text-muted mt-0.5">{agentCount} agent{agentCount !== 1 ? "s" : ""}</div>
+        </div>
       </div>
 
-      {/* Row 2: directory path — wraps on long paths */}
+      {/* Row 2: directory path */}
       {shortDir ? (
-        <div className="flex items-start gap-1.5 text-[11px] text-text-muted font-mono leading-snug">
-          <FolderOpen size={10} className="flex-shrink-0 mt-0.5 text-text-muted/50" />
-          <span className="break-all">{shortDir}</span>
+        <div className="rounded-md border border-border-strong/25 bg-bg-sidebar/45 px-2.5 py-2">
+          <div className="flex items-start gap-1.5 text-[11px] text-text-muted font-mono leading-snug">
+            <FolderOpen size={10} className="flex-shrink-0 mt-0.5 text-text-muted/50" />
+            <span className="break-all">{shortDir}</span>
+          </div>
         </div>
       ) : (
-        <div className="flex items-center gap-1 text-[11px] text-warning/80">
+        <div className="flex items-center gap-1 rounded-md border border-warning/20 bg-warning/5 px-2.5 py-2 text-[11px] text-warning/80">
           <AlertCircle size={10} className="flex-shrink-0" />
           <span>No directory set</span>
         </div>
@@ -918,7 +931,7 @@ function ProjectCard({
 
       {/* Row 3: agent chips */}
       {(project?.agents?.length ?? 0) > 0 ? (
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap min-h-[28px]">
           {(project?.agents ?? []).map((agentId) => (
             <span
               key={agentId}
@@ -930,27 +943,37 @@ function ProjectCard({
           ))}
         </div>
       ) : (
-        <div className="flex items-center gap-1 text-[11px] text-warning/80">
+        <div className="flex items-center gap-1 text-[11px] text-warning/80 min-h-[28px]">
           <AlertCircle size={10} className="flex-shrink-0" />
           <span>No agents configured</span>
         </div>
       )}
 
       {/* Row 4: stats footer */}
-      <div className="flex items-center gap-3 pt-2 border-t border-border-strong/30 text-[11px] text-text-muted">
-        <span className="flex items-center gap-1">
-          <Code size={10} />
-          {totalSkills} skill{totalSkills !== 1 ? "s" : ""}
-        </span>
-        <span className="flex items-center gap-1">
-          <Server size={10} />
-          {mcpCount} MCP
-        </span>
-        {project?.updated_at && (
-          <span className="ml-auto">
-            {new Date(project.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+      <div className="mt-auto flex w-full items-center justify-between pt-2 border-t border-border-strong/30 text-[11px] text-text-muted">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="flex items-center gap-1.5">
+            <Code size={10} />
+            {totalSkills} skill{totalSkills !== 1 ? "s" : ""}
           </span>
-        )}
+          <span className="flex items-center gap-1.5">
+            <Server size={10} />
+            {mcpCount} MCP
+          </span>
+          {project?.updated_at && (
+            <span className="flex items-center gap-1 text-text-muted/90 whitespace-nowrap">
+              {new Date(project.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              <ChevronRight size={11} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+            </span>
+          )}
+        </div>
+        <div className="flex-shrink-0">
+          {isConfigured ? (
+            <ProjectStatusBadge drift={drift} />
+          ) : (
+            <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] border border-transparent invisible">-</span>
+          )}
+        </div>
       </div>
     </button>
   );
@@ -1015,7 +1038,7 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-4 gap-4 items-start">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 items-stretch auto-rows-fr">
             {sorted.map((name) => (
               <ProjectCard
                 key={name}
