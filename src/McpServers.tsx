@@ -453,8 +453,8 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   return (
     <div className="flex h-full w-full bg-bg-base">
       {/* Left sidebar */}
-      <div className="w-64 flex-shrink-0 flex flex-col border-r border-surface bg-bg-input/50">
-        <div className="h-11 px-4 border-b border-surface flex justify-between items-center bg-bg-base/30">
+      <div className="w-64 flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50">
+        <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center bg-bg-base/30">
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             MCP Servers
           </span>

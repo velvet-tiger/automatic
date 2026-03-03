@@ -7,7 +7,6 @@ import {
   ScrollText,
   LayoutTemplate,
   Layers,
-  ArrowRight,
   RefreshCw,
   AlertCircle,
   Plus,
@@ -236,52 +235,42 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
         </div>
 
         {/* Section cards */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           {SECTIONS.map((section) => {
             const Icon = section.icon;
             return (
               <div
                 key={section.id}
-                className={`group bg-bg-input border border-border-strong/40 rounded-xl p-5 flex flex-col gap-4 transition-all ${section.borderHoverClass}`}
+                className={`group bg-bg-input border border-border-strong/40 rounded-xl p-5 flex flex-col transition-all ${section.borderHoverClass}`}
               >
                 {/* Header row */}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`p-2.5 rounded-lg transition-colors ${section.iconBgClass}`}>
-                      <Icon size={18} className={section.iconColorClass} />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-[14px] font-semibold text-text-base leading-snug">
-                        {section.label}
-                      </div>
-                      {section.count !== null && (
-                        <div className="text-[11px] text-text-muted mt-0.5">
-                          <span className={`font-semibold ${section.iconColorClass}`}>{section.count}</span>
-                          {" "}{section.countLabel}
-                        </div>
-                      )}
-                    </div>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className={`p-2 rounded-lg transition-colors shrink-0 ${section.iconBgClass}`}>
+                    <Icon size={16} className={section.iconColorClass} />
                   </div>
-
-                  <button
-                    onClick={() => onNavigate(section.primaryAction.tab)}
-                    className="flex items-center gap-1 text-[12px] text-text-muted hover:text-text-base transition-colors shrink-0"
-                  >
-                    {section.primaryAction.label}
-                    <ArrowRight size={12} />
-                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] font-semibold text-text-base leading-snug truncate">
+                      {section.label}
+                    </div>
+                    {section.count !== null && (
+                      <div className="text-[11px] text-text-muted">
+                        <span className={`font-semibold ${section.iconColorClass}`}>{section.count}</span>
+                        {" "}{section.countLabel}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Help text */}
-                <p className="text-[12px] text-text-muted leading-relaxed">{section.helpText}</p>
+                <p className="text-[11px] text-text-muted leading-relaxed flex-1 mb-4">{section.helpText}</p>
 
                 {/* Actions */}
-                <div className="flex flex-wrap gap-2 border-t border-border-strong/30 pt-3">
+                <div className="flex flex-col gap-1.5 border-t border-border-strong/30 pt-3">
                   <button
                     onClick={() => onNavigate(section.primaryAction.tab)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-surface border border-border-strong/60 hover:border-border-strong hover:bg-surface-hover transition-colors ${section.iconColorClass}`}
+                    className={`flex items-center justify-center gap-1.5 w-full px-3 py-1.5 rounded-md text-[11px] font-medium bg-surface border border-border-strong/60 hover:border-border-strong hover:bg-surface-hover transition-colors ${section.iconColorClass}`}
                   >
-                    <Icon size={12} />
+                    <Icon size={11} />
                     {section.primaryAction.label}
                   </button>
                   {section.secondaryActions.map((action) => {
@@ -290,9 +279,9 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
                       <button
                         key={action.tab}
                         onClick={() => onNavigate(action.tab)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-surface border border-border-strong/60 text-text-muted hover:text-text-base hover:border-border-strong hover:bg-surface-hover transition-colors"
+                        className="flex items-center justify-center gap-1.5 w-full px-3 py-1.5 rounded-md text-[11px] font-medium bg-surface border border-border-strong/60 text-text-muted hover:text-text-base hover:border-border-strong hover:bg-surface-hover transition-colors"
                       >
-                        <ActionIcon size={12} />
+                        <ActionIcon size={11} />
                         {action.label}
                       </button>
                     );
