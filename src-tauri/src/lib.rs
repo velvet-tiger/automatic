@@ -42,6 +42,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ai_chat,
+            ai_chat_with_tools,
             resolve_author,
             read_profile,
             save_profile,

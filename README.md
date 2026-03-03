@@ -1,4 +1,11 @@
-# Automatic
+```
+  ___         __                    __  _
+ / _ |__ ___/ /____  __ _  ___ _  / /_(_)___
+/ __ / // / __/ _ \/  ' \/ _ `/ / __/ / __/
+\__/_\_,_/\__/\___/_/_/_/\_,_/  \__/_/\__/
+
+  A hub for your AI agent configurations.
+```
 
 Automatic is a desktop hub for managing your AI agent configurations. It gives you a central place to organise the skills, MCP servers, rules, and project settings that power tools like Claude Code, Cursor, and other MCP-compatible agents — so your agents always have the right context, wherever they run.
 

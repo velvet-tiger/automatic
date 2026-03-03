@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Send, Trash2, AlertCircle, ChevronDown, ChevronUp, Bot, Check } from "lucide-react";
+import { Send, Trash2, AlertCircle, ChevronDown, ChevronUp, Bot, Check, FolderOpen } from "lucide-react";
+import { flag } from "./flags";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -18,9 +19,9 @@ const MODELS = [
   "claude-3-opus-20240229",
 ];
 
-// ── ModelPicker ───────────────────────────────────────────────────────────────
+// ── Shared dropdown hook ──────────────────────────────────────────────────────
 
-function ModelPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function useDropdown() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -32,6 +33,14 @@ function ModelPicker({ value, onChange }: { value: string; onChange: (v: string)
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
+
+  return { open, setOpen, ref };
+}
+
+// ── ModelPicker ───────────────────────────────────────────────────────────────
+
+function ModelPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { open, setOpen, ref } = useDropdown();
 
   return (
     <div ref={ref} className="relative">
@@ -64,9 +73,83 @@ function ModelPicker({ value, onChange }: { value: string; onChange: (v: string)
   );
 }
 
+// ── ProjectPicker ─────────────────────────────────────────────────────────────
+
+interface ProjectOption {
+  name: string;
+  directory: string;
+}
+
+function ProjectPicker({
+  projects,
+  value,
+  onChange,
+}: {
+  projects: ProjectOption[];
+  value: string;
+  onChange: (name: string, directory: string) => void;
+}) {
+  const { open, setOpen, ref } = useDropdown();
+  const selected = projects.find((p) => p.name === value);
+
+  // Truncate a long path to the last N path segments for display.
+  const shortenPath = (dir: string, segments = 3) => {
+    const parts = dir.replace(/\\/g, "/").split("/").filter(Boolean);
+    if (parts.length <= segments) return dir;
+    return "…/" + parts.slice(-segments).join("/");
+  };
+
+  if (projects.length === 0) {
+    return (
+      <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] text-text-muted bg-bg-input border border-border-strong/40 italic">
+        <FolderOpen size={11} />
+        No projects
+      </span>
+    );
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] text-text-base bg-bg-input border border-border-strong/40 hover:border-border-strong/70 transition-colors max-w-[200px]"
+      >
+        <FolderOpen size={11} className="text-text-muted shrink-0" />
+        <span className="truncate">{selected?.name ?? "Select project…"}</span>
+        <ChevronDown size={11} className={`text-text-muted transition-transform shrink-0 ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 min-w-[260px] max-w-[340px] rounded-md bg-bg-input border border-border-strong/40 shadow-lg overflow-hidden">
+          {projects.map((p) => (
+            <button
+              key={p.name}
+              onClick={() => { onChange(p.name, p.directory); setOpen(false); }}
+              className={`w-full flex items-start gap-2 px-3 py-2 text-left transition-colors ${
+                p.name === value
+                  ? "text-text-base bg-bg-sidebar"
+                  : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
+              }`}
+            >
+              <Check size={11} className={`mt-0.5 shrink-0 ${p.name === value ? "opacity-100 text-brand" : "opacity-0"}`} />
+              <span className="flex flex-col min-w-0">
+                <span className="text-[12px] font-medium truncate">{p.name}</span>
+                <span className="text-[10px] text-text-muted/70 truncate font-mono mt-0.5">
+                  {shortenPath(p.directory)}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AiPlayground() {
+  const toolsEnabled = flag("ai_toolset");
+
   const [messages, setMessages] = useState<AiMessage[]>([]);
   const [input, setInput] = useState("");
   const [system, setSystem] = useState("");
@@ -74,7 +157,37 @@ export default function AiPlayground() {
   const [model, setModel] = useState("claude-sonnet-4-5");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [workingDir, setWorkingDir] = useState<string>("");
+  const [projects, setProjects] = useState<Array<{ name: string; directory: string }>>([]);
+  const [selectedProject, setSelectedProject] = useState<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // ── Load projects for the working-dir picker ───────────────────────────────
+
+  useEffect(() => {
+    if (!toolsEnabled) return;
+    invoke<string[]>("get_projects")
+      .then((names) =>
+        Promise.all(
+          names.map((name) =>
+            invoke<string>("read_project", { name }).then((raw) => {
+              const p = JSON.parse(raw);
+              return { name, directory: p?.directory ?? "" };
+            })
+          )
+        )
+      )
+      .then((all) => {
+        const withDir = all.filter((p) => p.directory);
+        setProjects(withDir);
+        // Default to the first project that has a directory — never home.
+        if (withDir.length > 0 && !selectedProject) {
+          setSelectedProject(withDir[0]!.name);
+          setWorkingDir(withDir[0]!.directory);
+        }
+      })
+      .catch(() => {});
+  }, [toolsEnabled]);
 
   // ── Scroll to bottom on new messages ──────────────────────────────────────
 
@@ -96,13 +209,32 @@ export default function AiPlayground() {
     setLoading(true);
 
     try {
-      const response: string = await invoke("ai_chat", {
-        messages: nextMessages,
-        apiKey: null,
-        model: model || null,
-        system: system.trim() || null,
-        maxTokens: null,
-      });
+      let response: string;
+      if (toolsEnabled) {
+        if (!workingDir) {
+          setError("Select a project directory before using file tools.");
+          setLoading(false);
+          setMessages((prev) => prev.slice(0, -1)); // remove the optimistic user msg
+          setInput(text);
+          return;
+        }
+        response = await invoke("ai_chat_with_tools", {
+          messages: nextMessages,
+          apiKey: null,
+          model: model || null,
+          system: system.trim() || null,
+          maxTokens: null,
+          workingDir,
+        });
+      } else {
+        response = await invoke("ai_chat", {
+          messages: nextMessages,
+          apiKey: null,
+          model: model || null,
+          system: system.trim() || null,
+          maxTokens: null,
+        });
+      }
       setMessages((prev) => [...prev, { role: "assistant", content: response }]);
     } catch (err: any) {
       setError(typeof err === "string" ? err : JSON.stringify(err));
@@ -135,7 +267,26 @@ export default function AiPlayground() {
 
         <ModelPicker value={model} onChange={setModel} />
 
+        {/* Tools badge */}
+        {toolsEnabled && (
+          <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-brand/15 text-brand border border-brand/30">
+            <FolderOpen size={10} />
+            read_file
+          </span>
+        )}
+
         <div className="ml-auto flex items-center gap-2">
+          {/* Project / working-dir picker (visible when tools are on) */}
+          {toolsEnabled && (
+            <ProjectPicker
+              projects={projects}
+              value={selectedProject}
+              onChange={(name, directory) => {
+                setSelectedProject(name);
+                setWorkingDir(directory);
+              }}
+            />
+          )}
           {messages.length > 0 && (
             <button
               onClick={clearConversation}
