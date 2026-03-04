@@ -123,6 +123,10 @@ const AUTO_INSTALL_SKILLS: &[(&str, &str)] = &[
         "automatic-database-design",
         include_str!("../../skills/automatic-database-design/SKILL.md"),
     ),
+    (
+        "automatic-llms-txt",
+        include_str!("../../skills/automatic-llms-txt/SKILL.md"),
+    ),
 ];
 
 /// Skills bundled with the app but only installed on demand (e.g. when a user
