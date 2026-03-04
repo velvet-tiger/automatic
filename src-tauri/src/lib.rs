@@ -133,6 +133,7 @@ pub fn run() {
             get_all_activity,
             track_event,
             restart_app,
+            open_directory_dialog,
             subscribe_newsletter,
             authorize_mcp_server,
             has_mcp_oauth_token,

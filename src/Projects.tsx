@@ -7,7 +7,7 @@ import { MarkdownPreview } from "./MarkdownPreview";
 import { useCurrentUser } from "./ProfileContext";
 import { MemoryBrowser } from "./MemoryBrowser";
 import { invoke } from "@tauri-apps/api/core";
-import { open, ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   trackProjectCreated,
   trackProjectUpdated,
@@ -2463,8 +2463,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   {/* Directory path — click to change */}
                   <button
                     onClick={async () => {
-                      const selected = await open({ directory: true, multiple: false, title: "Select project directory" });
-                      if (selected) updateField("directory", selected as string);
+                      const selected: string | null = await invoke("open_directory_dialog");
+                      if (selected) updateField("directory", selected);
                     }}
                     className="mt-1 flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text-base font-mono transition-colors group"
                     title="Click to change directory"
@@ -2643,17 +2643,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           />
                           <button
                             onClick={async () => {
-                              const selected = await open({
-                                directory: true,
-                                multiple: false,
-                                title: "Select project directory",
-                              });
+                              const selected: string | null = await invoke("open_directory_dialog");
                               if (!selected) return;
-                              const dir = selected as string;
-                              const folderName = dir.split("/").filter(Boolean).pop() ?? "";
+                              const folderName = selected.split("/").filter(Boolean).pop() ?? "";
                               const name = newName.trim() || folderName;
                               setNewName(name);
-                              updateField("directory", dir);
+                              updateField("directory", selected);
                             }}
                             className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors whitespace-nowrap"
                           >
@@ -3435,8 +3430,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   <div>
                                     <button
                                       onClick={async () => {
-                                        const selected = await open({ directory: true, multiple: false, title: "Select project directory" });
-                                        if (selected) updateField("directory", selected as string);
+                                        const selected: string | null = await invoke("open_directory_dialog");
+                                        if (selected) updateField("directory", selected);
                                       }}
                                       className="text-brand hover:text-brand-hover transition-colors font-medium"
                                     >

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { identifyOnboarding } from "./analytics";
 import { applyTheme, type Theme } from "./theme";
 import { ChevronRight, Check, FolderOpen } from "lucide-react";
-import { open } from "@tauri-apps/plugin-dialog";
+
 import graphLogo from "../logos/graph_5.svg";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -902,12 +902,8 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
   };
 
   const handleBrowseDir = async () => {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: "Select project directory",
-    });
-    if (selected) setProjectDir(selected as string);
+    const selected: string | null = await invoke("open_directory_dialog");
+    if (selected) setProjectDir(selected);
   };
 
   if (loading) {

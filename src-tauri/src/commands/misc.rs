@@ -72,3 +72,57 @@ pub fn get_sessions() -> Result<String, String> {
 pub fn restart_app(app: tauri::AppHandle) {
     app.restart();
 }
+
+// ── Directory Picker ──────────────────────────────────────────────────────────
+
+/// Open a native folder-picker dialog and return the selected path.
+///
+/// On macOS we bypass `rfd`/`NSOpenPanel` entirely and use `osascript`
+/// because `rfd 0.16` panics on Apple-Silicon Macs when `NSOpenPanel`
+/// unexpectedly returns NULL (upstream issue: PolyMeilex/rfd#259).
+///
+/// Returns `Ok(Some(path))` when a folder is chosen, `Ok(None)` when the
+/// user cancels, or `Err(message)` if the picker itself fails.
+#[tauri::command]
+pub async fn open_directory_dialog() -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        // Use `osascript` to show a choose-folder dialog.  This is reliable
+        // on all Apple-Silicon (M-series) Macs and avoids the rfd/NSOpenPanel
+        // NULL-pointer panic.
+        let output = std::process::Command::new("osascript")
+            .args([
+                "-e",
+                "set result to choose folder with prompt \"Select project directory\"\n\
+                 POSIX path of result",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to launch osascript: {e}"))?;
+
+        if output.status.success() {
+            let raw = String::from_utf8_lossy(&output.stdout);
+            let path = raw.trim().trim_end_matches('/').to_string();
+            if path.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(path))
+            }
+        } else {
+            // Exit code 1 with "User canceled" in stderr means the user
+            // dismissed the dialog — treat that as a normal cancellation.
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("User canceled") || stderr.contains("user canceled") {
+                Ok(None)
+            } else {
+                Err(format!("osascript error: {}", stderr.trim()))
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        // On non-macOS platforms the rfd panic does not occur; use the
+        // tauri-plugin-dialog blocking API from a background thread.
+        Err("open_directory_dialog: not implemented on this platform".to_string())
+    }
+}
