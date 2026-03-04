@@ -53,6 +53,12 @@ pub enum ActivityEvent {
     ProjectCreated,
     /// Project description or settings were updated.
     ProjectUpdated,
+    /// A memory key was stored or updated.
+    MemoryStored,
+    /// A single memory key was deleted.
+    MemoryDeleted,
+    /// Memory entries were bulk-cleared (all or by pattern).
+    MemoryCleared,
 }
 
 impl ActivityEvent {
@@ -67,6 +73,9 @@ impl ActivityEvent {
             Self::AgentRemoved => "agent_removed",
             Self::ProjectCreated => "project_created",
             Self::ProjectUpdated => "project_updated",
+            Self::MemoryStored => "memory_stored",
+            Self::MemoryDeleted => "memory_deleted",
+            Self::MemoryCleared => "memory_cleared",
         }
     }
 }
@@ -82,7 +91,11 @@ fn get_db_path() -> Result<PathBuf, String> {
 
 fn open_conn() -> Result<Connection, String> {
     let path = get_db_path()?;
-    let conn = Connection::open(&path).map_err(|e| format!("Failed to open activity DB: {}", e))?;
+    open_conn_at(&path)
+}
+
+fn open_conn_at(path: &PathBuf) -> Result<Connection, String> {
+    let conn = Connection::open(path).map_err(|e| format!("Failed to open activity DB: {}", e))?;
 
     // Enable WAL mode so concurrent reads during a write don't block.
     conn.execute_batch("PRAGMA journal_mode=WAL;")
@@ -276,4 +289,252 @@ pub fn get_all_activity(limit: usize) -> Result<Vec<ActivityEntry>, String> {
         entries.push(row.map_err(|e| format!("Failed to read activity row: {}", e))?);
     }
     Ok(entries)
+}
+
+// ── Path-injectable helpers used by tests ─────────────────────────────────────
+
+#[cfg(test)]
+/// Insert one activity row directly into `conn`, with no project-metadata
+/// side-effect.  Returns the inserted timestamp.
+fn insert_into(
+    conn: &Connection,
+    project: &str,
+    event: ActivityEvent,
+    label: &str,
+    detail: &str,
+) -> Result<String, String> {
+    let ts = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO activity (project, event, label, detail, timestamp)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![project, event.as_str(), label, detail, ts],
+    )
+    .map_err(|e| format!("insert error: {}", e))?;
+    Ok(ts)
+}
+
+#[cfg(test)]
+/// Read the N most-recent rows for `project` from an open `conn`.
+fn read_from(conn: &Connection, project: &str, limit: usize) -> Result<Vec<ActivityEntry>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, project, event, label, detail, timestamp
+             FROM activity
+             WHERE project = ?1
+             ORDER BY id DESC
+             LIMIT ?2",
+        )
+        .map_err(|e| format!("prepare error: {}", e))?;
+
+    let rows = stmt
+        .query_map(params![project, limit as i64], |row| {
+            Ok(ActivityEntry {
+                id: row.get(0)?,
+                project: row.get(1)?,
+                event: row.get(2)?,
+                label: row.get(3)?,
+                detail: row.get(4)?,
+                timestamp: row.get(5)?,
+            })
+        })
+        .map_err(|e| format!("query error: {}", e))?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        entries.push(row.map_err(|e| format!("row error: {}", e))?);
+    }
+    Ok(entries)
+}
+
+#[cfg(test)]
+/// Count all rows for `project` in `conn`.
+fn count_from(conn: &Connection, project: &str) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM activity WHERE project = ?1",
+        params![project],
+        |row| row.get(0),
+    )
+    .unwrap_or(0)
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn fresh_conn(dir: &std::path::Path) -> Connection {
+        let path = dir.join("activity.db").to_path_buf();
+        open_conn_at(&path).unwrap()
+    }
+
+    // ── basic insert / read ──────────────────────────────────────────────────
+
+    #[test]
+    fn log_and_read_single_entry() {
+        let dir = tempdir().unwrap();
+        let conn = fresh_conn(dir.path());
+
+        insert_into(
+            &conn,
+            "proj",
+            ActivityEvent::MemoryStored,
+            "Memory stored: k1",
+            "k1",
+        )
+        .unwrap();
+
+        let entries = read_from(&conn, "proj", 10).unwrap();
+        assert_eq!(entries.len(), 1);
+
+        let e = &entries[0];
+        assert_eq!(e.project, "proj");
+        assert_eq!(e.event, "memory_stored");
+        assert_eq!(e.label, "Memory stored: k1");
+        assert_eq!(e.detail, "k1");
+        assert!(!e.timestamp.is_empty());
+    }
+
+    #[test]
+    fn log_multiple_events_newest_first() {
+        let dir = tempdir().unwrap();
+        let conn = fresh_conn(dir.path());
+
+        insert_into(&conn, "proj", ActivityEvent::MemoryStored, "a", "").unwrap();
+        insert_into(&conn, "proj", ActivityEvent::MemoryDeleted, "b", "").unwrap();
+        insert_into(&conn, "proj", ActivityEvent::MemoryCleared, "c", "").unwrap();
+
+        let entries = read_from(&conn, "proj", 10).unwrap();
+        assert_eq!(entries.len(), 3);
+        // Newest first — "memory_cleared" was inserted last.
+        assert_eq!(entries[0].event, "memory_cleared");
+        assert_eq!(entries[1].event, "memory_deleted");
+        assert_eq!(entries[2].event, "memory_stored");
+    }
+
+    // ── event kind strings ───────────────────────────────────────────────────
+
+    #[test]
+    fn memory_event_strings_are_correct() {
+        assert_eq!(ActivityEvent::MemoryStored.as_str(), "memory_stored");
+        assert_eq!(ActivityEvent::MemoryDeleted.as_str(), "memory_deleted");
+        assert_eq!(ActivityEvent::MemoryCleared.as_str(), "memory_cleared");
+    }
+
+    #[test]
+    fn all_event_kind_strings_are_unique() {
+        let all = [
+            ActivityEvent::ProjectSynced,
+            ActivityEvent::SkillAdded,
+            ActivityEvent::SkillRemoved,
+            ActivityEvent::McpServerAdded,
+            ActivityEvent::McpServerRemoved,
+            ActivityEvent::AgentAdded,
+            ActivityEvent::AgentRemoved,
+            ActivityEvent::ProjectCreated,
+            ActivityEvent::ProjectUpdated,
+            ActivityEvent::MemoryStored,
+            ActivityEvent::MemoryDeleted,
+            ActivityEvent::MemoryCleared,
+        ];
+        let strings: Vec<&str> = all.iter().map(|e| e.as_str()).collect();
+        let unique: std::collections::HashSet<&str> = strings.iter().copied().collect();
+        assert_eq!(
+            strings.len(),
+            unique.len(),
+            "duplicate event kind strings found"
+        );
+    }
+
+    // ── project isolation ────────────────────────────────────────────────────
+
+    #[test]
+    fn entries_are_scoped_to_project() {
+        let dir = tempdir().unwrap();
+        let conn = fresh_conn(dir.path());
+
+        insert_into(&conn, "project-a", ActivityEvent::MemoryStored, "a", "").unwrap();
+        insert_into(&conn, "project-b", ActivityEvent::MemoryDeleted, "b", "").unwrap();
+
+        let a = read_from(&conn, "project-a", 10).unwrap();
+        let b = read_from(&conn, "project-b", 10).unwrap();
+
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].project, "project-a");
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].project, "project-b");
+    }
+
+    // ── limit ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn read_respects_limit() {
+        let dir = tempdir().unwrap();
+        let conn = fresh_conn(dir.path());
+
+        for i in 0..10 {
+            insert_into(
+                &conn,
+                "proj",
+                ActivityEvent::MemoryStored,
+                &format!("label {}", i),
+                "",
+            )
+            .unwrap();
+        }
+
+        let entries = read_from(&conn, "proj", 3).unwrap();
+        assert_eq!(entries.len(), 3);
+    }
+
+    #[test]
+    fn count_returns_correct_total() {
+        let dir = tempdir().unwrap();
+        let conn = fresh_conn(dir.path());
+
+        for _ in 0..5 {
+            insert_into(&conn, "proj", ActivityEvent::MemoryStored, "x", "").unwrap();
+        }
+
+        assert_eq!(count_from(&conn, "proj"), 5);
+    }
+
+    // ── detail field ────────────────────────────────────────────────────────
+
+    #[test]
+    fn detail_field_is_stored_and_retrieved() {
+        let dir = tempdir().unwrap();
+        let conn = fresh_conn(dir.path());
+
+        insert_into(
+            &conn,
+            "proj",
+            ActivityEvent::MemoryCleared,
+            "Memory cleared",
+            "42 entries matching 'foo'",
+        )
+        .unwrap();
+
+        let entries = read_from(&conn, "proj", 1).unwrap();
+        assert_eq!(entries[0].detail, "42 entries matching 'foo'");
+    }
+
+    #[test]
+    fn empty_detail_is_allowed() {
+        let dir = tempdir().unwrap();
+        let conn = fresh_conn(dir.path());
+
+        insert_into(
+            &conn,
+            "proj",
+            ActivityEvent::MemoryDeleted,
+            "Memory deleted: k",
+            "",
+        )
+        .unwrap();
+
+        let entries = read_from(&conn, "proj", 1).unwrap();
+        assert_eq!(entries[0].detail, "");
+    }
 }

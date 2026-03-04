@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { trackMemoryStored, trackMemoryDeleted, trackMemoryCleared } from "./analytics";
 import {
   Trash2,
   Edit2,
@@ -370,6 +371,7 @@ export function MemoryBrowser({
         value: editingValue,
         source: memories[editingKey]?.source ?? null,
       });
+      trackMemoryStored(projectName, editingKey);
       setEditingKey(null);
       setEditingValue("");
       await onRefresh();
@@ -383,6 +385,7 @@ export function MemoryBrowser({
   const deleteMemory = async (key: string) => {
     try {
       await invoke("delete_memory", { project: projectName, key });
+      trackMemoryDeleted(projectName, key);
       if (editingKey === key) cancelEdit();
       setExpandedKeys((prev) => {
         const next = new Set(prev);
@@ -410,11 +413,13 @@ export function MemoryBrowser({
     )
       return;
     try {
+      const countBeforeClear = Object.keys(memories).length;
       await invoke("clear_memories", {
         project: projectName,
         confirm: true,
         pattern: null,
       });
+      trackMemoryCleared(projectName, countBeforeClear);
       setExpandedKeys(new Set());
       setEditingKey(null);
       await onRefresh();
@@ -432,6 +437,7 @@ export function MemoryBrowser({
         value,
         source: null,
       });
+      trackMemoryStored(projectName, key);
       setShowAddModal(false);
       await onRefresh();
     } catch (err: any) {

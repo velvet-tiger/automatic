@@ -150,6 +150,19 @@ export function trackMcpServerDeleted(name: string): void {
   track("mcp_server_deleted", { name });
 }
 
+// Memory
+export function trackMemoryStored(project: string, key: string): void {
+  track("memory_stored", { project, key });
+}
+
+export function trackMemoryDeleted(project: string, key: string): void {
+  track("memory_deleted", { project, key });
+}
+
+export function trackMemoryCleared(project: string, count: number): void {
+  track("memory_cleared", { project, count });
+}
+
 // Settings
 export function trackSettingChanged(key: string, value: unknown): void {
   track("setting_changed", { key, value });

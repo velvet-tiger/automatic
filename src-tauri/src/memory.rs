@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+#[cfg(test)]
+use std::path::Path;
 use std::path::PathBuf;
 
 /// A single memory entry with metadata.
@@ -52,6 +54,100 @@ pub fn write_memory_db(project_name: &str, db: &MemoryDb) -> Result<(), String> 
     fs::write(&path, raw).map_err(|e| e.to_string())
 }
 
+// ── Path-injectable helpers used by tests ────────────────────────────────────
+
+#[cfg(test)]
+/// Read the memory DB from an explicit base directory (used in tests).
+fn read_db_at(base: &Path, project_name: &str) -> Result<MemoryDb, String> {
+    let path = base.join(format!("{}.json", project_name));
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    Ok(serde_json::from_str(&raw).unwrap_or_default())
+}
+
+#[cfg(test)]
+/// Write the memory DB to an explicit base directory (used in tests).
+fn write_db_at(base: &Path, project_name: &str, db: &MemoryDb) -> Result<(), String> {
+    let path = base.join(format!("{}.json", project_name));
+    let raw = serde_json::to_string_pretty(db).map_err(|e| e.to_string())?;
+    fs::write(&path, raw).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+/// Store a memory entry into an explicit base directory (used in tests).
+fn store_at(
+    base: &Path,
+    project_name: &str,
+    key: &str,
+    value: &str,
+    source: Option<&str>,
+) -> Result<String, String> {
+    let mut db = read_db_at(base, project_name)?;
+    db.insert(
+        key.to_string(),
+        MemoryEntry {
+            value: value.to_string(),
+            timestamp: current_timestamp(),
+            source: source.map(|s| s.to_string()),
+            created_by: None,
+        },
+    );
+    write_db_at(base, project_name, &db)?;
+    Ok(format!(
+        "Memory stored: key='{}' for project '{}'",
+        key, project_name
+    ))
+}
+
+#[cfg(test)]
+/// Delete a memory entry from an explicit base directory (used in tests).
+fn delete_at(base: &Path, project_name: &str, key: &str) -> Result<String, String> {
+    let mut db = read_db_at(base, project_name)?;
+    if db.remove(key).is_none() {
+        return Err(format!("Memory key '{}' not found", key));
+    }
+    write_db_at(base, project_name, &db)?;
+    Ok(format!(
+        "Memory deleted: key='{}' for project '{}'",
+        key, project_name
+    ))
+}
+
+#[cfg(test)]
+/// Clear memory entries from an explicit base directory (used in tests).
+fn clear_at(
+    base: &Path,
+    project_name: &str,
+    pattern: Option<&str>,
+    confirm: bool,
+) -> Result<usize, String> {
+    if !confirm {
+        return Err("Deletion not confirmed.".to_string());
+    }
+    let mut db = read_db_at(base, project_name)?;
+    let deleted_count = if let Some(pat) = pattern {
+        let pat_lower = pat.to_lowercase();
+        let keys: Vec<String> = db
+            .keys()
+            .filter(|k| k.to_lowercase().contains(&pat_lower))
+            .cloned()
+            .collect();
+        let n = keys.len();
+        for k in keys {
+            db.remove(&k);
+        }
+        n
+    } else {
+        let n = db.len();
+        db.clear();
+        n
+    };
+    write_db_at(base, project_name, &db)?;
+    Ok(deleted_count)
+}
+
 /// Generates an ISO 8601 timestamp for the current time.
 pub fn current_timestamp() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -88,6 +184,13 @@ pub fn store_memory(
     );
 
     write_memory_db(project_name, &db)?;
+
+    crate::activity::log(
+        project_name,
+        crate::activity::ActivityEvent::MemoryStored,
+        &format!("Memory stored: {}", key),
+        key,
+    );
 
     Ok(format!(
         "Memory stored: key='{}' for project '{}'",
@@ -211,6 +314,13 @@ pub fn delete_memory(project_name: &str, key: &str) -> Result<String, String> {
 
     write_memory_db(project_name, &db)?;
 
+    crate::activity::log(
+        project_name,
+        crate::activity::ActivityEvent::MemoryDeleted,
+        &format!("Memory deleted: {}", key),
+        key,
+    );
+
     Ok(format!(
         "Memory deleted: key='{}' for project '{}'",
         key, project_name
@@ -248,6 +358,19 @@ pub fn clear_memories(
 
     write_memory_db(project_name, &db)?;
 
+    let detail = if let Some(pat) = pattern {
+        format!("{} entries matching '{}'", deleted_count, pat)
+    } else {
+        format!("{} entries", deleted_count)
+    };
+
+    crate::activity::log(
+        project_name,
+        crate::activity::ActivityEvent::MemoryCleared,
+        "Memory cleared",
+        &detail,
+    );
+
     if let Some(pat) = pattern {
         Ok(format!(
             "Cleared {} memor{} matching pattern '{}' for project '{}'",
@@ -263,5 +386,189 @@ pub fn clear_memories(
             if deleted_count == 1 { "y" } else { "ies" },
             project_name
         ))
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    // ── store / get ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn store_creates_entry() {
+        let dir = tempdir().unwrap();
+        store_at(dir.path(), "proj", "k1", "hello", None).unwrap();
+
+        let db = read_db_at(dir.path(), "proj").unwrap();
+        let entry = db.get("k1").expect("key must exist");
+        assert_eq!(entry.value, "hello");
+        assert!(entry.source.is_none());
+        assert!(!entry.timestamp.is_empty());
+    }
+
+    #[test]
+    fn store_records_source() {
+        let dir = tempdir().unwrap();
+        store_at(dir.path(), "proj", "k1", "v", Some("agent-x")).unwrap();
+
+        let db = read_db_at(dir.path(), "proj").unwrap();
+        assert_eq!(db["k1"].source.as_deref(), Some("agent-x"));
+    }
+
+    #[test]
+    fn store_overwrites_existing_key() {
+        let dir = tempdir().unwrap();
+        store_at(dir.path(), "proj", "k1", "first", None).unwrap();
+        store_at(dir.path(), "proj", "k1", "second", None).unwrap();
+
+        let db = read_db_at(dir.path(), "proj").unwrap();
+        assert_eq!(db["k1"].value, "second");
+        assert_eq!(db.len(), 1);
+    }
+
+    #[test]
+    fn read_empty_project_returns_empty_map() {
+        let dir = tempdir().unwrap();
+        let db = read_db_at(dir.path(), "nonexistent").unwrap();
+        assert!(db.is_empty());
+    }
+
+    #[test]
+    fn store_multiple_keys_all_persisted() {
+        let dir = tempdir().unwrap();
+        store_at(dir.path(), "proj", "a", "1", None).unwrap();
+        store_at(dir.path(), "proj", "b", "2", None).unwrap();
+        store_at(dir.path(), "proj", "c", "3", None).unwrap();
+
+        let db = read_db_at(dir.path(), "proj").unwrap();
+        assert_eq!(db.len(), 3);
+        assert_eq!(db["a"].value, "1");
+        assert_eq!(db["b"].value, "2");
+        assert_eq!(db["c"].value, "3");
+    }
+
+    // ── delete ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn delete_removes_key() {
+        let dir = tempdir().unwrap();
+        store_at(dir.path(), "proj", "k1", "v", None).unwrap();
+        store_at(dir.path(), "proj", "k2", "v2", None).unwrap();
+
+        delete_at(dir.path(), "proj", "k1").unwrap();
+
+        let db = read_db_at(dir.path(), "proj").unwrap();
+        assert!(!db.contains_key("k1"), "k1 should be gone");
+        assert!(db.contains_key("k2"), "k2 should remain");
+    }
+
+    #[test]
+    fn delete_missing_key_returns_err() {
+        let dir = tempdir().unwrap();
+        let err = delete_at(dir.path(), "proj", "ghost").unwrap_err();
+        assert!(err.contains("not found"), "unexpected error: {}", err);
+    }
+
+    // ── clear ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn clear_all_empties_db() {
+        let dir = tempdir().unwrap();
+        store_at(dir.path(), "proj", "a", "1", None).unwrap();
+        store_at(dir.path(), "proj", "b", "2", None).unwrap();
+
+        let n = clear_at(dir.path(), "proj", None, true).unwrap();
+        assert_eq!(n, 2);
+
+        let db = read_db_at(dir.path(), "proj").unwrap();
+        assert!(db.is_empty());
+    }
+
+    #[test]
+    fn clear_with_pattern_removes_only_matching() {
+        let dir = tempdir().unwrap();
+        store_at(dir.path(), "proj", "foo/bar", "1", None).unwrap();
+        store_at(dir.path(), "proj", "foo/baz", "2", None).unwrap();
+        store_at(dir.path(), "proj", "other", "3", None).unwrap();
+
+        let n = clear_at(dir.path(), "proj", Some("foo"), true).unwrap();
+        assert_eq!(n, 2);
+
+        let db = read_db_at(dir.path(), "proj").unwrap();
+        assert!(!db.contains_key("foo/bar"));
+        assert!(!db.contains_key("foo/baz"));
+        assert!(db.contains_key("other"), "non-matching key must survive");
+    }
+
+    #[test]
+    fn clear_pattern_case_insensitive() {
+        let dir = tempdir().unwrap();
+        store_at(dir.path(), "proj", "PREFIX/thing", "v", None).unwrap();
+
+        let n = clear_at(dir.path(), "proj", Some("prefix"), true).unwrap();
+        assert_eq!(n, 1);
+        assert!(read_db_at(dir.path(), "proj").unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_without_confirm_returns_err() {
+        let dir = tempdir().unwrap();
+        store_at(dir.path(), "proj", "k", "v", None).unwrap();
+        let err = clear_at(dir.path(), "proj", None, false).unwrap_err();
+        assert!(err.contains("not confirmed"), "unexpected error: {}", err);
+
+        // DB must be untouched.
+        assert_eq!(read_db_at(dir.path(), "proj").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clear_empty_project_succeeds_with_zero_count() {
+        let dir = tempdir().unwrap();
+        let n = clear_at(dir.path(), "proj", None, true).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    // ── persistence ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn data_survives_read_write_roundtrip() {
+        let dir = tempdir().unwrap();
+        let mut db: MemoryDb = HashMap::new();
+        db.insert(
+            "conventions/naming".to_string(),
+            MemoryEntry {
+                value: "use snake_case".to_string(),
+                timestamp: current_timestamp(),
+                source: Some("claude-code".to_string()),
+                created_by: None,
+            },
+        );
+        write_db_at(dir.path(), "proj", &db).unwrap();
+
+        let loaded = read_db_at(dir.path(), "proj").unwrap();
+        assert_eq!(loaded["conventions/naming"].value, "use snake_case");
+        assert_eq!(
+            loaded["conventions/naming"].source.as_deref(),
+            Some("claude-code")
+        );
+    }
+
+    // ── project isolation ────────────────────────────────────────────────────
+
+    #[test]
+    fn different_projects_are_isolated() {
+        let dir = tempdir().unwrap();
+        store_at(dir.path(), "project-a", "shared-key", "alpha", None).unwrap();
+        store_at(dir.path(), "project-b", "shared-key", "beta", None).unwrap();
+
+        let a = read_db_at(dir.path(), "project-a").unwrap();
+        let b = read_db_at(dir.path(), "project-b").unwrap();
+
+        assert_eq!(a["shared-key"].value, "alpha");
+        assert_eq!(b["shared-key"].value, "beta");
     }
 }
