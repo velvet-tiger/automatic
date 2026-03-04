@@ -102,6 +102,16 @@ pub fn list_skill_names() -> Result<Vec<String>, String> {
     Ok(list_skills()?.into_iter().map(|e| e.name).collect())
 }
 
+/// Read a skill's raw SKILL.md content without any companion file formatting.
+/// Use this for sync and drift detection where the on-disk file must match
+/// exactly — companion resource sections are not written to project skill files.
+pub fn read_skill_raw(name: &str) -> Result<String, String> {
+    match get_skill_path(name)? {
+        Some(path) => fs::read_to_string(&path).map_err(|e| e.to_string()),
+        None => Ok("".to_string()),
+    }
+}
+
 /// Read a skill's SKILL.md content.  Checks `~/.agents/skills/` first
 /// (the canonical location), then falls back to `~/.claude/skills/`.
 pub fn read_skill(name: &str) -> Result<String, String> {

@@ -22,10 +22,15 @@ pub(crate) fn load_mcp_server_configs() -> Result<Map<String, Value>, String> {
 }
 
 /// Read all skill contents from the global registry for the given names.
+///
+/// Uses the raw SKILL.md content (without companion resource formatting) so
+/// that the content written to project skill files during sync matches exactly
+/// what drift detection compares against.  Companion files are handled
+/// separately by `copy_skills_to_project` which copies the full directory.
 pub(crate) fn load_skill_contents(skill_names: &[String]) -> Vec<(String, String)> {
     let mut contents = Vec::new();
     for name in skill_names {
-        match crate::core::read_skill(name) {
+        match crate::core::read_skill_raw(name) {
             Ok(content) if !content.is_empty() => {
                 contents.push((name.clone(), content));
             }
@@ -69,6 +74,30 @@ pub(crate) fn clean_project_file(dir: &PathBuf, filename: &str) -> Result<Option
                 format!("\n\n{}", after.trim_start())
             }
         );
+        fs::write(&path, cleaned).map_err(|e| e.to_string())?;
+        Ok(Some(path.display().to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Strip any `<!-- automatic:rules:start -->…<!-- automatic:rules:end -->`
+/// managed section from a project file.  Used when switching a Claude project
+/// to the `.claude/rules/` mode so the two representations do not co-exist.
+/// Returns the path if the file was modified, or None if no cleanup was needed.
+pub(crate) fn clean_project_file_rules_section(
+    dir: &PathBuf,
+    filename: &str,
+) -> Result<Option<String>, String> {
+    let path = dir.join(filename);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let cleaned = crate::core::strip_rules_section_pub(&content);
+
+    if cleaned != content {
         fs::write(&path, cleaned).map_err(|e| e.to_string())?;
         Ok(Some(path.display().to_string()))
     } else {
