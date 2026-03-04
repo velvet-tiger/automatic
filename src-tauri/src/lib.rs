@@ -5,6 +5,7 @@ pub mod mcp;
 pub mod memory;
 pub mod oauth;
 pub mod proxy;
+pub mod recommendations;
 pub mod sync;
 pub mod context;
 
@@ -137,6 +138,14 @@ pub fn run() {
             has_mcp_oauth_token,
             revoke_mcp_oauth_token,
             refresh_mcp_oauth_token,
+            add_recommendation,
+            get_recommendation,
+            list_recommendations,
+            dismiss_recommendation,
+            action_recommendation,
+            delete_recommendation,
+            clear_recommendations,
+            count_recommendations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
