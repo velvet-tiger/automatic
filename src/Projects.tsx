@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { SkillSelector } from "./SkillSelector";
 import { AgentSelector } from "./AgentSelector";
+import type { AgentOptions } from "./AgentSelector";
 import { AgentIcon } from "./AgentIcon";
 import { McpSelector } from "./McpSelector";
 import { MarkdownPreview } from "./MarkdownPreview";
@@ -54,12 +55,6 @@ import {
   Search,
   Info,
 } from "lucide-react";
-
-/** Per-agent configuration options stored in a project. */
-interface AgentOptions {
-  /** Claude Code: write rules to .claude/rules/*.md instead of injecting into CLAUDE.md. */
-  claude_rules_in_dot_claude: boolean;
-}
 
 interface Project {
   name: string;
@@ -1395,7 +1390,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "memory" | "activity";
+  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "memory" | "activity" | "recommendations";
   const [projectTab, setProjectTab] = useState<ProjectTab>("summary");
 
   // Memory state
@@ -3111,6 +3106,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 { id: "project_file" as ProjectTab, label: "Project Instructions" },
                 { id: "memory" as ProjectTab, label: "Memory" },
                 { id: "activity" as ProjectTab, label: "Activity" },
+                { id: "recommendations" as ProjectTab, label: "Recommendations" },
               ]).map((tab) => (
                 <button
                   key={tab.id}
@@ -3120,13 +3116,18 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       loadActivityPage(selectedName, 0);
                     }
                   }}
-                  className={`px-3 py-2.5 text-[13px] font-medium transition-colors relative ${
+                  className={`px-3 py-2.5 text-[13px] font-medium transition-colors relative flex items-center gap-1.5 ${
                     projectTab === tab.id
                       ? "text-text-base"
                       : "text-text-muted hover:text-text-base"
                   }`}
                 >
                   {tab.label}
+                  {tab.id === "recommendations" && recommendations.length > 0 && (
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
+                      {recommendations.length}
+                    </span>
+                  )}
                   {projectTab === tab.id && (
                     <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
                   )}
@@ -3737,94 +3738,27 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {/* ── Details tab ──────────────────────────────────────── */}
                  {/* ── Agents tab ───────────────────────────────────────── */}
                 {projectTab === "agents" && (
-                   <section className="space-y-6">
+                   <section>
                       <AgentSelector
                         agentIds={project.agents}
                         availableAgents={availableAgents}
                         onAdd={(id) => addItem("agents", id)}
                         onRemove={(i) => handleRemoveAgent(i)}
                         emptyMessage="No agent tools selected. Add tools to enable config sync."
+                        agentOptions={project.agent_options}
+                        onOptionChange={(agentId, patch) => {
+                          const current = project.agent_options?.[agentId] ?? { claude_rules_in_dot_claude: true };
+                          setProject({
+                            ...project,
+                            agent_options: {
+                              ...(project.agent_options ?? {}),
+                              [agentId]: { ...current, ...patch },
+                            },
+                            updated_at: new Date().toISOString(),
+                          });
+                          setDirty(true);
+                        }}
                       />
-
-                      {/* ── Per-agent configuration options ──────────────── */}
-                      {project.agents.length > 0 && (
-                        <div>
-                          <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
-                            Agent Configuration
-                          </label>
-                          <div className="space-y-3">
-                            {project.agents.map((agentId) => {
-                              // Only Claude Code has configurable options right now.
-                              if (agentId !== "claude") return null;
-
-                              const opts: AgentOptions = {
-                                claude_rules_in_dot_claude: true,
-                                ...(project.agent_options?.[agentId] ?? {}),
-                              };
-                              const agentLabel =
-                                availableAgents.find((a) => a.id === agentId)?.label ?? agentId;
-
-                              const updateOpts = (patch: Partial<AgentOptions>) => {
-                                const updated = {
-                                  ...project,
-                                  agent_options: {
-                                    ...(project.agent_options ?? {}),
-                                    [agentId]: { ...opts, ...patch },
-                                  },
-                                  updated_at: new Date().toISOString(),
-                                };
-                                setProject(updated);
-                                setDirty(true);
-                              };
-
-                              return (
-                                <div
-                                  key={agentId}
-                                  className="border border-border-strong/40 rounded-lg overflow-hidden"
-                                >
-                                  {/* Agent header */}
-                                  <div className="flex items-center gap-2 px-3 py-2 bg-bg-input border-b border-border-strong/40">
-                                    <AgentIcon agentId={agentId} size={13} />
-                                    <span className="text-[12px] font-medium text-text-base">
-                                      {agentLabel}
-                                    </span>
-                                  </div>
-
-                                  {/* Options list */}
-                                  <div className="divide-y divide-border-strong/20">
-                                    {/* claude_rules_in_dot_claude */}
-                                    <label className="flex items-start gap-3 px-3 py-3 cursor-pointer hover:bg-bg-input/50 transition-colors">
-                                      <div className="flex-1 min-w-0">
-                                        <div className="text-[13px] text-text-base font-medium leading-snug">
-                                          Store rules in <code className="text-[11px] font-mono bg-bg-sidebar px-1 py-0.5 rounded">.claude/rules/</code>
-                                        </div>
-                                        <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
-                                          Write each rule as an individual <code className="font-mono">.md</code> file
-                                          under <code className="font-mono">.claude/rules/</code> instead of injecting
-                                          them into <code className="font-mono">CLAUDE.md</code>. Claude Code loads
-                                          these files automatically each session.
-                                        </div>
-                                      </div>
-                                      <div className="flex-shrink-0 pt-0.5">
-                                        <input
-                                          type="checkbox"
-                                          checked={opts.claude_rules_in_dot_claude}
-                                          onChange={(e) =>
-                                            updateOpts({
-                                              claude_rules_in_dot_claude: e.target.checked,
-                                            })
-                                          }
-                                          className="w-4 h-4 accent-brand cursor-pointer"
-                                        />
-                                      </div>
-                                    </label>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
                    </section>
                  )}
 
@@ -4389,6 +4323,72 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     </section>
                   );
                 })()}
+
+                {/* ── Recommendations tab ──────────────────────────── */}
+                {projectTab === "recommendations" && (
+                  <section className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle size={13} className="text-text-muted" />
+                      <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Recommendations</span>
+                      {recommendations.length > 0 && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
+                          {recommendations.length}
+                        </span>
+                      )}
+                    </div>
+
+                    {recommendations.length === 0 ? (
+                      <div className="bg-bg-input border border-border-strong/40 rounded-lg px-4 py-10 text-center">
+                        <p className="text-[13px] text-text-muted">No recommendations at this time.</p>
+                      </div>
+                    ) : (
+                      <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                        {recommendations.map((rec) => (
+                          <div key={rec.id} className="flex items-start gap-3 px-4 py-4 group hover:bg-surface-hover transition-colors">
+                            <AlertCircle
+                              size={14}
+                              className={`flex-shrink-0 mt-0.5 ${rec.priority === "high" ? "text-warning" : "text-text-muted"}`}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[13px] font-semibold text-text-base">{rec.title}</span>
+                                {rec.priority === "high" && (
+                                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/20 leading-none">
+                                    Important
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[12px] text-text-muted leading-relaxed">{rec.body}</p>
+                              {rec.kind === "rule" && (
+                                <button
+                                  onClick={() => setProjectTab("project_file")}
+                                  className="mt-2 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
+                                >
+                                  Open Project File <ArrowRight size={10} />
+                                </button>
+                              )}
+                              {rec.kind === "project_file" && (
+                                <button
+                                  onClick={() => setProjectTab("project_file")}
+                                  className="mt-2 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
+                                >
+                                  Create Instructions File <ArrowRight size={10} />
+                                </button>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => handleDismissRecommendation(rec.id)}
+                              className="flex-shrink-0 p-1 text-text-muted hover:text-text-base transition-colors opacity-0 group-hover:opacity-100"
+                              title="Dismiss"
+                            >
+                              <X size={13} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                )}
 
               </div>
             </div>

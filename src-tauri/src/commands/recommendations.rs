@@ -1,6 +1,6 @@
 use crate::recommendations::{
     AddRecommendationParams, ListRecommendationsFilter, Recommendation, RecommendationCounts,
-    RecommendationStatus,
+    RecommendationPriority, RecommendationStatus,
 };
 
 // ── Recommendations ───────────────────────────────────────────────────────────
@@ -73,4 +73,138 @@ pub fn clear_recommendations(project: &str, status: Option<String>) -> Result<us
 #[tauri::command]
 pub fn count_recommendations(project: &str) -> Result<RecommendationCounts, String> {
     crate::recommendations::count_recommendations(project)
+}
+
+/// Return all pending recommendations across every project, ordered by
+/// priority (high first) then creation time.  Used by the dashboard.
+/// `limit` defaults to 50 when omitted.
+#[tauri::command]
+pub fn list_all_pending_recommendations(
+    limit: Option<usize>,
+) -> Result<Vec<Recommendation>, String> {
+    crate::recommendations::list_all_pending_recommendations(limit.unwrap_or(50))
+}
+
+/// Evaluate a project's configuration and upsert system-generated
+/// recommendations for common issues:
+///
+/// 1. No rules are attached to any project instruction file (`file_rules` is
+///    empty across all file keys).
+/// 2. The project has agents configured but no instruction file exists on disk.
+///
+/// For each satisfied condition the corresponding pending recommendation is
+/// cleared automatically.  Already-dismissed recommendations are never
+/// re-created (users can opt out permanently by dismissing).
+///
+/// Returns the list of current pending recommendations after evaluation.
+#[tauri::command]
+pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendation>, String> {
+    use crate::agent;
+    use std::path::Path;
+
+    // Load the project config.
+    let raw = crate::core::read_project(project)?;
+    let proj: crate::core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    // Clear any stale mcp_server recommendations created by an older version of
+    // this evaluator (the Automatic MCP server is always injected by the sync
+    // engine, so this check was incorrect and has been removed).
+    crate::recommendations::clear_system_recommendations_by_kind(project, "mcp_server")?;
+
+    // ── Check 1: Rules attached to instruction files ──────────────────────────
+    // A project benefits from having at least one rule attached to its
+    // instruction files so agents receive consistent behavioural guidelines.
+    let has_any_rules =
+        !proj.file_rules.is_empty() && proj.file_rules.values().any(|v| !v.is_empty());
+    if has_any_rules {
+        crate::recommendations::clear_system_recommendations_by_kind(project, "rule")?;
+    } else {
+        let already_dismissed = crate::recommendations::list_recommendations(
+            project,
+            crate::recommendations::ListRecommendationsFilter {
+                status: Some(RecommendationStatus::Dismissed),
+                kind: Some("rule".to_string()),
+                limit: None,
+            },
+        )?
+        .into_iter()
+        .any(|r| r.source == "automatic-system");
+
+        if !already_dismissed
+            && !crate::recommendations::has_pending_system_recommendation(project, "rule")?
+        {
+            crate::recommendations::add_recommendation(AddRecommendationParams {
+                project: project.to_string(),
+                kind: "rule".to_string(),
+                title: "Attach rules to your instruction file".to_string(),
+                body: "No rules are attached to this project's instruction files. \
+                       Rules inject shared guidelines (coding standards, checklists, \
+                       Automatic service instructions) into your agent files. \
+                       Open the Project File tab and attach the \"automatic-service\" rule \
+                       to get started."
+                    .to_string(),
+                priority: RecommendationPriority::Normal,
+                source: "automatic-system".to_string(),
+            })?;
+        }
+    }
+
+    // ── Check 2: Instruction file exists on disk ──────────────────────────────
+    // Only evaluated when the project has a directory and at least one agent
+    // configured (otherwise there is nothing to check).
+    if !proj.directory.is_empty() && !proj.agents.is_empty() {
+        let project_dir = Path::new(&proj.directory);
+        let any_file_exists = proj.agents.iter().any(|agent_id| {
+            if let Some(a) = agent::from_id(agent_id) {
+                project_dir.join(a.project_file_name()).exists()
+            } else {
+                false
+            }
+        });
+
+        if any_file_exists {
+            crate::recommendations::clear_system_recommendations_by_kind(project, "project_file")?;
+        } else {
+            let already_dismissed = crate::recommendations::list_recommendations(
+                project,
+                crate::recommendations::ListRecommendationsFilter {
+                    status: Some(RecommendationStatus::Dismissed),
+                    kind: Some("project_file".to_string()),
+                    limit: None,
+                },
+            )?
+            .into_iter()
+            .any(|r| r.source == "automatic-system");
+
+            if !already_dismissed
+                && !crate::recommendations::has_pending_system_recommendation(
+                    project,
+                    "project_file",
+                )?
+            {
+                crate::recommendations::add_recommendation(AddRecommendationParams {
+                    project: project.to_string(),
+                    kind: "project_file".to_string(),
+                    title: "Create an instructions file".to_string(),
+                    body: "No instruction file was found in your project directory. \
+                           Create one via the Project File tab so agents receive \
+                           project-specific context and rules on every session."
+                        .to_string(),
+                    priority: RecommendationPriority::Normal,
+                    source: "automatic-system".to_string(),
+                })?;
+            }
+        }
+    }
+
+    // Return all current pending recommendations for this project.
+    crate::recommendations::list_recommendations(
+        project,
+        crate::recommendations::ListRecommendationsFilter {
+            status: Some(RecommendationStatus::Pending),
+            kind: None,
+            limit: None,
+        },
+    )
 }

@@ -20,6 +20,7 @@ import {
   Compass,
   History,
   Check,
+  Lightbulb,
 } from "lucide-react";
 import { SkillAvatar } from "./SkillAvatar";
 
@@ -468,6 +469,19 @@ interface DashboardProps {
   onNavigateToTemplateMarketplace?: (templateName: string) => void;
 }
 
+interface DashboardRecommendation {
+  id: number;
+  project: string;
+  kind: string;
+  title: string;
+  body: string;
+  priority: "low" | "normal" | "high";
+  status: "pending" | "dismissed" | "actioned";
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNavigateToMcpMarketplace, onNavigateToTemplateMarketplace }: DashboardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [mcpServerCount, setMcpServerCount] = useState(0);
@@ -477,6 +491,7 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
   const [driftMap, setDriftMap] = useState<Record<string, DriftReport | null>>({});
   const [activityEntries, setActivityEntries] = useState<ActivityEntry[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(true);
+  const [recommendations, setRecommendations] = useState<DashboardRecommendation[]>([]);
 
   // Getting-started flags — persisted in settings.json via the backend.
   const [skillInstalled, setSkillInstalled] = useState(false);
@@ -537,23 +552,28 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
       setProjects(loaded);
       setError(null);
 
-      // Check drift for projects that have a directory and at least one agent configured
+      // Check drift for projects that have a directory and at least one agent configured,
+      // and load all pending recommendations in parallel.
       const driftResults: Record<string, DriftReport | null> = {};
-      await Promise.all(
-        loaded.map(async (p) => {
-          if (!p.directory || p.agents.length === 0) {
-            driftResults[p.name] = null; // not applicable
-            return;
-          }
-          try {
-            const raw: string = await invoke("check_project_drift", { name: p.name });
-            driftResults[p.name] = JSON.parse(raw) as DriftReport;
-          } catch {
-            driftResults[p.name] = null;
-          }
-        })
-      );
+      const [, recs] = await Promise.all([
+        Promise.all(
+          loaded.map(async (p) => {
+            if (!p.directory || p.agents.length === 0) {
+              driftResults[p.name] = null; // not applicable
+              return;
+            }
+            try {
+              const raw: string = await invoke("check_project_drift", { name: p.name });
+              driftResults[p.name] = JSON.parse(raw) as DriftReport;
+            } catch {
+              driftResults[p.name] = null;
+            }
+          })
+        ),
+        invoke<DashboardRecommendation[]>("list_all_pending_recommendations").catch(() => [] as DashboardRecommendation[]),
+      ]);
       setDriftMap(driftResults);
+      setRecommendations(recs);
     } catch (err: any) {
       setError(`Failed to load dashboard data: ${err}`);
     } finally {
@@ -655,6 +675,25 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
                     Dismiss
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* Recommendations banner — compact callout when there are pending items */}
+            {recommendations.length > 0 && (
+              <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-warning/5 border border-warning/25">
+                <Lightbulb size={14} className="text-warning shrink-0" />
+                <p className="flex-1 text-[12px] text-text-muted leading-snug">
+                  <span className="font-semibold text-text-base">
+                    {recommendations.length === 1 ? "1 recommendation" : `${recommendations.length} recommendations`}
+                  </span>
+                  {" "}available across your projects.
+                </p>
+                <button
+                  onClick={() => onNavigate("recommendations")}
+                  className="shrink-0 flex items-center gap-1 text-[12px] font-medium text-warning hover:text-warning-hover transition-colors"
+                >
+                  Review <ArrowRight size={11} />
+                </button>
               </div>
             )}
 

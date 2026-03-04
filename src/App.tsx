@@ -15,13 +15,14 @@ import McpServers from "./McpServers";
 import Templates from "./Templates";
 import Rules from "./Rules";
 import Agents from "./Agents";
+import Recommendations from "./Recommendations";
 import Settings from "./Settings";
 import TemplateMarketplace from "./TemplateMarketplace";
 import McpMarketplace from "./McpMarketplace";
 import CollectionMarketplace from "./CollectionMarketplace";
 import AiPlayground from "./AiPlayground";
 import FirstRunWizard from "./FirstRunWizard";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical } from "lucide-react";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb } from "lucide-react";
 import { flag } from "./flags";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
@@ -209,7 +210,7 @@ function App() {
             : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
         }`}
       >
-        <Icon size={14} className={isActive ? "text-text-base" : "text-text-muted"} />
+        <Icon size={14} className={`shrink-0 ${isActive ? "text-text-base" : "text-text-muted"}`} />
         <span className="flex-1 text-left">{label}</span>
         {count && (
           <span className="text-[11px] bg-bg-sidebar text-text-muted px-1.5 rounded-sm">
@@ -263,6 +264,7 @@ function App() {
             </div>
             <ul className="space-y-0.5">
               <NavItem id="configuration" icon={LayoutDashboard} label="Overview" />
+              <NavItem id="recommendations" icon={Lightbulb} label="Recommendations" />
               <NavItem id="agents" icon={Bot} label="Agents" />
               <NavItem id="project-templates" icon={Layers} label="Templates" />
               <NavItem id="templates" icon={LayoutTemplate} label="Instructions" />
@@ -438,6 +440,11 @@ function App() {
           {activeTab === "configuration" && (
             <div className="flex-1 h-full">
               <ConfigurationDashboard onNavigate={setActiveTab} />
+            </div>
+          )}
+          {activeTab === "recommendations" && (
+            <div className="flex-1 h-full">
+              <Recommendations onNavigateToProject={navigateToProject} />
             </div>
           )}
           {activeTab === "agents" && (
