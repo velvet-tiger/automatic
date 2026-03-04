@@ -389,6 +389,134 @@ pub fn clear_memories(
     }
 }
 
+// ============================================================================
+// Claude Auto-Memory Integration
+// ============================================================================
+
+/// The content read from Claude's auto-memory directory for a project.
+///
+/// `MEMORY.md` is the index file Claude keeps concise (first 200 lines are
+/// loaded by Claude Code automatically each session).  `topic_files` lists
+/// any additional topic files Claude has created alongside it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeMemoryContent {
+    /// Absolute path to the memory directory (for display / linking in the UI).
+    pub memory_dir: String,
+    /// Contents of MEMORY.md, or None if the file does not exist yet.
+    pub memory_md: Option<String>,
+    /// Names and contents of any topic files in the directory (e.g. debugging.md).
+    pub topic_files: Vec<ClaudeMemoryTopicFile>,
+}
+
+/// A single topic file inside the Claude auto-memory directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeMemoryTopicFile {
+    /// Filename (e.g. "debugging.md").
+    pub name: String,
+    /// Full text content of the file.
+    pub content: String,
+}
+
+/// Derives the Claude auto-memory directory path for a given project directory.
+///
+/// Claude Code encodes the absolute project path as the directory name by
+/// replacing every `/` with `-` (the leading `/` becomes a leading `-`).
+///
+/// For example:
+///   `/Users/alice/projects/foo` → `~/.claude/projects/-Users-alice-projects-foo/memory`
+///
+/// If `project_dir` is empty or the home directory cannot be resolved, returns
+/// `None`.
+pub fn claude_memory_dir(project_dir: &str) -> Option<PathBuf> {
+    if project_dir.is_empty() {
+        return None;
+    }
+    let home = dirs::home_dir()?;
+    // Encode the absolute path: replace every '/' with '-'
+    let encoded = project_dir.replace('/', "-");
+    Some(
+        home.join(".claude")
+            .join("projects")
+            .join(encoded)
+            .join("memory"),
+    )
+}
+
+/// Reads Claude's auto-memory content for a project directory.
+///
+/// Returns a `ClaudeMemoryContent` describing the MEMORY.md index and any
+/// topic files present.  Does not error if the directory does not exist yet —
+/// in that case `memory_md` is `None` and `topic_files` is empty.
+pub fn read_claude_memory(project_dir: &str) -> Result<ClaudeMemoryContent, String> {
+    let memory_dir = match claude_memory_dir(project_dir) {
+        Some(p) => p,
+        None => {
+            return Err(
+                "Cannot derive Claude memory path: project directory is not set".to_string(),
+            )
+        }
+    };
+
+    let memory_dir_str = memory_dir.to_string_lossy().to_string();
+
+    if !memory_dir.exists() {
+        return Ok(ClaudeMemoryContent {
+            memory_dir: memory_dir_str,
+            memory_md: None,
+            topic_files: Vec::new(),
+        });
+    }
+
+    // Read MEMORY.md index
+    let memory_md_path = memory_dir.join("MEMORY.md");
+    let memory_md = if memory_md_path.exists() {
+        Some(
+            fs::read_to_string(&memory_md_path)
+                .map_err(|e| format!("Failed to read MEMORY.md: {}", e))?,
+        )
+    } else {
+        None
+    };
+
+    // Read topic files (all .md files except MEMORY.md itself)
+    let mut topic_files: Vec<ClaudeMemoryTopicFile> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&memory_dir) {
+        let mut names: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let p = e.path();
+                p.is_file()
+                    && p.extension().is_some_and(|ext| ext == "md")
+                    && p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n != "MEMORY.md")
+            })
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        names.sort();
+
+        for name in names {
+            let path = memory_dir.join(&name);
+            match fs::read_to_string(&path) {
+                Ok(content) => topic_files.push(ClaudeMemoryTopicFile { name, content }),
+                Err(e) => {
+                    // Log and skip unreadable files rather than failing the whole call
+                    eprintln!(
+                        "[automatic] could not read Claude topic file {:?}: {}",
+                        path, e
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(ClaudeMemoryContent {
+        memory_dir: memory_dir_str,
+        memory_md,
+        topic_files,
+    })
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

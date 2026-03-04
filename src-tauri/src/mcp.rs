@@ -94,6 +94,12 @@ pub struct ClearMemoriesParams {
     pub confirm: bool,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ReadClaudeMemoryParams {
+    /// The project name as registered in Automatic
+    pub project: String,
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Verify that `project` is a registered project name.
@@ -461,6 +467,81 @@ impl AutomaticMcpServer {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to clear memories: {}",
+                e
+            ))])),
+        }
+    }
+
+    // ── Claude auto-memory integration ────────────────────────────────────
+
+    #[tool(
+        name = "automatic_read_claude_memory",
+        description = "Reads Claude Code's auto-memory files for a project (MEMORY.md index and any topic files). \
+                       Claude Code stores learnings it discovers during sessions in ~/.claude/projects/<encoded-path>/memory/. \
+                       Use this to inspect what Claude has learned, then call automatic_store_memory to promote \
+                       important entries into Automatic's structured memory store."
+    )]
+    async fn read_claude_memory(
+        &self,
+        params: Parameters<ReadClaudeMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+
+        // Look up the project's directory
+        let project_json = match crate::core::read_project(&params.0.project) {
+            Ok(j) => j,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to read project '{}': {}",
+                    params.0.project, e
+                ))]));
+            }
+        };
+
+        let project: crate::core::Project = match serde_json::from_str(&project_json) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to parse project data: {}",
+                    e
+                ))]));
+            }
+        };
+
+        match crate::memory::read_claude_memory(&project.directory) {
+            Ok(content) => {
+                let mut output = format!(
+                    "# Claude Auto-Memory for '{}'\n\nDirectory: {}\n\n",
+                    params.0.project, content.memory_dir
+                );
+
+                match &content.memory_md {
+                    Some(md) => {
+                        output.push_str("## MEMORY.md\n\n");
+                        output.push_str(md);
+                        output.push('\n');
+                    }
+                    None => {
+                        output.push_str("MEMORY.md does not exist yet — Claude has not written any auto-memory for this project.\n");
+                    }
+                }
+
+                if !content.topic_files.is_empty() {
+                    output.push_str(&format!(
+                        "\n## Topic files ({} found)\n\n",
+                        content.topic_files.len()
+                    ));
+                    for file in &content.topic_files {
+                        output.push_str(&format!("### {}\n\n{}\n\n", file.name, file.content));
+                    }
+                }
+
+                Ok(CallToolResult::success(vec![Content::text(output)]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to read Claude auto-memory: {}",
                 e
             ))])),
         }

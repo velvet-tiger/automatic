@@ -6,6 +6,7 @@ import { McpSelector } from "./McpSelector";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { useCurrentUser } from "./ProfileContext";
 import { MemoryBrowser } from "./MemoryBrowser";
+import { ClaudeMemoryPanel } from "./ClaudeMemoryPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
@@ -54,6 +55,12 @@ import {
   Info,
 } from "lucide-react";
 
+/** Per-agent configuration options stored in a project. */
+interface AgentOptions {
+  /** Claude Code: write rules to .claude/rules/*.md instead of injecting into CLAUDE.md. */
+  claude_rules_in_dot_claude: boolean;
+}
+
 interface Project {
   name: string;
   description: string;
@@ -69,6 +76,8 @@ interface Project {
   created_by?: string;
   file_rules?: Record<string, string[]>;
   instruction_mode?: string;
+  /** Per-agent options keyed by agent id. Agents not present use defaults. */
+  agent_options?: Record<string, AgentOptions>;
 }
 
 interface AgentInfo {
@@ -197,6 +206,19 @@ interface ActivityEntry {
   label: string;
   detail: string;
   timestamp: string;
+}
+
+interface ProjectRecommendation {
+  id: number;
+  project: string;
+  kind: string;
+  title: string;
+  body: string;
+  priority: "low" | "normal" | "high";
+  status: "pending" | "dismissed" | "actioned";
+  source: string;
+  created_at: string;
+  updated_at: string;
 }
 
 /** Returns a relative time string ("just now", "5 min ago", "2 days ago", etc.) */
@@ -1380,6 +1402,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
   const [loadingMemories, setLoadingMemories] = useState(false);
 
+  // Recommendations state
+  const [recommendations, setRecommendations] = useState<ProjectRecommendation[]>([]);
+
   // Activity state
   const [activityEntries, setActivityEntries] = useState<ActivityEntry[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(false);
@@ -1472,9 +1497,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     startCreate({ fromTemplate: tmpl });
   }, [initialCreateWithTemplate, availableProjectTemplates]);
 
-  // Reset drift state whenever the active project changes
+  // Reset drift + recommendations state whenever the active project changes
   useEffect(() => {
     setDriftReport(null);
+    if (!selectedName) setRecommendations([]);
   }, [selectedName]);
 
   // Periodically check for configuration drift while a project tab is active
@@ -1712,6 +1738,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
+  const loadRecommendations = async (projectName: string) => {
+    try {
+      const recs = await invoke<ProjectRecommendation[]>("evaluate_project_recommendations", { project: projectName });
+      setRecommendations(recs);
+    } catch (err: any) {
+      console.error("Failed to evaluate recommendations:", err);
+      // Non-fatal — clear so stale data isn't shown
+      setRecommendations([]);
+    }
+  };
+
   const loadActivity = async (projectName: string) => {
     try {
       setLoadingActivity(true);
@@ -1934,6 +1971,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       }
       await loadMemories(name);
       await loadActivity(name);
+      await loadRecommendations(name);
       // Reset activity tab pagination for the newly selected project
       setActivityPage(0);
       setActivityPageEntries([]);
@@ -1982,6 +2020,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       await loadAvailableMcpServers();
       await loadMemories(name);
       await loadActivity(name);
+      await loadRecommendations(name);
       // Reset activity tab pagination on project reload
       setActivityPage(0);
       setActivityPageEntries([]);
@@ -2211,6 +2250,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       if (key === "agents") trackProjectAgentRemoved(pName, removed);
       else if (key === "skills") trackProjectSkillRemoved(pName, removed);
       else if (key === "mcp_servers") trackProjectMcpServerRemoved(pName, removed);
+    }
+  };
+
+  const handleDismissRecommendation = async (id: number) => {
+    try {
+      await invoke("dismiss_recommendation", { id });
+      setRecommendations((prev) => prev.filter((r) => r.id !== id));
+    } catch (err: any) {
+      console.error("Failed to dismiss recommendation:", err);
     }
   };
 
@@ -3426,6 +3474,79 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {projectTab === "summary" && (
                   <div className="space-y-6">
 
+                    {/* ── Recommendations ──────────────────────────────── */}
+                    {recommendations.length > 0 && (
+                      <section>
+                        <div className="flex items-center gap-2 mb-3">
+                          <Info size={13} className="text-warning" />
+                          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
+                            Recommendations
+                          </span>
+                        </div>
+                        <div className="space-y-2">
+                          {recommendations.map((rec) => (
+                            <div
+                              key={rec.id}
+                              className={`flex items-start gap-3 px-4 py-3 rounded-lg border ${
+                                rec.priority === "high"
+                                  ? "border-warning/30 bg-warning/5"
+                                  : "border-border-strong/40 bg-bg-input"
+                              }`}
+                            >
+                              <AlertCircle
+                                size={14}
+                                className={`flex-shrink-0 mt-0.5 ${
+                                  rec.priority === "high" ? "text-warning" : "text-text-muted"
+                                }`}
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-0.5">
+                                  <span className="text-[12px] font-semibold text-text-base">{rec.title}</span>
+                                  {rec.priority === "high" && (
+                                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/20 leading-none">
+                                      Important
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-text-muted leading-relaxed">{rec.body}</p>
+                                {rec.kind === "mcp_server" && (
+                                  <button
+                                    onClick={() => setProjectTab("mcp_servers")}
+                                    className="mt-1.5 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
+                                  >
+                                    Go to MCP Servers <ArrowRight size={10} />
+                                  </button>
+                                )}
+                                {rec.kind === "rule" && (
+                                  <button
+                                    onClick={() => setProjectTab("project_file")}
+                                    className="mt-1.5 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
+                                  >
+                                    Open Project File <ArrowRight size={10} />
+                                  </button>
+                                )}
+                                {rec.kind === "project_file" && (
+                                  <button
+                                    onClick={() => setProjectTab("project_file")}
+                                    className="mt-1.5 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
+                                  >
+                                    Create Instructions File <ArrowRight size={10} />
+                                  </button>
+                                )}
+                              </div>
+                              <button
+                                onClick={() => handleDismissRecommendation(rec.id)}
+                                className="flex-shrink-0 p-0.5 text-text-muted hover:text-text-base transition-colors"
+                                title="Dismiss"
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+
                     {/* ── Resources: Skills · MCP Servers · Memory ──────── */}
                     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
 
@@ -3616,16 +3737,96 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {/* ── Details tab ──────────────────────────────────────── */}
                  {/* ── Agents tab ───────────────────────────────────────── */}
                 {projectTab === "agents" && (
-                  <section>
-                     <AgentSelector
-                       agentIds={project.agents}
-                       availableAgents={availableAgents}
-                       onAdd={(id) => addItem("agents", id)}
-                       onRemove={(i) => handleRemoveAgent(i)}
-                       emptyMessage="No agent tools selected. Add tools to enable config sync."
-                     />
-                  </section>
-                )}
+                   <section className="space-y-6">
+                      <AgentSelector
+                        agentIds={project.agents}
+                        availableAgents={availableAgents}
+                        onAdd={(id) => addItem("agents", id)}
+                        onRemove={(i) => handleRemoveAgent(i)}
+                        emptyMessage="No agent tools selected. Add tools to enable config sync."
+                      />
+
+                      {/* ── Per-agent configuration options ──────────────── */}
+                      {project.agents.length > 0 && (
+                        <div>
+                          <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
+                            Agent Configuration
+                          </label>
+                          <div className="space-y-3">
+                            {project.agents.map((agentId) => {
+                              // Only Claude Code has configurable options right now.
+                              if (agentId !== "claude") return null;
+
+                              const opts: AgentOptions = {
+                                claude_rules_in_dot_claude: true,
+                                ...(project.agent_options?.[agentId] ?? {}),
+                              };
+                              const agentLabel =
+                                availableAgents.find((a) => a.id === agentId)?.label ?? agentId;
+
+                              const updateOpts = (patch: Partial<AgentOptions>) => {
+                                const updated = {
+                                  ...project,
+                                  agent_options: {
+                                    ...(project.agent_options ?? {}),
+                                    [agentId]: { ...opts, ...patch },
+                                  },
+                                  updated_at: new Date().toISOString(),
+                                };
+                                setProject(updated);
+                                setDirty(true);
+                              };
+
+                              return (
+                                <div
+                                  key={agentId}
+                                  className="border border-border-strong/40 rounded-lg overflow-hidden"
+                                >
+                                  {/* Agent header */}
+                                  <div className="flex items-center gap-2 px-3 py-2 bg-bg-input border-b border-border-strong/40">
+                                    <AgentIcon agentId={agentId} size={13} />
+                                    <span className="text-[12px] font-medium text-text-base">
+                                      {agentLabel}
+                                    </span>
+                                  </div>
+
+                                  {/* Options list */}
+                                  <div className="divide-y divide-border-strong/20">
+                                    {/* claude_rules_in_dot_claude */}
+                                    <label className="flex items-start gap-3 px-3 py-3 cursor-pointer hover:bg-bg-input/50 transition-colors">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-[13px] text-text-base font-medium leading-snug">
+                                          Store rules in <code className="text-[11px] font-mono bg-bg-sidebar px-1 py-0.5 rounded">.claude/rules/</code>
+                                        </div>
+                                        <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                                          Write each rule as an individual <code className="font-mono">.md</code> file
+                                          under <code className="font-mono">.claude/rules/</code> instead of injecting
+                                          them into <code className="font-mono">CLAUDE.md</code>. Claude Code loads
+                                          these files automatically each session.
+                                        </div>
+                                      </div>
+                                      <div className="flex-shrink-0 pt-0.5">
+                                        <input
+                                          type="checkbox"
+                                          checked={opts.claude_rules_in_dot_claude}
+                                          onChange={(e) =>
+                                            updateOpts({
+                                              claude_rules_in_dot_claude: e.target.checked,
+                                            })
+                                          }
+                                          className="w-4 h-4 accent-brand cursor-pointer"
+                                        />
+                                      </div>
+                                    </label>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                   </section>
+                 )}
 
                 {/* ── Skills tab ───────────────────────────────────────── */}
                 {projectTab === "skills" && (
@@ -4087,13 +4288,22 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                 {/* ── Memory tab ──────────────────────────────────── */}
                 {projectTab === "memory" && selectedName && (
-                  <MemoryBrowser
-                    projectName={selectedName}
-                    memories={memories}
-                    loading={loadingMemories}
-                    onRefresh={() => loadMemories(selectedName)}
-                    onError={(msg) => setError(msg)}
-                  />
+                  <>
+                    <MemoryBrowser
+                      projectName={selectedName}
+                      memories={memories}
+                      loading={loadingMemories}
+                      onRefresh={() => loadMemories(selectedName)}
+                      onError={(msg) => setError(msg)}
+                    />
+                    {project?.directory && project.agents.includes("claude") && (
+                      <ClaudeMemoryPanel
+                        projectName={selectedName}
+                        projectDirectory={project.directory}
+                        onPromoted={() => loadMemories(selectedName)}
+                      />
+                    )}
+                  </>
                 )}
 
                 {/* ── Activity tab ─────────────────────────────────── */}

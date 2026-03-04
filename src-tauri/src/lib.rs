@@ -124,6 +124,7 @@ pub fn run() {
             search_memories,
             delete_memory,
             clear_memories,
+            get_claude_memory,
             check_installed_editors,
             open_in_editor,
             get_editor_icon,
@@ -142,11 +143,13 @@ pub fn run() {
             add_recommendation,
             get_recommendation,
             list_recommendations,
+            list_all_pending_recommendations,
             dismiss_recommendation,
             action_recommendation,
             delete_recommendation,
             clear_recommendations,
             count_recommendations,
+            evaluate_project_recommendations,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

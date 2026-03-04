@@ -1,3 +1,4 @@
+use crate::core;
 use crate::memory;
 
 // ── Memory ───────────────────────────────────────────────────────────────────
@@ -44,4 +45,17 @@ pub fn clear_memories(
     confirm: bool,
 ) -> Result<String, String> {
     memory::clear_memories(project, pattern, confirm)
+}
+
+/// Returns Claude Code's auto-memory content for the given project.
+///
+/// Looks up the project's directory from the Automatic registry, then derives
+/// the Claude memory path (`~/.claude/projects/<encoded>/memory/`) and reads
+/// `MEMORY.md` plus any topic files present.
+#[tauri::command]
+pub fn get_claude_memory(project: &str) -> Result<memory::ClaudeMemoryContent, String> {
+    let project_json = core::read_project(project)?;
+    let p: crate::core::Project =
+        serde_json::from_str(&project_json).map_err(|e| format!("Invalid project data: {}", e))?;
+    memory::read_claude_memory(&p.directory)
 }
