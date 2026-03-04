@@ -982,6 +982,153 @@ function ProjectCard({
   );
 }
 
+// ── Projects Health Bar ───────────────────────────────────────────────────────
+
+interface ProjectsHealthBarProps {
+  projects: string[];
+  projectDetails: Map<string, Project>;
+  driftByProject: Record<string, boolean>;
+}
+
+function ProjectsHealthBar({ projects, projectDetails, driftByProject }: ProjectsHealthBarProps) {
+  if (projects.length === 0) return null;
+
+  const total = projects.length;
+  const synced = projects.filter((n) => driftByProject[n] === false).length;
+  const drifted = projects.filter((n) => driftByProject[n] === true).length;
+  const checking = projects.filter((n) => driftByProject[n] === undefined).length;
+
+  // Unique agent ids across all projects
+  const agentSet = new Set<string>();
+  let totalSkills = 0;
+  let totalMcp = 0;
+  let fullyConfigured = 0;
+  for (const name of projects) {
+    const p = projectDetails.get(name);
+    if (!p) continue;
+    (p.agents ?? []).forEach((a) => agentSet.add(a));
+    totalSkills += (p.skills?.length ?? 0) + (p.local_skills?.length ?? 0);
+    totalMcp += p.mcp_servers?.length ?? 0;
+    if ((p.agents?.length ?? 0) > 0 && !!p.directory) fullyConfigured++;
+  }
+
+  // Show a compact progress-like bar for synced/drifted/checking ratio
+  const syncedPct = total > 0 ? Math.round((synced / total) * 100) : 0;
+  const driftedPct = total > 0 ? Math.round((drifted / total) * 100) : 0;
+  const checkingPct = total > 0 ? Math.max(0, 100 - syncedPct - driftedPct) : 0;
+
+  return (
+    <div className="rounded-xl border border-border-strong/40 bg-bg-input overflow-hidden">
+      {/* Stat strip */}
+      <div className="flex items-stretch divide-x divide-border-strong/30">
+        {/* Projects */}
+        <div className="flex-1 flex flex-col items-center justify-center gap-0.5 px-3 py-3 min-w-0">
+          <div className="flex items-center gap-1 text-text-base">
+            <FolderOpen size={13} />
+            <span className="text-[15px] font-semibold tabular-nums leading-none">{total}</span>
+          </div>
+          <span className="text-[10px] text-text-muted tracking-wide uppercase mt-0.5">Projects</span>
+        </div>
+
+        {/* Synced — uses health token so corporate themes get luminance-stepped grey */}
+        <div className="flex-1 flex flex-col items-center justify-center gap-0.5 px-3 py-3 min-w-0">
+          <div
+            className="flex items-center gap-1"
+            style={{ color: synced > 0 ? "var(--health-synced)" : undefined }}
+          >
+            <Check size={13} className={synced === 0 ? "text-text-muted" : ""} />
+            <span className={`text-[15px] font-semibold tabular-nums leading-none ${synced === 0 ? "text-text-muted" : ""}`}>{synced}</span>
+          </div>
+          <span className="text-[10px] text-text-muted tracking-wide uppercase mt-0.5">Synced</span>
+        </div>
+
+        {/* Drifted — uses health token */}
+        <div className="flex-1 flex flex-col items-center justify-center gap-0.5 px-3 py-3 min-w-0">
+          <div
+            className="flex items-center gap-1"
+            style={{ color: drifted > 0 ? "var(--health-drifted)" : undefined }}
+          >
+            <AlertCircle size={13} className={drifted === 0 ? "text-text-muted" : ""} />
+            <span className={`text-[15px] font-semibold tabular-nums leading-none ${drifted === 0 ? "text-text-muted" : ""}`}>{drifted}</span>
+          </div>
+          <span className="text-[10px] text-text-muted tracking-wide uppercase mt-0.5">Drifted</span>
+        </div>
+
+        {/* Agents */}
+        <div className="flex-1 flex flex-col items-center justify-center gap-0.5 px-3 py-3 min-w-0">
+          <div className={`flex items-center gap-1 ${agentSet.size > 0 ? "text-brand" : "text-text-muted"}`}>
+            <Bot size={13} />
+            <span className="text-[15px] font-semibold tabular-nums leading-none">{agentSet.size}</span>
+          </div>
+          <span className="text-[10px] text-text-muted tracking-wide uppercase mt-0.5">Agents</span>
+        </div>
+
+        {/* Skills */}
+        <div className="flex-1 flex flex-col items-center justify-center gap-0.5 px-3 py-3 min-w-0">
+          <div className={`flex items-center gap-1 ${totalSkills > 0 ? "text-icon-skill" : "text-text-muted"}`}>
+            <Code size={13} />
+            <span className="text-[15px] font-semibold tabular-nums leading-none">{totalSkills}</span>
+          </div>
+          <span className="text-[10px] text-text-muted tracking-wide uppercase mt-0.5">Skills</span>
+        </div>
+
+        {/* MCP Servers */}
+        <div className="flex-1 flex flex-col items-center justify-center gap-0.5 px-3 py-3 min-w-0">
+          <div className={`flex items-center gap-1 ${totalMcp > 0 ? "text-icon-mcp" : "text-text-muted"}`}>
+            <Server size={13} />
+            <span className="text-[15px] font-semibold tabular-nums leading-none">{totalMcp}</span>
+          </div>
+          <span className="text-[10px] text-text-muted tracking-wide uppercase mt-0.5">MCP Servers</span>
+        </div>
+      </div>
+
+      {/* Sync health bar — only shown when we have drift data for at least one project */}
+      {checking < total && (
+        <div className="border-t border-border-strong/30 px-4 py-2 flex items-center gap-3">
+          <span className="text-[10px] text-text-muted uppercase tracking-wider flex-shrink-0">Sync health</span>
+          <div className="flex-1 h-1.5 rounded-full overflow-hidden flex" style={{ background: "var(--health-checking)" }}>
+            {syncedPct > 0 && (
+              <div
+                className="h-full transition-all"
+                style={{ width: `${syncedPct}%`, background: "var(--health-synced)" }}
+                title={`${synced} synced`}
+              />
+            )}
+            {driftedPct > 0 && (
+              <div
+                className="h-full transition-all"
+                style={{ width: `${driftedPct}%`, background: "var(--health-drifted)" }}
+                title={`${drifted} drifted`}
+              />
+            )}
+            {checkingPct > 0 && (
+              <div
+                className="h-full transition-all"
+                style={{ width: `${checkingPct}%`, background: "var(--health-checking)" }}
+                title={`${checking} checking`}
+              />
+            )}
+          </div>
+          <div className="flex items-center gap-2.5 flex-shrink-0 text-[10px]">
+            {synced > 0 && (
+              <span style={{ color: "var(--health-synced)" }}>{syncedPct}% synced</span>
+            )}
+            {drifted > 0 && (
+              <span style={{ color: "var(--health-drifted)" }}>{drifted} drifted</span>
+            )}
+            {checking > 0 && <span className="text-text-muted">{checking} checking…</span>}
+            {fullyConfigured < total && (
+              <span className="text-text-muted">{total - fullyConfigured} unconfigured</span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, onSelect, onCreate }: ProjectsOverviewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState<"alphabetical" | "created" | "updated" | "last_activity">("updated");
@@ -1013,8 +1160,6 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
         return inName || inDirectory || inAgents;
       })
     : sorted;
-
-  const driftedCount = projects.filter((n) => driftByProject[n] === true).length;
 
   return (
     <div className="flex-1 h-full overflow-y-auto custom-scrollbar bg-bg-base">
@@ -1060,16 +1205,13 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
       </div>
 
       <div className="p-6 space-y-5">
-        {/* Drift banner */}
-        {driftedCount > 0 && (
-          <div className="bg-warning/10 border border-warning/30 rounded-lg px-5 py-3 flex items-center gap-2.5 text-warning">
-            <AlertCircle size={14} className="flex-shrink-0" />
-            <span className="text-[13px] font-medium">
-              {driftedCount === 1
-                ? "1 project has drifted — agent config files are out of sync."
-                : `${driftedCount} projects have drifted — agent config files are out of sync.`}
-            </span>
-          </div>
+        {/* Health overview bar */}
+        {!projectsLoading && projects.length > 0 && (
+          <ProjectsHealthBar
+            projects={projects}
+            projectDetails={projectDetails}
+            driftByProject={driftByProject}
+          />
         )}
 
         {/* Card grid */}

@@ -47,8 +47,20 @@
   --color-danger-hover: var(--danger-hover);
 }
 
+@theme {
+  --color-health-synced: var(--health-synced);
+  --color-health-drifted: var(--health-drifted);
+  --color-health-checking: var(--health-checking);
+}
+
 :root {
   /* Default: Dark */
+  /* Health bar segment colours — separate from semantic success/warning so
+     corporate themes can differentiate without overriding global tokens */
+  --health-synced: #22c55e;   /* green — matches default --success */
+  --health-drifted: #f59e0b;  /* amber — matches default --warning  */
+  --health-checking: #3f3f46; /* zinc-700 — neutral track            */
+
   /* Avatar palette — focus on indigo and violet */
   --avatar-0: var(--brand);
   --avatar-1: var(--accent);
@@ -97,6 +109,12 @@
 }
 
 [data-theme="corporate-dark"] {
+  /* Health bar: use luminance steps so synced/drifted/checking are visually
+     distinct even though the theme has no semantic colour */
+  --health-synced: #c8c8c8;   /* light grey  — synced   */
+  --health-drifted: #777777;  /* mid grey    — drifted  */
+  --health-checking: #3a3a3f; /* dark grey   — checking */
+
   --icon-agent: var(--text-muted);
   --icon-skill: #d4d4d4;
   --icon-mcp: #d4d4d4;
@@ -344,6 +362,11 @@
 }
 
 [data-theme="corporate-light"] {
+  /* Health bar: luminance steps on a light background */
+  --health-synced: #2a2a2a;   /* near-black — synced   */
+  --health-drifted: #888888;  /* mid grey   — drifted  */
+  --health-checking: #d4d4d4; /* pale grey  — checking */
+
   --icon-agent: var(--text-muted);
   --icon-skill: #3a3a3a;
   --icon-mcp: #6b6b6b;
