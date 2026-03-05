@@ -290,14 +290,14 @@ jobs:
           LINUX_FILE=$(ls sigs/linux/*.AppImage.sig | xargs -I{} basename {} .sig)
           WINDOWS_FILE=$(ls sigs/windows/*.msi.sig | xargs -I{} basename {} .sig)
 
-          DARWIN_URL="${BASE_URL}/${DARWIN_FILE}"
-          LINUX_URL="${BASE_URL}/${LINUX_FILE}"
-          WINDOWS_URL="${BASE_URL}/${WINDOWS_FILE}"
+          export DARWIN_URL="${BASE_URL}/${DARWIN_FILE}"
+          export LINUX_URL="${BASE_URL}/${LINUX_FILE}"
+          export WINDOWS_URL="${BASE_URL}/${WINDOWS_FILE}"
 
-          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          export PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
           # Fetch release notes from the draft release
-          RELEASE_NOTES=$(gh release view "$TAG" --json body -q '.body' 2>/dev/null || echo "")
+          export RELEASE_NOTES=$(gh release view "$TAG" --json body -q '.body' 2>/dev/null || echo "")
 
           python3 - <<PYEOF
           import json, glob, os
