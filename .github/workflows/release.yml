@@ -164,23 +164,23 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           BUNDLE_DIR=src-tauri/target/release/bundle/appimage
-          TAR_GZ=$(ls "$BUNDLE_DIR"/*.AppImage.tar.gz 2>/dev/null | head -1)
-          SIG_FILE="${TAR_GZ}.sig"
+          APPIMAGE=$(ls "$BUNDLE_DIR"/*.AppImage 2>/dev/null | grep -v '\.sig' | head -1)
+          SIG_FILE="${APPIMAGE}.sig"
 
-          if [ -z "$TAR_GZ" ] || [ ! -f "$SIG_FILE" ]; then
-            echo "ERROR: Could not find AppImage.tar.gz or its .sig in $BUNDLE_DIR" >&2
+          if [ -z "$APPIMAGE" ] || [ ! -f "$SIG_FILE" ]; then
+            echo "ERROR: Could not find AppImage or its .sig in $BUNDLE_DIR" >&2
             ls "$BUNDLE_DIR"/ || true
             exit 1
           fi
 
-          gh release upload "$TAG" "$TAR_GZ" "$SIG_FILE" --clobber
+          gh release upload "$TAG" "$APPIMAGE" "$SIG_FILE" --clobber
 
       - name: Stash Linux signature as workflow artifact
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
           name: sig-linux
-          path: src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz.sig
+          path: src-tauri/target/release/bundle/appimage/*.AppImage.sig
           if-no-files-found: error
 
       - name: List Windows bundle output (diagnostic)
@@ -196,23 +196,23 @@ jobs:
         shell: bash
         run: |
           BUNDLE_DIR=src-tauri/target/release/bundle/msi
-          MSI_ZIP=$(ls "$BUNDLE_DIR"/*.msi.zip 2>/dev/null | head -1)
-          SIG_FILE="${MSI_ZIP}.sig"
+          MSI=$(ls "$BUNDLE_DIR"/*.msi 2>/dev/null | grep -v '\.sig' | head -1)
+          SIG_FILE="${MSI}.sig"
 
-          if [ -z "$MSI_ZIP" ] || [ ! -f "$SIG_FILE" ]; then
-            echo "ERROR: Could not find .msi.zip or its .sig in $BUNDLE_DIR" >&2
+          if [ -z "$MSI" ] || [ ! -f "$SIG_FILE" ]; then
+            echo "ERROR: Could not find .msi or its .sig in $BUNDLE_DIR" >&2
             ls "$BUNDLE_DIR"/ || true
             exit 1
           fi
 
-          gh release upload "$TAG" "$MSI_ZIP" "$SIG_FILE" --clobber
+          gh release upload "$TAG" "$MSI" "$SIG_FILE" --clobber
 
       - name: Stash Windows signature as workflow artifact
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: sig-windows
-          path: src-tauri/target/release/bundle/msi/*.msi.zip.sig
+          path: src-tauri/target/release/bundle/msi/*.msi.sig
           if-no-files-found: error
 
       - name: Build Tauri app (branch / dispatch)
@@ -282,13 +282,13 @@ jobs:
 
           BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
-          # Updater URLs — these are the signed archives uploaded by the build jobs above.
+          # Updater URLs — these are the signed artifacts uploaded by the build jobs above.
           # macOS:   Automatic_universal.app.tar.gz (uploaded with that label by the build job)
-          # Linux:   original AppImage.tar.gz filename (e.g. Automatic_0.5.1_amd64.AppImage.tar.gz)
-          # Windows: original .msi.zip filename (e.g. Automatic_0.5.1_x64_en-US.msi.zip)
+          # Linux:   original AppImage filename (e.g. Automatic_0.6.0_amd64.AppImage)
+          # Windows: original MSI filename (e.g. Automatic_0.6.0_x64_en-US.msi)
           DARWIN_FILE="Automatic_universal.app.tar.gz"
-          LINUX_FILE=$(ls sigs/linux/*.AppImage.tar.gz.sig | xargs -I{} basename {} .sig)
-          WINDOWS_FILE=$(ls sigs/windows/*.msi.zip.sig | xargs -I{} basename {} .sig)
+          LINUX_FILE=$(ls sigs/linux/*.AppImage.sig | xargs -I{} basename {} .sig)
+          WINDOWS_FILE=$(ls sigs/windows/*.msi.sig | xargs -I{} basename {} .sig)
 
           DARWIN_URL="${BASE_URL}/${DARWIN_FILE}"
           LINUX_URL="${BASE_URL}/${LINUX_FILE}"
@@ -303,9 +303,9 @@ jobs:
           import json, glob, os
 
           darwin_sig  = open('sigs/macos/Automatic.app.tar.gz.sig').read().strip()
-          linux_sig_f = glob.glob('sigs/linux/*.AppImage.tar.gz.sig')[0]
+          linux_sig_f = glob.glob('sigs/linux/*.AppImage.sig')[0]
           linux_sig   = open(linux_sig_f).read().strip()
-          win_sig_f   = glob.glob('sigs/windows/*.msi.zip.sig')[0]
+          win_sig_f   = glob.glob('sigs/windows/*.msi.sig')[0]
           win_sig     = open(win_sig_f).read().strip()
 
           payload = {
