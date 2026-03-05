@@ -1370,8 +1370,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   const [wizardDiscovering, setWizardDiscovering] = useState(false);
   const [wizardDiscoveredAgents, setWizardDiscoveredAgents] = useState<string[]>([]);
-  /** Non-null when the wizard was launched from a "New project from template" action. */
-  const [wizardSourceTemplate, setWizardSourceTemplate] = useState<string | null>(null);
+  /** Non-empty when the wizard was launched from a "New project from template" action. */
+  const [wizardSourceTemplates, setWizardSourceTemplates] = useState<string[]>([]);
   /** Tracks the name of the stub project saved during step 1 so it can be deleted on cancel. */
   const wizardStubName = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1403,9 +1403,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   // Project template state
   const [availableProjectTemplates, setAvailableProjectTemplates] = useState<ProjectTemplate[]>([]);
   const [showProjectTemplatePicker, setShowProjectTemplatePicker] = useState(false);
-  const [selectedProjectTemplate, setSelectedProjectTemplate] = useState<string | null>(null);
-  // Pending unified instruction content + rules to write after next save (from template apply)
-  const pendingUnifiedInstruction = useRef<{ content: string; rules: string[] } | null>(null);
+  /** Names of templates currently selected in the picker (multi-select). */
+  const [selectedProjectTemplates, setSelectedProjectTemplates] = useState<string[]>([]);
+  // Pending unified instruction content + rules to write after next save (from template applies).
+  // Each entry corresponds to one applied template; contents are concatenated on flush.
+  const pendingUnifiedInstruction = useRef<{ content: string; rules: string[] }[] | null>(null);
 
   // Project file state
   const [projectFiles, setProjectFiles] = useState<ProjectFileInfo[]>([]);
@@ -1516,9 +1518,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     if (!initialCreateWithTemplate || availableProjectTemplates.length === 0) return;
     const tmpl = availableProjectTemplates.find((t) => t.name === initialCreateWithTemplate);
     if (!tmpl) return;
-    setWizardSourceTemplate(initialCreateWithTemplate);
+    setWizardSourceTemplates([initialCreateWithTemplate]);
     onInitialCreateWithTemplateConsumed?.();
-    startCreate({ fromTemplate: tmpl });
+    startCreate({ fromTemplates: [tmpl] });
   }, [initialCreateWithTemplate, availableProjectTemplates]);
 
   // Reset drift + recommendations state whenever the active project changes
@@ -1671,6 +1673,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
   // ── Folder drag-onto state ──────────────────────────────────────────────────
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+  /** Within-folder drop target: folderId + insertion index within that folder's projectNames. */
+  const [folderDropTarget, setFolderDropTarget] = useState<{ folderId: string; itemIdx: number } | null>(null);
+  /** Ref to the sidebar scroll container, used for drop-to-ungrouped zone detection. */
+  const sidebarListRef = useRef<HTMLDivElement>(null);
+  /** Non-null when a folder header is being dragged for reordering. */
+  const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
+  /** Insertion index among folders while a folder is being dragged. */
+  const [folderReorderDropIdx, setFolderReorderDropIdx] = useState<number | null>(null);
+  const folderReorderDropIdxRef = useRef<number | null>(null);
 
   // Compute which ungrouped-project drop index the pointer is over.
   // Uses [data-ungrouped-idx] attributes so folder <li> elements are ignored.
@@ -1687,40 +1698,123 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     return items.length;
   };
 
-  // Walk up the DOM from `el` to find a [data-folder-id] ancestor.
-  const getFolderIdAtElement = (el: Element | null): string | null => {
-    let cur = el;
-    while (cur && cur !== listRef.current) {
-      const fid = (cur as HTMLElement).dataset?.folderId;
-      if (fid) return fid;
+  // ── Drag destination resolver ────────────────────────────────────────────────
+  // Walk up the DOM from a point element to determine which drag zone the pointer
+  // is over: a folder header, a folder item row, an ungrouped item, or the
+  // generic ungrouped zone (sidebar background).
+  type DragDest =
+    | { kind: "folder-header"; folderId: string }
+    | { kind: "folder-item"; folderId: string; itemIdx: number }
+    | { kind: "ungrouped"; ungroupedIdx: number }
+    | { kind: "ungrouped-zone" }
+    | { kind: "folder-reorder"; folderIdx: number }
+    | null;
+
+  const resolveDragDest = (clientX: number, clientY: number): DragDest => {
+    const el = document.elementFromPoint(clientX, clientY);
+    if (!el) return null;
+    // Walk up from the hit element looking for data attributes
+    let cur: HTMLElement | null = el as HTMLElement;
+    while (cur) {
+      const ds = cur.dataset;
+      // Folder reorder zone (on folder <li> with data-folder-reorder-idx)
+      if (ds.folderReorderIdx !== undefined) {
+        const idx = parseInt(ds.folderReorderIdx, 10);
+        if (!isNaN(idx)) return { kind: "folder-reorder", folderIdx: idx };
+      }
+      // Folder item row inside a folder
+      if (ds.folderItemFid && ds.folderItemIdx !== undefined) {
+        const itemIdx = parseInt(ds.folderItemIdx, 10);
+        if (!isNaN(itemIdx)) {
+          // Decide above/below based on pointer Y vs midpoint
+          const rect = cur.getBoundingClientRect();
+          const mid = rect.top + rect.height / 2;
+          return { kind: "folder-item", folderId: ds.folderItemFid, itemIdx: clientY < mid ? itemIdx : itemIdx + 1 };
+        }
+      }
+      // Folder header (drop onto folder)
+      if (ds.folderId) {
+        return { kind: "folder-header", folderId: ds.folderId };
+      }
+      // Ungrouped item
+      if (ds.ungroupedIdx !== undefined) {
+        const idx = parseInt(ds.ungroupedIdx, 10);
+        if (!isNaN(idx)) {
+          const rect = cur.getBoundingClientRect();
+          const mid = rect.top + rect.height / 2;
+          return { kind: "ungrouped", ungroupedIdx: clientY < mid ? idx : idx + 1 };
+        }
+      }
+      // Ungrouped zone (sidebar scroll container or the <ul>)
+      if (ds.ungroupedZone !== undefined) {
+        return { kind: "ungrouped-zone" };
+      }
       cur = cur.parentElement;
     }
     return null;
   };
 
-  const handleGripDown = (idx: number, projectName: string, e: React.PointerEvent) => {
+  /**
+   * Pointer-events drag handler for project items.
+   * @param projectName - Name of the project being dragged
+   * @param sourceFolderId - Folder ID the project lives in, or null if ungrouped
+   */
+  const handleGripDown = (projectName: string, sourceFolderId: string | null, e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    dragIdxRef.current = idx;
-    dropIdxRef.current = idx;
-    setDragIdx(idx);
-    setDropIdx(idx);
+    // For ungrouped items we still track dragIdx/dropIdx for backward compat
+    const ungroupedIdx = sourceFolderId === null ? ungroupedProjects.indexOf(projectName) : null;
+    if (ungroupedIdx !== null) {
+      dragIdxRef.current = ungroupedIdx;
+      dropIdxRef.current = ungroupedIdx;
+      setDragIdx(ungroupedIdx);
+      setDropIdx(ungroupedIdx);
+    } else {
+      dragIdxRef.current = null;
+      dropIdxRef.current = null;
+      setDragIdx(null);
+      setDropIdx(null);
+    }
     setDragGhost({ name: projectName, x: e.clientX, y: e.clientY });
 
     const onMove = (ev: PointerEvent) => {
       // Update ghost position
       setDragGhost({ name: projectName, x: ev.clientX, y: ev.clientY });
 
-      // Detect if pointer is over a folder header
-      const el = document.elementFromPoint(ev.clientX, ev.clientY);
-      const fid = getFolderIdAtElement(el);
-      setDragOverFolderId(fid);
+      const dest = resolveDragDest(ev.clientX, ev.clientY);
 
-      // Only update reorder drop index when not hovering a folder
-      if (!fid) {
+      // Reset all indicators, then set the relevant ones
+      setDragOverFolderId(null);
+      setFolderDropTarget(null);
+
+      if (!dest) {
+        // No recognized zone — keep previous ungrouped drop idx
         const target = getDropIndex(ev.clientY);
         dropIdxRef.current = target;
         setDropIdx(target);
+        return;
+      }
+
+      switch (dest.kind) {
+        case "folder-header":
+          setDragOverFolderId(dest.folderId);
+          break;
+        case "folder-item":
+          setFolderDropTarget({ folderId: dest.folderId, itemIdx: dest.itemIdx });
+          break;
+        case "ungrouped": {
+          const target = dest.ungroupedIdx;
+          dropIdxRef.current = target;
+          setDropIdx(target);
+          break;
+        }
+        case "ungrouped-zone": {
+          // Drop to end of ungrouped list
+          const target = ungroupedProjects.length;
+          dropIdxRef.current = target;
+          setDropIdx(target);
+          break;
+        }
       }
     };
 
@@ -1729,34 +1823,133 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       window.removeEventListener("pointerup", onUp);
 
       setDragGhost(null);
+      setDragOverFolderId(null);
+      setFolderDropTarget(null);
 
-      const fromIdx = dragIdxRef.current;
-      const toIdx = dropIdxRef.current;
+      const dest = resolveDragDest(ev.clientX, ev.clientY);
+
+      const fromUngroupedIdx = dragIdxRef.current;
+      const toUngroupedIdx = dropIdxRef.current;
       dragIdxRef.current = null;
       dropIdxRef.current = null;
       setDragIdx(null);
       setDropIdx(null);
 
-      // Check if dropped onto a folder
-      const el = document.elementFromPoint(ev.clientX, ev.clientY);
-      const targetFolderId = getFolderIdAtElement(el);
-      setDragOverFolderId(null);
+      if (!dest) return;
 
-      if (targetFolderId) {
-        moveProjectToFolder(projectName, targetFolderId);
-        return;
+      switch (dest.kind) {
+        case "folder-header":
+          // Move project into this folder (appended at end)
+          moveProjectToFolder(projectName, dest.folderId);
+          return;
+
+        case "folder-item": {
+          // Move project into the folder at a specific position
+          // First remove from all folders
+          const cleaned = folders.map((f) => ({
+            ...f,
+            projectNames: f.projectNames.filter((n) => n !== projectName),
+          }));
+          // Insert at the correct position
+          const updated = cleaned.map((f) => {
+            if (f.id !== dest.folderId) return f;
+            const names = [...f.projectNames];
+            names.splice(dest.itemIdx, 0, projectName);
+            return { ...f, projectNames: names };
+          });
+          saveFolders(updated);
+          return;
+        }
+
+        case "ungrouped":
+        case "ungrouped-zone": {
+          // If it was in a folder, remove from folder first
+          if (sourceFolderId) {
+            moveProjectToFolder(projectName, null);
+          }
+          // Reorder within ungrouped list
+          if (sourceFolderId === null && fromUngroupedIdx !== null && toUngroupedIdx !== null && fromUngroupedIdx !== toUngroupedIdx) {
+            setProjects((prev) => {
+              // Map ungrouped indices back to the full projects array indices
+              const ungrouped = prev.filter((n) => !folders.some((f) => f.projectNames.includes(n)));
+              const fromName = ungrouped[fromUngroupedIdx];
+              const toInsertBefore = toUngroupedIdx < ungrouped.length ? ungrouped[toUngroupedIdx] : null;
+              if (!fromName) return prev;
+              const without = prev.filter((n) => n !== fromName);
+              if (toInsertBefore === null) {
+                // Insert at end
+                const reordered = [...without, fromName];
+                saveProjectOrder(reordered);
+                return reordered;
+              }
+              const insertIdx = without.indexOf(toInsertBefore);
+              const reordered = [...without.slice(0, insertIdx), fromName, ...without.slice(insertIdx)];
+              saveProjectOrder(reordered);
+              return reordered;
+            });
+          }
+          return;
+        }
       }
+    };
 
-      if (fromIdx === null || toIdx === null || fromIdx === toIdx) return;
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
 
-      setProjects((prev) => {
-        const reordered = [...prev];
-        const [removed] = reordered.splice(fromIdx, 1);
-        const insertAt = toIdx > fromIdx ? toIdx - 1 : toIdx;
-        reordered.splice(insertAt, 0, removed);
-        saveProjectOrder(reordered);
-        return reordered;
-      });
+  /** Pointer-events drag handler for reordering folder headers. */
+  const handleFolderGripDown = (folderId: string, e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startFolderIdx = folders.findIndex((f) => f.id === folderId);
+    setDraggingFolderId(folderId);
+    setFolderReorderDropIdx(startFolderIdx);
+    folderReorderDropIdxRef.current = startFolderIdx;
+    const folderName = folders[startFolderIdx]?.name ?? "Folder";
+    setDragGhost({ name: folderName, x: e.clientX, y: e.clientY });
+
+    const updateDropIdx = (idx: number) => {
+      folderReorderDropIdxRef.current = idx;
+      setFolderReorderDropIdx(idx);
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      setDragGhost({ name: folderName, x: ev.clientX, y: ev.clientY });
+      // Walk up from hit element to find a [data-folder-reorder-idx] ancestor
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      let cur: HTMLElement | null = el as HTMLElement;
+      while (cur) {
+        if (cur.dataset?.folderReorderIdx !== undefined) {
+          const idx = parseInt(cur.dataset.folderReorderIdx, 10);
+          if (!isNaN(idx)) {
+            const rect = cur.getBoundingClientRect();
+            const mid = rect.top + rect.height / 2;
+            updateDropIdx(ev.clientY < mid ? idx : idx + 1);
+            return;
+          }
+        }
+        cur = cur.parentElement;
+      }
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+
+      setDragGhost(null);
+      const fromIdx = startFolderIdx;
+      const toIdx = folderReorderDropIdxRef.current;
+      folderReorderDropIdxRef.current = null;
+      setDraggingFolderId(null);
+      setFolderReorderDropIdx(null);
+
+      if (toIdx === null || fromIdx === toIdx || fromIdx === toIdx - 1) return;
+
+      const reordered = [...folders];
+      const [removed] = reordered.splice(fromIdx, 1);
+      const insertAt = toIdx > fromIdx ? toIdx - 1 : toIdx;
+      reordered.splice(insertAt, 0, removed);
+      saveFolders(reordered);
     };
 
     window.addEventListener("pointermove", onMove);
@@ -1769,7 +1962,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       const ordered = applyStoredOrder(result);
       setProjects(ordered);
       setError(null);
-      // Populate the overview details map in the background
+      // Populate the overview details map from the stored config only.
+      // Autodetected items that differ from the stored config are drift —
+      // they are surfaced when the user opens the project, not silently merged.
       const entries = await Promise.all(
         ordered.map(async (name) => {
           try {
@@ -1906,9 +2101,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
+  /** Apply a single project template to the currently loaded project (non-wizard flow). */
   const applyProjectTemplate = (tmpl: ProjectTemplate) => {
     if (!project) return;
-    // Merge: add template values, preserving anything already on the project
     const mergedAgents = [...new Set([...project.agents, ...tmpl.agents])];
     const mergedSkills = [...new Set([...project.skills, ...tmpl.skills])];
     const mergedMcpServers = [...new Set([...project.mcp_servers, ...tmpl.mcp_servers])];
@@ -1925,15 +2120,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       providers: mergedProviders,
       ...(hasUnified ? { instruction_mode: "unified" } : {}),
     });
-    // Stash the unified instruction content + rules so handleSave can write them after the project is saved
     if (hasUnified) {
-      pendingUnifiedInstruction.current = {
-        content: tmpl.unified_instruction || "",
-        rules: tmpl.unified_rules || [],
-      };
+      pendingUnifiedInstruction.current = [
+        ...(pendingUnifiedInstruction.current ?? []),
+        { content: tmpl.unified_instruction || "", rules: tmpl.unified_rules || [] },
+      ];
     }
     setDirty(true);
-    setSelectedProjectTemplate(tmpl.name);
+    setSelectedProjectTemplates([tmpl.name]);
     setShowProjectTemplatePicker(false);
   };
 
@@ -2141,6 +2335,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setSelectedName(name);
       setIsCreating(false);
       setProject(data);
+      // Keep the overview card in sync whenever a project is reloaded from disk.
+      setProjectDetailsMap((prev) => new Map(prev).set(name, data));
       setDirty(false);
 
       await loadAvailableSkills();
@@ -2201,6 +2397,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
           skill_count: toSave.skills.length,
           mcp_count: (toSave.mcp_servers ?? []).length,
         });
+        // Keep the overview card in sync with what was just persisted.
+        setProjectDetailsMap((prev) => new Map(prev).set(name, toSave));
       }
       setError(null);
 
@@ -2212,24 +2410,30 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         setDriftByProject((prev) => ({ ...prev, [name]: false }));
       }
 
-      // Write any pending unified instruction content from a template apply
+      // Write any pending unified instruction content from one or more template applies.
+      // Multiple entries are concatenated with a separator; rules are unioned across all.
       const pending = pendingUnifiedInstruction.current;
-      if (pending !== null && toSave.directory && toSave.agents.length > 0) {
+      if (pending !== null && pending.length > 0 && toSave.directory && toSave.agents.length > 0) {
         pendingUnifiedInstruction.current = null;
-        // If the template had rules, persist them into file_rules before writing
-        if (pending.rules.length > 0) {
+        const mergedRules = [...new Set(pending.flatMap((e) => e.rules))];
+        const mergedContent = pending
+          .map((e) => e.content)
+          .filter(Boolean)
+          .join("\n\n---\n\n");
+        // If any template had rules, persist them into file_rules before writing
+        if (mergedRules.length > 0) {
           const latestRaw: string = await invoke("read_project", { name });
           const latestProj = JSON.parse(latestRaw);
           const withRules = {
             ...latestProj,
-            file_rules: { ...(latestProj.file_rules || {}), _unified: pending.rules },
+            file_rules: { ...(latestProj.file_rules || {}), _unified: mergedRules },
           };
           await invoke("save_project", { name, data: JSON.stringify(withRules, null, 2) });
         }
         await invoke("save_project_file", {
           name,
           filename: "_unified",
-          content: pending.content,
+          content: mergedContent,
         });
       }
 
@@ -2265,10 +2469,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
-  const startCreate = async (opts?: { fromTemplate?: ProjectTemplate }) => {
+  const startCreate = async (opts?: { fromTemplates?: ProjectTemplate[] }) => {
     setSelectedName(null);
     localStorage.removeItem(LAST_PROJECT_KEY);
-    if (!opts?.fromTemplate) setWizardSourceTemplate(null);
+    if (!opts?.fromTemplates?.length) setWizardSourceTemplates([]);
     // Pre-populate agents and agent options from settings defaults
     let defaultAgents: string[] = [];
     let defaultAgentOptions: Record<string, AgentOptions> = {};
@@ -2280,9 +2484,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       // Non-fatal — proceed with empty agents if settings can't be read
     }
 
-    // If launched from a template, merge its values into the initial project state
-    // so agents, skills, MCP servers etc. are pre-populated from the start.
-    const tmpl = opts?.fromTemplate;
+    // If launched from one or more templates, merge all their values into the initial project state.
+    const templates = opts?.fromTemplates ?? [];
     const baseProject = {
       ...emptyProject(""),
       agents: defaultAgents,
@@ -2290,36 +2493,50 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         ? { agent_options: defaultAgentOptions }
         : {}),
     };
-    const initialProject = tmpl
+
+    let mergedAgents = [...defaultAgents];
+    let mergedSkills: string[] = [];
+    let mergedMcpServers: string[] = [];
+    let mergedProviders: string[] = [];
+    let mergedDescription = "";
+    let anyUnified = false;
+    const pendingEntries: { content: string; rules: string[] }[] = [];
+
+    for (const tmpl of templates) {
+      mergedAgents = [...new Set([...mergedAgents, ...tmpl.agents])];
+      mergedSkills = [...new Set([...mergedSkills, ...tmpl.skills])];
+      mergedMcpServers = [...new Set([...mergedMcpServers, ...tmpl.mcp_servers])];
+      mergedProviders = [...new Set([...mergedProviders, ...tmpl.providers])];
+      if (!mergedDescription) mergedDescription = tmpl.description || "";
+      const hasContent = !!(tmpl.unified_instruction && tmpl.unified_instruction.trim());
+      const hasRules = (tmpl.unified_rules || []).length > 0;
+      if (hasContent || hasRules) {
+        anyUnified = true;
+        pendingEntries.push({ content: tmpl.unified_instruction || "", rules: tmpl.unified_rules || [] });
+      }
+    }
+
+    const initialProject = templates.length > 0
       ? {
           ...baseProject,
-          description: tmpl.description || "",
-          agents: [...new Set([...defaultAgents, ...tmpl.agents])],
-          skills: [...tmpl.skills],
-          mcp_servers: [...tmpl.mcp_servers],
-          providers: [...tmpl.providers],
-          ...(((tmpl.unified_instruction && tmpl.unified_instruction.trim()) || (tmpl.unified_rules || []).length > 0)
-            ? { instruction_mode: "unified" as const }
-            : {}),
+          description: mergedDescription,
+          agents: mergedAgents,
+          skills: mergedSkills,
+          mcp_servers: mergedMcpServers,
+          providers: mergedProviders,
+          ...(anyUnified ? { instruction_mode: "unified" as const } : {}),
         }
       : baseProject;
 
-    if (tmpl) {
-      const hasUnifiedContent = !!(tmpl.unified_instruction && tmpl.unified_instruction.trim());
-      const hasUnifiedRules = (tmpl.unified_rules || []).length > 0;
-      if (hasUnifiedContent || hasUnifiedRules) {
-        pendingUnifiedInstruction.current = {
-          content: tmpl.unified_instruction || "",
-          rules: tmpl.unified_rules || [],
-        };
-      }
+    if (pendingEntries.length > 0) {
+      pendingUnifiedInstruction.current = pendingEntries;
     }
 
     setProject(initialProject);
     setDirty(true);
     setIsCreating(true);
     setNewName("");
-    setSelectedProjectTemplate(tmpl ? tmpl.name : null);
+    setSelectedProjectTemplates(templates.map((t) => t.name));
     setShowProjectTemplatePicker(false);
     setWizardStep(1);
     setWizardDiscoveredAgents([]);
@@ -2584,29 +2801,42 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
+        <div ref={sidebarListRef} data-ungrouped-zone="" className="flex-1 overflow-y-auto py-2 custom-scrollbar">
           {projects.length === 0 && !isCreating && folders.length === 0 ? (
             <div className="px-4 py-3 text-[13px] text-text-muted text-center">
               No projects yet.
             </div>
           ) : (
-            <ul className="space-y-0.5 px-2" ref={listRef}>
+            <ul className="space-y-0.5 px-2" ref={listRef} data-ungrouped-zone="">
 
 
               {/* ── Folders ─────────────────────────────────────────── */}
-              {folders.map((folder) => (
-                <li key={folder.id}>
+              {folders.map((folder, folderIdx) => (
+                <li key={folder.id} data-folder-reorder-idx={folderIdx} className="relative">
+                  {/* Drop indicator line — above this folder (for folder reordering) */}
+                  {draggingFolderId && folderReorderDropIdx === folderIdx && folderReorderDropIdx !== folders.findIndex((f) => f.id === draggingFolderId) && folderReorderDropIdx !== folders.findIndex((f) => f.id === draggingFolderId) + 1 && (
+                    <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
+                  )}
                   {/* Folder header */}
                   <div
                     data-folder-id={folder.id}
-                    className={`group flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors cursor-pointer ${
-                      dragOverFolderId === folder.id
+                    className={`group relative flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                      draggingFolderId === folder.id
+                        ? "opacity-30"
+                        : dragOverFolderId === folder.id
                         ? "bg-brand/15 ring-1 ring-brand/40"
                         : "hover:bg-bg-sidebar/40"
                     }`}
                   >
+                    {/* Grip handle for folder reordering — absolutely positioned so it doesn't push content right */}
+                    <div
+                      className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
+                      onPointerDown={(e) => handleFolderGripDown(folder.id, e)}
+                    >
+                      <GripVertical size={10} className="text-text-muted" />
+                    </div>
                     <button
-                      onClick={() => toggleFolderCollapsed(folder.id)}
+                      onClick={() => { if (!draggingFolderId) toggleFolderCollapsed(folder.id); }}
                       className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
                     >
                       <ChevronDown
@@ -2674,16 +2904,26 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     <ul className="mt-0.5 space-y-0.5">
                       {folder.projectNames
                         .filter((n) => projects.includes(n))
-                        .map((name) => {
-                          const idx = projects.indexOf(name);
-                          return (
+                        .map((name, itemIdx) => (
                             <li
                               key={name}
                               className="relative pl-4"
+                              data-folder-item-fid={folder.id}
+                              data-folder-item-idx={itemIdx}
                             >
-                              <div className={`group flex items-center relative ${dragIdx === idx ? "opacity-30" : ""}`}>
+                              {/* Drop indicator line — above this folder item */}
+                              {folderDropTarget && folderDropTarget.folderId === folder.id && folderDropTarget.itemIdx === itemIdx && (
+                                <div className="absolute -top-[1px] left-6 right-2 h-[2px] bg-brand rounded-full z-10" />
+                              )}
+                              <div className={`group flex items-center relative ${dragGhost?.name === name ? "opacity-30" : ""}`}>
+                                <div
+                                  className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
+                                  onPointerDown={(e) => handleGripDown(name, folder.id, e)}
+                                >
+                                  <GripVertical size={10} className="text-text-muted" />
+                                </div>
                                 <button
-                                  onClick={() => { if (dragIdx === null) selectProject(name); }}
+                                  onClick={() => { if (!dragGhost) selectProject(name); }}
                                   className={`w-full flex items-center gap-2 pl-4 pr-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
                                     selectedName === name && !isCreating
                                       ? "bg-bg-sidebar text-text-base"
@@ -2711,15 +2951,22 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   <X size={10} />
                                 </button>
                               </div>
+                              {/* Drop indicator line — after last folder item */}
+                              {folderDropTarget && folderDropTarget.folderId === folder.id && folderDropTarget.itemIdx === itemIdx + 1 && itemIdx === folder.projectNames.filter((n) => projects.includes(n)).length - 1 && (
+                                <div className="absolute -bottom-[1px] left-6 right-2 h-[2px] bg-brand rounded-full z-10" />
+                              )}
                             </li>
-                          );
-                        })}
+                        ))}
                       {folder.projectNames.filter((n) => projects.includes(n)).length === 0 && (
                         <li className="pl-8 py-1 text-[11px] text-text-muted/50 italic">
                           Empty — drag projects here
                         </li>
                       )}
                     </ul>
+                  )}
+                  {/* Drop indicator line — after last folder (for folder reordering) */}
+                  {draggingFolderId && folderReorderDropIdx === folderIdx + 1 && folderIdx === folders.length - 1 && folderReorderDropIdx !== folders.findIndex((f) => f.id === draggingFolderId) && (
+                    <div className="absolute -bottom-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
                   )}
                 </li>
               ))}
@@ -2732,18 +2979,18 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   data-ungrouped-idx={idx}
                 >
                   {/* Drop indicator line — above this item */}
-                  {dragIdx !== null && dropIdx === idx && dropIdx !== dragIdx && dropIdx !== dragIdx + 1 && (
+                  {dragGhost !== null && dropIdx === idx && (dragIdx === null || (dropIdx !== dragIdx && dropIdx !== dragIdx + 1)) && (
                     <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
                   )}
-                  <div className={`group flex items-center relative ${dragIdx === idx ? "opacity-30" : ""}`}>
+                  <div className={`group flex items-center relative ${dragGhost?.name === name ? "opacity-30" : ""}`}>
                     <div
                       className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
-                      onPointerDown={(e) => handleGripDown(idx, name, e)}
+                      onPointerDown={(e) => handleGripDown(name, null, e)}
                     >
                       <GripVertical size={10} className="text-text-muted" />
                     </div>
                     <button
-                      onClick={() => { if (dragIdx === null) selectProject(name); }}
+                      onClick={() => { if (!dragGhost) selectProject(name); }}
                       className={`w-full flex items-center gap-2.5 pl-4 pr-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
                         selectedName === name && !isCreating
                           ? "bg-bg-sidebar text-text-base"
@@ -2771,7 +3018,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     </button>
                   </div>
                   {/* Drop indicator line — after last ungrouped item */}
-                  {dragIdx !== null && dropIdx === ungroupedProjects.length && idx === ungroupedProjects.length - 1 && dropIdx !== dragIdx && (
+                  {dragGhost !== null && dropIdx === ungroupedProjects.length && idx === ungroupedProjects.length - 1 && (dragIdx === null || dropIdx !== dragIdx) && (
                     <div className="absolute -bottom-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
                   )}
                 </li>
@@ -3045,7 +3292,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 ) : (
                   <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
                     {availableProjectTemplates.map((tmpl) => {
-                      const isSelected = selectedProjectTemplate === tmpl.name;
+                      const isSelected = selectedProjectTemplates.includes(tmpl.name);
                       return (
                         <button
                           key={tmpl.name}
@@ -3088,11 +3335,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   </button>
 
                   {/* Template source badge */}
-                  {wizardSourceTemplate && (
+                  {wizardSourceTemplates.length > 0 && (
                     <div className="flex items-center justify-center gap-2 mb-5">
                       <div className="flex items-center gap-2 px-3 py-1.5 bg-brand/10 border border-brand/30 rounded-full">
                         <LayoutTemplate size={12} className="text-brand" />
-                        <span className="text-[12px] text-brand font-medium">From template: {wizardSourceTemplate}</span>
+                        <span className="text-[12px] text-brand font-medium">From template{wizardSourceTemplates.length > 1 ? "s" : ""}: {wizardSourceTemplates.join(", ")}</span>
                       </div>
                     </div>
                   )}
@@ -3329,7 +3576,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       {availableProjectTemplates.length > 0 ? (
                         <div className="space-y-1 max-h-56 overflow-y-auto custom-scrollbar mb-5">
                           {availableProjectTemplates.map((tmpl) => {
-                            const isSelected = selectedProjectTemplate === tmpl.name;
+                            const isSelected = selectedProjectTemplates.includes(tmpl.name);
                             return (
                               <button
                                 key={tmpl.name}
@@ -3376,11 +3623,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         </div>
                       )}
 
-                      {selectedProjectTemplate && (
+                      {selectedProjectTemplates.length > 0 && (
                         <button
                           onClick={() => {
                             setProject((p) => p ? { ...p, agents: p.agents } : p);
-                            setSelectedProjectTemplate(null);
+                            setSelectedProjectTemplates([]);
                             setShowProjectTemplatePicker(false);
                           }}
                           className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base mb-4 transition-colors"
@@ -4749,7 +4996,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       />
     )}
 
-    {/* ── Drag ghost — follows the cursor while dragging a project ─────── */}
+    {/* ── Drag ghost — follows the cursor while dragging a project or folder ─── */}
     {dragGhost && (
       <div
         style={{
@@ -4761,7 +5008,11 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         }}
         className="flex items-center gap-2 px-3 py-1.5 rounded-md text-[13px] font-medium bg-bg-sidebar border border-border-strong/60 shadow-lg text-text-base opacity-90"
       >
-        <FolderOpen size={13} className="text-text-muted flex-shrink-0" />
+        {draggingFolderId ? (
+          <Folder size={13} className="text-text-muted flex-shrink-0" />
+        ) : (
+          <FolderOpen size={13} className="text-text-muted flex-shrink-0" />
+        )}
         <span>{dragGhost.name}</span>
       </div>
     )}

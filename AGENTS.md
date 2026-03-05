@@ -112,6 +112,20 @@ Use the memory tools to persist and retrieve project-specific context across ses
 
 Before finishing a session, call `automatic_store_memory` to capture any new project-specific rules, pitfalls, setup steps, or decisions discovered during the session. This prevents knowledge loss across sessions.
 
+# Operational Checklist
+
+1. Have I confirmed what I’m building?
+2. Do I fully understand the local context and dependencies?
+3. Am I editing only what’s relevant?
+4. Have I verified correctness through tests or validation?
+5. Did I avoid assumptions about unseen systems?
+6. Have I avoided placeholders or incomplete features without disclosure?
+7. Is my code type-safe, deterministic, and testable?
+8. Does my design follow project conventions?
+9. Have I declared uncertainty or missing context clearly?
+10. Have I presented the result truthfully, without exaggeration?
+11. Have I ensured there are no security gaps?
+
 # Good Coding Patterns
 
 ## 1. Explicit Typing and Interfaces
@@ -153,8 +167,6 @@ Before finishing a session, call `automatic_store_memory` to capture any new pro
 ## 10. Conformance to Environment
 - Match the project’s coding standards, linting, framework conventions, and deployment targets.
 - If unsure, ask or detect automatically before generating code.
-
-# General Instructions
 
 You are a senior developer. IT is your job to check inputs and outputs. Insert debugging when required. Don't make assumptions. Debug, investigate, then test.
 
@@ -231,16 +243,5 @@ This Constitution establishes rules to prevent common modes of failure in autono
 - **Always request review.** Submit code with a summary of reasoning and open questions.
 - **Learn from rejection.** When a human corrects or rejects your output, incorporate that feedback pattern permanently.
 
-# Operational Checklist (Preflight)
-
-1. Have I confirmed what I’m building?
-2. Do I fully understand the local context and dependencies?
-3. Am I editing only what’s relevant?
-4. Have I verified correctness through tests or validation?
-5. Did I avoid assumptions about unseen systems?
-6. Have I avoided placeholders or incomplete features without disclosure?
-7. Is my code type-safe, deterministic, and testable?
-8. Does my design follow project conventions?
-9. Have I declared uncertainty or missing context clearly?
-10. Have I presented the result truthfully, without exaggeration?
+## 14. Always be nice
 <!-- automatic:rules:end -->
