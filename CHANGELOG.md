@@ -2,6 +2,46 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.6.0] — 2026-03-05
+
+### Features
+
+#### Recommendations
+- New system recommendations engine that evaluates projects for missing rules and instruction files, surfacing actionable items per project
+- Dedicated Recommendations page (sidebar nav, Configuration section) grouped by project with dismiss support
+- Per-project Recommendations tab in the Projects view
+- Dashboard banner linking to the Recommendations page (replaces full inline list)
+- SQLite-backed recommendations store with priority levels (low/normal/high) and full lifecycle management (pending/dismissed/actioned)
+
+#### Memory
+- Claude Code auto-memory integration: read-only access to `~/.claude/projects/<hash>/memory/` files directly in the Memory tab (requires Claude agent on project)
+- Per-file Promote button to save Claude auto-memory entries into Automatic's structured memory store
+- `automatic_read_claude_memory` MCP tool so agents can inspect Claude's learnings
+- Memory mutations (store/delete/clear) now logged to the Activity feed and analytics
+
+#### Agents
+- Per-agent configuration options framework: inline collapsed settings panel per agent card with a chevron toggle
+- `claude_rules_in_dot_claude` option (default: on) syncs rules to `.claude/rules/<name>.md` files instead of injecting inline into `CLAUDE.md`
+- Default agent options configurable in Settings; new projects seeded from saved defaults
+
+#### Projects
+- Health bar summary strip above the card grid showing total projects, synced/drifted counts, unique agent count, skills in use, and MCP server count
+- Segmented sync-health progress bar that fills as drift checks complete
+- Project Instructions: Rules moved from footer strip to right sidebar
+
+#### Skills
+- Bundled `automatic-llms-txt` skill for creating `llms.txt` files following the llmstxt.org standard; auto-installed on first launch
+
+### Fixes
+- Drift detection now uses raw SKILL.md content for comparison, eliminating false positives
+- Folder picker on macOS replaced with an `osascript`-backed command, fixing a panic on Apple Silicon caused by `NSOpenPanel` returning NULL (rfd #259)
+
+### CI
+- AMPLITUDE_API_KEY secret passed to Tauri build steps
+- Workaround for tauri-action `latest.json` bug affecting universal macOS builds
+
+---
+
 ## [0.5.0] — 2026-03-03
 
 ### Features
@@ -305,6 +345,7 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Warp removal correctly deletes `WARP.md` via owned config paths
 - Junie removal deletes the entire `.junie/` directory
 
+[0.6.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.6.0
 [0.5.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.5.0
 [0.4.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.4.0
 [0.3.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.3.0
