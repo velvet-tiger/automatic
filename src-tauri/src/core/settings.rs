@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 
 use super::paths::get_automatic_dir;
+use super::types::AgentOptions;
 
 // ── Settings (~/.automatic/settings.json) ────────────────────────────────────
 
@@ -57,6 +59,11 @@ pub struct Settings {
     /// Set to true once the user dismisses the welcome message on the dashboard.
     #[serde(default)]
     pub welcome_dismissed: bool,
+    /// Default per-agent options applied when a new project is created.
+    /// Keyed by agent id (e.g. `"claude"`).  Agents absent from this map
+    /// use `AgentOptions::default()` when a project is created.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub default_agent_options: HashMap<String, AgentOptions>,
 }
 
 fn default_analytics_enabled() -> bool {
@@ -73,6 +80,7 @@ impl Default for Settings {
             default_agents: Vec::new(),
             getting_started: GettingStartedFlags::default(),
             welcome_dismissed: false,
+            default_agent_options: HashMap::new(),
         }
     }
 }

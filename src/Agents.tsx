@@ -1,14 +1,42 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Bot, FolderOpen, AlertCircle, ArrowRight, CheckCircle2, XCircle } from "lucide-react";
+import { Bot, FolderOpen, AlertCircle, ArrowRight, CheckCircle2, XCircle, Settings2 } from "lucide-react";
 import { ICONS } from "./icons";
 import { AgentIcon } from "./AgentIcon";
-import type { AgentCapabilities } from "./AgentSelector";
+import type { AgentCapabilities, AgentOptions } from "./AgentSelector";
 
 interface AgentProject {
   name: string;
   directory: string;
 }
+
+/** Describes a single toggleable default option for a particular agent. */
+interface AgentOptionDef {
+  /** Key in AgentOptions */
+  key: keyof AgentOptions;
+  label: string;
+  description: string;
+  /** Hard-coded default value when not set in settings */
+  hardDefault: boolean;
+}
+
+/**
+ * Static catalogue of configurable default options per agent id.
+ * Keyed by agent id.  Empty list = no configurable options.
+ */
+const AGENT_OPTION_DEFS: Record<string, AgentOptionDef[]> = {
+  claude: [
+    {
+      key: "claude_rules_in_dot_claude",
+      label: "Store rules in .claude/rules/",
+      description:
+        "Write each rule as an individual Markdown file under .claude/rules/ " +
+        "instead of injecting them inline into CLAUDE.md. " +
+        "Claude Code loads these files automatically every session.",
+      hardDefault: true,
+    },
+  ],
+};
 
 interface AgentWithProjects {
   id: string;
@@ -60,9 +88,12 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
     return localStorage.getItem(LAST_AGENT_KEY);
   });
   const [error, setError] = useState<string | null>(null);
+  /** Default agent options loaded from settings — keyed by agent id */
+  const [defaultOptions, setDefaultOptions] = useState<Record<string, AgentOptions>>({});
 
   useEffect(() => {
     loadAgents();
+    loadDefaults();
   }, []);
 
   useEffect(() => {
@@ -81,21 +112,48 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
       parsed.sort((a, b) => {
         const aCount = a.projects.length;
         const bCount = b.projects.length;
-        // Both have projects: sort by count desc, then alpha
         if (aCount > 0 && bCount > 0) {
           if (bCount !== aCount) return bCount - aCount;
           return a.label.localeCompare(b.label);
         }
-        // One has projects, one doesn't: projects-first
         if (aCount > 0) return -1;
         if (bCount > 0) return 1;
-        // Neither has projects: alphabetical
         return a.label.localeCompare(b.label);
       });
       setAgents(parsed);
       setError(null);
     } catch (err: any) {
       setError(`Failed to load agents: ${err}`);
+    }
+  };
+
+  const loadDefaults = async () => {
+    try {
+      const raw: any = await invoke("read_settings");
+      setDefaultOptions(raw.default_agent_options ?? {});
+    } catch {
+      // Non-fatal — fall back to hard defaults
+    }
+  };
+
+  const setDefaultOption = async (agentId: string, key: keyof AgentOptions, value: boolean) => {
+    try {
+      const raw: any = await invoke("read_settings");
+      const existing: AgentOptions = {
+        claude_rules_in_dot_claude: true,
+        ...(raw.default_agent_options?.[agentId] ?? {}),
+      };
+      const updated = {
+        ...raw,
+        default_agent_options: {
+          ...(raw.default_agent_options ?? {}),
+          [agentId]: { ...existing, [key]: value },
+        },
+      };
+      await invoke("write_settings", { settings: updated });
+      setDefaultOptions(updated.default_agent_options);
+    } catch (err: any) {
+      setError(`Failed to save default: ${err}`);
     }
   };
 
@@ -226,11 +284,57 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
                   )}
                 </section>
 
+                {/* Default options — settable here, applied to new projects */}
+                 {(AGENT_OPTION_DEFS[selected.id]?.length ?? 0) > 0 && (
+                   <section>
+                     <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3 flex items-center gap-1.5">
+                       <Settings2 size={12} className="text-text-muted" /> Default Options
+                     </label>
+                     <div className="divide-y divide-border-strong/20 border border-border-strong/40 rounded-lg overflow-hidden">
+                       {AGENT_OPTION_DEFS[selected.id]!.map((opt) => {
+                         const agentDefaults = defaultOptions[selected.id];
+                         const value: boolean = agentDefaults
+                           ? (agentDefaults[opt.key] as boolean)
+                           : opt.hardDefault;
+                         return (
+                           <label
+                             key={opt.key}
+                             className="flex items-start gap-3 px-3 py-3 bg-bg-input cursor-pointer hover:bg-bg-sidebar/40 transition-colors"
+                           >
+                             <div className="flex-1 min-w-0">
+                               <div className="text-[13px] text-text-base font-medium leading-snug">
+                                 {opt.label}
+                               </div>
+                               <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                                 {opt.description}
+                               </div>
+                             </div>
+                             <div className="flex-shrink-0 pt-0.5">
+                               <input
+                                 type="checkbox"
+                                 checked={value}
+                                 onChange={(e) =>
+                                   setDefaultOption(selected.id, opt.key, e.target.checked)
+                                 }
+                                 className="w-4 h-4 accent-brand cursor-pointer"
+                               />
+                             </div>
+                           </label>
+                         );
+                       })}
+                     </div>
+                     <p className="text-[11px] text-text-muted mt-2 leading-relaxed">
+                       These defaults apply when a new project is created. Each project can
+                       override them individually in its Agents tab.
+                     </p>
+                   </section>
+                 )}
+
                 {/* Projects */}
-                <section>
-                  <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase flex items-center gap-1.5 mb-3">
-                    <FolderOpen size={12} className={ICONS.project.iconColor} /> Projects Using This Agent
-                  </label>
+                 <section>
+                   <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase flex items-center gap-1.5 mb-3">
+                     <FolderOpen size={12} className={ICONS.project.iconColor} /> Projects Using This Agent
+                   </label>
                   {selected.projects.length === 0 ? (
                     <p className="text-[13px] text-text-muted italic">
                       No projects are using {selected.label} yet. Add it to a project in the Projects tab.

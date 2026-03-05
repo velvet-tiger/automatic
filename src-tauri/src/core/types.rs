@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ── Data Structures ──────────────────────────────────────────────────────────
 
@@ -22,6 +23,39 @@ pub struct SkillSource {
 
 fn default_skill_source_kind() -> String {
     "github".to_string()
+}
+
+// ── Agent Options ─────────────────────────────────────────────────────────────
+
+/// Per-agent configuration options stored in a project.
+///
+/// Each agent has a corresponding `AgentOptions` entry that can override
+/// default sync behaviour for that specific agent within a project.
+/// Fields default to the recommended value so that existing projects without
+/// this struct in their JSON behave identically to newly created ones.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentOptions {
+    /// **Claude Code only.**  When `true` (the default), rules are written as
+    /// individual Markdown files under `.claude/rules/` rather than being
+    /// injected as an `<!-- automatic:rules:start/end -->` block inside
+    /// `CLAUDE.md`.  This matches the format recommended by the Claude Code
+    /// documentation and is easier for Claude to discover and follow.
+    ///
+    /// Set to `false` to revert to the legacy inline-injection behaviour.
+    #[serde(default = "default_true")]
+    pub claude_rules_in_dot_claude: bool,
+}
+
+impl Default for AgentOptions {
+    fn default() -> Self {
+        Self {
+            claude_rules_in_dot_claude: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A skill entry with its name and which global directories it exists in.
@@ -78,12 +112,16 @@ pub struct Project {
     /// (e.g. "CLAUDE.md") to an ordered list of rule names whose content is
     /// appended below the user-authored content when the file is written.
     /// In unified mode the key `"_unified"` is used for all files.
-    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub file_rules: std::collections::HashMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub file_rules: HashMap<String, Vec<String>>,
     /// `"unified"` — one set of instructions written to all agent files.
     /// `"per-agent"` (default) — each agent file is edited independently.
     #[serde(default = "default_instruction_mode")]
     pub instruction_mode: String,
+    /// Per-agent configuration options keyed by agent id (e.g. `"claude"`).
+    /// Agents not present in this map use their `AgentOptions::default()`.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub agent_options: HashMap<String, AgentOptions>,
 }
 
 fn default_instruction_mode() -> String {

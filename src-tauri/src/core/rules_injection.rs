@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -109,6 +110,136 @@ pub fn is_file_rules_current(
 
     // Check if the file contains the exact expected rules section.
     Ok(raw.contains(&expected_section))
+}
+
+// ── .claude/rules/ directory-based rules ────────────────────────────────────
+
+/// Write rules as individual Markdown files under `<project_dir>/.claude/rules/`.
+///
+/// This is the format recommended by the Claude Code documentation:
+/// each rule becomes a file named `<machine_name>.md` inside `.claude/rules/`.
+/// Files managed by Automatic are given a comment header; files that do not
+/// belong to the current rule set (and were previously written by Automatic)
+/// are deleted so the directory stays in sync with the project's rule list.
+///
+/// Returns the list of files written or removed.
+pub fn sync_rules_to_dot_claude_rules(
+    project_dir: &str,
+    rule_names: &[String],
+) -> Result<Vec<String>, String> {
+    let rules_dir = PathBuf::from(project_dir).join(".claude").join("rules");
+    fs::create_dir_all(&rules_dir)
+        .map_err(|e| format!("Failed to create .claude/rules/: {}", e))?;
+
+    let mut touched: Vec<String> = Vec::new();
+
+    // Build the set of filenames we intend to write so we can remove stale ones.
+    let intended: HashSet<String> = rule_names.iter().map(|n| format!("{}.md", n)).collect();
+
+    // Remove files that were previously managed by Automatic but are no
+    // longer in the rule list.  We only remove files whose first line
+    // carries the Automatic-managed marker so we never clobber user files.
+    if let Ok(entries) = fs::read_dir(&rules_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let file_name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if intended.contains(&file_name) {
+                continue; // Will be (re-)written below — leave it for now.
+            }
+            // Only remove files that carry our managed header.
+            if let Ok(content) = fs::read_to_string(&path) {
+                if content.starts_with(CLAUDE_RULES_MANAGED_HEADER) {
+                    if fs::remove_file(&path).is_ok() {
+                        touched.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Write each rule as `<machine_name>.md`.
+    for machine_name in rule_names {
+        let content = match read_rule_content(machine_name) {
+            Ok(c) if !c.trim().is_empty() => c,
+            _ => continue, // Skip missing or empty rules silently.
+        };
+
+        let file_path = rules_dir.join(format!("{}.md", machine_name));
+        let file_content = format!("{}{}\n", CLAUDE_RULES_MANAGED_HEADER, content.trim_end());
+
+        // Only write if different from what is already on disk.
+        let existing = fs::read_to_string(&file_path).unwrap_or_default();
+        if existing != file_content {
+            fs::write(&file_path, &file_content)
+                .map_err(|e| format!("Failed to write rule '{}': {}", machine_name, e))?;
+            touched.push(file_path.display().to_string());
+        }
+    }
+
+    Ok(touched)
+}
+
+/// Marker placed at the very start of every rule file written by Automatic.
+/// Used to identify files that are safe to delete on cleanup.
+const CLAUDE_RULES_MANAGED_HEADER: &str = "<!-- managed by Automatic — do not edit by hand -->\n\n";
+
+/// Read-only check: returns `true` if the on-disk `.claude/rules/` directory
+/// already contains exactly the files that would be generated from `rule_names`
+/// (same filenames, same content, no extra Automatic-managed files).
+pub fn is_dot_claude_rules_current(
+    project_dir: &str,
+    rule_names: &[String],
+) -> Result<bool, String> {
+    let rules_dir = PathBuf::from(project_dir).join(".claude").join("rules");
+
+    // Collect currently-managed files (those with our header).
+    let mut managed_on_disk: HashSet<String> = HashSet::new();
+    if let Ok(entries) = fs::read_dir(&rules_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            if let Ok(content) = fs::read_to_string(&path) {
+                if content.starts_with(CLAUDE_RULES_MANAGED_HEADER) {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        managed_on_disk.insert(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let intended: HashSet<String> = rule_names.iter().map(|n| format!("{}.md", n)).collect();
+
+    // Extra managed files that shouldn't be there.
+    if managed_on_disk != intended {
+        return Ok(false);
+    }
+
+    // Check content of each intended file.
+    for machine_name in rule_names {
+        let content = match read_rule_content(machine_name) {
+            Ok(c) if !c.trim().is_empty() => c,
+            _ => continue,
+        };
+        let expected = format!("{}{}\n", CLAUDE_RULES_MANAGED_HEADER, content.trim_end());
+        let actual = match fs::read_to_string(rules_dir.join(format!("{}.md", machine_name))) {
+            Ok(c) => c,
+            Err(_) => return Ok(false),
+        };
+        if actual != expected {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
 }
 
 /// Re-inject rules into an existing project file.  Reads the file, strips

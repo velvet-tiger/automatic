@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bot, Plus, Search, Trash2, X } from "lucide-react";
+import { Bot, ChevronDown, Plus, Search, Trash2, X } from "lucide-react";
 import { AgentIcon } from "./AgentIcon";
 
 export interface AgentCapabilities {
@@ -15,6 +15,39 @@ export interface AgentInfo {
   capabilities?: AgentCapabilities;
 }
 
+/** Per-agent configuration options (mirrors the Rust AgentOptions struct). */
+export interface AgentOptions {
+  claude_rules_in_dot_claude: boolean;
+}
+
+/** Describes one toggleable option for an agent. */
+interface OptionDef {
+  key: keyof AgentOptions;
+  label: string;
+  description: string;
+}
+
+/**
+ * Static catalogue of configurable options per agent id.
+ * Only agents with at least one entry show the settings panel.
+ */
+const AGENT_OPTION_DEFS: Record<string, OptionDef[]> = {
+  claude: [
+    {
+      key: "claude_rules_in_dot_claude",
+      label: "Store rules in .claude/rules/",
+      description:
+        "Write each rule as an individual .md file under .claude/rules/ instead of injecting " +
+        "them into CLAUDE.md. Claude Code loads these files automatically every session.",
+    },
+  ],
+};
+
+/** Default values for AgentOptions — must match Rust defaults. */
+function defaultOptions(): AgentOptions {
+  return { claude_rules_in_dot_claude: true };
+}
+
 interface AgentSelectorProps {
   /** IDs of currently selected agents */
   agentIds: string[];
@@ -28,6 +61,10 @@ interface AgentSelectorProps {
   label?: string;
   /** Empty-state message (default: "No agents configured.") */
   emptyMessage?: string;
+  /** Current per-agent options keyed by agent id */
+  agentOptions?: Record<string, AgentOptions>;
+  /** Called when an option changes for a specific agent */
+  onOptionChange?: (agentId: string, patch: Partial<AgentOptions>) => void;
 }
 
 /**
@@ -35,6 +72,7 @@ interface AgentSelectorProps {
  * Renders:
  *   - A section header with an "Add" button
  *   - The current list of agents as styled card rows (label + description)
+ *   - An inline collapsed settings panel for agents that have configurable options
  *   - A searchable dropdown panel when adding
  */
 export function AgentSelector({
@@ -44,9 +82,13 @@ export function AgentSelector({
   onRemove,
   label = "Agent Tools",
   emptyMessage = "No agents configured.",
+  agentOptions,
+  onOptionChange,
 }: AgentSelectorProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
+  // Track which agent cards have their settings panel expanded
+  const [expandedSettings, setExpandedSettings] = useState<Set<string>>(new Set());
 
   const unaddedAgents = availableAgents.filter((a) => !agentIds.includes(a.id));
   const filteredAgents = search.trim()
@@ -66,6 +108,18 @@ export function AgentSelector({
   function handleCancel() {
     setAdding(false);
     setSearch("");
+  }
+
+  function toggleSettings(id: string) {
+    setExpandedSettings((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
   }
 
   return (
@@ -95,24 +149,80 @@ export function AgentSelector({
       <div className="space-y-2">
         {agentIds.map((id, idx) => {
           const info = availableAgents.find((a) => a.id === id);
+          const optionDefs = AGENT_OPTION_DEFS[id] ?? [];
+          const hasOptions = optionDefs.length > 0 && !!onOptionChange;
+          const isExpanded = expandedSettings.has(id);
+          const opts: AgentOptions = {
+            ...defaultOptions(),
+            ...(agentOptions?.[id] ?? {}),
+          };
+
           return (
             <div
               key={id}
-              className="flex items-center gap-3 px-3 py-3 bg-bg-input border border-border-strong/40 rounded-lg group"
+              className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden"
             >
-              <AgentIcon agentId={id} size={20} />
-              <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-medium text-text-base">{info?.label ?? id}</div>
-                {info?.description && (
-                  <div className="text-[11px] text-text-muted mt-0.5">{info.description}</div>
-                )}
-              </div>
-              <button
-                onClick={() => onRemove(idx)}
-                className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded"
+              {/* Main agent row — clicking anywhere toggles settings if available */}
+              <div
+                className={`flex items-center gap-3 px-3 py-3 group ${hasOptions ? "cursor-pointer hover:bg-bg-sidebar/30 transition-colors" : ""}`}
+                onClick={hasOptions ? () => toggleSettings(id) : undefined}
               >
-                <Trash2 size={12} />
-              </button>
+                <AgentIcon agentId={id} size={20} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-medium text-text-base">{info?.label ?? id}</div>
+                  {info?.description && (
+                    <div className="text-[11px] text-text-muted mt-0.5">{info.description}</div>
+                  )}
+                </div>
+
+                {/* Chevron indicator for agents with options */}
+                {hasOptions && (
+                  <ChevronDown
+                    size={13}
+                    className={`flex-shrink-0 transition-transform duration-150 ${
+                      isExpanded ? "rotate-0 text-brand" : "-rotate-90 text-text-muted"
+                    }`}
+                  />
+                )}
+
+                <button
+                  onClick={(e) => { e.stopPropagation(); onRemove(idx); }}
+                  className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded flex-shrink-0"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+
+              {/* Collapsed settings panel */}
+              {hasOptions && isExpanded && (
+                <div className="border-t border-border-strong/30 divide-y divide-border-strong/20">
+                  {optionDefs.map((opt) => (
+                    <label
+                      key={opt.key}
+                      className="flex items-start gap-3 px-3 py-2.5 cursor-pointer hover:bg-bg-sidebar/40 transition-colors"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] text-text-base font-medium leading-snug">
+                          {opt.label}
+                        </div>
+                        <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                          {opt.description}
+                        </div>
+                      </div>
+                      <div className="flex-shrink-0 pt-0.5">
+                        <input
+                          type="checkbox"
+                          checked={opts[opt.key] as boolean}
+                          onChange={(e) =>
+                            onOptionChange!(id, { [opt.key]: e.target.checked })
+                          }
+                          className="w-4 h-4 accent-brand cursor-pointer"
+                        />
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}

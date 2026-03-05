@@ -2135,11 +2135,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     setSelectedName(null);
     localStorage.removeItem(LAST_PROJECT_KEY);
     if (!opts?.fromTemplate) setWizardSourceTemplate(null);
-    // Pre-populate agents from the "Default Agents" setting
+    // Pre-populate agents and agent options from settings defaults
     let defaultAgents: string[] = [];
+    let defaultAgentOptions: Record<string, AgentOptions> = {};
     try {
       const raw: any = await invoke("read_settings");
       defaultAgents = raw.default_agents ?? [];
+      defaultAgentOptions = raw.default_agent_options ?? {};
     } catch {
       // Non-fatal — proceed with empty agents if settings can't be read
     }
@@ -2147,7 +2149,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     // If launched from a template, merge its values into the initial project state
     // so agents, skills, MCP servers etc. are pre-populated from the start.
     const tmpl = opts?.fromTemplate;
-    const baseProject = { ...emptyProject(""), agents: defaultAgents };
+    const baseProject = {
+      ...emptyProject(""),
+      agents: defaultAgents,
+      ...(Object.keys(defaultAgentOptions).length > 0
+        ? { agent_options: defaultAgentOptions }
+        : {}),
+    };
     const initialProject = tmpl
       ? {
           ...baseProject,
@@ -3334,118 +3342,123 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       };
 
                       return (
-                        <div className="flex-1 flex flex-col min-w-0">
-                          {/* Editor toolbar */}
-                          <div className="flex items-center justify-between px-4 h-9 bg-bg-input border-b border-border-strong/40 flex-shrink-0">
-                            <span className="text-[11px] text-text-muted">
-                              {activeProjectFile === "_unified"
-                                ? <>{projectFileEditing ? "Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
-                                : <>{activeProjectFile}{!fileExists ? " (new)" : ""}{projectFileEditing ? " — Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
-                              }
-                            </span>
-                            <div className="flex items-center gap-1.5">
-                              {!projectFileEditing ? (
-                                <button
-                                  onClick={() => {
-                                    setProjectFileEditing(true);
-                                    // Auto-enable Automatic rule if rules have never been configured for this file
-                                    if (project && activeProjectFile) {
-                                      const hasAutomatic = availableRules.some(r => r.id === "automatic-service");
-                                      if (hasAutomatic && !project.file_rules?.[activeProjectFile]) {
-                                        setProject({ ...project, file_rules: { ...(project.file_rules || {}), [activeProjectFile]: ["automatic-service"] } });
-                                      }
-                                    }
-                                  }}
-                                  className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
-                                >
-                                  <Edit2 size={10} /> Edit
-                                </button>
-                              ) : (
-                                <>
+                        <div className="flex-1 flex min-w-0 min-h-0">
+                          {/* Editor column */}
+                          <div className="flex-1 flex flex-col min-w-0">
+                            {/* Editor toolbar */}
+                            <div className="flex items-center justify-between px-4 h-9 bg-bg-input border-b border-border-strong/40 flex-shrink-0">
+                              <span className="text-[11px] text-text-muted">
+                                {activeProjectFile === "_unified"
+                                  ? <>{projectFileEditing ? "Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
+                                  : <>{activeProjectFile}{!fileExists ? " (new)" : ""}{projectFileEditing ? " — Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
+                                }
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {!projectFileEditing ? (
                                   <button
                                     onClick={() => {
-                                      setProjectFileEditing(false);
-                                      if (projectFileDirty && selectedName && activeProjectFile) {
-                                        if (fileExists) {
-                                          loadProjectFileContent(selectedName, activeProjectFile);
-                                        } else {
-                                          setProjectFileContent("");
-                                          setProjectFileDirty(false);
+                                      setProjectFileEditing(true);
+                                      // Auto-enable Automatic rule if rules have never been configured for this file
+                                      if (project && activeProjectFile) {
+                                        const hasAutomatic = availableRules.some(r => r.id === "automatic-service");
+                                        if (hasAutomatic && !project.file_rules?.[activeProjectFile]) {
+                                          setProject({ ...project, file_rules: { ...(project.file_rules || {}), [activeProjectFile]: ["automatic-service"] } });
                                         }
                                       }
                                     }}
-                                    className="px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+                                    className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
                                   >
-                                    Cancel
+                                    <Edit2 size={10} /> Edit
                                   </button>
-                                  <button
-                                    onClick={handleSaveProjectFile}
-                                    disabled={!projectFileDirty || projectFileSaving}
-                                    className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-brand hover:bg-brand-hover text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                  >
-                                    <Check size={10} /> {projectFileSaving ? "Saving..." : "Save"}
-                                  </button>
-                                </>
-                              )}
+                                ) : (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        setProjectFileEditing(false);
+                                        if (projectFileDirty && selectedName && activeProjectFile) {
+                                          if (fileExists) {
+                                            loadProjectFileContent(selectedName, activeProjectFile);
+                                          } else {
+                                            setProjectFileContent("");
+                                            setProjectFileDirty(false);
+                                          }
+                                        }
+                                      }}
+                                      className="px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      onClick={handleSaveProjectFile}
+                                      disabled={!projectFileDirty || projectFileSaving}
+                                      className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-brand hover:bg-brand-hover text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      <Check size={10} /> {projectFileSaving ? "Saving..." : "Save"}
+                                    </button>
+                                  </>
+                                )}
+                              </div>
                             </div>
+
+                            {/* Content area */}
+                            {projectFileEditing ? (
+                              <textarea
+                                value={projectFileContent}
+                                onChange={(e) => {
+                                  setProjectFileContent(e.target.value);
+                                  setProjectFileDirty(true);
+                                }}
+                                className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30 min-h-0"
+                                placeholder="Write your project instructions here..."
+                                spellCheck={false}
+                              />
+                            ) : (
+                              <div className="flex-1 overflow-y-auto custom-scrollbar bg-bg-base min-h-0">
+                                {projectFileContent
+                                  ? <MarkdownPreview content={projectFileContent} />
+                                  : <span className="block p-4 text-[13px] text-text-muted italic">Empty file.</span>
+                                }
+                              </div>
+                            )}
                           </div>
 
-                          {/* Content area — fills remaining height above rules panel */}
-                          {projectFileEditing ? (
-                            <textarea
-                              value={projectFileContent}
-                              onChange={(e) => {
-                                setProjectFileContent(e.target.value);
-                                setProjectFileDirty(true);
-                              }}
-                              className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30 min-h-0"
-                              placeholder="Write your project instructions here..."
-                              spellCheck={false}
-                            />
-                          ) : (
-                            <div className="flex-1 overflow-y-auto custom-scrollbar bg-bg-base min-h-0">
-                              {projectFileContent
-                                ? <MarkdownPreview content={projectFileContent} />
-                                : <span className="block p-4 text-[13px] text-text-muted italic">Empty file.</span>
-                              }
-                            </div>
-                          )}
-
-                          {/* Rules panel */}
-                          <div className="border-t border-border-strong/40 bg-bg-input flex-shrink-0">
-                            <div className="px-4 py-2 flex items-center gap-2">
+                          {/* Rules sidebar */}
+                          <div className="w-44 flex-shrink-0 border-l border-border-strong/40 bg-bg-input/50 flex flex-col">
+                            <div className="h-9 px-3 border-b border-border-strong/40 flex items-center gap-2 flex-shrink-0">
                               <ScrollText size={12} className="text-accent-hover" />
                               <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Rules</span>
                               {currentFileRules.length > 0 && (
-                                <span className="text-[10px] text-accent-hover bg-accent-hover/10 px-1.5 py-0.5 rounded">{currentFileRules.length}</span>
+                                <span className="text-[10px] text-accent-hover bg-accent-hover/10 px-1.5 py-0.5 rounded ml-auto">{currentFileRules.length}</span>
                               )}
                             </div>
-                            {availableRules.length > 0 ? (
-                              <div className="px-4 pb-3 flex flex-wrap gap-1.5">
-                                {availableRules.map(rule => {
-                                  const isSelected = currentFileRules.includes(rule.id);
-                                  return (
-                                    <button
-                                      key={rule.id}
-                                      onClick={() => handleToggleRule(rule.id)}
-                                      className={`px-2.5 py-1 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
-                                        isSelected
-                                          ? "rule-pill-selected font-medium"
-                                          : "bg-bg-sidebar border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
-                                      }`}
-                                    >
-                                      <ScrollText size={10} />
-                                      {rule.name}
-                                      {isSelected && <Check size={10} />}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            ) : (
-                              <div className="px-4 pb-3">
-                                <span className="text-[11px] text-text-muted italic">No rules created yet. Create rules in the Rules section to attach them here.</span>
-                              </div>
-                            )}
+                            <div className="flex-1 overflow-y-auto py-2 px-2 custom-scrollbar">
+                              {availableRules.length > 0 ? (
+                                <div className="space-y-1">
+                                  {availableRules.map(rule => {
+                                    const isSelected = currentFileRules.includes(rule.id);
+                                    return (
+                                      <button
+                                        key={rule.id}
+                                        onClick={() => handleToggleRule(rule.id)}
+                                        className={`w-full text-left px-2 py-1.5 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
+                                          isSelected
+                                            ? "rule-pill-selected font-medium"
+                                            : "bg-bg-sidebar border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
+                                        }`}
+                                      >
+                                        <ScrollText size={10} className="flex-shrink-0" />
+                                        <span className="truncate">{rule.name}</span>
+                                        {isSelected && <Check size={10} className="flex-shrink-0 ml-auto" />}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-text-muted italic leading-relaxed px-1">
+                                  No rules yet. Create rules in the Rules section.
+                                </p>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
