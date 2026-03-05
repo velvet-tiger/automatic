@@ -830,7 +830,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             instruction_mode:
-              tmpl?.unified_instruction?.trim() ? "unified" : "per-agent",
+              (tmpl?.unified_instruction?.trim() || (tmpl?.unified_rules ?? []).length > 0) ? "unified" : "per-agent",
           };
 
           // save_project for new projects runs sync_project (autodetect + write agent configs).
@@ -839,9 +839,13 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
             data: JSON.stringify(project, null, 2),
           });
 
-          // Write unified instruction if the template provides one.
-          if (tmpl?.unified_instruction?.trim()) {
-            if ((tmpl.unified_rules ?? []).length > 0) {
+          // Write unified instruction and/or rules if the template provides them.
+          // Rules-only templates (no instruction text) are valid and must still
+          // have their rules persisted into file_rules and written to agent files.
+          const hasUnifiedContent = !!(tmpl?.unified_instruction?.trim());
+          const hasUnifiedRules = (tmpl?.unified_rules ?? []).length > 0;
+          if (hasUnifiedContent || hasUnifiedRules) {
+            if (hasUnifiedRules) {
               const latestRaw: string = await invoke("read_project", {
                 name: dirName,
               });
@@ -850,7 +854,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
                 ...latestProj,
                 file_rules: {
                   ...(latestProj.file_rules || {}),
-                  _unified: tmpl.unified_rules,
+                  _unified: tmpl!.unified_rules,
                 },
               };
               await invoke("save_project", {
@@ -861,7 +865,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
             await invoke("save_project_file", {
               name: dirName,
               filename: "_unified",
-              content: tmpl.unified_instruction,
+              content: tmpl?.unified_instruction || "",
             });
           }
 
