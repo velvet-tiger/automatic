@@ -27,6 +27,8 @@ import {
   Plus,
   X,
   FolderOpen,
+  FolderPlus,
+  Folder,
   Check,
   Code,
   Server,
@@ -124,6 +126,15 @@ interface ProjectTemplate {
 const SIDEBAR_MIN = 160;
 const SIDEBAR_MAX = 400;
 const SIDEBAR_DEFAULT = 192; // w-48 equivalent
+
+// ── Project Folder types ──────────────────────────────────────────────────────
+
+interface ProjectFolder {
+  id: string;
+  name: string;
+  collapsed: boolean;
+  projectNames: string[];
+}
 
 // ── Skill frontmatter helpers (shared with Skills.tsx logic) ─────────────────
 
@@ -1277,6 +1288,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const { userId } = useCurrentUser();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
   const PROJECT_ORDER_KEY = "automatic.projects.order";
+  const PROJECT_FOLDERS_KEY = "automatic.projects.folders";
 
   // Migrate legacy "nexus." localStorage keys on first load
   useEffect(() => {
@@ -1296,6 +1308,19 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [projectsLoading, setProjectsLoading] = useState(true);
   // Always start on the overview — do not restore a previously selected project.
   const [selectedName, setSelectedName] = useState<string | null>(null);
+
+  // ── Folder state ────────────────────────────────────────────────────────────
+  const [folders, setFolders] = useState<ProjectFolder[]>(() => {
+    try {
+      const stored = localStorage.getItem("automatic.projects.folders");
+      if (!stored) return [];
+      return JSON.parse(stored) as ProjectFolder[];
+    } catch {
+      return [];
+    }
+  });
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [editingFolderName, setEditingFolderName] = useState("");
 
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const isSidebarDragging = useRef(false);
@@ -1335,6 +1360,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const dragIdxRef = useRef<number | null>(null);
   const dropIdxRef = useRef<number | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  // Ghost label that follows the cursor while dragging
+  const [dragGhost, setDragGhost] = useState<{ name: string; x: number; y: number } | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [dirty, setDirty] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -1579,38 +1606,113 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(ordered));
   };
 
-  // Compute which list index the pointer is over, skipping the "New Project" item
+  // ── Folder helpers ──────────────────────────────────────────────────────────
+
+  const saveFolders = (updated: ProjectFolder[]) => {
+    localStorage.setItem(PROJECT_FOLDERS_KEY, JSON.stringify(updated));
+    setFolders(updated);
+  };
+
+  const createFolder = () => {
+    const id = `folder-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const name = "New Folder";
+    const newFolder: ProjectFolder = { id, name, collapsed: false, projectNames: [] };
+    const updated = [...folders, newFolder];
+    saveFolders(updated);
+    // Immediately start editing the name
+    setEditingFolderId(id);
+    setEditingFolderName(name);
+  };
+
+  const renameFolder = (id: string, name: string) => {
+    saveFolders(folders.map((f) => (f.id === id ? { ...f, name } : f)));
+  };
+
+  const deleteFolder = (id: string) => {
+    // Remove folder but keep its projects (they become ungrouped)
+    saveFolders(folders.filter((f) => f.id !== id));
+  };
+
+  const toggleFolderCollapsed = (id: string) => {
+    saveFolders(folders.map((f) => (f.id === id ? { ...f, collapsed: !f.collapsed } : f)));
+  };
+
+  const moveProjectToFolder = (projectName: string, folderId: string | null) => {
+    // Remove from all folders first
+    const cleaned = folders.map((f) => ({
+      ...f,
+      projectNames: f.projectNames.filter((n) => n !== projectName),
+    }));
+    if (folderId === null) {
+      saveFolders(cleaned);
+      return;
+    }
+    saveFolders(cleaned.map((f) => (f.id === folderId ? { ...f, projectNames: [...f.projectNames, projectName] } : f)));
+  };
+
+  /** Returns project names not assigned to any folder, in current display order. */
+  const ungroupedProjects = projects.filter((n) => !folders.some((f) => f.projectNames.includes(n)));
+
+  // ── Folder drag-onto state ──────────────────────────────────────────────────
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
+
+  // Compute which ungrouped-project drop index the pointer is over.
+  // Uses [data-ungrouped-idx] attributes so folder <li> elements are ignored.
   const getDropIndex = (clientY: number): number | null => {
     if (!listRef.current) return null;
-    const children = Array.from(listRef.current.children) as HTMLElement[];
-    // If creating, the first child is the "New Project" placeholder — skip it
-    const offset = isCreating ? 1 : 0;
-    const items = children.slice(offset);
+    const items = Array.from(
+      listRef.current.querySelectorAll<HTMLElement>("[data-ungrouped-idx]")
+    );
     for (let i = 0; i < items.length; i++) {
-      const rect = items[i].getBoundingClientRect();
+      const rect = items[i]!.getBoundingClientRect();
       const midY = rect.top + rect.height / 2;
       if (clientY < midY) return i;
     }
     return items.length;
   };
 
-  const handleGripDown = (idx: number, e: React.PointerEvent) => {
+  // Walk up the DOM from `el` to find a [data-folder-id] ancestor.
+  const getFolderIdAtElement = (el: Element | null): string | null => {
+    let cur = el;
+    while (cur && cur !== listRef.current) {
+      const fid = (cur as HTMLElement).dataset?.folderId;
+      if (fid) return fid;
+      cur = cur.parentElement;
+    }
+    return null;
+  };
+
+  const handleGripDown = (idx: number, projectName: string, e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
     dragIdxRef.current = idx;
     dropIdxRef.current = idx;
     setDragIdx(idx);
     setDropIdx(idx);
+    setDragGhost({ name: projectName, x: e.clientX, y: e.clientY });
 
     const onMove = (ev: PointerEvent) => {
-      const target = getDropIndex(ev.clientY);
-      dropIdxRef.current = target;
-      setDropIdx(target);
+      // Update ghost position
+      setDragGhost({ name: projectName, x: ev.clientX, y: ev.clientY });
+
+      // Detect if pointer is over a folder header
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const fid = getFolderIdAtElement(el);
+      setDragOverFolderId(fid);
+
+      // Only update reorder drop index when not hovering a folder
+      if (!fid) {
+        const target = getDropIndex(ev.clientY);
+        dropIdxRef.current = target;
+        setDropIdx(target);
+      }
     };
 
-    const onUp = () => {
+    const onUp = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+
+      setDragGhost(null);
 
       const fromIdx = dragIdxRef.current;
       const toIdx = dropIdxRef.current;
@@ -1618,6 +1720,16 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       dropIdxRef.current = null;
       setDragIdx(null);
       setDropIdx(null);
+
+      // Check if dropped onto a folder
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const targetFolderId = getFolderIdAtElement(el);
+      setDragOverFolderId(null);
+
+      if (targetFolderId) {
+        moveProjectToFolder(projectName, targetFolderId);
+        return;
+      }
 
       if (fromIdx === null || toIdx === null || fromIdx === toIdx) return;
 
@@ -2124,6 +2236,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         setProject(null);
         setDirty(false);
       }
+      // Clean up folder membership for deleted project
+      saveFolders(folders.map((f) => ({ ...f, projectNames: f.projectNames.filter((n) => n !== name) })));
       await loadProjects();
       setError(null);
     } catch (err: any) {
@@ -2399,41 +2513,179 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   return (
     <>
     <div className="flex h-full w-full bg-bg-base">
-      {/* Left sidebar - project list */}
+      {/* Left sidebar - project list (hidden while creating a new project) */}
       <div
-        className="flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50 relative"
+        className={`flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50 relative${isCreating ? " hidden" : ""}`}
         style={{ width: sidebarWidth }}
       >
         <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center bg-bg-base/30">
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             Projects
           </span>
-          <button
-            onClick={() => startCreate()}
-            className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-            title="Create New Project"
-          >
-            <Plus size={14} />
-          </button>
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => createFolder()}
+              className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
+              title="New Folder"
+            >
+              <FolderPlus size={14} />
+            </button>
+            <button
+              onClick={() => startCreate()}
+              className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
+              title="Create New Project"
+            >
+              <Plus size={14} />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
-          {projects.length === 0 && !isCreating ? (
+          {projects.length === 0 && !isCreating && folders.length === 0 ? (
             <div className="px-4 py-3 text-[13px] text-text-muted text-center">
               No projects yet.
             </div>
           ) : (
             <ul className="space-y-0.5 px-2" ref={listRef}>
-              {isCreating && (
-                <li className="flex items-center gap-2.5 px-2 py-1.5 rounded-md text-[13px] bg-bg-sidebar text-text-base">
-                  <FolderOpen size={14} className="text-text-muted" />
-                  <span className="italic">New Project...</span>
+
+
+              {/* ── Folders ─────────────────────────────────────────── */}
+              {folders.map((folder) => (
+                <li key={folder.id}>
+                  {/* Folder header */}
+                  <div
+                    data-folder-id={folder.id}
+                    className={`group flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors cursor-pointer ${
+                      dragOverFolderId === folder.id
+                        ? "bg-brand/15 ring-1 ring-brand/40"
+                        : "hover:bg-bg-sidebar/40"
+                    }`}
+                  >
+                    <button
+                      onClick={() => toggleFolderCollapsed(folder.id)}
+                      className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
+                    >
+                      <ChevronDown
+                        size={10}
+                        className={`text-text-muted flex-shrink-0 transition-transform ${folder.collapsed ? "-rotate-90" : ""}`}
+                      />
+                      <Folder size={13} className="text-text-muted flex-shrink-0" />
+                      {editingFolderId === folder.id ? (
+                        <input
+                          type="text"
+                          value={editingFolderName}
+                          autoFocus
+                          className="flex-1 min-w-0 bg-transparent text-[12px] font-medium text-text-base outline-none border-b border-brand"
+                          onChange={(e) => setEditingFolderName(e.target.value)}
+                          onBlur={() => {
+                            const trimmed = editingFolderName.trim();
+                            if (trimmed) renameFolder(folder.id, trimmed);
+                            setEditingFolderId(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              const trimmed = editingFolderName.trim();
+                              if (trimmed) renameFolder(folder.id, trimmed);
+                              setEditingFolderId(null);
+                            } else if (e.key === "Escape") {
+                              setEditingFolderId(null);
+                            }
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <span className="flex-1 text-[12px] font-medium text-text-muted truncate">
+                          {folder.name}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-text-muted/60 flex-shrink-0 ml-1">
+                        {folder.projectNames.filter((n) => projects.includes(n)).length}
+                      </span>
+                    </button>
+                    {/* Folder actions (rename / delete) */}
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingFolderId(folder.id);
+                          setEditingFolderName(folder.name);
+                        }}
+                        className="p-0.5 text-text-muted hover:text-text-base rounded hover:bg-bg-sidebar"
+                        title="Rename folder"
+                      >
+                        <Edit2 size={10} />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteFolder(folder.id); }}
+                        className="p-0.5 text-text-muted hover:text-danger rounded hover:bg-bg-sidebar"
+                        title="Delete folder (projects remain)"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Folder contents */}
+                  {!folder.collapsed && (
+                    <ul className="mt-0.5 space-y-0.5">
+                      {folder.projectNames
+                        .filter((n) => projects.includes(n))
+                        .map((name) => {
+                          const idx = projects.indexOf(name);
+                          return (
+                            <li
+                              key={name}
+                              className="relative pl-4"
+                            >
+                              <div className={`group flex items-center relative ${dragIdx === idx ? "opacity-30" : ""}`}>
+                                <button
+                                  onClick={() => { if (dragIdx === null) selectProject(name); }}
+                                  className={`w-full flex items-center gap-2 pl-4 pr-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
+                                    selectedName === name && !isCreating
+                                      ? "bg-bg-sidebar text-text-base"
+                                      : "text-text-muted hover:bg-bg-sidebar/50 hover:text-text-base"
+                                  }`}
+                                >
+                                  <FolderOpen
+                                    size={13}
+                                    className={
+                                      driftByProject[name] === true
+                                        ? "text-warning"
+                                        : selectedName === name && !isCreating
+                                        ? "text-text-base"
+                                        : "text-text-muted"
+                                    }
+                                  />
+                                  <span className="flex-1 text-left truncate">{name}</span>
+                                </button>
+                                {/* Remove-from-folder button */}
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); moveProjectToFolder(name, null); }}
+                                  className="absolute right-2 p-1 text-text-muted hover:text-text-base opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
+                                  title="Remove from folder"
+                                >
+                                  <X size={10} />
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      {folder.projectNames.filter((n) => projects.includes(n)).length === 0 && (
+                        <li className="pl-8 py-1 text-[11px] text-text-muted/50 italic">
+                          Empty — drag projects here
+                        </li>
+                      )}
+                    </ul>
+                  )}
                 </li>
-              )}
-              {projects.map((name, idx) => (
+              ))}
+
+              {/* ── Ungrouped projects ───────────────────────────────── */}
+              {ungroupedProjects.map((name, idx) => (
                 <li
                   key={name}
                   className="relative"
+                  data-ungrouped-idx={idx}
                 >
                   {/* Drop indicator line — above this item */}
                   {dragIdx !== null && dropIdx === idx && dropIdx !== dragIdx && dropIdx !== dragIdx + 1 && (
@@ -2442,7 +2694,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <div className={`group flex items-center relative ${dragIdx === idx ? "opacity-30" : ""}`}>
                     <div
                       className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
-                      onPointerDown={(e) => handleGripDown(idx, e)}
+                      onPointerDown={(e) => handleGripDown(idx, name, e)}
                     >
                       <GripVertical size={10} className="text-text-muted" />
                     </div>
@@ -2474,8 +2726,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       <X size={12} />
                     </button>
                   </div>
-                  {/* Drop indicator line — after last item */}
-                  {dragIdx !== null && dropIdx === projects.length && idx === projects.length - 1 && dropIdx !== dragIdx && (
+                  {/* Drop indicator line — after last ungrouped item */}
+                  {dragIdx !== null && dropIdx === ungroupedProjects.length && idx === ungroupedProjects.length - 1 && dropIdx !== dragIdx && (
                     <div className="absolute -bottom-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
                   )}
                 </li>
@@ -4440,6 +4692,23 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         agentLabel={driftDiffFile.agentLabel}
         onClose={() => setDriftDiffFile(null)}
       />
+    )}
+
+    {/* ── Drag ghost — follows the cursor while dragging a project ─────── */}
+    {dragGhost && (
+      <div
+        style={{
+          position: "fixed",
+          left: dragGhost.x + 12,
+          top: dragGhost.y - 12,
+          pointerEvents: "none",
+          zIndex: 9999,
+        }}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-md text-[13px] font-medium bg-bg-sidebar border border-border-strong/60 shadow-lg text-text-base opacity-90"
+      >
+        <FolderOpen size={13} className="text-text-muted flex-shrink-0" />
+        <span>{dragGhost.name}</span>
+      </div>
     )}
     </>
   );
