@@ -103,6 +103,8 @@ jobs:
           AC_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           # Brandfetch CDN client ID — inlined into the JS bundle at build time by Vite
           VITE_BRANDFETCH_CLIENT_ID: ${{ secrets.VITE_BRANDFETCH_CLIENT_ID }}
+          # Baked into the Rust binary at compile time via option_env!()
+          AMPLITUDE_API_KEY: ${{ secrets.AMPLITUDE_API_KEY }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Automatic ${{ github.ref_name }}
@@ -128,5 +130,7 @@ jobs:
           AC_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           # Brandfetch CDN client ID — inlined into the JS bundle at build time by Vite
           VITE_BRANDFETCH_CLIENT_ID: ${{ secrets.VITE_BRANDFETCH_CLIENT_ID }}
+          # Baked into the Rust binary at compile time via option_env!()
+          AMPLITUDE_API_KEY: ${{ secrets.AMPLITUDE_API_KEY }}
         with:
           args: ${{ matrix.args }}
