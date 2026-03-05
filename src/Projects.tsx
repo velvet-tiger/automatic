@@ -1372,6 +1372,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [wizardDiscoveredAgents, setWizardDiscoveredAgents] = useState<string[]>([]);
   /** Non-null when the wizard was launched from a "New project from template" action. */
   const [wizardSourceTemplate, setWizardSourceTemplate] = useState<string | null>(null);
+  /** Tracks the name of the stub project saved during step 1 so it can be deleted on cancel. */
+  const wizardStubName = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameName, setRenameName] = useState("");
@@ -1584,6 +1586,20 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       clearInterval(interval);
     };
   }, [projects]);
+
+  // Clean up any in-progress wizard stub when the component unmounts (e.g. user
+  // navigates to a different top-level section via the sidebar).
+  useEffect(() => {
+    return () => {
+      const stub = wizardStubName.current;
+      if (stub) {
+        // Fire-and-forget: best-effort deletion on unmount. We cannot await here
+        // since React cleanup functions must be synchronous.
+        invoke("delete_project", { name: stub }).catch(() => {});
+        wizardStubName.current = null;
+      }
+    };
+  }, []);
 
   const applyStoredOrder = (names: string[]): string[] => {
     try {
@@ -2005,6 +2021,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   };
 
   const selectProject = async (name: string) => {
+    // If the wizard is open, cancel it (cleans up any saved stub) before loading the selected project.
+    if (isCreating) {
+      await cancelCreate();
+    }
     try {
       // Fetch both the stored state and the autodetected state in parallel so
       // we can tell whether detection found anything new that hasn't been saved.
@@ -2304,6 +2324,30 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     setWizardStep(1);
     setWizardDiscoveredAgents([]);
     setWizardDiscovering(false);
+    wizardStubName.current = null;
+  };
+
+  /**
+   * Cancel an in-progress project creation wizard.
+   * If a stub was already saved to disk (after step 1 "Continue"), delete it so
+   * it does not appear as a broken project in the project list.
+   */
+  const cancelCreate = async () => {
+    const stub = wizardStubName.current;
+    wizardStubName.current = null;
+    setIsCreating(false);
+    setProject(null);
+    setDirty(false);
+    setError(null);
+    pendingUnifiedInstruction.current = null;
+    if (stub) {
+      try {
+        await invoke("delete_project", { name: stub });
+      } catch {
+        // Non-fatal — stub cleanup is best-effort
+      }
+      await loadProjects();
+    }
   };
 
   const startRename = () => {
@@ -3032,7 +3076,16 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
             {/* ── New project wizard (3 steps) ─────────────────────── */}
             {isCreating && (
               <div className="flex-1 flex flex-col items-center justify-center p-8">
-                <div className="w-full max-w-md">
+                <div className="w-full max-w-md relative">
+
+                  {/* Cancel wizard button */}
+                  <button
+                    onClick={cancelCreate}
+                    className="absolute -top-2 right-0 flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
+                    title="Cancel project creation"
+                  >
+                    <X size={13} /> Cancel
+                  </button>
 
                   {/* Template source badge */}
                   {wizardSourceTemplate && (
@@ -3117,6 +3170,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 const stub = { ...emptyProject(name), directory: dir, name };
                                 if (userId && !stub.created_by) stub.created_by = userId;
                                 await invoke("save_project", { name, data: JSON.stringify(stub, null, 2) });
+                                // Track stub name so cancelCreate can clean it up if the user navigates away
+                                wizardStubName.current = name;
                                 // Run read-only autodetection
                                 const raw: string = await invoke("autodetect_project_dependencies", { name });
                                 const detected = JSON.parse(raw) as Project;
