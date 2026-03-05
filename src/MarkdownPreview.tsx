@@ -3,7 +3,7 @@ import React from "react";
 // ── Shared markdown renderer ──────────────────────────────────────────────────
 // Renders a markdown string as styled React elements.
 // Supports: fenced code blocks, h1/h2/h3, tables, unordered/ordered lists,
-// horizontal rules, inline code, bold, italic, and paragraphs.
+// blockquotes, horizontal rules, inline code, bold, italic, and paragraphs.
 
 export function MarkdownPreview({ content }: { content: string }) {
   // Inline formatter
@@ -87,6 +87,19 @@ export function MarkdownPreview({ content }: { content: string }) {
         i++; n++;
       }
       elements.push(<ol key={k++} className="my-2 space-y-1.5">{items}</ol>);
+      continue;
+    }
+    if (line.startsWith("> ") || line === ">") {
+      const quoteLines: string[] = [];
+      while (i < lines.length && (lines[i]!.startsWith("> ") || lines[i] === ">")) {
+        quoteLines.push(lines[i]!.replace(/^> ?/, ""));
+        i++;
+      }
+      elements.push(
+        <blockquote key={k++} className="my-3 pl-3 border-l-2 border-border-strong/50 text-[13px] text-text-muted leading-relaxed space-y-1">
+          {quoteLines.map((ql, qi) => <p key={qi}>{inlineFormat(ql)}</p>)}
+        </blockquote>
+      );
       continue;
     }
     if (/^---+$/.test(line.trim())) { elements.push(<hr key={k++} className="my-4 border-border-strong/40" />); i++; continue; }
