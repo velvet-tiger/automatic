@@ -2,6 +2,27 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.7.0] — 2026-03-06
+
+### Features
+
+#### Projects
+- Folder/group support in the project sidebar with overview tile sync
+- Apply multiple templates to a project at once from the template selector
+
+#### Markdown
+- Blockquote rendering in MarkdownPreview components
+
+### Fixes
+- Wizard now deletes the stub project when the user cancels or navigates away
+- Template rules are applied correctly even when `unified_instruction` is empty
+- Sidebar and "New Project..." item are hidden while a project is being created
+
+### Build
+- Dev server port changed from 1420 to 1421
+
+---
+
 ## [0.6.0] — 2026-03-05
 
 ### Features
@@ -345,6 +366,7 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Warp removal correctly deletes `WARP.md` via owned config paths
 - Junie removal deletes the entire `.junie/` directory
 
+[0.7.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.7.0
 [0.6.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.6.0
 [0.5.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.5.0
 [0.4.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.4.0
