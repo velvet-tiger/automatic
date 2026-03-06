@@ -2044,6 +2044,62 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
+  /** Toggle a template's selection in the multi-select picker without immediately applying it. */
+  const toggleProjectTemplateSelection = (tmplName: string) => {
+    setSelectedProjectTemplates((prev) =>
+      prev.includes(tmplName) ? prev.filter((n) => n !== tmplName) : [...prev, tmplName]
+    );
+  };
+
+  /**
+   * Merge all currently-selected templates into the open project and close the picker.
+   * Each template's assets are unioned in; unified instructions are concatenated.
+   */
+  const applySelectedProjectTemplates = () => {
+    if (!project || selectedProjectTemplates.length === 0) return;
+    const templates = availableProjectTemplates.filter((t) => selectedProjectTemplates.includes(t.name));
+
+    let mergedAgents = [...project.agents];
+    let mergedSkills = [...project.skills];
+    let mergedMcpServers = [...project.mcp_servers];
+    let mergedProviders = [...project.providers];
+    let mergedDescription = project.description;
+    let anyUnified = false;
+    const pendingEntries: { content: string; rules: string[] }[] = [];
+
+    for (const tmpl of templates) {
+      mergedAgents = [...new Set([...mergedAgents, ...tmpl.agents])];
+      mergedSkills = [...new Set([...mergedSkills, ...tmpl.skills])];
+      mergedMcpServers = [...new Set([...mergedMcpServers, ...tmpl.mcp_servers])];
+      mergedProviders = [...new Set([...mergedProviders, ...tmpl.providers])];
+      if (!mergedDescription) mergedDescription = tmpl.description;
+      const hasContent = !!(tmpl.unified_instruction && tmpl.unified_instruction.trim());
+      const hasRules = (tmpl.unified_rules || []).length > 0;
+      if (hasContent || hasRules) {
+        anyUnified = true;
+        pendingEntries.push({ content: tmpl.unified_instruction || "", rules: tmpl.unified_rules || [] });
+      }
+    }
+
+    setProject({
+      ...project,
+      description: mergedDescription,
+      agents: mergedAgents,
+      skills: mergedSkills,
+      mcp_servers: mergedMcpServers,
+      providers: mergedProviders,
+      ...(anyUnified ? { instruction_mode: "unified" } : {}),
+    });
+
+    if (anyUnified) {
+      pendingUnifiedInstruction.current = pendingEntries;
+    }
+
+    setDirty(true);
+    setShowProjectTemplatePicker(false);
+    // selectedProjectTemplates intentionally kept so the panel shows what was applied
+  };
+
   const loadMemories = async (projectName: string) => {
     try {
       setLoadingMemories(true);
@@ -2099,36 +2155,6 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     } finally {
       setLoadingActivityPage(false);
     }
-  };
-
-  /** Apply a single project template to the currently loaded project (non-wizard flow). */
-  const applyProjectTemplate = (tmpl: ProjectTemplate) => {
-    if (!project) return;
-    const mergedAgents = [...new Set([...project.agents, ...tmpl.agents])];
-    const mergedSkills = [...new Set([...project.skills, ...tmpl.skills])];
-    const mergedMcpServers = [...new Set([...project.mcp_servers, ...tmpl.mcp_servers])];
-    const mergedProviders = [...new Set([...project.providers, ...tmpl.providers])];
-    const hasUnifiedContent = !!(tmpl.unified_instruction && tmpl.unified_instruction.trim());
-    const hasUnifiedRules = (tmpl.unified_rules || []).length > 0;
-    const hasUnified = hasUnifiedContent || hasUnifiedRules;
-    setProject({
-      ...project,
-      description: project.description || tmpl.description,
-      agents: mergedAgents,
-      skills: mergedSkills,
-      mcp_servers: mergedMcpServers,
-      providers: mergedProviders,
-      ...(hasUnified ? { instruction_mode: "unified" } : {}),
-    });
-    if (hasUnified) {
-      pendingUnifiedInstruction.current = [
-        ...(pendingUnifiedInstruction.current ?? []),
-        { content: tmpl.unified_instruction || "", rules: tmpl.unified_rules || [] },
-      ];
-    }
-    setDirty(true);
-    setSelectedProjectTemplates([tmpl.name]);
-    setShowProjectTemplatePicker(false);
   };
 
   const loadProjectFiles = async (name: string) => {
@@ -2374,7 +2400,52 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     if (!name) return;
     try {
       setSyncStatus("syncing");
-      const toSave = { ...project, name, updated_at: new Date().toISOString() };
+
+      // In the wizard (isCreating), selectedProjectTemplates represents the final
+      // template choices from step 3. Merge them into the project snapshot here so
+      // the save is atomic — no React state-update timing issues.
+      let effectiveProject = project;
+      if (isCreating && selectedProjectTemplates.length > 0) {
+        const wizardTemplates = availableProjectTemplates.filter((t) =>
+          selectedProjectTemplates.includes(t.name)
+        );
+        let mergedAgents = [...project.agents];
+        let mergedSkills = [...project.skills];
+        let mergedMcpServers = [...project.mcp_servers];
+        let mergedProviders = [...project.providers];
+        let anyUnified = false;
+        const wizardPending: { content: string; rules: string[] }[] = [];
+
+        for (const tmpl of wizardTemplates) {
+          mergedAgents = [...new Set([...mergedAgents, ...tmpl.agents])];
+          mergedSkills = [...new Set([...mergedSkills, ...tmpl.skills])];
+          mergedMcpServers = [...new Set([...mergedMcpServers, ...tmpl.mcp_servers])];
+          mergedProviders = [...new Set([...mergedProviders, ...tmpl.providers])];
+          const hasContent = !!(tmpl.unified_instruction && tmpl.unified_instruction.trim());
+          const hasRules = (tmpl.unified_rules || []).length > 0;
+          if (hasContent || hasRules) {
+            anyUnified = true;
+            wizardPending.push({ content: tmpl.unified_instruction || "", rules: tmpl.unified_rules || [] });
+          }
+        }
+        effectiveProject = {
+          ...project,
+          agents: mergedAgents,
+          skills: mergedSkills,
+          mcp_servers: mergedMcpServers,
+          providers: mergedProviders,
+          ...(anyUnified ? { instruction_mode: "unified" } : {}),
+        };
+        if (wizardPending.length > 0) {
+          // Merge with any previously stashed pending entries (e.g. from startCreate)
+          pendingUnifiedInstruction.current = [
+            ...(pendingUnifiedInstruction.current ?? []),
+            ...wizardPending,
+          ];
+        }
+      }
+
+      const toSave = { ...effectiveProject, name, updated_at: new Date().toISOString() };
       // Tag new projects with the current user for future team/cloud sync
       if (isCreating && userId && !toSave.created_by) {
         toSave.created_by = userId;
@@ -3277,7 +3348,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
             {!isCreating && showProjectTemplatePicker && (
               <div className="border-b border-border-strong/40 bg-bg-input/50 px-6 py-3">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-[12px] font-semibold text-text-base">Apply Project Template</span>
+                  <span className="text-[12px] font-semibold text-text-base">Apply Project Templates</span>
                   <button
                     onClick={() => setShowProjectTemplatePicker(false)}
                     className="text-[11px] text-text-muted hover:text-text-base transition-colors"
@@ -3290,32 +3361,53 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     No project templates yet. Create one in the Project Templates section.
                   </p>
                 ) : (
-                  <div className="grid grid-cols-2 xl:grid-cols-3 gap-2">
-                    {availableProjectTemplates.map((tmpl) => {
-                      const isSelected = selectedProjectTemplates.includes(tmpl.name);
-                      return (
-                        <button
-                          key={tmpl.name}
-                          onClick={() => applyProjectTemplate(tmpl)}
-                          className={`text-left px-3 py-2 rounded-md transition-colors flex items-start gap-2 border ${
-                            isSelected ? "bg-brand/15 border-brand/40" : "bg-bg-sidebar hover:bg-surface border-border-strong/30 hover:border-border-strong"
-                          }`}
-                        >
-                          <LayoutTemplate size={13} className={`mt-0.5 shrink-0 ${isSelected ? "text-brand" : "text-text-muted"}`} />
-                          <div className="min-w-0">
-                            <div className="text-[12px] font-medium text-text-base truncate">{tmpl.name}</div>
-                            {tmpl.description && <div className="text-[11px] text-text-muted truncate">{tmpl.description}</div>}
-                            <div className="flex items-center gap-2 mt-1">
-                              {tmpl.agents.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.agents.length} agents</span>}
-                              {tmpl.skills.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.skills.length} skills</span>}
-                              {tmpl.mcp_servers.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.mcp_servers.length} MCP</span>}
+                  <>
+                    <p className="text-[11px] text-text-muted mb-2">Select one or more templates — their assets will be merged into this project.</p>
+                    <div className="grid grid-cols-2 xl:grid-cols-3 gap-2 mb-3">
+                      {availableProjectTemplates.map((tmpl) => {
+                        const isSelected = selectedProjectTemplates.includes(tmpl.name);
+                        return (
+                          <button
+                            key={tmpl.name}
+                            onClick={() => toggleProjectTemplateSelection(tmpl.name)}
+                            className={`text-left px-3 py-2 rounded-md transition-colors flex items-start gap-2 border ${
+                              isSelected ? "bg-brand/15 border-brand/40" : "bg-bg-sidebar hover:bg-surface border-border-strong/30 hover:border-border-strong"
+                            }`}
+                          >
+                            <LayoutTemplate size={13} className={`mt-0.5 shrink-0 ${isSelected ? "text-brand" : "text-text-muted"}`} />
+                            <div className="min-w-0">
+                              <div className="text-[12px] font-medium text-text-base truncate">{tmpl.name}</div>
+                              {tmpl.description && <div className="text-[11px] text-text-muted truncate">{tmpl.description}</div>}
+                              <div className="flex items-center gap-2 mt-1">
+                                {tmpl.agents.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.agents.length} agents</span>}
+                                {tmpl.skills.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.skills.length} skills</span>}
+                                {tmpl.mcp_servers.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.mcp_servers.length} MCP</span>}
+                              </div>
                             </div>
-                          </div>
-                          {isSelected && <Check size={12} className="text-brand shrink-0 mt-0.5 ml-auto" />}
+                            {isSelected && <Check size={12} className="text-brand shrink-0 mt-0.5 ml-auto" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center justify-end gap-3">
+                      {selectedProjectTemplates.length > 0 && (
+                        <button
+                          onClick={() => setSelectedProjectTemplates([])}
+                          className="text-[12px] text-text-muted hover:text-text-base transition-colors"
+                        >
+                          Clear selection
                         </button>
-                      );
-                    })}
-                  </div>
+                      )}
+                      <button
+                        onClick={applySelectedProjectTemplates}
+                        disabled={selectedProjectTemplates.length === 0}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover disabled:opacity-40 disabled:cursor-not-allowed text-white text-[12px] font-medium rounded transition-colors"
+                      >
+                        <Check size={12} />
+                        Apply {selectedProjectTemplates.length > 0 ? `${selectedProjectTemplates.length} ` : ""}Template{selectedProjectTemplates.length !== 1 ? "s" : ""}
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -3560,27 +3652,27 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     </>
                   )}
 
-                  {/* ── Step 3: Template ──────────────────────────────── */}
+                  {/* ── Step 3: Templates ─────────────────────────────── */}
                   {wizardStep === 3 && (
                     <>
                       <div className="mb-6 text-center">
                         <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-brand/10 border border-brand/30 flex items-center justify-center">
                           <LayoutTemplate size={24} className="text-brand" strokeWidth={1.5} />
                         </div>
-                        <h2 className="text-[16px] font-semibold text-text-base mb-1">Apply a template</h2>
+                        <h2 className="text-[16px] font-semibold text-text-base mb-1">Apply templates</h2>
                         <p className="text-[13px] text-text-muted leading-relaxed">
-                          Optionally start from a project template to pre-configure skills, MCP servers, and instructions.
+                          Optionally select one or more templates to pre-configure skills, MCP servers, and instructions.
                         </p>
                       </div>
 
                       {availableProjectTemplates.length > 0 ? (
-                        <div className="space-y-1 max-h-56 overflow-y-auto custom-scrollbar mb-5">
+                        <div className="space-y-1 max-h-56 overflow-y-auto custom-scrollbar mb-3">
                           {availableProjectTemplates.map((tmpl) => {
                             const isSelected = selectedProjectTemplates.includes(tmpl.name);
                             return (
                               <button
                                 key={tmpl.name}
-                                onClick={() => applyProjectTemplate(tmpl)}
+                                onClick={() => toggleProjectTemplateSelection(tmpl.name)}
                                 className={`w-full text-left px-3 py-2.5 rounded-md transition-colors flex items-start gap-2 border ${
                                   isSelected
                                     ? "bg-brand/15 border-brand/40"
@@ -3625,14 +3717,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                       {selectedProjectTemplates.length > 0 && (
                         <button
-                          onClick={() => {
-                            setProject((p) => p ? { ...p, agents: p.agents } : p);
-                            setSelectedProjectTemplates([]);
-                            setShowProjectTemplatePicker(false);
-                          }}
-                          className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base mb-4 transition-colors"
+                          onClick={() => setSelectedProjectTemplates([])}
+                          className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base mb-3 transition-colors"
                         >
-                          <X size={11} /> Clear template
+                          <X size={11} /> Clear selection ({selectedProjectTemplates.length})
                         </button>
                       )}
 
