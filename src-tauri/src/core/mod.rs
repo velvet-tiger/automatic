@@ -1,4 +1,5 @@
 pub mod ai;
+mod app_plugins;
 mod author;
 mod credentials;
 mod env_crypto;
@@ -20,6 +21,7 @@ mod skills;
 mod templates;
 mod types;
 
+pub use app_plugins::*;
 pub use author::*;
 pub use credentials::*;
 pub use flags::*;

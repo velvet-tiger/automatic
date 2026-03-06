@@ -1,5 +1,6 @@
 mod activity;
 mod ai;
+mod app_plugins;
 mod credentials;
 mod flags;
 mod profile;
@@ -19,6 +20,7 @@ mod oauth;
 
 pub use activity::*;
 pub use ai::*;
+pub use app_plugins::*;
 pub use credentials::*;
 pub use flags::*;
 pub use profile::*;

@@ -82,6 +82,8 @@ function App() {
   const [pendingMarketplaceTemplate, setPendingMarketplaceTemplate] = useState<string | null>(null);
   const [pendingMcpServer, setPendingMcpServer] = useState<string | null>(null);
 
+
+
   // ── App version ─────────────────────────────────────────────────────────
   const [appVersion, setAppVersion] = useState<string>("");
   useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);

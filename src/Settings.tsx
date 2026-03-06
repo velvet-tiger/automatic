@@ -12,7 +12,8 @@ import {
   trackUpdateInstalled,
 } from "./analytics";
 import { AgentSelector, type AgentInfo } from "./AgentSelector";
-import { Code2, Bot, AppWindow, X } from "lucide-react";
+import SettingsPlugins from "./plugins/SettingsPlugins";
+import { Code2, Bot, AppWindow, Puzzle, X } from "lucide-react";
 
 type UpdateStatus =
   | "idle"
@@ -23,7 +24,7 @@ type UpdateStatus =
   | "installed"
   | "error";
 
-type SettingsPage = "skills" | "agents" | "app";
+type SettingsPage = "skills" | "agents" | "app" | "plugins";
 
 interface AppSettings {
   skill_sync_mode: string;
@@ -49,6 +50,12 @@ const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; descripti
     label: "App",
     icon: <AppWindow size={15} />,
     description: "Analytics & updates",
+  },
+  {
+    id: "plugins",
+    label: "Plugins",
+    icon: <Puzzle size={15} />,
+    description: "Enable & disable features",
   },
 ];
 
@@ -385,6 +392,9 @@ export default function Settings() {
           )}
 
           {/* ── App page ────────────────────────────────────────────── */}
+          {/* ── Plugins page ────────────────────────────────────────────── */}
+          {activePage === "plugins" && <SettingsPlugins />}
+
           {activePage === "app" && (
             <div>
               <h2 className="text-lg font-medium mb-1 text-text-base">App</h2>
