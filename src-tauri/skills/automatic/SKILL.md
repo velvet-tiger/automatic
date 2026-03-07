@@ -79,6 +79,27 @@ name: string  — the project name as registered in Automatic
 
 ---
 
+### `automatic_get_project_context`
+
+Read the structured context for a named project from `.automatic/context.json` in the project directory. Returns all sections in a single call:
+
+- **commands** — build, test, lint, and other runnable commands
+- **entry_points** — key source files or modules to orient around
+- **concepts** — named architectural concepts with summaries and relevant file paths
+- **conventions** — coding and naming conventions to follow
+- **gotchas** — known pitfalls and environment-specific warnings
+- **docs** — indexed documentation files with summaries and paths
+
+```
+project: string  — the project name as registered in Automatic
+```
+
+**When to use:** At the start of a session or before making changes to a project. The context tells you the correct build commands, where to start reading, how the codebase is organised, and what to watch out for. Prefer this over guessing from directory structure alone.
+
+Returns an empty context object (no error) if the file has not been created yet.
+
+---
+
 ### `automatic_sync_project`
 
 Sync a project's MCP server configs and skill references to its directory for all configured agent tools (Claude Code, Cursor, OpenCode, etc.).
@@ -118,7 +139,7 @@ Automatic provides a persistent key-value store for agents to retain context, us
 
 1. **On session start** — call `automatic_list_skills` to see what skills are available. If a skill matches the current task domain, call `automatic_read_skill` to load it and view its companion resources. Optionally call `automatic_search_memories` to retrieve past learnings for the current project.
 
-2. **For project context** — call `automatic_list_projects` to find the relevant project, then `automatic_read_project` to load its full configuration.
+2. **For project context** — call `automatic_list_projects` to find the relevant project, then `automatic_read_project` to load its configuration and `automatic_get_project_context` to load its commands, concepts, conventions, and gotchas.
 
 3. **For project setup** — call `automatic_list_mcp_servers` to see registered servers, then `automatic_sync_project` to apply the configuration.
 
