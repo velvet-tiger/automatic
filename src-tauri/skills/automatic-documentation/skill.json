@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "automatic-documentation",
+  "version": "1.0.0",
+  "description": "Principles for writing READMEs, API docs, ADRs, code comments, and changelogs for AI agents",
+  "author": {
+    "name": "Automatic",
+    "url": "https://github.com/velvet-tiger/automatic"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvet-tiger/automatic.git",
+    "directory": "src-tauri/skills/automatic-documentation"
+  },
+  "keywords": ["documentation", "readme", "api-docs", "adr", "changelog"],
+  "skills": [
+    {
+      "name": "automatic-documentation",
+      "path": ".",
+      "description": "Principles for writing READMEs, API docs, ADRs, code comments, and changelogs. Use when creating or improving any technical documentation.",
+      "category": "development",
+      "tags": ["documentation", "readme", "api-docs", "adr", "changelog", "comments"]
+    }
+  ]
+}

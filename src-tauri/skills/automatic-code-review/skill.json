@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "automatic-code-review",
+  "version": "1.0.0",
+  "description": "Effective code review principles and practices for AI agents",
+  "author": {
+    "name": "Automatic",
+    "url": "https://github.com/velvet-tiger/automatic"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvet-tiger/automatic.git",
+    "directory": "src-tauri/skills/automatic-code-review"
+  },
+  "keywords": ["code-review", "pull-request", "review", "quality"],
+  "skills": [
+    {
+      "name": "automatic-code-review",
+      "path": ".",
+      "description": "How to conduct and receive effective code reviews. Use when reviewing a PR, requesting review, or improving review quality.",
+      "category": "development",
+      "tags": ["code-review", "pull-request", "pr", "quality", "feedback"]
+    }
+  ]
+}

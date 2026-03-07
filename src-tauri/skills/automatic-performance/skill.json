@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "automatic-performance",
+  "version": "1.0.0",
+  "description": "Data-driven approach to identifying and resolving performance bottlenecks for AI agents",
+  "author": {
+    "name": "Automatic",
+    "url": "https://github.com/velvet-tiger/automatic"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvet-tiger/automatic.git",
+    "directory": "src-tauri/skills/automatic-performance"
+  },
+  "keywords": ["performance", "optimization", "profiling", "latency", "bottleneck"],
+  "skills": [
+    {
+      "name": "automatic-performance",
+      "path": ".",
+      "description": "Data-driven approach to identifying and resolving performance bottlenecks. Use when investigating slow queries, high latency, or memory growth.",
+      "category": "development",
+      "tags": ["performance", "optimization", "profiling", "latency", "memory", "bottleneck"]
+    }
+  ]
+}

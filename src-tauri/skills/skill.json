@@ -1,0 +1,89 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "automatic-skills",
+  "version": "1.0.0",
+  "description": "Core engineering skills bundled with the Automatic desktop app — covering API design, code review, database design, debugging, documentation, llms.txt, performance, refactoring, security review, and testing",
+  "author": {
+    "name": "Automatic",
+    "url": "https://github.com/velvet-tiger/automatic"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvet-tiger/automatic.git",
+    "directory": "src-tauri/skills"
+  },
+  "keywords": ["automatic", "engineering", "best-practices", "ai-agents"],
+  "skills": [
+    {
+      "name": "automatic-api-design",
+      "path": "./automatic-api-design",
+      "description": "REST API design conventions, error shapes, versioning, and pagination patterns. Use when designing or reviewing any HTTP API.",
+      "category": "development",
+      "tags": ["api", "rest", "http", "design", "versioning", "pagination"]
+    },
+    {
+      "name": "automatic-code-review",
+      "path": "./automatic-code-review",
+      "description": "How to conduct and receive effective code reviews. Use when reviewing a PR, requesting review, or improving review quality.",
+      "category": "development",
+      "tags": ["code-review", "pull-request", "pr", "quality", "feedback"]
+    },
+    {
+      "name": "automatic-database-design",
+      "path": "./automatic-database-design",
+      "description": "Schema design conventions, normalisation, indexing, and migration practices. Use when designing or reviewing a relational database schema.",
+      "category": "data",
+      "tags": ["database", "schema", "sql", "migrations", "normalisation", "indexing"]
+    },
+    {
+      "name": "automatic-debugging",
+      "path": "./automatic-debugging",
+      "description": "Systematic process for diagnosing and resolving defects. Use when debugging failures, investigating errors, or reproducing issues.",
+      "category": "development",
+      "tags": ["debugging", "errors", "defects", "troubleshooting", "diagnosis", "investigation"]
+    },
+    {
+      "name": "automatic-documentation",
+      "path": "./automatic-documentation",
+      "description": "Principles for writing READMEs, API docs, ADRs, code comments, and changelogs. Use when creating or improving any technical documentation.",
+      "category": "development",
+      "tags": ["documentation", "readme", "api-docs", "adr", "changelog", "comments"]
+    },
+    {
+      "name": "automatic-llms-txt",
+      "path": "./automatic-llms-txt",
+      "description": "Create and maintain llms.txt files following the llmstxt.org standard. Use when adding LLM-friendly documentation to a project or website.",
+      "category": "documentation",
+      "tags": ["llms-txt", "llmstxt", "documentation", "ai", "llm", "standards"]
+    },
+    {
+      "name": "automatic-performance",
+      "path": "./automatic-performance",
+      "description": "Data-driven approach to identifying and resolving performance bottlenecks. Use when investigating slow queries, high latency, or memory growth.",
+      "category": "development",
+      "tags": ["performance", "optimization", "profiling", "latency", "memory", "bottleneck"]
+    },
+    {
+      "name": "automatic-refactoring",
+      "path": "./automatic-refactoring",
+      "description": "Techniques for improving code structure without changing behaviour. Use when cleaning up code, reducing complexity, or addressing technical debt.",
+      "category": "development",
+      "tags": ["refactoring", "code-quality", "technical-debt", "clean-code", "complexity"]
+    },
+    {
+      "name": "automatic-security-review",
+      "path": "./automatic-security-review",
+      "description": "Security review checklist and threat mindset for any codebase. Use when reviewing code for vulnerabilities, implementing auth, or handling user input.",
+      "category": "development",
+      "tags": ["security", "vulnerability", "auth", "review", "threat-model", "input-validation"]
+    },
+    {
+      "name": "automatic-testing",
+      "path": "./automatic-testing",
+      "description": "Principles and patterns for writing effective tests. Use when writing unit, integration, or end-to-end tests, or reviewing test quality.",
+      "category": "testing",
+      "tags": ["testing", "unit-tests", "integration-tests", "e2e", "tdd", "test-quality"]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "automatic-testing",
+  "version": "1.0.0",
+  "description": "Principles and patterns for writing effective tests for AI agents",
+  "author": {
+    "name": "Automatic",
+    "url": "https://github.com/velvet-tiger/automatic"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvet-tiger/automatic.git",
+    "directory": "src-tauri/skills/automatic-testing"
+  },
+  "keywords": ["testing", "unit-tests", "integration-tests", "e2e", "tdd"],
+  "skills": [
+    {
+      "name": "automatic-testing",
+      "path": ".",
+      "description": "Principles and patterns for writing effective tests. Use when writing unit, integration, or end-to-end tests, or reviewing test quality.",
+      "category": "testing",
+      "tags": ["testing", "unit-tests", "integration-tests", "e2e", "tdd", "test-quality"]
+    }
+  ]
+}

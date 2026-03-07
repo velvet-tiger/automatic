@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "automatic-llms-txt",
+  "version": "1.0.0",
+  "description": "Create and maintain llms.txt files following the llmstxt.org standard for AI agents",
+  "author": {
+    "name": "Automatic",
+    "url": "https://github.com/velvet-tiger/automatic"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvet-tiger/automatic.git",
+    "directory": "src-tauri/skills/automatic-llms-txt"
+  },
+  "keywords": ["llms-txt", "llmstxt", "documentation", "ai", "llm"],
+  "skills": [
+    {
+      "name": "automatic-llms-txt",
+      "path": ".",
+      "description": "Create and maintain llms.txt files following the llmstxt.org standard. Use when adding LLM-friendly documentation to a project or website.",
+      "category": "documentation",
+      "tags": ["llms-txt", "llmstxt", "documentation", "ai", "llm", "standards"]
+    }
+  ]
+}

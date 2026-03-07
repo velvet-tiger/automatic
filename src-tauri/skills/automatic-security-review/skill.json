@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "automatic-security-review",
+  "version": "1.0.0",
+  "description": "Security review checklist and threat mindset for reviewing codebases for AI agents",
+  "author": {
+    "name": "Automatic",
+    "url": "https://github.com/velvet-tiger/automatic"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvet-tiger/automatic.git",
+    "directory": "src-tauri/skills/automatic-security-review"
+  },
+  "keywords": ["security", "vulnerability", "auth", "review", "threat-model"],
+  "skills": [
+    {
+      "name": "automatic-security-review",
+      "path": ".",
+      "description": "Security review checklist and threat mindset for any codebase. Use when reviewing code for vulnerabilities, implementing auth, or handling user input.",
+      "category": "development",
+      "tags": ["security", "vulnerability", "auth", "review", "threat-model", "input-validation"]
+    }
+  ]
+}

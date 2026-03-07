@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "automatic-database-design",
+  "version": "1.0.0",
+  "description": "Database schema design conventions, normalisation, indexing, and migration practices for AI agents",
+  "author": {
+    "name": "Automatic",
+    "url": "https://github.com/velvet-tiger/automatic"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvet-tiger/automatic.git",
+    "directory": "src-tauri/skills/automatic-database-design"
+  },
+  "keywords": ["database", "schema", "sql", "migrations", "indexing"],
+  "skills": [
+    {
+      "name": "automatic-database-design",
+      "path": ".",
+      "description": "Schema design conventions, normalisation, indexing, and migration practices. Use when designing or reviewing a relational database schema.",
+      "category": "data",
+      "tags": ["database", "schema", "sql", "migrations", "normalisation", "indexing"]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "automatic-refactoring",
+  "version": "1.0.0",
+  "description": "Techniques for improving code structure without changing behaviour for AI agents",
+  "author": {
+    "name": "Automatic",
+    "url": "https://github.com/velvet-tiger/automatic"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvet-tiger/automatic.git",
+    "directory": "src-tauri/skills/automatic-refactoring"
+  },
+  "keywords": ["refactoring", "code-quality", "technical-debt", "clean-code"],
+  "skills": [
+    {
+      "name": "automatic-refactoring",
+      "path": ".",
+      "description": "Techniques for improving code structure without changing behaviour. Use when cleaning up code, reducing complexity, or addressing technical debt.",
+      "category": "development",
+      "tags": ["refactoring", "code-quality", "technical-debt", "clean-code", "complexity"]
+    }
+  ]
+}

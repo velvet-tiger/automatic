@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::*;
+use super::types::{SkillsJson};
 
 // ── Skills Store (skills.sh) ─────────────────────────────────────────────────
 
@@ -181,6 +182,78 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
         if let Ok(Some(content)) = result {
             tasks.abort_all();
             return Ok(content);
+        }
+    }
+
+    // ── Step 1b: skill.json at repo root ─────────────────────────────────────
+    // Try fetching skill.json from the well-known repo root for main/master.
+    // This is faster than a git clone and covers repos that publish
+    // skill.json package metadata per the velvet-tiger/skills-json spec.
+    for branch in &["main", "master"] {
+        let skills_json_url = format!(
+            "https://raw.githubusercontent.com/{}/{}/skill.json",
+            source, branch
+        );
+
+        let skills_json_resp = client
+            .get(&skills_json_url)
+            .header("User-Agent", "automatic-desktop/1.0")
+            .send()
+            .await;
+
+        let skills_json_text = match skills_json_resp {
+            Ok(r) if r.status().is_success() => match r.text().await {
+                Ok(t) => t,
+                Err(_) => continue,
+            },
+            _ => continue,
+        };
+
+        let manifest: SkillsJson = match serde_json::from_str(&skills_json_text) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        // Find the matching skill entry by name
+        let skill_entry = manifest.skills.iter().find(|s| s.name == name);
+        let skill_entry = match skill_entry {
+            Some(e) => e,
+            None => continue,
+        };
+
+        // Resolve the SKILL.md (or custom entrypoint) path from skill.json
+        let entrypoint = skill_entry.entrypoint_file();
+        let skill_path = if skill_entry.path == "." || skill_entry.path.is_empty() {
+            entrypoint.to_string()
+        } else {
+            let p = skill_entry.path.trim_start_matches("./");
+            format!("{}/{}", p, entrypoint)
+        };
+
+        let skill_url = format!(
+            "https://raw.githubusercontent.com/{}/{}/{}",
+            source, branch, skill_path
+        );
+
+        let skill_resp = client
+            .get(&skill_url)
+            .header("User-Agent", "automatic-desktop/1.0")
+            .send()
+            .await;
+
+        let content = match skill_resp {
+            Ok(r) if r.status().is_success() => match r.text().await {
+                Ok(t) => t,
+                Err(_) => continue,
+            },
+            _ => continue,
+        };
+
+        // Validate: frontmatter name must match or be absent
+        match extract_frontmatter_name(&content) {
+            Some(ref n) if n == name => return Ok(content),
+            None => return Ok(content),
+            _ => {}
         }
     }
 

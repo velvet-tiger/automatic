@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use super::types::SkillsJson;
 use super::*;
 
 // ── Skills ───────────────────────────────────────────────────────────────────
@@ -21,6 +22,15 @@ fn skill_has_resources(skill_dir: &PathBuf) -> bool {
 }
 
 /// Scan a single skills directory and return the set of valid skill names.
+///
+/// Discovery order:
+/// 1. If a `skill.json` exists at the directory root, read skill names from it
+///    and verify each skill's entrypoint (SKILL.md or custom) is present.
+/// 2. Fall back to scanning subdirectories for any that contain `SKILL.md`.
+///
+/// This means that a directory that is itself a skill.json package (e.g. a
+/// locally cloned skill repo) is correctly enumerated via its manifest, while
+/// plain directories without skill.json continue to work as before.
 fn scan_skills_dir(dir: &PathBuf) -> Result<std::collections::HashSet<String>, String> {
     let mut names = std::collections::HashSet::new();
 
@@ -28,6 +38,34 @@ fn scan_skills_dir(dir: &PathBuf) -> Result<std::collections::HashSet<String>, S
         return Ok(names);
     }
 
+    // ── Step 1: skill.json discovery ─────────────────────────────────────────
+    let skills_json_path = dir.join("skill.json");
+    if skills_json_path.exists() {
+        if let Ok(raw) = fs::read_to_string(&skills_json_path) {
+            if let Ok(manifest) = serde_json::from_str::<SkillsJson>(&raw) {
+                for skill in &manifest.skills {
+                    if !is_valid_name(&skill.name) {
+                        continue;
+                    }
+                    // Resolve the skill directory and entrypoint
+                    let skill_base = if skill.path == "." || skill.path.is_empty() {
+                        dir.clone()
+                    } else {
+                        let p = skill.path.trim_start_matches("./");
+                        dir.join(p)
+                    };
+                    let entrypoint = skill_base.join(skill.entrypoint_file());
+                    if entrypoint.exists() {
+                        names.insert(skill.name.clone());
+                    }
+                }
+                // Return immediately — the manifest is authoritative for this dir
+                return Ok(names);
+            }
+        }
+    }
+
+    // ── Step 2: filesystem scan (no skill.json) ───────────────────────────────
     let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
     for entry in entries {
         if let Ok(entry) = entry {
@@ -336,21 +374,56 @@ pub fn get_skill_dir(name: &str) -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
 
-/// Get the absolute path to a skill's SKILL.md file. Checks `~/.agents/skills/` first,
+/// Resolve the entrypoint filename for a skill directory.
+/// If a `skill.json` exists in the skill's parent directory (or the skill
+/// itself is the package root), reads it to find the custom `entrypoint`
+/// field for the matching skill entry.  Falls back to "SKILL.md".
+fn resolve_entrypoint(skill_dir: &PathBuf, name: &str) -> String {
+    // Check for skill.json in the parent (standard layout: skill.json at root,
+    // skill dirs as children)
+    if let Some(parent) = skill_dir.parent() {
+        let skills_json_path = parent.join("skill.json");
+        if let Ok(raw) = fs::read_to_string(&skills_json_path) {
+            if let Ok(manifest) = serde_json::from_str::<SkillsJson>(&raw) {
+                if let Some(entry) = manifest.skills.iter().find(|s| s.name == name) {
+                    return entry.entrypoint_file().to_string();
+                }
+            }
+        }
+    }
+    "SKILL.md".to_string()
+}
+
+/// Get the absolute path to a skill's entrypoint file. Checks `~/.agents/skills/` first,
 /// then falls back to `~/.claude/skills/`.
+/// Respects the `entrypoint` field in `skill.json` if present; defaults to `SKILL.md`.
 pub fn get_skill_path(name: &str) -> Result<Option<PathBuf>, String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
 
-    let agents_path = get_agents_skills_dir()?.join(name).join("SKILL.md");
+    let agents_skill_dir = get_agents_skills_dir()?.join(name);
+    let agents_entrypoint = resolve_entrypoint(&agents_skill_dir, name);
+    let agents_path = agents_skill_dir.join(&agents_entrypoint);
     if agents_path.exists() {
         return Ok(Some(agents_path));
     }
+    // Fallback to SKILL.md for backward compatibility
+    let agents_fallback = agents_skill_dir.join("SKILL.md");
+    if agents_fallback.exists() {
+        return Ok(Some(agents_fallback));
+    }
 
-    let claude_path = get_claude_skills_dir()?.join(name).join("SKILL.md");
+    let claude_skill_dir = get_claude_skills_dir()?.join(name);
+    let claude_entrypoint = resolve_entrypoint(&claude_skill_dir, name);
+    let claude_path = claude_skill_dir.join(&claude_entrypoint);
     if claude_path.exists() {
         return Ok(Some(claude_path));
+    }
+    // Fallback to SKILL.md for backward compatibility
+    let claude_fallback = claude_skill_dir.join("SKILL.md");
+    if claude_fallback.exists() {
+        return Ok(Some(claude_fallback));
     }
 
     Ok(None)

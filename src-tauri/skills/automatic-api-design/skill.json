@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "automatic-api-design",
+  "version": "1.0.0",
+  "description": "REST API design conventions, error shapes, versioning, and pagination patterns for AI agents",
+  "author": {
+    "name": "Automatic",
+    "url": "https://github.com/velvet-tiger/automatic"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvet-tiger/automatic.git",
+    "directory": "src-tauri/skills/automatic-api-design"
+  },
+  "keywords": ["api", "rest", "design", "http", "conventions"],
+  "skills": [
+    {
+      "name": "automatic-api-design",
+      "path": ".",
+      "description": "REST API design conventions, error shapes, versioning, and pagination patterns. Use when designing or reviewing any HTTP API.",
+      "category": "development",
+      "tags": ["api", "rest", "http", "design", "versioning", "pagination"]
+    }
+  ]
+}
