@@ -45,6 +45,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ai_chat,
             ai_chat_with_tools,
+            ai_list_models,
             resolve_author,
             read_profile,
             save_profile,
@@ -56,6 +57,8 @@ pub fn run() {
             dismiss_welcome,
             save_api_key,
             get_api_key,
+            has_api_key,
+            delete_api_key,
             list_agents,
             list_agents_with_projects,
             detect_installed_agents,

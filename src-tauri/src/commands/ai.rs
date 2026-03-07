@@ -32,3 +32,12 @@ pub async fn ai_chat_with_tools(
     ai::chat_with_tools(messages, api_key, model, system, max_tokens, working_dir).await
 }
 
+/// Fetch available Anthropic model IDs from the Models API.
+///
+/// Resolves the API key via the standard chain (env var → keychain).
+/// Returns an error if no key is configured or the request fails.
+#[tauri::command]
+pub async fn ai_list_models() -> Result<Vec<String>, String> {
+    ai::list_models().await
+}
+

@@ -10,7 +10,8 @@ interface AiMessage {
   content: string;
 }
 
-const MODELS = [
+/** Static fallback list used when the API key is absent or the request fails. */
+const FALLBACK_MODELS = [
   "claude-sonnet-4-5",
   "claude-opus-4-5",
   "claude-haiku-4-5",
@@ -39,7 +40,15 @@ function useDropdown() {
 
 // ── ModelPicker ───────────────────────────────────────────────────────────────
 
-function ModelPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function ModelPicker({
+  value,
+  onChange,
+  models,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  models: string[];
+}) {
   const { open, setOpen, ref } = useDropdown();
 
   return (
@@ -52,8 +61,8 @@ function ModelPicker({ value, onChange }: { value: string; onChange: (v: string)
         <ChevronDown size={11} className={`text-text-muted transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 min-w-[220px] rounded-md bg-bg-input border border-border-strong/40 shadow-lg overflow-hidden">
-          {MODELS.map((m) => (
+        <div className="absolute left-0 top-full mt-1 z-50 min-w-[220px] max-h-72 overflow-y-auto rounded-md bg-bg-input border border-border-strong/40 shadow-lg custom-scrollbar">
+          {models.map((m) => (
             <button
               key={m}
               onClick={() => { onChange(m); setOpen(false); }}
@@ -154,13 +163,31 @@ export default function AiPlayground() {
   const [input, setInput] = useState("");
   const [system, setSystem] = useState("");
   const [showSystem, setShowSystem] = useState(false);
-  const [model, setModel] = useState("claude-sonnet-4-5");
+  const [models, setModels] = useState<string[]>(FALLBACK_MODELS);
+  const [model, setModel] = useState(FALLBACK_MODELS[0]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [workingDir, setWorkingDir] = useState<string>("");
   const [projects, setProjects] = useState<Array<{ name: string; directory: string }>>([]);
   const [selectedProject, setSelectedProject] = useState<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // ── Fetch available models from the Anthropic API ─────────────────────────
+
+  useEffect(() => {
+    invoke<string[]>("ai_list_models")
+      .then((fetched) => {
+        if (fetched.length > 0) {
+          setModels(fetched);
+          // Keep the selected model if it's in the fetched list; otherwise
+          // default to the first result (newest model).
+          setModel((prev) => (fetched.includes(prev) ? prev : fetched[0]!));
+        }
+      })
+      .catch(() => {
+        // No key configured yet, or network error — stay on the fallback list.
+      });
+  }, []);
 
   // ── Load projects for the working-dir picker ───────────────────────────────
 
@@ -265,7 +292,7 @@ export default function AiPlayground() {
         <Bot size={15} className="text-brand" />
         <span className="text-[13px] font-medium text-text-base">AI Playground</span>
 
-        <ModelPicker value={model} onChange={setModel} />
+        <ModelPicker value={model} onChange={setModel} models={models} />
 
         {/* Tools badge */}
         {toolsEnabled && (

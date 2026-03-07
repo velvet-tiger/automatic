@@ -35,6 +35,18 @@ struct AnthropicResponse {
     content: Vec<ContentBlock>,
 }
 
+/// A single entry from the Anthropic Models API.
+#[derive(Debug, Deserialize)]
+struct ModelInfo {
+    id: String,
+}
+
+/// Top-level response from the Anthropic Models list API.
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    data: Vec<ModelInfo>,
+}
+
 /// Error body returned by Anthropic (best-effort parse).
 #[derive(Debug, Deserialize)]
 struct AnthropicError {
@@ -104,7 +116,43 @@ pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
         }
     }
 
-    Err("No Anthropic API key found. Set ANTHROPIC_API_KEY in .env or save one via Settings.".to_string())
+    Err("No Anthropic API key found. Set ANTHROPIC_API_KEY in the environment, or add a key via Agents > Claude.".to_string())
+}
+
+/// Fetch the list of available model IDs from the Anthropic Models API.
+///
+/// Returns model IDs in the order provided by the API (newest first).
+/// Requires a valid API key — resolves via the standard chain.
+pub async fn list_models() -> Result<Vec<String>, String> {
+    let key = resolve_api_key(None)?;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get("https://api.anthropic.com/v1/models")
+        .header("x-api-key", &key)
+        .header("anthropic-version", "2023-06-01")
+        .query(&[("limit", "100")])
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+    if !status.is_success() {
+        let msg = serde_json::from_str::<AnthropicError>(&body)
+            .map(|e| e.error.message)
+            .unwrap_or_else(|_| body.clone());
+        return Err(format!("Anthropic API error {}: {}", status, msg));
+    }
+
+    let parsed: ModelsResponse = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse models response: {}", e))?;
+
+    Ok(parsed.data.into_iter().map(|m| m.id).collect())
 }
 
 /// Send a list of messages to the Anthropic Messages API and return the
