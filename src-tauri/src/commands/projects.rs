@@ -175,7 +175,7 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
         core::save_project(name, &enriched_data)?;
 
         if !enriched.agents.is_empty() {
-            let written = sync::sync_project_without_autodetect(&enriched)?;
+            let written = sync::sync_project_without_autodetect(&mut enriched)?;
             if !written.is_empty() {
                 let detail = format!(
                     "{} file{}",
@@ -336,7 +336,7 @@ where
     }
 }
 
-pub(crate) fn sync_project_if_configured(project_name: &str, project: &core::Project) {
+pub(crate) fn sync_project_if_configured(project_name: &str, project: &mut core::Project) {
     if project.directory.is_empty() || project.agents.is_empty() {
         return;
     }

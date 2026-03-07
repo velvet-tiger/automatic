@@ -3,6 +3,118 @@ use std::collections::HashMap;
 
 // ── Data Structures ──────────────────────────────────────────────────────────
 
+// ── skill.json (velvet-tiger/skills-json spec) ───────────────────────────────
+
+/// Publisher-side package metadata for an AI agent skill package.
+/// Lives at the root of a skill repo as `skill.json`.
+/// Spec: https://github.com/velvet-tiger/skills-json
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SkillsJson {
+    /// URL to the JSON Schema (optional, for validation tooling).
+    #[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    /// Package identifier. Lowercase, hyphens allowed.
+    pub name: String,
+    /// Semver version.
+    pub version: String,
+    /// One-line package summary.
+    pub description: String,
+    /// Package author.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<SkillsJsonAuthor>,
+    /// SPDX license identifier. Inherited by skills unless overridden.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    /// Source repository info.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository: Option<SkillsJsonRepository>,
+    /// Documentation URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+    /// Package-level search terms.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keywords: Vec<String>,
+    /// Array of skill entries (minimum 1).
+    pub skills: Vec<SkillsJsonSkill>,
+}
+
+/// Author info — object form (npm shorthand strings are not supported here,
+/// use the object form for serialization).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkillsJsonAuthor {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+}
+
+/// Repository info.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkillsJsonRepository {
+    #[serde(rename = "type")]
+    pub repo_type: String,
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directory: Option<String>,
+}
+
+/// A single skill entry within a `skill.json` package.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkillsJsonSkill {
+    /// Unique skill identifier. Should match directory name.
+    pub name: String,
+    /// Relative path from skill.json to the skill directory.
+    pub path: String,
+    /// What this skill does and when to use it.
+    pub description: String,
+    /// Skill-specific version override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// SRI hash of skill directory contents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub integrity: Option<String>,
+    /// Main instruction file relative to path. Defaults to "SKILL.md".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<String>,
+    /// Primary category for organisation and filtering.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Search and filter tags.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// SPDX license override for this skill.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    /// Compatibility constraints.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requires: Option<SkillsJsonRequires>,
+    /// Other skill names within this package that must also be installed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+}
+
+impl SkillsJsonSkill {
+    /// Resolve the entrypoint filename. Returns "SKILL.md" when not specified.
+    pub fn entrypoint_file(&self) -> &str {
+        self.entrypoint.as_deref().unwrap_or("SKILL.md")
+    }
+}
+
+/// Compatibility constraints for a skill.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SkillsJsonRequires {
+    /// Required tool availability (e.g. ["python3", "node"]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    /// External skill dependencies ("package/skill-name" format).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
+    /// Minimum agent versions keyed by agent slug.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub min_agent_versions: HashMap<String, String>,
+}
+
 /// Remote origin of a skill imported from skills.sh, or the bundled origin
 /// for skills shipped with the app.
 /// Stored in ~/.automatic/skills.json keyed by skill name.
@@ -122,6 +234,11 @@ pub struct Project {
     /// Agents not present in this map use their `AgentOptions::default()`.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub agent_options: HashMap<String, AgentOptions>,
+    /// Hash of the full content Automatic last wrote to each instruction file.
+    /// Maps filename (e.g. `"AGENTS.md"`) to a hex-encoded hash.  Used by
+    /// drift detection to identify files that were modified externally.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub instruction_file_hashes: HashMap<String, String>,
 }
 
 fn default_instruction_mode() -> String {

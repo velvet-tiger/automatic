@@ -1,5 +1,9 @@
+use std::collections::HashMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+
+use crate::agent;
 
 use super::*;
 
@@ -60,5 +64,63 @@ pub(crate) fn strip_managed_section(content: &str) -> String {
         }
     } else {
         content.to_string()
+    }
+}
+
+// ── Instruction file hash tracking ──────────────────────────────────────────
+
+/// Compute a deterministic hash of file content.  Used to detect external
+/// modifications to instruction files.
+pub fn compute_content_hash(content: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Read all instruction files for a project's agents from disk and return a
+/// map of `filename → hash(full_content)`.  Only files that exist on disk are
+/// included.
+pub fn compute_instruction_hashes(project: &Project) -> HashMap<String, String> {
+    let mut hashes = HashMap::new();
+    if project.directory.is_empty() {
+        return hashes;
+    }
+
+    let dir = PathBuf::from(&project.directory);
+    if !dir.exists() {
+        return hashes;
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for agent_id in &project.agents {
+        if let Some(a) = agent::from_id(agent_id) {
+            if !a.capabilities().instructions {
+                continue;
+            }
+            let filename = a.project_file_name().to_string();
+            if seen.contains(&filename) {
+                continue;
+            }
+            seen.insert(filename.clone());
+
+            let path = dir.join(&filename);
+            if let Ok(content) = fs::read_to_string(&path) {
+                hashes.insert(filename, compute_content_hash(&content));
+            }
+        }
+    }
+
+    hashes
+}
+
+/// Record the current on-disk hashes for all instruction files into the
+/// project's config and persist to the registry.  Call after any operation
+/// that writes instruction files.
+pub fn record_instruction_hashes(project_name: &str, project: &mut Project) {
+    project.instruction_file_hashes = compute_instruction_hashes(project);
+
+    // Persist updated hashes to the registry.
+    if let Ok(data) = serde_json::to_string_pretty(project) {
+        let _ = save_project(project_name, &data);
     }
 }

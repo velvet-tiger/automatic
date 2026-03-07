@@ -98,7 +98,7 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
 #[tauri::command]
 pub fn sync_rule_to_project(rule_name: &str, project_name: &str) -> Result<(), String> {
     let raw = core::read_project(project_name)?;
-    let project: core::Project =
+    let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
 
     let references = project
@@ -120,6 +120,6 @@ pub fn sync_rule_to_project(rule_name: &str, project_name: &str) -> Result<(), S
         }
     }
 
-    sync_project_if_configured(project_name, &project);
+    sync_project_if_configured(project_name, &mut project);
     Ok(())
 }

@@ -34,23 +34,43 @@ pub struct AgentDrift {
     pub files: Vec<DriftedFile>,
 }
 
+/// A conflict detected when an instruction file exists on disk with user content
+/// that Automatic was not aware of (externally created or edited).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct InstructionFileConflict {
+    /// The instruction filename (e.g. `"AGENTS.md"`, `"CLAUDE.md"`).
+    pub filename: String,
+    /// Agent labels that use this file (e.g. `["Claude Code"]`).
+    pub agent_labels: Vec<String>,
+    /// The user-authored content currently on disk (stripped of Automatic managed sections).
+    pub disk_content: String,
+    /// The user-authored content Automatic has stored (empty string if never set through Automatic).
+    pub automatic_content: String,
+}
+
 /// Full drift report for a project.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DriftReport {
-    /// `true` if any agent has drift.
+    /// `true` if any agent has MCP/skill drift, or instruction files have conflicts.
     pub drifted: bool,
     /// One entry per agent that has at least one drifted file.
     pub agents: Vec<AgentDrift>,
+    /// Instruction files that have content on disk which Automatic does not recognise.
+    /// These require user action: keep existing or overwrite.
+    #[serde(default)]
+    pub instruction_conflicts: Vec<InstructionFileConflict>,
 }
 
 /// Check whether the on-disk agent configs match what Automatic would generate.
-/// Returns a [`DriftReport`] describing which agents and files have drifted.
+/// Returns a [`DriftReport`] describing which agents and files have drifted,
+/// and any instruction files that have external content Automatic was not aware of.
 /// This is a read-only operation — nothing is written.
 pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
     if project.directory.is_empty() || project.agents.is_empty() {
         return Ok(DriftReport {
             drifted: false,
             agents: vec![],
+            instruction_conflicts: vec![],
         });
     }
 
@@ -59,6 +79,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         return Ok(DriftReport {
             drifted: false,
             agents: vec![],
+            instruction_conflicts: vec![],
         });
     }
 
@@ -95,11 +116,177 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         }
     }
 
-    let drifted = !agent_drifts.is_empty();
+    let instruction_conflicts = collect_instruction_file_conflicts(project, &dir);
+
+    let drifted = !agent_drifts.is_empty() || !instruction_conflicts.is_empty();
     Ok(DriftReport {
         drifted,
         agents: agent_drifts,
+        instruction_conflicts,
     })
+}
+
+/// Public wrapper for use by the `commands` layer.
+pub fn collect_instruction_conflicts_pub(
+    project: &Project,
+    dir: &PathBuf,
+) -> Vec<InstructionFileConflict> {
+    collect_instruction_file_conflicts(project, dir)
+}
+
+/// Detect instruction files that were modified outside Automatic.
+///
+/// Compares the current on-disk hash of each instruction file against the
+/// hash Automatic recorded the last time it wrote the file (stored in
+/// `project.instruction_file_hashes`).  A mismatch means the file was
+/// edited externally.
+///
+/// Also detects "orphaned" files: instruction files that exist on disk but
+/// have no stored hash at all (e.g. the user created one manually before
+/// Automatic ever synced the project).
+///
+/// In unified mode, additionally checks whether the instruction files are
+/// inconsistent with each other (different user content), even if no
+/// individual hash is stored yet.
+fn collect_instruction_file_conflicts(
+    project: &Project,
+    dir: &PathBuf,
+) -> Vec<InstructionFileConflict> {
+    let mut conflicts: Vec<InstructionFileConflict> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    // Collect all instruction filenames and their on-disk user content.
+    let mut file_user_contents: Vec<(String, String)> = Vec::new();
+
+    for agent_id in &project.agents {
+        let agent_instance = match agent::from_id(agent_id) {
+            Some(a) => a,
+            None => continue,
+        };
+
+        if !agent_instance.capabilities().instructions {
+            continue;
+        }
+
+        let filename = agent_instance.project_file_name().to_string();
+        if seen.contains(&filename) {
+            continue;
+        }
+        seen.insert(filename.clone());
+
+        let file_path = dir.join(&filename);
+        if !file_path.exists() {
+            continue;
+        }
+
+        let raw_disk = match fs::read_to_string(&file_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let disk_user_content = crate::core::strip_rules_section_pub(
+            &crate::core::strip_managed_section_pub(&raw_disk),
+        );
+
+        // Skip files with no user content.
+        if disk_user_content.trim().is_empty() {
+            continue;
+        }
+
+        let current_hash = crate::core::compute_content_hash(&raw_disk);
+        let stored_hash = project.instruction_file_hashes.get(&filename);
+
+        let is_externally_modified = match stored_hash {
+            Some(stored) => &current_hash != stored,
+            // No stored hash means Automatic has never recorded writing this
+            // file.  If the file has user content, it was created externally.
+            None => true,
+        };
+
+        if is_externally_modified {
+            file_user_contents.push((filename, disk_user_content));
+        }
+    }
+
+    // In unified mode, also check for inconsistency across files, even if
+    // individual hashes match.  If files have different user content,
+    // something was modified outside of Automatic's unified replication.
+    if project.instruction_mode == "unified" && file_user_contents.is_empty() {
+        let mut all_contents: Vec<(String, String)> = Vec::new();
+        let mut seen2: HashSet<String> = HashSet::new();
+
+        for agent_id in &project.agents {
+            let agent_instance = match agent::from_id(agent_id) {
+                Some(a) => a,
+                None => continue,
+            };
+            if !agent_instance.capabilities().instructions {
+                continue;
+            }
+            let filename = agent_instance.project_file_name().to_string();
+            if seen2.contains(&filename) {
+                continue;
+            }
+            seen2.insert(filename.clone());
+
+            let file_path = dir.join(&filename);
+            if !file_path.exists() {
+                continue;
+            }
+            if let Ok(raw) = fs::read_to_string(&file_path) {
+                let user_content = crate::core::strip_rules_section_pub(
+                    &crate::core::strip_managed_section_pub(&raw),
+                );
+                all_contents.push((filename, user_content));
+            }
+        }
+
+        // If there are 2+ files with different user content, they're inconsistent.
+        if all_contents.len() > 1 {
+            let first_content = &all_contents[0].1;
+            let inconsistent: Vec<_> = all_contents
+                .iter()
+                .filter(|(_, c)| c.trim() != first_content.trim())
+                .collect();
+
+            if !inconsistent.is_empty() {
+                // Flag all files as conflicted so the user can choose.
+                file_user_contents = all_contents;
+            }
+        }
+    }
+
+    // Build conflict entries for each externally-modified file.
+    for (filename, disk_user_content) in &file_user_contents {
+        let agent_labels: Vec<String> = project
+            .agents
+            .iter()
+            .filter_map(|aid| {
+                agent::from_id(aid).and_then(|a| {
+                    if a.project_file_name() == *filename {
+                        Some(a.label().to_string())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        // The "Automatic content" is what Automatic would generate for this
+        // file: empty user content (since any real content was set by the user
+        // externally) plus whatever rules are configured.  We return empty
+        // here so the UI correctly shows that Automatic has no stored content.
+        let automatic_content = String::new();
+
+        conflicts.push(InstructionFileConflict {
+            filename: filename.clone(),
+            agent_labels,
+            disk_content: disk_user_content.clone(),
+            automatic_content,
+        });
+    }
+
+    conflicts
 }
 
 /// Collect MCP config drift entries for one agent into `out`.

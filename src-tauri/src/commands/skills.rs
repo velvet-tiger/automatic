@@ -57,8 +57,8 @@ pub fn import_local_skill(name: &str, skill_name: &str) -> Result<String, String
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    let updated = sync::import_local_skill(&project, skill_name)?;
-    super::projects::sync_project_if_configured(name, &updated);
+    let mut updated = sync::import_local_skill(&project, skill_name)?;
+    super::projects::sync_project_if_configured(name, &mut updated);
     serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())
 }
 

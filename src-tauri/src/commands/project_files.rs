@@ -82,18 +82,41 @@ pub fn read_project_file(name: &str, filename: &str) -> Result<String, String> {
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
 
     if filename == "_unified" {
-        // Read from the first existing agent file
+        // In unified mode, collect all existing agent files and pick the one
+        // with the most recently modified timestamp.  This ensures that if the
+        // user edits one file externally, the unified view shows the updated
+        // content rather than stale content from an arbitrary first file.
         let project_dir = std::path::Path::new(&project.directory);
+        let mut candidates: Vec<(String, std::time::SystemTime)> = Vec::new();
+
+        let mut seen = std::collections::HashSet::new();
         for agent_id in &project.agents {
             if let Some(a) = agent::from_id(agent_id) {
-                let f = a.project_file_name();
-                if project_dir.join(f).exists() {
-                    return core::read_project_file(&project.directory, f);
+                let f = a.project_file_name().to_string();
+                if seen.contains(&f) {
+                    continue;
+                }
+                seen.insert(f.clone());
+
+                let path = project_dir.join(&f);
+                if path.exists() {
+                    let mtime = path
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    candidates.push((f, mtime));
                 }
             }
         }
-        // No file exists yet -- return empty
-        Ok(String::new())
+
+        if candidates.is_empty() {
+            return Ok(String::new());
+        }
+
+        // Pick the most recently modified file so external edits are visible.
+        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+        let best = &candidates[0].0;
+        core::read_project_file(&project.directory, best)
     } else {
         core::read_project_file(&project.directory, filename)
     }
@@ -116,7 +139,7 @@ fn collect_agent_filenames(project: &core::Project) -> Vec<String> {
 #[tauri::command]
 pub fn save_project_file(name: &str, filename: &str, content: &str) -> Result<(), String> {
     let raw = core::read_project(name)?;
-    let project: core::Project =
+    let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
 
     if filename == "_unified" || project.instruction_mode == "unified" {
@@ -129,13 +152,115 @@ pub fn save_project_file(name: &str, filename: &str, content: &str) -> Result<()
         for f in collect_agent_filenames(&project) {
             core::save_project_file_with_rules(&project.directory, &f, content, &rules)?;
         }
-        Ok(())
     } else {
         let rules = project
             .file_rules
             .get(filename)
             .cloned()
             .unwrap_or_default();
-        core::save_project_file_with_rules(&project.directory, filename, content, &rules)
+        core::save_project_file_with_rules(&project.directory, filename, content, &rules)?;
     }
+
+    // Record updated hashes so drift detection reflects what we just wrote.
+    core::record_instruction_hashes(name, &mut project);
+    Ok(())
+}
+
+/// Adopt the current on-disk content of an instruction file into Automatic's
+/// editor.  This is a no-op write: the file is read, its user-authored content
+/// is extracted (stripping Automatic-managed sections), and then re-written
+/// through the normal `save_project_file_with_rules` path so that managed
+/// sections are correctly re-applied.  After this call the file is considered
+/// in sync and the conflict is resolved.
+///
+/// Call this when the user chooses "Use existing file" in the conflict
+/// resolution UI.
+#[tauri::command]
+pub fn adopt_instruction_file(name: &str, filename: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let mut project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    // read_project_file strips managed sections and returns only user content.
+    let user_content = core::read_project_file(&project.directory, filename)?;
+
+    // Re-write through the standard path so rules are correctly applied.
+    if project.instruction_mode == "unified" {
+        let rules = project
+            .file_rules
+            .get("_unified")
+            .cloned()
+            .unwrap_or_default();
+        for f in collect_agent_filenames(&project) {
+            core::save_project_file_with_rules(&project.directory, &f, &user_content, &rules)?;
+        }
+    } else {
+        let rules = project
+            .file_rules
+            .get(filename)
+            .cloned()
+            .unwrap_or_default();
+        core::save_project_file_with_rules(&project.directory, filename, &user_content, &rules)?;
+    }
+
+    // Record updated hashes so drift detection reflects what we just wrote.
+    core::record_instruction_hashes(name, &mut project);
+
+    // Return the adopted user content so the frontend can update its editor state.
+    Ok(user_content)
+}
+
+/// Overwrite an instruction file with Automatic's stored content (empty user
+/// content plus any configured rules).  This erases any content that was
+/// manually added outside of Automatic.
+///
+/// Call this when the user chooses "Overwrite with Automatic content" in the
+/// conflict resolution UI.
+#[tauri::command]
+pub fn overwrite_instruction_file(name: &str, filename: &str) -> Result<(), String> {
+    let raw = core::read_project(name)?;
+    let mut project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    // Write an empty user-content file with the configured rules re-applied.
+    if project.instruction_mode == "unified" {
+        let rules = project
+            .file_rules
+            .get("_unified")
+            .cloned()
+            .unwrap_or_default();
+        for f in collect_agent_filenames(&project) {
+            core::save_project_file_with_rules(&project.directory, &f, "", &rules)?;
+        }
+    } else {
+        let rules = project
+            .file_rules
+            .get(filename)
+            .cloned()
+            .unwrap_or_default();
+        core::save_project_file_with_rules(&project.directory, filename, "", &rules)?;
+    }
+
+    // Record updated hashes so drift detection reflects what we just wrote.
+    core::record_instruction_hashes(name, &mut project);
+    Ok(())
+}
+
+/// Returns the list of instruction file conflicts for a project — files that
+/// exist on disk with user content that differs from what Automatic has stored.
+/// Serialised as a JSON array of [`InstructionFileConflict`] objects.
+#[tauri::command]
+pub fn get_instruction_file_conflicts(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    let dir = std::path::PathBuf::from(&project.directory);
+    if project.directory.is_empty() || !dir.exists() {
+        return serde_json::to_string(&[] as &[crate::sync::InstructionFileConflict])
+            .map_err(|e| e.to_string());
+    }
+
+    let conflicts = crate::sync::collect_instruction_conflicts_pub(&project, &dir);
+    serde_json::to_string(&conflicts).map_err(|e| e.to_string())
 }
