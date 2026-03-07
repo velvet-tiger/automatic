@@ -37,14 +37,15 @@ pub fn get_project_context(directory: &str) -> Result<ProjectContext, String> {
     }
 
     let dir_path = PathBuf::from(directory);
-    let context_path = dir_path.join(".automatic").join("context.toml");
+    let context_path = dir_path.join(".automatic").join("context.json");
 
     if !context_path.exists() {
         return Ok(ProjectContext::default());
     }
 
     let content = fs::read_to_string(&context_path).map_err(|e| e.to_string())?;
-    let context: ProjectContext = toml::from_str(&content).map_err(|e| format!("Failed to parse context.toml: {}", e))?;
+    let context: ProjectContext = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse context.json: {}", e))?;
 
     Ok(context)
 }
@@ -53,9 +54,13 @@ pub fn get_project_context(directory: &str) -> Result<ProjectContext, String> {
 // Formatters for context tools
 // ============================================================================
 
-pub fn get_commands(context: &ProjectContext, project_name: &str, command_type: Option<&str>) -> Result<String, String> {
+pub fn get_commands(
+    context: &ProjectContext,
+    project_name: &str,
+    command_type: Option<&str>,
+) -> Result<String, String> {
     if context.commands.is_empty() {
-        return Ok(format!("No commands defined for project '{}'. Define them in .automatic/context.toml under [commands].", project_name));
+        return Ok(format!("No commands defined for project '{}'. Define them in .automatic/context.json under \"commands\".", project_name));
     }
 
     match command_type {
@@ -79,9 +84,14 @@ pub fn get_commands(context: &ProjectContext, project_name: &str, command_type: 
     }
 }
 
-pub fn get_architecture(context: &ProjectContext, project_name: &str, concept_name: &str, path: &std::path::Path) -> Result<String, String> {
+pub fn get_architecture(
+    context: &ProjectContext,
+    project_name: &str,
+    concept_name: &str,
+    path: &std::path::Path,
+) -> Result<String, String> {
     if context.concepts.is_empty() {
-        return Ok(format!("No concepts defined for project '{}'. Define them in .automatic/context.toml under [concepts].", project_name));
+        return Ok(format!("No concepts defined for project '{}'. Define them in .automatic/context.json under \"concepts\".", project_name));
     }
 
     // Try exact match first
@@ -131,13 +141,17 @@ fn format_concept(root: &std::path::Path, name: &str, concept: &Concept) -> Stri
     output
 }
 
-pub fn get_conventions(context: &ProjectContext, project_name: &str, category: Option<&str>) -> Result<String, String> {
+pub fn get_conventions(
+    context: &ProjectContext,
+    project_name: &str,
+    category: Option<&str>,
+) -> Result<String, String> {
     let has_conventions = !context.conventions.is_empty();
     let has_gotchas = !context.gotchas.is_empty();
 
     if !has_conventions && !has_gotchas {
         return Ok(format!(
-            "No conventions found for '{}'. Create .automatic/context.toml to add project-specific conventions and gotchas.",
+            "No conventions found for '{}'. Create .automatic/context.json to add project-specific conventions and gotchas.",
             project_name
         ));
     }
@@ -188,10 +202,15 @@ pub fn get_conventions(context: &ProjectContext, project_name: &str, category: O
     Ok(output)
 }
 
-pub fn get_docs(context: &ProjectContext, project_name: &str, topic: Option<&str>, path: &std::path::Path) -> Result<String, String> {
+pub fn get_docs(
+    context: &ProjectContext,
+    project_name: &str,
+    topic: Option<&str>,
+    path: &std::path::Path,
+) -> Result<String, String> {
     if context.docs.is_empty() {
         return Ok(format!(
-            "No documentation index found for '{}'. Define them in .automatic/context.toml under [docs].",
+            "No documentation index found for '{}'. Define them in .automatic/context.json under \"docs\".",
             project_name
         ));
     }
