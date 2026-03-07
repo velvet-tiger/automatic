@@ -58,6 +58,7 @@ import {
   Search,
   Info,
   Sparkles,
+  Lightbulb,
 } from "lucide-react";
 
 interface CustomRule {
@@ -367,6 +368,13 @@ interface ProjectsProps {
   onNavigateToSkill?: (skillName: string) => void;
   /** Called when the user clicks "View full configuration" on an MCP server — navigates to the MCP Servers page. */
   onNavigateToMcpServer?: (serverName: string) => void;
+  /** Called when the user clicks "View" on an AI-suggested skill — navigates to the Skill Store. */
+  onNavigateToSkillStore?: (skillId: string) => void;
+  /** Called when the user clicks "View" on an AI-suggested skill that has full metadata (id, name, source, installs).
+   *  Navigates to the Skill Store and auto-selects the exact skill. */
+  onNavigateToSkillStoreWithResult?: (result: { id: string; name: string; source: string; installs: number }) => void;
+  /** Called when the user clicks "View" on an AI-suggested MCP server — navigates to the MCP Marketplace. */
+  onNavigateToMcpMarketplace?: (slug: string) => void;
   /** When set, opens the new project wizard at step 3 with this template pre-selected. */
   initialCreateWithTemplate?: string | null;
   onInitialCreateWithTemplateConsumed?: () => void;
@@ -1471,7 +1479,7 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Projects({ initialProject = null, onInitialProjectConsumed, onNavigateToSkill, onNavigateToMcpServer, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
+export default function Projects({ initialProject = null, onInitialProjectConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToMcpMarketplace, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const { log, update } = useTaskLog();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
@@ -1630,6 +1638,16 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
   // Recommendations state
   const [recommendations, setRecommendations] = useState<ProjectRecommendation[]>([]);
+  const [aiRecsLoading, setAiRecsLoading] = useState(false);
+  const [aiRecsLastRunAt, setAiRecsLastRunAt] = useState<string | null>(null);
+
+  // Skills tab AI suggestion state
+  const [aiSkillsLoading, setAiSkillsLoading] = useState(false);
+  const [aiSkillsSuggestions, setAiSkillsSuggestions] = useState<ProjectRecommendation[]>([]);
+
+  // MCP Servers tab AI suggestion state
+  const [aiMcpLoading, setAiMcpLoading] = useState(false);
+  const [aiMcpSuggestions, setAiMcpSuggestions] = useState<ProjectRecommendation[]>([]);
 
   // Activity state
   const [activityEntries, setActivityEntries] = useState<ActivityEntry[]>([]);
@@ -1760,7 +1778,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     setCustomRuleEditingIdx(null);
     setGlobalRuleAdding(false);
     setGlobalRuleSearch("");
-    if (!selectedName) setRecommendations([]);
+    setRecommendations([]);
+    setAiRecsLastRunAt(null);
+    setAiSkillsSuggestions([]);
+    setAiMcpSuggestions([]);
   }, [selectedName]);
 
   // Periodically check for configuration drift while a project tab is active
@@ -2428,14 +2449,83 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
   const loadRecommendations = async (projectName: string) => {
     try {
-      const recs = await invoke<ProjectRecommendation[]>("evaluate_project_recommendations", { project: projectName });
+      const [recs, skillRecs, mcpRecs] = await Promise.all([
+        invoke<ProjectRecommendation[]>("evaluate_project_recommendations", { project: projectName }),
+        invoke<ProjectRecommendation[]>("list_recommendations_by_source", { project: projectName, source: "automatic-ai-skills" }),
+        invoke<ProjectRecommendation[]>("list_recommendations_by_source", { project: projectName, source: "automatic-ai-mcp" }),
+      ]);
       setRecommendations(recs);
+      setAiSkillsSuggestions(skillRecs);
+      setAiMcpSuggestions(mcpRecs);
+      // Fetch the last AI run timestamp (non-blocking, best-effort).
+      invoke<string | null>("get_ai_recommendations_timestamp", { project: projectName })
+        .then((ts) => setAiRecsLastRunAt(ts ?? null))
+        .catch(() => {});
       // Notify the global Recommendations view so it re-fetches from the DB.
       window.dispatchEvent(new CustomEvent("recommendations-updated"));
     } catch (err: any) {
       console.error("Failed to evaluate recommendations:", err);
       // Non-fatal — clear so stale data isn't shown
       setRecommendations([]);
+      setAiSkillsSuggestions([]);
+      setAiMcpSuggestions([]);
+    }
+  };
+
+  const handleUpdateAiRecommendations = async () => {
+    if (!selectedName || aiRecsLoading) return;
+    setAiRecsLoading(true);
+    const entryId = log(`Analysing recommendations for "${selectedName}"…`, "running");
+    try {
+      const result = await invoke<{ recommendations: ProjectRecommendation[]; last_run_at: string }>(
+        "ai_generate_project_recommendations",
+        { project: selectedName, force: true },
+      );
+      setRecommendations(result.recommendations);
+      setAiRecsLastRunAt(result.last_run_at);
+      window.dispatchEvent(new CustomEvent("recommendations-updated"));
+      update(entryId, `Recommendations updated for "${selectedName}"`, "success");
+    } catch (err: any) {
+      console.error("Failed to generate AI recommendations:", err);
+      update(entryId, `Recommendation analysis failed: ${err}`, "error");
+    } finally {
+      setAiRecsLoading(false);
+    }
+  };
+
+  const handleSuggestSkills = async () => {
+    if (!selectedName || aiSkillsLoading) return;
+    setAiSkillsLoading(true);
+    const entryId = log(`Suggesting skills for "${selectedName}"…`, "running");
+    try {
+      const recs = await invoke<ProjectRecommendation[]>("ai_suggest_skills", { project: selectedName });
+      const skillRecs = recs.filter((r) => r.source === "automatic-ai-skills" && r.status === "pending");
+      setAiSkillsSuggestions(skillRecs);
+      window.dispatchEvent(new CustomEvent("recommendations-updated"));
+      update(entryId, `Skills suggestions ready for "${selectedName}"`, "success");
+    } catch (err: any) {
+      console.error("Failed to suggest skills:", err);
+      update(entryId, `Skills suggestion failed: ${err}`, "error");
+    } finally {
+      setAiSkillsLoading(false);
+    }
+  };
+
+  const handleSuggestMcpServers = async () => {
+    if (!selectedName || aiMcpLoading) return;
+    setAiMcpLoading(true);
+    const entryId = log(`Suggesting MCP servers for "${selectedName}"…`, "running");
+    try {
+      const recs = await invoke<ProjectRecommendation[]>("ai_suggest_mcp_servers", { project: selectedName });
+      const mcpRecs = recs.filter((r) => r.source === "automatic-ai-mcp" && r.status === "pending");
+      setAiMcpSuggestions(mcpRecs);
+      window.dispatchEvent(new CustomEvent("recommendations-updated"));
+      update(entryId, `MCP server suggestions ready for "${selectedName}"`, "success");
+    } catch (err: any) {
+      console.error("Failed to suggest MCP servers:", err);
+      update(entryId, `MCP server suggestion failed: ${err}`, "error");
+    } finally {
+      setAiMcpLoading(false);
     }
   };
 
@@ -5178,77 +5268,23 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {projectTab === "summary" && (
                   <div className="space-y-6">
 
-                    {/* ── Recommendations ──────────────────────────────── */}
+                    {/* ── Recommendations banner ───────────────────────── */}
                     {recommendations.length > 0 && (
-                      <section>
-                        <div className="flex items-center gap-2 mb-3">
-                          <Info size={13} className="text-warning" />
-                          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
-                            Recommendations
+                      <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-warning/5 border border-warning/25">
+                        <Lightbulb size={14} className="text-warning shrink-0" />
+                        <p className="flex-1 text-[12px] text-text-muted leading-snug">
+                          <span className="font-semibold text-text-base">
+                            {recommendations.length === 1 ? "1 recommendation" : `${recommendations.length} recommendations`}
                           </span>
-                        </div>
-                        <div className="space-y-2">
-                          {recommendations.map((rec) => (
-                            <div
-                              key={rec.id}
-                              className={`flex items-start gap-3 px-4 py-3 rounded-lg border ${
-                                rec.priority === "high"
-                                  ? "border-warning/30 bg-warning/5"
-                                  : "border-border-strong/40 bg-bg-input"
-                              }`}
-                            >
-                              <AlertCircle
-                                size={14}
-                                className={`flex-shrink-0 mt-0.5 ${
-                                  rec.priority === "high" ? "text-warning" : "text-text-muted"
-                                }`}
-                              />
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-0.5">
-                                  <span className="text-[12px] font-semibold text-text-base">{rec.title}</span>
-                                  {rec.priority === "high" && (
-                                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/20 leading-none">
-                                      Important
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-[11px] text-text-muted leading-relaxed">{rec.body}</p>
-                                {rec.kind === "mcp_server" && (
-                                  <button
-                                    onClick={() => setProjectTab("mcp_servers")}
-                                    className="mt-1.5 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
-                                  >
-                                    Go to MCP Servers <ArrowRight size={10} />
-                                  </button>
-                                )}
-                                {rec.kind === "rule" && (
-                                  <button
-                                    onClick={() => setProjectTab("project_file")}
-                                    className="mt-1.5 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
-                                  >
-                                    Open Project File <ArrowRight size={10} />
-                                  </button>
-                                )}
-                                {rec.kind === "project_file" && (
-                                  <button
-                                    onClick={() => setProjectTab("project_file")}
-                                    className="mt-1.5 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
-                                  >
-                                    Create Instructions File <ArrowRight size={10} />
-                                  </button>
-                                )}
-                              </div>
-                              <button
-                                onClick={() => handleDismissRecommendation(rec.id)}
-                                className="flex-shrink-0 p-0.5 text-text-muted hover:text-text-base transition-colors"
-                                title="Dismiss"
-                              >
-                                <X size={13} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </section>
+                          {" "}available for this project.
+                        </p>
+                        <button
+                          onClick={() => setProjectTab("recommendations")}
+                          className="shrink-0 flex items-center gap-1 text-[12px] font-medium text-warning hover:text-warning-hover transition-colors"
+                        >
+                          Review <ArrowRight size={11} />
+                        </button>
+                      </div>
                     )}
 
                     {/* ── Resources: Skills · MCP Servers · Memory ──────── */}
@@ -5544,11 +5580,97 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               setError(`Fork failed: ${err}`);
                             }
                           }}
-                        />
+                         />
+                      </section>
+
+                     {/* ── AI skill suggestions ──────────────────────────── */}
+                     <section>
+                       <div className="flex items-center gap-2">
+                         <Sparkles size={12} className="text-text-muted" />
+                         <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">AI Suggestions</span>
+                         {aiSkillsSuggestions.length > 0 && !aiSkillsLoading && (
+                           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-brand/10 text-brand border border-brand/20 leading-none">
+                             {aiSkillsSuggestions.length}
+                           </span>
+                         )}
+                         <div className="flex-1" />
+                         <button
+                           onClick={handleSuggestSkills}
+                           disabled={aiSkillsLoading}
+                           className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded-md disabled:opacity-40 transition-colors"
+                           title="Ask AI to suggest skills based on this project's configuration"
+                         >
+                           <Sparkles size={11} className={aiSkillsLoading ? "animate-pulse" : ""} />
+                           {aiSkillsLoading ? "Analysing…" : "Suggest skills"}
+                         </button>
+                       </div>
+
+                       {aiSkillsLoading && (
+                         <div className="mt-2 bg-bg-input border border-border-strong/40 rounded-lg px-4 py-4 flex items-center gap-3">
+                           <RefreshCw size={13} className="text-brand animate-spin flex-shrink-0" />
+                           <p className="text-[12px] text-text-muted">Searching the skill library and marketplace…</p>
+                         </div>
+                       )}
+
+                       {!aiSkillsLoading && aiSkillsSuggestions.length === 0 && (
+                         <p className="mt-1.5 text-[12px] text-text-muted">
+                           Click "Suggest skills" to get AI-powered recommendations based on this project.
+                         </p>
+                       )}
+
+                       {!aiSkillsLoading && aiSkillsSuggestions.length > 0 && (
+                         <div className="mt-2 bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                           {aiSkillsSuggestions.map((rec) => (
+                             <div key={rec.id} className="flex items-start gap-3 px-4 py-3 group hover:bg-surface-hover transition-colors">
+                               <Sparkles size={13} className="flex-shrink-0 mt-0.5 text-brand" />
+                               <div className="flex-1 min-w-0">
+                                 <div className="flex items-center gap-2 mb-0.5">
+                                   <span className="text-[13px] font-semibold text-text-base font-mono">{rec.title}</span>
+                                   {rec.priority === "high" && (
+                                     <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/20 leading-none">High</span>
+                                   )}
+                                 </div>
+                                 <p className="text-[12px] text-text-muted leading-relaxed">{rec.body}</p>
+                                 <div className="flex items-center gap-2 mt-2">
+                                   {onNavigateToSkillStore && (
+                                     <button
+                                       onClick={() => onNavigateToSkillStore(rec.title)}
+                                       className="text-[11px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded px-2 py-1 transition-colors flex items-center gap-1"
+                                     >
+                                       <Search size={10} /> View
+                                     </button>
+                                   )}
+                                   <button
+                                     onClick={async () => {
+                                       addItem("skills", rec.title);
+                                       await invoke("action_recommendation", { id: rec.id });
+                                       setAiSkillsSuggestions((prev) => prev.filter((r) => r.id !== rec.id));
+                                     }}
+                                     disabled={project.skills.includes(rec.title)}
+                                     className="text-[11px] font-medium text-brand hover:text-brand-hover border border-brand/40 rounded px-2 py-1 transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-default"
+                                   >
+                                     <Plus size={10} /> {project.skills.includes(rec.title) ? "Added" : "Add to project"}
+                                   </button>
+                                 </div>
+                               </div>
+                               <button
+                                 onClick={async () => {
+                                   await invoke("dismiss_recommendation", { id: rec.id });
+                                   setAiSkillsSuggestions((prev) => prev.filter((r) => r.id !== rec.id));
+                                 }}
+                                 className="flex-shrink-0 p-1 text-text-muted hover:text-text-base transition-colors opacity-0 group-hover:opacity-100"
+                                 title="Dismiss"
+                               >
+                                 <X size={12} />
+                               </button>
+                             </div>
+                           ))}
+                         </div>
+                       )}
                      </section>
 
-                    {/* Local Skills */}
-                    {project.local_skills.length > 0 && (
+                     {/* Local Skills */}
+                     {project.local_skills.length > 0 && (
                       <section>
                         <div className="flex items-center justify-between mb-2">
                           <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase flex items-center gap-1.5">
@@ -5920,6 +6042,94 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       emptyMessage={warpOnly ? "Add other agent tools to enable MCP server syncing." : "No MCP servers attached."}
                       onNavigateToMcpServer={onNavigateToMcpServer}
                     />
+
+                    {/* ── AI MCP suggestions ─────────────────────────────── */}
+                    {!warpOnly && (
+                      <div className="mt-4 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Sparkles size={12} className="text-text-muted" />
+                          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">AI Suggestions</span>
+                          {aiMcpSuggestions.length > 0 && !aiMcpLoading && (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-brand/10 text-brand border border-brand/20 leading-none">
+                              {aiMcpSuggestions.length}
+                            </span>
+                          )}
+                          <div className="flex-1" />
+                          <button
+                            onClick={handleSuggestMcpServers}
+                            disabled={aiMcpLoading}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded-md disabled:opacity-40 transition-colors"
+                            title="Ask AI to suggest MCP servers based on this project's configuration"
+                          >
+                            <Sparkles size={11} className={aiMcpLoading ? "animate-pulse" : ""} />
+                            {aiMcpLoading ? "Analysing…" : "Suggest MCP servers"}
+                          </button>
+                        </div>
+
+                        {aiMcpLoading && (
+                          <div className="bg-bg-input border border-border-strong/40 rounded-lg px-4 py-4 flex items-center gap-3">
+                            <RefreshCw size={13} className="text-brand animate-spin flex-shrink-0" />
+                            <p className="text-[12px] text-text-muted">Searching the MCP server catalogue…</p>
+                          </div>
+                        )}
+
+                        {!aiMcpLoading && aiMcpSuggestions.length === 0 && (
+                          <p className="text-[12px] text-text-muted">
+                            Click "Suggest MCP servers" to get AI-powered recommendations based on this project.
+                          </p>
+                        )}
+
+                        {!aiMcpLoading && aiMcpSuggestions.length > 0 && (
+                          <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                            {aiMcpSuggestions.map((rec) => (
+                              <div key={rec.id} className="flex items-start gap-3 px-4 py-3 group hover:bg-surface-hover transition-colors">
+                                <Sparkles size={13} className="flex-shrink-0 mt-0.5 text-brand" />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-0.5">
+                                    <span className="text-[13px] font-semibold text-text-base font-mono">{rec.title}</span>
+                                    {rec.priority === "high" && (
+                                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/20 leading-none">High</span>
+                                    )}
+                                  </div>
+                                  <p className="text-[12px] text-text-muted leading-relaxed">{rec.body}</p>
+                                  <div className="flex items-center gap-2 mt-2">
+                                    {onNavigateToMcpMarketplace && (
+                                      <button
+                                        onClick={() => onNavigateToMcpMarketplace(rec.title)}
+                                        className="text-[11px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded px-2 py-1 transition-colors flex items-center gap-1"
+                                      >
+                                        <Search size={10} /> View
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={async () => {
+                                        addItem("mcp_servers", rec.title);
+                                        await invoke("action_recommendation", { id: rec.id });
+                                        setAiMcpSuggestions((prev) => prev.filter((r) => r.id !== rec.id));
+                                      }}
+                                      disabled={project.mcp_servers.includes(rec.title)}
+                                      className="text-[11px] font-medium text-brand hover:text-brand-hover border border-brand/40 rounded px-2 py-1 transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-default"
+                                    >
+                                      <Plus size={10} /> {project.mcp_servers.includes(rec.title) ? "Added" : "Add to project"}
+                                    </button>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={async () => {
+                                    await invoke("dismiss_recommendation", { id: rec.id });
+                                    setAiMcpSuggestions((prev) => prev.filter((r) => r.id !== rec.id));
+                                  }}
+                                  className="flex-shrink-0 p-1 text-text-muted hover:text-text-base transition-colors opacity-0 group-hover:opacity-100"
+                                  title="Dismiss"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </section>
                   );
                 })()}
@@ -6031,21 +6241,52 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {/* ── Recommendations tab ──────────────────────────── */}
                 {projectTab === "recommendations" && (
                   <section className="space-y-3">
+                    {/* Header row */}
                     <div className="flex items-center gap-2">
-                      <AlertCircle size={13} className="text-text-muted" />
+                      <Sparkles size={13} className="text-text-muted" />
                       <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Recommendations</span>
                       {recommendations.length > 0 && (
                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
                           {recommendations.length}
                         </span>
                       )}
+                      <div className="flex-1" />
+                      {/* Last-run metadata */}
+                      {aiRecsLastRunAt && !aiRecsLoading && (
+                        <span className="text-[11px] text-text-muted">
+                          Updated {relativeTime(aiRecsLastRunAt)}
+                        </span>
+                      )}
+                      {/* Manual trigger button */}
+                      <button
+                        onClick={handleUpdateAiRecommendations}
+                        disabled={aiRecsLoading}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded-md disabled:opacity-40 transition-colors"
+                        title="Re-run AI analysis to refresh recommendations"
+                      >
+                        <RefreshCw size={11} className={aiRecsLoading ? "animate-spin" : ""} />
+                        {aiRecsLoading ? "Analysing…" : "Update recommendations"}
+                      </button>
                     </div>
 
-                    {recommendations.length === 0 ? (
-                      <div className="bg-bg-input border border-border-strong/40 rounded-lg px-4 py-10 text-center">
-                        <p className="text-[13px] text-text-muted">No recommendations at this time.</p>
+                    {/* AI loading state */}
+                    {aiRecsLoading && (
+                      <div className="bg-bg-input border border-border-strong/40 rounded-lg px-4 py-6 flex items-center gap-3">
+                        <RefreshCw size={14} className="text-brand animate-spin flex-shrink-0" />
+                        <div>
+                          <p className="text-[13px] font-medium text-text-base">Analysing project…</p>
+                          <p className="text-[12px] text-text-muted">The AI is reviewing your configuration and searching for relevant skills and MCP servers.</p>
+                        </div>
                       </div>
-                    ) : (
+                    )}
+
+                    {!aiRecsLoading && recommendations.length === 0 ? (
+                      <div className="bg-bg-input border border-border-strong/40 rounded-lg px-4 py-10 text-center">
+                        <Sparkles size={18} className="text-text-muted mx-auto mb-2" />
+                        <p className="text-[13px] font-medium text-text-base mb-1">No recommendations at this time</p>
+                        <p className="text-[12px] text-text-muted">Click "Update recommendations" to run an AI analysis of your project configuration.</p>
+                      </div>
+                    ) : !aiRecsLoading ? (
                       <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
                         {recommendations.map((rec) => (
                           <div key={rec.id} className="flex items-start gap-3 px-4 py-4 group hover:bg-surface-hover transition-colors">
@@ -6059,6 +6300,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 {rec.priority === "high" && (
                                   <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/20 leading-none">
                                     Important
+                                  </span>
+                                )}
+                                {rec.source === "automatic-ai" && (
+                                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-brand/10 text-brand border border-brand/20 leading-none flex items-center gap-1">
+                                    <Sparkles size={8} />
+                                    AI
                                   </span>
                                 )}
                               </div>
@@ -6090,7 +6337,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           </div>
                         ))}
                       </div>
-                    )}
+                    ) : null}
                   </section>
                 )}
 

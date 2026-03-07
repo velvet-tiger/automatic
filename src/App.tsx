@@ -22,12 +22,31 @@ import McpMarketplace from "./McpMarketplace";
 import CollectionMarketplace from "./CollectionMarketplace";
 import AiPlayground from "./AiPlayground";
 import FirstRunWizard from "./FirstRunWizard";
-import { TaskLogProvider } from "./TaskLogContext";
+import { TaskLogProvider, useTaskLog } from "./TaskLogContext";
 import TaskLog from "./TaskLog";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb } from "lucide-react";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb, List } from "lucide-react";
 import { flag } from "./flags";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
+
+/**
+ * Small icon button that toggles the Task Log panel open/closed.
+ * Must be rendered inside TaskLogProvider.
+ */
+function TaskLogToggleButton() {
+  const { isVisible, show, dismiss } = useTaskLog();
+
+  return (
+    <button
+      onClick={isVisible ? dismiss : show}
+      className="flex items-center justify-center w-[26px] h-[26px] rounded-md text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors"
+      aria-label={isVisible ? "Close task log" : "Open task log"}
+      title={isVisible ? "Close task log" : "Open task log"}
+    >
+      <List size={14} />
+    </button>
+  );
+}
 
 /**
  * Bootstraps Amplitude analytics once the user profile and settings are loaded.
@@ -80,7 +99,10 @@ function App() {
   const [mcpMarketplaceResetKey, setMcpMarketplaceResetKey] = useState(0);
   const [collectionMarketplaceResetKey, setCollectionMarketplaceResetKey] = useState(0);
   const [pendingSkillStoreId, setPendingSkillStoreId] = useState<string | null>(null);
+  const [pendingSkillStoreQuery, setPendingSkillStoreQuery] = useState<string | null>(null);
+  const [pendingSkillStoreResult, setPendingSkillStoreResult] = useState<{ id: string; name: string; source: string; installs: number } | null>(null);
   const [pendingMcpSlug, setPendingMcpSlug] = useState<string | null>(null);
+  const [pendingMcpQuery, setPendingMcpQuery] = useState<string | null>(null);
   const [pendingMarketplaceTemplate, setPendingMarketplaceTemplate] = useState<string | null>(null);
   const [pendingMcpServer, setPendingMcpServer] = useState<string | null>(null);
 
@@ -175,11 +197,27 @@ function App() {
 
   const navigateToSkillStore = (skillId: string) => {
     setPendingSkillStoreId(skillId);
+    // Extract the bare skill name from a full ID ("owner/repo/name" → "name")
+    // and use it as a search query so the search box is pre-filled when the
+    // full ID doesn't match a featured skill exactly.
+    const bareName = skillId.includes("/") ? skillId.split("/").pop()! : skillId;
+    setPendingSkillStoreQuery(bareName);
+    setPendingSkillStoreResult(null);
+    setActiveTab("skill-store");
+  };
+
+  // Navigate to the Skill Store and auto-select a specific skill result from AI
+  // metadata (id, name, source, installs all known — no search needed).
+  const navigateToSkillStoreWithResult = (result: { id: string; name: string; source: string; installs: number }) => {
+    setPendingSkillStoreResult(result);
+    setPendingSkillStoreId(null);
+    setPendingSkillStoreQuery(null);
     setActiveTab("skill-store");
   };
 
   const navigateToMcpMarketplace = (slug: string) => {
     setPendingMcpSlug(slug);
+    setPendingMcpQuery(slug);
     setActiveTab("mcp-marketplace");
   };
 
@@ -377,8 +415,9 @@ function App() {
             {activeTab.replace(/-/g, ' ')}
           </span>
 
-          {/* Right: contextual actions */}
+          {/* Right: contextual actions + task log toggle */}
           <div className="ml-auto pr-4 flex items-center gap-2 relative z-10">
+            <TaskLogToggleButton />
             {activeTab === "skills" && (
               <button
                 onClick={() => setActiveTab("skill-store")}
@@ -428,6 +467,9 @@ function App() {
                 onInitialProjectConsumed={() => setPendingProject(null)}
                 onNavigateToSkill={navigateToSkill}
                 onNavigateToMcpServer={navigateToMcpServer}
+                onNavigateToSkillStore={navigateToSkillStore}
+                onNavigateToSkillStoreWithResult={navigateToSkillStoreWithResult}
+                onNavigateToMcpMarketplace={navigateToMcpMarketplace}
                 initialCreateWithTemplate={pendingCreateWithTemplate}
                 onInitialCreateWithTemplateConsumed={() => setPendingCreateWithTemplate(null)}
               />
@@ -473,6 +515,10 @@ function App() {
                 resetKey={skillStoreResetKey}
                 initialSkillId={pendingSkillStoreId}
                 onInitialSkillIdConsumed={() => setPendingSkillStoreId(null)}
+                initialQuery={pendingSkillStoreQuery}
+                onInitialQueryConsumed={() => setPendingSkillStoreQuery(null)}
+                initialSkillResult={pendingSkillStoreResult}
+                onInitialSkillResultConsumed={() => setPendingSkillStoreResult(null)}
               />
             </div>
           )}
@@ -492,6 +538,8 @@ function App() {
                 resetKey={mcpMarketplaceResetKey}
                 initialSlug={pendingMcpSlug}
                 onInitialSlugConsumed={() => setPendingMcpSlug(null)}
+                initialQuery={pendingMcpQuery}
+                onInitialQueryConsumed={() => setPendingMcpQuery(null)}
               />
             </div>
           )}
