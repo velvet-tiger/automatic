@@ -4639,16 +4639,20 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 onClick={() => handleToggleProjectRule(rule.id)}
                                 className={`w-full text-left px-4 py-3 rounded-lg border transition-colors flex items-center gap-3 ${
                                   isSelected
-                                    ? "rule-pill-selected"
-                                    : "bg-bg-input border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
+                                    ? "bg-bg-input border-brand/40"
+                                    : "bg-bg-input border-border-strong/40 hover:border-border-strong"
                                 }`}
                               >
-                                <ScrollText size={14} className="flex-shrink-0" />
+                                <ScrollText size={14} className={`flex-shrink-0 ${isSelected ? "text-brand" : "text-text-muted"}`} />
                                 <div className="flex-1 min-w-0">
-                                  <div className={`text-[13px] font-medium truncate ${isSelected ? "" : "text-text-base"}`}>{rule.name}</div>
-                                  <div className="text-[11px] text-text-muted truncate">{rule.id}</div>
+                                  <div className="text-[13px] font-medium truncate text-text-base">{rule.name}</div>
+                                  <div className="text-[11px] truncate text-text-muted">{rule.id}</div>
                                 </div>
-                                {isSelected && <Check size={14} className="flex-shrink-0 text-current" />}
+                                {isSelected ? (
+                                  <Check size={14} className="flex-shrink-0 text-brand" />
+                                ) : (
+                                  <div className="w-[14px] h-[14px] flex-shrink-0 rounded border border-border-strong/60" />
+                                )}
                               </button>
                             );
                           })}

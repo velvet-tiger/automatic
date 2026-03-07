@@ -904,13 +904,13 @@ export default function ProjectTemplates({
                               }}
                               className={`px-2.5 py-1 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
                                 isSelected
-                                ? "rule-pill-selected font-medium"
+                                ? "bg-bg-sidebar border-brand/40 font-medium text-text-base"
                                 : "bg-bg-sidebar border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
                               }`}
                             >
-                              <ScrollText size={10} />
+                              <ScrollText size={10} className={isSelected ? "text-brand" : ""} />
                               {rule.name}
-                              {isSelected && <Check size={10} />}
+                              {isSelected && <Check size={10} className="text-brand" />}
                             </button>
                           );
                         })}
