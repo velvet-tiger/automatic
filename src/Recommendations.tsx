@@ -1,6 +1,55 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertCircle, ArrowRight, FolderOpen, Lightbulb, RefreshCw, X } from "lucide-react";
+import { AlertCircle, ArrowRight, ChevronDown, ChevronRight, Code, FolderOpen, Lightbulb, RefreshCw, Server, Sparkles, X } from "lucide-react";
+
+interface RecRowProps {
+  icon: React.ReactNode;
+  title: string;
+  badge?: React.ReactNode;
+  body: string;
+  linkLabel: React.ReactNode;
+  onLinkClick: () => void;
+  onDismiss?: () => void;
+}
+
+function RecRow({ icon, title, badge, body, linkLabel, onLinkClick, onDismiss }: RecRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="group/row hover:bg-surface-hover transition-colors">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+        >
+          {expanded
+            ? <ChevronDown size={12} className="flex-shrink-0 text-text-muted" />
+            : <ChevronRight size={12} className="flex-shrink-0 text-text-muted" />}
+          <span className="flex-shrink-0">{icon}</span>
+          <span className="text-[13px] font-medium text-text-base truncate">{title}</span>
+          {badge && <span className="flex-shrink-0">{badge}</span>}
+        </button>
+        <button
+          onClick={onLinkClick}
+          className="flex-shrink-0 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
+        >
+          {linkLabel}
+        </button>
+        {onDismiss && (
+          <button
+            onClick={onDismiss}
+            className="flex-shrink-0 p-0.5 text-text-muted hover:text-text-base transition-colors opacity-0 group-hover/row:opacity-100"
+            title="Dismiss"
+          >
+            <X size={12} />
+          </button>
+        )}
+      </div>
+      {expanded && (
+        <p className="px-9 pb-2.5 text-[12px] text-text-muted leading-relaxed">{body}</p>
+      )}
+    </div>
+  );
+}
 
 interface Recommendation {
   id: number;
@@ -16,8 +65,11 @@ interface Recommendation {
 }
 
 interface RecommendationsProps {
-  onNavigateToProject: (name: string) => void;
+  onNavigateToProject: (name: string, tab?: string) => void;
 }
+
+/** Sources whose individual records are replaced by a single rollup card. */
+const AI_SUGGESTION_SOURCES = new Set(["automatic-ai-skills", "automatic-ai-mcp"]);
 
 export default function Recommendations({ onNavigateToProject }: RecommendationsProps) {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
@@ -54,18 +106,38 @@ export default function Recommendations({ onNavigateToProject }: Recommendations
     }
   };
 
-  const handleProjectClick = (name: string) => {
+  const handleProjectClick = (name: string, tab?: string) => {
     localStorage.setItem("automatic.projects.selected", name);
-    onNavigateToProject(name);
+    onNavigateToProject(name, tab);
   };
 
-  // Group by project, preserving the priority-first ordering from the backend.
-  const grouped = recommendations.reduce<Map<string, Recommendation[]>>((map, rec) => {
-    const list = map.get(rec.project) ?? [];
-    list.push(rec);
-    map.set(rec.project, list);
-    return map;
-  }, new Map());
+  // Separate normal recs from AI suggestion rollup sources, grouped by project.
+  const groupedNormal = recommendations
+    .filter((r) => !AI_SUGGESTION_SOURCES.has(r.source))
+    .reduce<Map<string, Recommendation[]>>((map, rec) => {
+      const list = map.get(rec.project) ?? [];
+      list.push(rec);
+      map.set(rec.project, list);
+      return map;
+    }, new Map());
+
+  // Build rollup summaries: for each project, count AI-suggested skills and MCP servers.
+  const aiRollupByProject = recommendations
+    .filter((r) => AI_SUGGESTION_SOURCES.has(r.source))
+    .reduce<Map<string, { skillCount: number; mcpCount: number }>>((map, rec) => {
+      const entry = map.get(rec.project) ?? { skillCount: 0, mcpCount: 0 };
+      if (rec.source === "automatic-ai-skills") entry.skillCount++;
+      if (rec.source === "automatic-ai-mcp") entry.mcpCount++;
+      map.set(rec.project, entry);
+      return map;
+    }, new Map());
+
+  // Merge: all projects that have either normal recs or AI rollups.
+  const allProjects = new Set([...groupedNormal.keys(), ...aiRollupByProject.keys()]);
+
+  // Total visible count: normal recs + one rollup card per category per project
+  const totalCount = recommendations.filter((r) => !AI_SUGGESTION_SOURCES.has(r.source)).length
+    + [...aiRollupByProject.values()].reduce((n, v) => n + (v.skillCount > 0 ? 1 : 0) + (v.mcpCount > 0 ? 1 : 0), 0);
 
   return (
     <div className="flex-1 h-full overflow-y-auto custom-scrollbar bg-bg-base">
@@ -75,9 +147,9 @@ export default function Recommendations({ onNavigateToProject }: Recommendations
           Recommendations
         </span>
         <div className="flex items-center gap-2">
-          {recommendations.length > 0 && (
+          {totalCount > 0 && (
             <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
-              {recommendations.length}
+              {totalCount}
             </span>
           )}
           <button
@@ -97,7 +169,7 @@ export default function Recommendations({ onNavigateToProject }: Recommendations
             <RefreshCw size={16} className="animate-spin mr-2" />
             <span className="text-[13px]">Loading recommendations…</span>
           </div>
-        ) : recommendations.length === 0 ? (
+        ) : allProjects.size === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <div className="w-16 h-16 rounded-2xl border border-dashed border-border-strong flex items-center justify-center mb-5">
               <Lightbulb size={24} className="text-text-muted" />
@@ -109,60 +181,68 @@ export default function Recommendations({ onNavigateToProject }: Recommendations
           </div>
         ) : (
           <div className="space-y-6 max-w-2xl">
-            {[...grouped.entries()].map(([projectName, recs]) => (
-              <section key={projectName}>
-                {/* Project heading with link */}
-                <button
-                  onClick={() => handleProjectClick(projectName)}
-                  className="flex items-center gap-2 mb-3 group"
-                >
-                  <FolderOpen size={13} className="text-text-muted group-hover:text-brand transition-colors" />
-                  <span className="text-[13px] font-semibold text-text-base group-hover:text-brand transition-colors">
-                    {projectName}
-                  </span>
-                  <ArrowRight size={11} className="text-text-muted opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
-                </button>
+            {[...allProjects].map((projectName) => {
+              const normalRecs = groupedNormal.get(projectName) ?? [];
+              const aiRollup = aiRollupByProject.get(projectName);
 
-                {/* Recommendation cards */}
-                <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
-                  {recs.map((rec) => (
-                    <div
-                      key={rec.id}
-                      className="flex items-start gap-3 px-4 py-4 group/row hover:bg-surface-hover transition-colors"
-                    >
-                      <AlertCircle
-                        size={14}
-                        className={`flex-shrink-0 mt-0.5 ${rec.priority === "high" ? "text-warning" : "text-text-muted"}`}
+              return (
+                <section key={projectName}>
+                  {/* Project heading */}
+                  <button
+                    onClick={() => handleProjectClick(projectName)}
+                    className="flex items-center gap-2 mb-3 group"
+                  >
+                    <FolderOpen size={13} className="text-text-muted group-hover:text-brand transition-colors" />
+                    <span className="text-[13px] font-semibold text-text-base group-hover:text-brand transition-colors">
+                      {projectName}
+                    </span>
+                    <ArrowRight size={11} className="text-text-muted opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
+                  </button>
+
+                  <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                    {/* AI skills rollup */}
+                    {aiRollup && aiRollup.skillCount > 0 && (
+                      <RecRow
+                        icon={<Sparkles size={13} className="text-brand" />}
+                        title={`${aiRollup.skillCount} skill${aiRollup.skillCount !== 1 ? "s" : ""} recommended`}
+                        badge={<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-brand/10 text-brand border border-brand/20 leading-none flex items-center gap-1"><Sparkles size={8} /> AI</span>}
+                        body={`The AI has identified ${aiRollup.skillCount} skill${aiRollup.skillCount !== 1 ? "s" : ""} that may benefit this project. Open the project and go to the Skills tab to review and add them.`}
+                        linkLabel={<><Code size={10} /> Open project → Skills tab</>}
+                        onLinkClick={() => handleProjectClick(projectName, "skills")}
                       />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-[13px] font-semibold text-text-base">{rec.title}</span>
-                          {rec.priority === "high" && (
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/20 leading-none shrink-0">
-                              Important
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[12px] text-text-muted leading-relaxed">{rec.body}</p>
-                        <button
-                          onClick={() => handleProjectClick(projectName)}
-                          className="mt-2 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
-                        >
-                          Open project <ArrowRight size={10} />
-                        </button>
-                      </div>
-                      <button
-                        onClick={() => handleDismiss(rec.id)}
-                        className="flex-shrink-0 p-1 text-text-muted hover:text-text-base transition-colors opacity-0 group-hover/row:opacity-100"
-                        title="Dismiss"
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ))}
+                    )}
+
+                    {/* AI MCP rollup */}
+                    {aiRollup && aiRollup.mcpCount > 0 && (
+                      <RecRow
+                        icon={<Sparkles size={13} className="text-brand" />}
+                        title={`${aiRollup.mcpCount} MCP server${aiRollup.mcpCount !== 1 ? "s" : ""} recommended`}
+                        badge={<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-brand/10 text-brand border border-brand/20 leading-none flex items-center gap-1"><Sparkles size={8} /> AI</span>}
+                        body={`The AI has identified ${aiRollup.mcpCount} MCP server${aiRollup.mcpCount !== 1 ? "s" : ""} that may benefit this project. Open the project and go to the MCP Servers tab to review and add them.`}
+                        linkLabel={<><Server size={10} /> Open project → MCP Servers tab</>}
+                        onLinkClick={() => handleProjectClick(projectName, "mcp_servers")}
+                      />
+                    )}
+
+                    {/* Normal recommendation cards */}
+                    {normalRecs.map((rec) => (
+                      <RecRow
+                        key={rec.id}
+                        icon={<AlertCircle size={13} className={rec.priority === "high" ? "text-warning" : "text-text-muted"} />}
+                        title={rec.title}
+                        badge={rec.priority === "high" ? (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/20 leading-none shrink-0">Important</span>
+                        ) : undefined}
+                        body={rec.body}
+                        linkLabel={<>Open project <ArrowRight size={10} /></>}
+                        onLinkClick={() => handleProjectClick(projectName)}
+                        onDismiss={() => handleDismiss(rec.id)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         )}
       </div>
