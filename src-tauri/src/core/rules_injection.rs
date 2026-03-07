@@ -33,13 +33,22 @@ pub(crate) fn strip_rules_section(content: &str) -> String {
     }
 }
 
-/// Build the rules section content from a list of rule machine names.
+/// Build the rules section content from a list of rule machine names plus any
+/// inline custom rule content strings.  Both sources are combined in order:
+/// global rules first, then custom rules.
 pub fn build_rules_section(rule_names: &[String]) -> Result<String, String> {
-    if rule_names.is_empty() {
-        return Ok(String::new());
-    }
+    build_rules_section_with_custom(rule_names, &[])
+}
 
-    let mut parts = Vec::new();
+/// Build the rules section from global rule machine names and inline custom
+/// rule content strings.  Either slice may be empty.
+pub fn build_rules_section_with_custom(
+    rule_names: &[String],
+    custom_contents: &[String],
+) -> Result<String, String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    // Global rules resolved from the registry
     for machine_name in rule_names {
         match read_rule_content(machine_name) {
             Ok(content) if !content.trim().is_empty() => {
@@ -48,6 +57,13 @@ pub fn build_rules_section(rule_names: &[String]) -> Result<String, String> {
             _ => {
                 // Skip missing or empty rules silently
             }
+        }
+    }
+
+    // Inline custom rules stored directly in the project
+    for content in custom_contents {
+        if !content.trim().is_empty() {
+            parts.push(content.clone());
         }
     }
 
@@ -78,7 +94,18 @@ pub fn save_project_file_with_rules(
     user_content: &str,
     rule_names: &[String],
 ) -> Result<(), String> {
-    let rules_section = build_rules_section(rule_names)?;
+    save_project_file_with_rules_and_custom(directory, filename, user_content, rule_names, &[])
+}
+
+/// Write a project file with both global and inline custom rules appended.
+pub fn save_project_file_with_rules_and_custom(
+    directory: &str,
+    filename: &str,
+    user_content: &str,
+    rule_names: &[String],
+    custom_contents: &[String],
+) -> Result<(), String> {
+    let rules_section = build_rules_section_with_custom(rule_names, custom_contents)?;
 
     let full_content = if rules_section.is_empty() {
         user_content.to_string()
@@ -96,12 +123,21 @@ pub fn is_file_rules_current(
     path: &std::path::Path,
     rule_names: &[String],
 ) -> Result<bool, String> {
+    is_file_rules_current_with_custom(path, rule_names, &[])
+}
+
+/// Read-only check including custom rule contents.
+pub fn is_file_rules_current_with_custom(
+    path: &std::path::Path,
+    rule_names: &[String],
+    custom_contents: &[String],
+) -> Result<bool, String> {
     if !path.exists() {
         return Ok(false);
     }
 
     let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let expected_section = build_rules_section(rule_names)?;
+    let expected_section = build_rules_section_with_custom(rule_names, custom_contents)?;
 
     if expected_section.is_empty() {
         // No rules expected — current if the file has no rules section.
@@ -250,6 +286,16 @@ pub fn inject_rules_into_project_file(
     filename: &str,
     rule_names: &[String],
 ) -> Result<bool, String> {
+    inject_rules_into_project_file_with_custom(directory, filename, rule_names, &[])
+}
+
+/// Re-inject rules (global + custom) into an existing project file.
+pub fn inject_rules_into_project_file_with_custom(
+    directory: &str,
+    filename: &str,
+    rule_names: &[String],
+    custom_contents: &[String],
+) -> Result<bool, String> {
     if directory.is_empty() {
         return Ok(false);
     }
@@ -262,7 +308,7 @@ pub fn inject_rules_into_project_file(
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let user_content = strip_rules_section(&strip_managed_section(&raw));
 
-    let rules_section = build_rules_section(rule_names)?;
+    let rules_section = build_rules_section_with_custom(rule_names, custom_contents)?;
 
     let full_content = if rules_section.is_empty() {
         user_content.clone()

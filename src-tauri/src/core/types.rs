@@ -239,6 +239,22 @@ pub struct Project {
     /// drift detection to identify files that were modified externally.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub instruction_file_hashes: HashMap<String, String>,
+    /// Inline custom rules stored directly in the project (not in the global
+    /// rule registry).  These are injected into instruction files in the same
+    /// way as global rules, but are scoped to this project only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_rules: Vec<CustomRule>,
+}
+
+/// An inline rule stored directly inside a project configuration.
+/// Unlike global rules (which live in `~/.automatic/rules/`), custom rules
+/// are project-scoped and travel with the project JSON.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomRule {
+    /// Short human-readable name (shown in the UI).
+    pub name: String,
+    /// Markdown content that will be injected into instruction files.
+    pub content: String,
 }
 
 fn default_instruction_mode() -> String {
