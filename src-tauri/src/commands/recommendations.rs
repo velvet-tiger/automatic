@@ -140,11 +140,11 @@ pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendat
             crate::recommendations::add_recommendation(AddRecommendationParams {
                 project: project.to_string(),
                 kind: "rule".to_string(),
-                title: "Attach rules to your instruction file".to_string(),
-                body: "No rules are attached to this project's instruction files. \
+                title: "Attach rules to your project".to_string(),
+                body: "No rules are attached to this project. \
                        Rules inject shared guidelines (coding standards, checklists, \
-                       Automatic service instructions) into your agent files. \
-                       Open the Project File tab and attach the \"automatic-service\" rule \
+                       and Automatic service instructions) into your agent files. \
+                       Open the Rules tab and attach the \"automatic-service\" rule \
                        to get started."
                     .to_string(),
                 priority: RecommendationPriority::Normal,
