@@ -153,6 +153,13 @@ interface DriftReport {
     agent_label: string;
     files: { path: string; reason: string }[];
   }[];
+  /** Instruction files modified outside Automatic (optional, used by Projects view). */
+  instruction_conflicts?: {
+    filename: string;
+    agent_labels: string[];
+    disk_content: string;
+    automatic_content: string;
+  }[];
 }
 
 type PillIcon = "download" | "cloud" | "monitor" | "code" | "server";

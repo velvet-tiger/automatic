@@ -897,7 +897,10 @@ function InstructionConflictModal({
   }, [onClose]);
 
   const hasAutomaticContent = conflict.automatic_content.trim().length > 0;
-  const diskLineCount = conflict.disk_content.split("\n").length;
+  const diskLines = conflict.disk_content.split("\n");
+  const diskLineCount = diskLines.length;
+  const previewLines = diskLines.slice(0, 10);
+  const hasMore = diskLineCount > 10;
 
   return (
     <div
@@ -907,7 +910,7 @@ function InstructionConflictModal({
     >
       <div
         className="flex flex-col bg-bg-sidebar border border-border-strong/40 rounded-xl shadow-2xl overflow-hidden"
-        style={{ width: "min(680px, 90vw)", maxHeight: "80vh" }}
+        style={{ width: "min(560px, 90vw)" }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border-strong flex-shrink-0">
@@ -927,36 +930,25 @@ function InstructionConflictModal({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+        <div className="px-5 py-4 space-y-4">
           <p className="text-[13px] text-text-base">
             <span className="font-mono text-warning">{conflict.filename}</span>
-            {" "}exists on disk with content that Automatic did not write.
+            {" "}has been modified outside Automatic.
           </p>
 
+          {/* Summary: line count + first 10 lines preview */}
           <div className="rounded-lg border border-border-strong/40 overflow-hidden">
             <div className="bg-bg-input px-3 py-2 flex items-center justify-between border-b border-border-strong/30">
               <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">On disk</span>
               <span className="text-[11px] text-text-muted">{diskLineCount} line{diskLineCount !== 1 ? "s" : ""}</span>
             </div>
-            <pre className="text-[12px] font-mono text-text-muted p-3 overflow-auto max-h-40 whitespace-pre-wrap">
-              {conflict.disk_content.trim() || <em className="not-italic text-text-subtle">empty</em>}
+            <pre className="text-[12px] font-mono text-text-muted p-3 whitespace-pre-wrap leading-relaxed">
+              {previewLines.join("\n").trim() || <em className="not-italic text-text-subtle">empty</em>}
+              {hasMore && (
+                <span className="text-text-subtle italic">{"\n"}... {diskLineCount - 10} more line{diskLineCount - 10 !== 1 ? "s" : ""}</span>
+              )}
             </pre>
           </div>
-
-          {hasAutomaticContent && (
-            <div className="rounded-lg border border-border-strong/40 overflow-hidden">
-              <div className="bg-bg-input px-3 py-2 border-b border-border-strong/30">
-                <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">Automatic editor content</span>
-              </div>
-              <pre className="text-[12px] font-mono text-text-muted p-3 overflow-auto max-h-40 whitespace-pre-wrap">
-                {conflict.automatic_content.trim() || <em className="not-italic text-text-subtle">empty</em>}
-              </pre>
-            </div>
-          )}
-
-          <p className="text-[12px] text-text-muted">
-            Choose how to resolve this conflict:
-          </p>
 
           <div className="grid grid-cols-1 gap-2">
             <button
@@ -966,7 +958,6 @@ function InstructionConflictModal({
               <span className="text-[13px] font-medium text-success">Use existing file</span>
               <span className="text-[12px] text-text-muted">
                 Keep the on-disk content and load it into Automatic's editor.
-                Any configured rules will be re-injected.
               </span>
             </button>
 
@@ -978,7 +969,7 @@ function InstructionConflictModal({
               <span className="text-[12px] text-text-muted">
                 {hasAutomaticContent
                   ? "Replace the on-disk file with Automatic's editor content."
-                  : "Replace the on-disk file with an empty file (only configured rules will be kept)."}
+                  : "Discard external changes. Only configured rules will remain."}
               </span>
             </button>
           </div>
