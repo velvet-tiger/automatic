@@ -100,9 +100,22 @@ interface AgentDrift {
   files: DriftedFile[];
 }
 
+interface InstructionFileConflict {
+  /** The instruction filename (e.g. "AGENTS.md", "CLAUDE.md"). */
+  filename: string;
+  /** Agent labels that use this file. */
+  agent_labels: string[];
+  /** User-authored content currently on disk (managed sections stripped). */
+  disk_content: string;
+  /** User-authored content Automatic has stored (empty if never set through Automatic). */
+  automatic_content: string;
+}
+
 interface DriftReport {
   drifted: boolean;
   agents: AgentDrift[];
+  /** Instruction files that have external content Automatic does not recognise. */
+  instruction_conflicts?: InstructionFileConflict[];
 }
 
 interface ProjectFileInfo {
@@ -859,6 +872,132 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
   );
 }
 
+// ── InstructionConflictModal ──────────────────────────────────────────────────
+
+interface InstructionConflictModalProps {
+  conflict: InstructionFileConflict;
+  projectName: string;
+  onAdopt: (adoptedContent: string) => void;
+  onOverwrite: () => void;
+  onClose: () => void;
+}
+
+function InstructionConflictModal({
+  conflict,
+  projectName: _projectName,
+  onAdopt,
+  onOverwrite,
+  onClose,
+}: InstructionConflictModalProps) {
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const hasAutomaticContent = conflict.automatic_content.trim().length > 0;
+  const diskLineCount = conflict.disk_content.split("\n").length;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(0,0,0,0.6)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="flex flex-col bg-bg-sidebar border border-border-strong/40 rounded-xl shadow-2xl overflow-hidden"
+        style={{ width: "min(680px, 90vw)", maxHeight: "80vh" }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border-strong flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] font-medium text-warning/70 uppercase tracking-wider">
+              Instruction File Conflict
+            </span>
+            <span className="text-border-strong">/</span>
+            <span className="text-[13px] font-mono text-text-base">{conflict.filename}</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-text-muted hover:text-text-base transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+          <p className="text-[13px] text-text-base">
+            <span className="font-mono text-warning">{conflict.filename}</span>
+            {" "}exists on disk with content that Automatic did not write.
+          </p>
+
+          <div className="rounded-lg border border-border-strong/40 overflow-hidden">
+            <div className="bg-bg-input px-3 py-2 flex items-center justify-between border-b border-border-strong/30">
+              <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">On disk</span>
+              <span className="text-[11px] text-text-muted">{diskLineCount} line{diskLineCount !== 1 ? "s" : ""}</span>
+            </div>
+            <pre className="text-[12px] font-mono text-text-muted p-3 overflow-auto max-h-40 whitespace-pre-wrap">
+              {conflict.disk_content.trim() || <em className="not-italic text-text-subtle">empty</em>}
+            </pre>
+          </div>
+
+          {hasAutomaticContent && (
+            <div className="rounded-lg border border-border-strong/40 overflow-hidden">
+              <div className="bg-bg-input px-3 py-2 border-b border-border-strong/30">
+                <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">Automatic editor content</span>
+              </div>
+              <pre className="text-[12px] font-mono text-text-muted p-3 overflow-auto max-h-40 whitespace-pre-wrap">
+                {conflict.automatic_content.trim() || <em className="not-italic text-text-subtle">empty</em>}
+              </pre>
+            </div>
+          )}
+
+          <p className="text-[12px] text-text-muted">
+            Choose how to resolve this conflict:
+          </p>
+
+          <div className="grid grid-cols-1 gap-2">
+            <button
+              onClick={() => onAdopt(conflict.disk_content)}
+              className="flex flex-col items-start gap-0.5 px-4 py-3 rounded-lg border border-success/30 bg-success/5 hover:bg-success/10 hover:border-success/50 transition-colors text-left"
+            >
+              <span className="text-[13px] font-medium text-success">Use existing file</span>
+              <span className="text-[12px] text-text-muted">
+                Keep the on-disk content and load it into Automatic's editor.
+                Any configured rules will be re-injected.
+              </span>
+            </button>
+
+            <button
+              onClick={onOverwrite}
+              className="flex flex-col items-start gap-0.5 px-4 py-3 rounded-lg border border-danger/30 bg-danger/5 hover:bg-danger/10 hover:border-danger/50 transition-colors text-left"
+            >
+              <span className="text-[13px] font-medium text-danger">Overwrite with Automatic content</span>
+              <span className="text-[12px] text-text-muted">
+                {hasAutomaticContent
+                  ? "Replace the on-disk file with Automatic's editor content."
+                  : "Replace the on-disk file with an empty file (only configured rules will be kept)."}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border-strong flex-shrink-0">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Projects Overview (card grid) ────────────────────────────────────────────
 
 interface ProjectsOverviewProps {
@@ -1400,6 +1539,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   // Drift diff modal state — null when closed
   const [driftDiffFile, setDriftDiffFile] = useState<{ file: DriftedFile; agentLabel: string } | null>(null);
 
+  // Instruction file conflict modal state — null when closed, conflict when open
+  const [instructionConflict, setInstructionConflict] = useState<InstructionFileConflict | null>(null);
+
   // Project template state
   const [availableProjectTemplates, setAvailableProjectTemplates] = useState<ProjectTemplate[]>([]);
   const [showProjectTemplatePicker, setShowProjectTemplatePicker] = useState(false);
@@ -1544,6 +1686,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         const report = JSON.parse(raw) as DriftReport;
         setDriftReport(report);
         setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
+
+        // If there are instruction file conflicts, surface the first one so the
+        // user can resolve it.  Only show one at a time to avoid overwhelming the UI.
+        const conflicts = report.instruction_conflicts ?? [];
+        if (conflicts.length > 0) {
+          setInstructionConflict((prev) => {
+            // Don't replace an already-open conflict dialog.
+            if (prev !== null) return prev;
+            return conflicts[0]!;
+          });
+        }
       } catch {
         // Silently ignore drift-check errors (e.g. directory gone)
       } finally {
@@ -2116,6 +2269,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     try {
       const recs = await invoke<ProjectRecommendation[]>("evaluate_project_recommendations", { project: projectName });
       setRecommendations(recs);
+      // Notify the global Recommendations view so it re-fetches from the DB.
+      window.dispatchEvent(new CustomEvent("recommendations-updated"));
     } catch (err: any) {
       console.error("Failed to evaluate recommendations:", err);
       // Non-fatal — clear so stale data isn't shown
@@ -2767,6 +2922,54 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
+  // ── Instruction file conflict resolution ──────────────────────────────────
+
+  /** User chose "Use existing file" — adopt the on-disk content into the editor. */
+  const handleAdoptInstructionFile = async (filename: string, adoptedContent: string) => {
+    const name = selectedName;
+    if (!name) return;
+    try {
+      await invoke("adopt_instruction_file", { name, filename });
+      // Update the editor state so it reflects the adopted content.
+      if (activeProjectFile === filename || activeProjectFile === "_unified") {
+        setProjectFileContent(adoptedContent);
+        setProjectFileDirty(false);
+      }
+      // Re-run drift check: conflict should now be gone.
+      const raw: string = await invoke("check_project_drift", { name });
+      const report = JSON.parse(raw) as DriftReport;
+      setDriftReport(report);
+      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
+    } catch (err: any) {
+      setError(`Failed to adopt instruction file: ${err}`);
+    } finally {
+      setInstructionConflict(null);
+    }
+  };
+
+  /** User chose "Overwrite with Automatic content" — wipe the externally-added content. */
+  const handleOverwriteInstructionFile = async (filename: string) => {
+    const name = selectedName;
+    if (!name) return;
+    try {
+      await invoke("overwrite_instruction_file", { name, filename });
+      // Clear the editor content to reflect the overwrite.
+      if (activeProjectFile === filename || activeProjectFile === "_unified") {
+        setProjectFileContent("");
+        setProjectFileDirty(false);
+      }
+      // Re-run drift check.
+      const raw: string = await invoke("check_project_drift", { name });
+      const report = JSON.parse(raw) as DriftReport;
+      setDriftReport(report);
+      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
+    } catch (err: any) {
+      setError(`Failed to overwrite instruction file: ${err}`);
+    } finally {
+      setInstructionConflict(null);
+    }
+  };
+
   const handleSync = async () => {
     const name = isCreating ? newName.trim() : selectedName;
     if (!name || !project) return;
@@ -2836,6 +3039,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
             file={driftDiffFile.file}
             agentLabel={driftDiffFile.agentLabel}
             onClose={() => setDriftDiffFile(null)}
+          />
+        )}
+        {instructionConflict && selectedName && (
+          <InstructionConflictModal
+            conflict={instructionConflict}
+            projectName={selectedName}
+            onAdopt={(adopted) => handleAdoptInstructionFile(instructionConflict.filename, adopted)}
+            onOverwrite={() => handleOverwriteInstructionFile(instructionConflict.filename)}
+            onClose={() => setInstructionConflict(null)}
           />
         )}
       </>
@@ -3340,6 +3552,25 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </div>
                     </div>
                   ))}
+                  {/* Instruction file conflicts within the drift banner */}
+                  {(driftReport.instruction_conflicts ?? []).length > 0 && (
+                    <div>
+                      <div className="text-[11px] font-semibold text-warning/80 mb-0.5">Instruction files</div>
+                      <div className="flex flex-wrap gap-x-2 gap-y-1">
+                        {(driftReport.instruction_conflicts ?? []).map((c) => (
+                          <button
+                            key={c.filename}
+                            onClick={() => setInstructionConflict(c)}
+                            className="flex items-center gap-1 text-[11px] font-mono text-warning/70 hover:text-warning bg-warning/5 hover:bg-warning/15 border border-warning/20 hover:border-warning/40 rounded px-1.5 py-0.5 transition-colors"
+                            title="Resolve conflict"
+                          >
+                            {c.filename}
+                            <span className="text-warning/50 font-sans ml-0.5">(conflict)</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -5081,6 +5312,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         file={driftDiffFile.file}
         agentLabel={driftDiffFile.agentLabel}
         onClose={() => setDriftDiffFile(null)}
+      />
+    )}
+
+    {/* ── Instruction file conflict modal ──────────────────────────────── */}
+    {instructionConflict && selectedName && (
+      <InstructionConflictModal
+        conflict={instructionConflict}
+        projectName={selectedName}
+        onAdopt={(adopted) => handleAdoptInstructionFile(instructionConflict.filename, adopted)}
+        onOverwrite={() => handleOverwriteInstructionFile(instructionConflict.filename)}
+        onClose={() => setInstructionConflict(null)}
       />
     )}
 

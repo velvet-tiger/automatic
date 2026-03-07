@@ -38,6 +38,13 @@ export default function Recommendations({ onNavigateToProject }: Recommendations
 
   useEffect(() => { load(); }, [load]);
 
+  // Re-load whenever Projects.tsx re-evaluates recommendations after a save.
+  useEffect(() => {
+    const handler = () => { load(); };
+    window.addEventListener("recommendations-updated", handler);
+    return () => window.removeEventListener("recommendations-updated", handler);
+  }, [load]);
+
   const handleDismiss = async (id: number) => {
     try {
       await invoke("dismiss_recommendation", { id });
