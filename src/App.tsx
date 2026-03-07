@@ -22,6 +22,8 @@ import McpMarketplace from "./McpMarketplace";
 import CollectionMarketplace from "./CollectionMarketplace";
 import AiPlayground from "./AiPlayground";
 import FirstRunWizard from "./FirstRunWizard";
+import { TaskLogProvider } from "./TaskLogContext";
+import TaskLog from "./TaskLog";
 import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb } from "lucide-react";
 import { flag } from "./flags";
 import graphLogo from "../logos/graph_5.svg";
@@ -224,6 +226,7 @@ function App() {
   };
 
   return (
+    <TaskLogProvider>
     <ProfileProvider>
     <AnalyticsBootstrap />
     {/* First-run wizard — rendered as a full-screen overlay; main UI is
@@ -527,8 +530,10 @@ function App() {
           )}
         </div>
       </main>
+      <TaskLog />
     </div>
     </ProfileProvider>
+    </TaskLogProvider>
   );
 }
 

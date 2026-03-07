@@ -217,6 +217,80 @@ pub async fn chat(
         .ok_or_else(|| "Anthropic returned no text content".to_string())
 }
 
+/// Send messages to the Anthropic API with a `output_config.format` JSON schema,
+/// guaranteeing the response is valid JSON matching the schema.
+///
+/// Structured outputs cannot be combined with tool use, so this function is
+/// intentionally separate from `chat_with_tools`.  Use it as the *second phase*
+/// after an exploration step has gathered the necessary facts.
+///
+/// - `schema`: A JSON Schema object describing the expected output structure.
+/// - `model`: Defaults to `"claude-sonnet-4-5"` if `None`.
+/// - `system`: Optional system prompt.
+/// - `max_tokens`: Defaults to `8192`.
+pub async fn chat_structured(
+    messages: Vec<AiMessage>,
+    api_key: Option<String>,
+    model: Option<String>,
+    system: Option<String>,
+    max_tokens: Option<u32>,
+    schema: Value,
+) -> Result<String, String> {
+    let key = resolve_api_key(api_key.as_deref())?;
+    let model_str = model.as_deref().unwrap_or("claude-sonnet-4-5");
+    let tokens = max_tokens.unwrap_or(8192);
+
+    let mut body = json!({
+        "model": model_str,
+        "max_tokens": tokens,
+        "messages": messages,
+        "output_config": {
+            "format": {
+                "type": "json_schema",
+                "schema": schema
+            }
+        }
+    });
+
+    if let Some(sys) = system.as_deref() {
+        body["system"] = json!(sys);
+    }
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", &key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    let status = response.status();
+    let body_text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+    if !status.is_success() {
+        let msg = serde_json::from_str::<AnthropicError>(&body_text)
+            .map(|e| e.error.message)
+            .unwrap_or_else(|_| body_text.clone());
+        return Err(format!("Anthropic API error {}: {}", status, msg));
+    }
+
+    let parsed: AnthropicResponse = serde_json::from_str(&body_text)
+        .map_err(|e| format!("Failed to parse Anthropic response: {}", e))?;
+
+    parsed
+        .content
+        .into_iter()
+        .find(|b| b.kind == "text")
+        .and_then(|b| b.text)
+        .ok_or_else(|| "Anthropic returned no text content".to_string())
+}
+
 // ── Tool-use (agentic loop) ───────────────────────────────────────────────────
 
 /// Maximum agentic turns before we abort to prevent runaway loops.
@@ -599,11 +673,25 @@ pub async fn chat_with_tools(
     max_tokens: Option<u32>,
     working_dir: String,
 ) -> Result<String, String> {
+    chat_with_tools_inner(messages, api_key, model, system, max_tokens, working_dir, None).await
+}
+
+
+async fn chat_with_tools_inner(
+    messages: Vec<AiMessage>,
+    api_key: Option<String>,
+    model: Option<String>,
+    system: Option<String>,
+    max_tokens: Option<u32>,
+    working_dir: String,
+    max_turns_override: Option<usize>,
+) -> Result<String, String> {
     let work_path = validate_working_dir(&working_dir)?;
 
     let key = resolve_api_key(api_key.as_deref())?;
     let model_str = model.as_deref().unwrap_or("claude-sonnet-4-5");
     let tokens = max_tokens.unwrap_or(4096);
+    let turn_limit = max_turns_override.unwrap_or(MAX_TOOL_TURNS);
 
     // Convert simple AiMessage vec into the richer JSON message format.
     let mut msg_array: Vec<Value> = messages
@@ -614,7 +702,7 @@ pub async fn chat_with_tools(
     let tools = json!([read_file_tool_def()]);
     let client = reqwest::Client::new();
 
-    for _turn in 0..MAX_TOOL_TURNS {
+    for _turn in 0..turn_limit {
         let mut body = json!({
             "model": model_str,
             "max_tokens": tokens,
@@ -713,7 +801,7 @@ pub async fn chat_with_tools(
 
     Err(format!(
         "Agentic loop exceeded {} turns without a final response.",
-        MAX_TOOL_TURNS
+        turn_limit
     ))
 }
 

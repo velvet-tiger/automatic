@@ -6,6 +6,7 @@ import { AgentIcon } from "./AgentIcon";
 import { McpSelector } from "./McpSelector";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { useCurrentUser } from "./ProfileContext";
+import { useTaskLog } from "./TaskLogContext";
 import { MemoryBrowser } from "./MemoryBrowser";
 import { ClaudeMemoryPanel } from "./ClaudeMemoryPanel";
 import { invoke } from "@tauri-apps/api/core";
@@ -1465,6 +1466,7 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
 
 export default function Projects({ initialProject = null, onInitialProjectConsumed, onNavigateToSkill, onNavigateToMcpServer, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
+  const { log, update } = useTaskLog();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
   const PROJECT_ORDER_KEY = "automatic.projects.order";
   const PROJECT_FOLDERS_KEY = "automatic.projects.folders";
@@ -2376,6 +2378,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     if (!selectedName) return;
     setContextGenerating(true);
     setContextJsonError(null);
+    const entryId = log(`Analysing project "${selectedName}"…`, "running");
     try {
       const generated: string = await invoke("ai_generate_context", { name: selectedName });
       // Pretty-print the returned JSON before putting it in the editor.
@@ -2383,8 +2386,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setContextRaw(pretty);
       setContextEditing(true);
       setContextDirty(true);
+      update(entryId, `Context generated for "${selectedName}" — review and save`, "success");
     } catch (err: any) {
       setContextJsonError(`Generation failed: ${err}`);
+      update(entryId, `Context generation failed: ${err}`, "error");
     } finally {
       setContextGenerating(false);
     }

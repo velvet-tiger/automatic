@@ -292,6 +292,273 @@ pub fn save_project_context_raw(name: &str, content: &str) -> Result<(), String>
     std::fs::write(dir.join("context.json"), content).map_err(|e| e.to_string())
 }
 
+/// Use AI to analyse the project directory and generate a `.automatic/context.json`
+/// scaffold.  Returns the generated JSON string so the frontend can preview it
+/// before saving.  The caller is responsible for writing it to disk via
+/// `save_project_context_raw`.
+///
+/// Approach: Rust builds a project snapshot (directory tree + key config/doc
+/// file contents) and passes it directly in the prompt.  A single
+/// `chat_structured` call then converts that snapshot into a guaranteed-valid
+/// JSON object using the Anthropic structured outputs API.  No tool-use loop,
+/// no turn counting, no markdown-fence guessing.
+#[tauri::command]
+pub async fn ai_generate_context(name: &str) -> Result<String, String> {
+    use serde_json::json;
+
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    // Build a structured snapshot of the project directory in Rust — this gives
+    // the model a directory tree plus the full content of key config files and
+    // the first 80 lines of the README, all in one go, with no tool calls needed.
+    let snapshot = context::build_project_snapshot(&project.directory)?;
+
+    // Structured outputs only allow `additionalProperties: false` — open string
+    // maps are not supported.  We use arrays of keyed objects instead, then
+    // convert the response back to the on-disk map format before returning.
+    let context_schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["commands", "entry_points", "concepts", "conventions", "gotchas", "docs"],
+        "properties": {
+            "commands": {
+                "type": "array",
+                "description": "Shell commands extracted from the project (build, test, lint, dev, etc.).",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "command"],
+                    "properties": {
+                        "name":    { "type": "string", "description": "Short label, e.g. 'build'." },
+                        "command": { "type": "string", "description": "The shell command to run." }
+                    }
+                }
+            },
+            "entry_points": {
+                "type": "array",
+                "description": "Primary source entry-point files.",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["label", "path"],
+                    "properties": {
+                        "label": { "type": "string", "description": "Short label, e.g. 'app', 'cli'." },
+                        "path":  { "type": "string", "description": "Relative path to the file." }
+                    }
+                }
+            },
+            "concepts": {
+                "type": "array",
+                "description": "Key architecture concepts (3-8) with the files that implement them.",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "summary", "files"],
+                    "properties": {
+                        "name":    { "type": "string", "description": "Concept name." },
+                        "summary": { "type": "string", "description": "One or two sentence description." },
+                        "files":   { "type": "array", "items": { "type": "string" }, "description": "Relative file paths." }
+                    }
+                }
+            },
+            "conventions": {
+                "type": "array",
+                "description": "Coding or project conventions observed in the codebase.",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "description"],
+                    "properties": {
+                        "name":        { "type": "string" },
+                        "description": { "type": "string" }
+                    }
+                }
+            },
+            "gotchas": {
+                "type": "array",
+                "description": "Known pitfalls, build quirks, or unusual dependencies.",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "description"],
+                    "properties": {
+                        "name":        { "type": "string" },
+                        "description": { "type": "string" }
+                    }
+                }
+            },
+            "docs": {
+                "type": "array",
+                "description": "Significant documentation files.",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["label", "path", "summary"],
+                    "properties": {
+                        "label":   { "type": "string" },
+                        "path":    { "type": "string", "description": "Relative path." },
+                        "summary": { "type": "string", "description": "One sentence description." }
+                    }
+                }
+            }
+        }
+    });
+
+    let system = "You are a senior software engineer producing structured documentation \
+        for AI coding agents. You will be given a project snapshot (directory tree, \
+        config files, and README). Analyse it and populate all fields. \
+        Rules: \
+        - commands: extract from package.json scripts, Makefile targets, Cargo.toml [dev], etc. \
+        - entry_points: identify main source files (src/main.rs, src/index.ts, app.py, etc.). \
+        - concepts: 3-8 key architecture concepts with the files that implement them. \
+        - conventions: naming, file structure, or code style patterns you can observe. \
+        - gotchas: build quirks, unusual dependencies, or known pitfalls. \
+        - docs: significant documentation files visible in the tree. \
+        Use empty arrays [] for sections where the snapshot provides no clear evidence. \
+        File paths must be relative to the project root. \
+        Keep all summaries to 1-2 sentences.";
+
+    let user_msg = format!(
+        "Project name: \"{}\"\n\nProject snapshot:\n\n{}",
+        name, snapshot
+    );
+
+    let generated = crate::core::ai::chat_structured(
+        vec![crate::core::ai::AiMessage {
+            role: "user".into(),
+            content: user_msg,
+        }],
+        None,
+        None,
+        Some(system.to_string()),
+        Some(4096),
+        context_schema,
+    )
+    .await?;
+
+    // Convert the array-of-objects response into the on-disk map format that
+    // context.rs / the frontend expect.
+    let ai_val: serde_json::Value = serde_json::from_str(&generated)
+        .map_err(|e| format!("Unexpected JSON parse failure: {}", e))?;
+
+    let output = convert_arrays_to_context_maps(&ai_val)?;
+    serde_json::to_string_pretty(&output).map_err(|e| e.to_string())
+}
+
+/// Convert the array-of-objects schema returned by the structured outputs API
+/// into the `{ "key": value }` map format used by `context.json` on disk.
+///
+/// Input shape (from AI):
+/// ```json
+/// {
+///   "commands":    [{ "name": "build", "command": "cargo build" }, ...],
+///   "entry_points":[{ "label": "app",  "path": "src/main.rs" }, ...],
+///   "concepts":    [{ "name": "MCP",   "summary": "...", "files": [...] }, ...],
+///   "conventions": [{ "name": "naming","description": "..." }, ...],
+///   "gotchas":     [{ "name": "lock",  "description": "..." }, ...],
+///   "docs":        [{ "label": "README","path": "README.md", "summary": "..." }, ...]
+/// }
+/// ```
+///
+/// Output shape (context.json format):
+/// ```json
+/// {
+///   "commands":    { "build": "cargo build" },
+///   "entry_points":{ "app": "src/main.rs" },
+///   "concepts":    { "MCP": { "summary": "...", "files": [...] } },
+///   "conventions": { "naming": "..." },
+///   "gotchas":     { "lock": "..." },
+///   "docs":        { "README": { "path": "README.md", "summary": "..." } }
+/// }
+/// ```
+fn convert_arrays_to_context_maps(ai: &serde_json::Value) -> Result<serde_json::Value, String> {
+    use serde_json::{Map, Value};
+
+    fn arr<'a>(v: &'a Value, field: &str) -> Result<&'a Vec<Value>, String> {
+        v.get(field)
+            .and_then(|x| x.as_array())
+            .ok_or_else(|| format!("missing or non-array field '{}'", field))
+    }
+
+    fn str_field<'a>(item: &'a Value, field: &str) -> Result<&'a str, String> {
+        item.get(field)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("item missing string field '{}'", field))
+    }
+
+    let mut out = Map::new();
+
+    // commands: [{ name, command }] → { name: command }
+    let mut commands = Map::new();
+    for item in arr(ai, "commands")? {
+        let name = str_field(item, "name")?.to_string();
+        let cmd  = str_field(item, "command")?.to_string();
+        commands.insert(name, Value::String(cmd));
+    }
+    out.insert("commands".into(), Value::Object(commands));
+
+    // entry_points: [{ label, path }] → { label: path }
+    let mut eps = Map::new();
+    for item in arr(ai, "entry_points")? {
+        let label = str_field(item, "label")?.to_string();
+        let path  = str_field(item, "path")?.to_string();
+        eps.insert(label, Value::String(path));
+    }
+    out.insert("entry_points".into(), Value::Object(eps));
+
+    // concepts: [{ name, summary, files }] → { name: { summary, files } }
+    let mut concepts = Map::new();
+    for item in arr(ai, "concepts")? {
+        let name    = str_field(item, "name")?.to_string();
+        let summary = str_field(item, "summary")?.to_string();
+        let files   = item.get("files").cloned().unwrap_or(Value::Array(vec![]));
+        let mut concept = Map::new();
+        concept.insert("summary".into(), Value::String(summary));
+        concept.insert("files".into(), files);
+        concepts.insert(name, Value::Object(concept));
+    }
+    out.insert("concepts".into(), Value::Object(concepts));
+
+    // conventions: [{ name, description }] → { name: description }
+    let mut conventions = Map::new();
+    for item in arr(ai, "conventions")? {
+        let name = str_field(item, "name")?.to_string();
+        let desc = str_field(item, "description")?.to_string();
+        conventions.insert(name, Value::String(desc));
+    }
+    out.insert("conventions".into(), Value::Object(conventions));
+
+    // gotchas: [{ name, description }] → { name: description }
+    let mut gotchas = Map::new();
+    for item in arr(ai, "gotchas")? {
+        let name = str_field(item, "name")?.to_string();
+        let desc = str_field(item, "description")?.to_string();
+        gotchas.insert(name, Value::String(desc));
+    }
+    out.insert("gotchas".into(), Value::Object(gotchas));
+
+    // docs: [{ label, path, summary }] → { label: { path, summary } }
+    let mut docs = Map::new();
+    for item in arr(ai, "docs")? {
+        let label   = str_field(item, "label")?.to_string();
+        let path    = str_field(item, "path")?.to_string();
+        let summary = str_field(item, "summary")?.to_string();
+        let mut doc = Map::new();
+        doc.insert("path".into(), Value::String(path));
+        doc.insert("summary".into(), Value::String(summary));
+        docs.insert(label, Value::Object(doc));
+    }
+    out.insert("docs".into(), Value::Object(docs));
+
+    Ok(Value::Object(out))
+}
+
 // ── Project Sync ─────────────────────────────────────────────────────────────
 
 #[tauri::command]

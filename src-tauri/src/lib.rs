@@ -1,13 +1,14 @@
 pub mod activity;
 pub mod agent;
+pub mod context;
 pub mod core;
+pub mod languages;
 pub mod mcp;
 pub mod memory;
 pub mod oauth;
 pub mod proxy;
 pub mod recommendations;
 pub mod sync;
-pub mod context;
 
 mod commands;
 
@@ -116,6 +117,7 @@ pub fn run() {
             get_project_context,
             read_project_context_raw,
             save_project_context_raw,
+            ai_generate_context,
             import_local_skill,
             sync_local_skills,
             read_local_skill,
