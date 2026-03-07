@@ -56,6 +56,7 @@ import {
   History,
   Search,
   Info,
+  Sparkles,
 } from "lucide-react";
 
 interface Project {
@@ -996,6 +997,7 @@ interface ProjectsOverviewProps {
   projectsLoading: boolean;
   projectDetails: Map<string, Project>;
   driftByProject: Record<string, boolean>;
+  folders: ProjectFolder[];
   onSelect: (name: string) => void;
   onCreate: () => void;
 }
@@ -1045,96 +1047,73 @@ function ProjectCard({
   const mcpCount = project?.mcp_servers?.length ?? 0;
   const agentCount = project?.agents?.length ?? 0;
 
-  // Shorten home directory but let the path wrap naturally
-  const shortDir = project?.directory
-    ? project.directory.replace(/^\/Users\/[^/]+/, "~")
-    : null;
-
   return (
     <button
       onClick={() => onSelect(name)}
-      className={`group relative w-full h-full text-left bg-bg-input border ${borderClass} rounded-xl p-4 flex flex-col gap-3 transition-all hover:bg-surface-hover hover:-translate-y-0.5`}
+      className={`group relative w-full h-full text-left bg-bg-input border ${borderClass} rounded-xl p-3 flex flex-col gap-2.5 transition-all hover:bg-surface-hover hover:-translate-y-0.5`}
     >
       {/* Row 1: title + status */}
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-2.5">
         <div
-          className={`mt-0.5 flex h-7 w-7 items-center justify-center rounded-md border ${
+          className={`mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border ${
             isDrifted
               ? "border-warning/30 bg-warning/10"
               : "border-border-strong/40 bg-bg-sidebar"
           }`}
         >
           <FolderOpen
-            size={14}
+            size={12}
             className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-icon-agent"}`}
           />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[14px] font-semibold text-text-base truncate">{name}</div>
+          <div className="text-[13px] font-semibold text-text-base truncate">{name}</div>
           <div className="text-[11px] text-text-muted mt-0.5">{agentCount} agent{agentCount !== 1 ? "s" : ""}</div>
         </div>
-      </div>
-
-      {/* Row 2: directory path */}
-      {shortDir ? (
-        <div className="rounded-md border border-border-strong/25 bg-bg-sidebar/45 px-2.5 py-2">
-          <div className="flex items-start gap-1.5 text-[11px] text-text-muted font-mono leading-snug">
-            <FolderOpen size={10} className="flex-shrink-0 mt-0.5 text-text-muted/50" />
-            <span className="break-all">{shortDir}</span>
-          </div>
-        </div>
-      ) : (
-        <div className="flex items-center gap-1 rounded-md border border-warning/20 bg-warning/5 px-2.5 py-2 text-[11px] text-warning/80">
-          <AlertCircle size={10} className="flex-shrink-0" />
-          <span>No directory set</span>
-        </div>
-      )}
-
-      {/* Row 3: agent chips */}
-      {(project?.agents?.length ?? 0) > 0 ? (
-        <div className="flex items-center gap-1.5 flex-wrap min-h-[28px]">
-          {(project?.agents ?? []).map((agentId) => (
-            <span
-              key={agentId}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[11px] text-text-muted"
-            >
-              <AgentIcon agentId={agentId} size={10} />
-              {agentId}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <div className="flex items-center gap-1 text-[11px] text-warning/80 min-h-[28px]">
-          <AlertCircle size={10} className="flex-shrink-0" />
-          <span>No agents configured</span>
-        </div>
-      )}
-
-      {/* Row 4: stats footer */}
-      <div className="mt-auto flex w-full items-center justify-between pt-2 border-t border-border-strong/30 text-[11px] text-text-muted">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="flex items-center gap-1.5">
-            <Code size={10} />
-            {totalSkills} skill{totalSkills !== 1 ? "s" : ""}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Server size={10} />
-            {mcpCount} MCP
-          </span>
-          {project?.updated_at && (
-            <span className="flex items-center gap-1 text-text-muted/90 whitespace-nowrap">
-              {new Date(project.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-              <ChevronRight size={11} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-            </span>
-          )}
-        </div>
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0 mt-0.5">
           {isConfigured ? (
             <ProjectStatusBadge drift={drift} />
           ) : (
             <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] border border-transparent invisible">-</span>
           )}
         </div>
+      </div>
+
+      {/* Row 2: agent chips */}
+      {(project?.agents?.length ?? 0) > 0 ? (
+        <div className="flex items-center gap-1 flex-wrap">
+          {(project?.agents ?? []).map((agentId) => (
+            <span
+              key={agentId}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] text-text-muted"
+            >
+              <AgentIcon agentId={agentId} size={9} />
+              {agentId}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="flex items-center gap-1 text-[11px] text-warning/70">
+          <AlertCircle size={10} className="flex-shrink-0" />
+          <span>No agents configured</span>
+        </div>
+      )}
+
+      {/* Row 3: stats footer */}
+      <div className="mt-auto flex w-full items-center gap-3 pt-2 border-t border-border-strong/30 text-[11px] text-text-muted">
+        <span className="flex items-center gap-1">
+          <Code size={10} />
+          {totalSkills}
+        </span>
+        <span className="flex items-center gap-1">
+          <Server size={10} />
+          {mcpCount}
+        </span>
+        {project?.updated_at && (
+          <span className="ml-auto whitespace-nowrap text-text-muted/70">
+            {new Date(project.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+          </span>
+        )}
       </div>
     </button>
   );
@@ -1287,9 +1266,11 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject }: Project
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, onSelect, onCreate }: ProjectsOverviewProps) {
+function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, folders, onSelect, onCreate }: ProjectsOverviewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState<"alphabetical" | "created" | "updated" | "last_activity">("updated");
+  // Track which folder groups are collapsed in the overview (independent of sidebar state)
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   const getSortTimestamp = (project: Project | undefined, key: "created" | "updated" | "last_activity"): number => {
     if (!project) return 0;
@@ -1298,26 +1279,63 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
     return new Date(project.last_activity ?? project.updated_at ?? project.created_at ?? 0).getTime();
   };
 
-  // Sort according to selected order.
-  const sorted = [...projects].sort((a, b) => {
-    if (sortOrder === "alphabetical") {
-      return a.localeCompare(b);
-    }
-    const aTime = getSortTimestamp(projectDetails.get(a), sortOrder);
-    const bTime = getSortTimestamp(projectDetails.get(b), sortOrder);
-    return bTime - aTime;
-  });
+  const sortNames = (names: string[]) =>
+    [...names].sort((a, b) => {
+      if (sortOrder === "alphabetical") return a.localeCompare(b);
+      const aTime = getSortTimestamp(projectDetails.get(a), sortOrder);
+      const bTime = getSortTimestamp(projectDetails.get(b), sortOrder);
+      return bTime - aTime;
+    });
 
-  const query = searchQuery.trim().toLowerCase();
-  const filtered = query
-    ? sorted.filter((name) => {
-        const details = projectDetails.get(name);
-        const inName = name.toLowerCase().includes(query);
-        const inDirectory = (details?.directory ?? "").toLowerCase().includes(query);
-        const inAgents = (details?.agents ?? []).some((agent) => agent.toLowerCase().includes(query));
-        return inName || inDirectory || inAgents;
-      })
-    : sorted;
+  const matchesSearch = (name: string): boolean => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return true;
+    const details = projectDetails.get(name);
+    return (
+      name.toLowerCase().includes(query) ||
+      (details?.directory ?? "").toLowerCase().includes(query) ||
+      (details?.agents ?? []).some((agent) => agent.toLowerCase().includes(query))
+    );
+  };
+
+  // Build grouped structure. Folders that have at least one visible project are
+  // rendered as groups; the remainder form the ungrouped section.
+  const projectsInFolders = new Set(folders.flatMap((f) => f.projectNames));
+  const ungroupedNames = projects.filter((n) => !projectsInFolders.has(n));
+  const hasFolders = folders.some((f) => f.projectNames.some((n) => projects.includes(n)));
+
+  // Filtered + sorted per section
+  const filteredFolders = folders
+    .map((folder) => ({
+      folder,
+      visibleNames: sortNames(
+        folder.projectNames.filter((n) => projects.includes(n) && matchesSearch(n))
+      ),
+    }))
+    .filter(({ visibleNames }) => visibleNames.length > 0);
+
+  const filteredUngrouped = sortNames(ungroupedNames.filter(matchesSearch));
+
+  const totalVisible =
+    filteredFolders.reduce((s, { visibleNames }) => s + visibleNames.length, 0) +
+    filteredUngrouped.length;
+
+  const toggleGroup = (id: string) =>
+    setCollapsedGroups((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  const renderCardGrid = (names: string[]) => (
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
+      {names.map((name) => (
+        <ProjectCard
+          key={name}
+          name={name}
+          project={projectDetails.get(name)}
+          drift={driftByProject[name]}
+          onSelect={onSelect}
+        />
+      ))}
+    </div>
+  );
 
   return (
     <div className="flex-1 h-full overflow-y-auto custom-scrollbar bg-bg-base">
@@ -1362,7 +1380,7 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
         </div>
       </div>
 
-      <div className="p-6 space-y-5">
+      <div className="p-6 space-y-6">
         {/* Health overview bar */}
         {!projectsLoading && projects.length > 0 && (
           <ProjectsHealthBar
@@ -1372,7 +1390,7 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
           />
         )}
 
-        {/* Card grid */}
+        {/* Empty state */}
         {!projectsLoading && projects.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <div className="w-16 h-16 rounded-2xl border border-dashed border-border-strong flex items-center justify-center mb-5">
@@ -1389,23 +1407,54 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
               Create Project
             </button>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : totalVisible === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center border border-border-strong/30 rounded-lg bg-bg-input/40">
             <p className="text-[13px] text-text-base mb-1">No matching projects</p>
             <p className="text-[12px] text-text-muted">Try another search term.</p>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 items-stretch auto-rows-fr">
-            {filtered.map((name) => (
-              <ProjectCard
-                key={name}
-                name={name}
-                project={projectDetails.get(name)}
-                drift={driftByProject[name]}
-                onSelect={onSelect}
-              />
-            ))}
+        ) : hasFolders ? (
+          /* ── Grouped layout ── */
+          <div className="space-y-6">
+            {filteredFolders.map(({ folder, visibleNames }) => {
+              const isCollapsed = collapsedGroups[folder.id] ?? false;
+              return (
+                <div key={folder.id}>
+                  {/* Group header */}
+                  <button
+                    onClick={() => toggleGroup(folder.id)}
+                    className="flex items-center gap-2 mb-3 group/gh w-full text-left"
+                  >
+                    <ChevronDown
+                      size={13}
+                      className={`text-text-muted transition-transform flex-shrink-0 ${isCollapsed ? "-rotate-90" : ""}`}
+                    />
+                    <Folder size={13} className="text-text-muted flex-shrink-0" />
+                    <span className="text-[12px] font-semibold text-text-muted tracking-wide">
+                      {folder.name}
+                    </span>
+                    <span className="text-[11px] text-text-muted/60 ml-0.5">
+                      {visibleNames.length}
+                    </span>
+                  </button>
+                  {!isCollapsed && renderCardGrid(visibleNames)}
+                </div>
+              );
+            })}
+
+            {/* Ungrouped projects at the bottom */}
+            {filteredUngrouped.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-[12px] font-semibold text-text-muted/60 tracking-wide">Other</span>
+                  <span className="text-[11px] text-text-muted/40">{filteredUngrouped.length}</span>
+                </div>
+                {renderCardGrid(filteredUngrouped)}
+              </div>
+            )}
           </div>
+        ) : (
+          /* ── Flat layout (no folders defined) ── */
+          renderCardGrid(filteredUngrouped)
         )}
       </div>
     </div>
@@ -1590,6 +1639,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [contextEditing, setContextEditing] = useState(false);
   const [contextDirty, setContextDirty] = useState(false);
   const [contextSaving, setContextSaving] = useState(false);
+  const [contextGenerating, setContextGenerating] = useState(false);
   const [contextJsonError, setContextJsonError] = useState<string | null>(null);
   const [contextFileExists, setContextFileExists] = useState(false);
 
@@ -2319,6 +2369,24 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setContextJsonError(`${err}`);
     } finally {
       setContextSaving(false);
+    }
+  };
+
+  const handleGenerateContext = async () => {
+    if (!selectedName) return;
+    setContextGenerating(true);
+    setContextJsonError(null);
+    try {
+      const generated: string = await invoke("ai_generate_context", { name: selectedName });
+      // Pretty-print the returned JSON before putting it in the editor.
+      const pretty = JSON.stringify(JSON.parse(generated), null, 2);
+      setContextRaw(pretty);
+      setContextEditing(true);
+      setContextDirty(true);
+    } catch (err: any) {
+      setContextJsonError(`Generation failed: ${err}`);
+    } finally {
+      setContextGenerating(false);
     }
   };
 
@@ -3080,6 +3148,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
           projectsLoading={projectsLoading}
           projectDetails={projectDetailsMap}
           driftByProject={driftByProject}
+          folders={folders}
           onSelect={(name) => {
             setSelectedName(name);
             selectProject(name);
@@ -4365,25 +4434,41 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     <p className="text-[12px] text-text-muted mb-5 max-w-sm">
                       Define commands, entry points, architecture concepts, conventions, gotchas, and docs.
                     </p>
-                    <button
-                      onClick={() => {
-                        const template = JSON.stringify({
-                          commands: { build: "npm run build", test: "npm test" },
-                          entry_points: { app: "src/main.ts" },
-                          concepts: { example: { summary: "Describe a key concept here", files: [] } },
-                          conventions: { naming: "Describe a naming convention" },
-                          gotchas: {},
-                          docs: {},
-                        }, null, 2);
-                        setContextRaw(template);
-                        setContextEditing(true);
-                        setContextDirty(true);
-                        setContextJsonError(null);
-                      }}
-                      className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5"
-                    >
-                      <Plus size={12} /> Create context.json
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleGenerateContext}
+                        disabled={contextGenerating}
+                        className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Sparkles size={12} className={contextGenerating ? "animate-pulse" : ""} />
+                        {contextGenerating ? "Generating…" : "Generate with AI"}
+                      </button>
+                      <button
+                        onClick={() => {
+                          const template = JSON.stringify({
+                            commands: { build: "npm run build", test: "npm test" },
+                            entry_points: { app: "src/main.ts" },
+                            concepts: { example: { summary: "Describe a key concept here", files: [] } },
+                            conventions: { naming: "Describe a naming convention" },
+                            gotchas: {},
+                            docs: {},
+                          }, null, 2);
+                          setContextRaw(template);
+                          setContextEditing(true);
+                          setContextDirty(true);
+                          setContextJsonError(null);
+                        }}
+                        className="px-3 py-1.5 bg-bg-input hover:bg-surface-hover border border-border-strong/50 text-text-muted hover:text-text-base text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5"
+                      >
+                        <Plus size={12} /> Create manually
+                      </button>
+                    </div>
+                    {contextJsonError && (
+                      <div className="flex items-start gap-2 mt-4 px-4 py-2 bg-error/10 border border-error/30 rounded-lg max-w-sm">
+                        <AlertCircle size={12} className="text-error mt-0.5 flex-shrink-0" />
+                        <span className="text-[11px] text-error font-mono">{contextJsonError}</span>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   /* ── Editor area ── */
@@ -4397,6 +4482,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         {contextDirty ? " (unsaved)" : ""}
                       </span>
                       <div className="flex items-center gap-1.5">
+                        {/* Generate button — always visible in the toolbar */}
+                        <button
+                          onClick={handleGenerateContext}
+                          disabled={contextGenerating || contextSaving}
+                          title="Generate context with AI"
+                          className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Sparkles size={10} className={contextGenerating ? "animate-pulse text-brand" : ""} />
+                          {contextGenerating ? "Generating…" : "Generate"}
+                        </button>
+                        <div className="w-px h-3 bg-border-strong/40" />
                         {!contextEditing ? (
                           <button
                             onClick={() => setContextEditing(true)}
