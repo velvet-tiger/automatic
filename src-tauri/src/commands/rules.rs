@@ -66,6 +66,13 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
         // Resolve each file_rules key to actual on-disk paths.
         // In unified mode, "_unified" maps to every agent's project file.
         let synced = referencing_entries.iter().all(|(key, rules)| {
+            // When dot-claude rules mode is active, check .claude/rules/
+            // instead of looking for inline rules in the project file.
+            if core::project_uses_dot_claude_rules(project, key) {
+                return core::is_dot_claude_rules_current(&project.directory, rules)
+                    .unwrap_or(false);
+            }
+
             let paths: Vec<PathBuf> = if *key == "_unified" {
                 let mut seen = std::collections::HashSet::new();
                 project
@@ -93,8 +100,12 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
     Ok(referencing)
 }
 
-/// Re-inject the given rule into a single project's instruction files and re-sync
-/// its agent configs.  Used by the "Update" button on the Rules page.
+/// Push updated rules to a single project and re-sync its agent configs.
+/// Used by the "Update" button on the Rules page.
+///
+/// The full project sync (which correctly routes rules to `.claude/rules/`
+/// or inline depending on the project's agent options) handles the actual
+/// write — no manual injection is needed here.
 #[tauri::command]
 pub fn sync_rule_to_project(rule_name: &str, project_name: &str) -> Result<(), String> {
     let raw = core::read_project(project_name)?;
@@ -111,13 +122,6 @@ pub fn sync_rule_to_project(rule_name: &str, project_name: &str) -> Result<(), S
             "Project '{}' does not reference rule '{}'",
             project_name, rule_name
         ));
-    }
-
-    // Re-inject the updated rule content into any files in this project that use it.
-    for (filename, rules) in &project.file_rules {
-        if rules.iter().any(|r| r == rule_name) {
-            core::inject_rules_into_project_file(&project.directory, filename, rules)?;
-        }
     }
 
     sync_project_if_configured(project_name, &mut project);

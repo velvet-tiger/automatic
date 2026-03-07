@@ -43,6 +43,95 @@ pub fn save_project_file(directory: &str, filename: &str, content: &str) -> Resu
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+// ── Rule-aware project file writes ──────────────────────────────────────────
+
+/// Save user content to the appropriate project instruction file(s), applying
+/// rules according to the project's configuration.
+///
+/// This is the **single code path** for all rule-aware file saves.  It handles:
+/// - Unified vs per-file instruction mode
+/// - Routing Claude Code rules to `.claude/rules/` when that option is enabled
+/// - Inline rule injection for all other agents
+///
+/// `filename` is either an actual filename (e.g. `"CLAUDE.md"`) or `"_unified"`
+/// for unified-mode saves.
+pub fn save_project_file_for_project(
+    project: &Project,
+    filename: &str,
+    user_content: &str,
+) -> Result<(), String> {
+    let is_unified = filename == "_unified" || project.instruction_mode == "unified";
+
+    let rule_key = if is_unified { "_unified" } else { filename };
+    let rules = project
+        .file_rules
+        .get(rule_key)
+        .cloned()
+        .unwrap_or_default();
+
+    let target_files = if is_unified {
+        collect_agent_filenames(project)
+    } else {
+        vec![filename.to_string()]
+    };
+
+    let mut dot_claude_synced = false;
+
+    for f in &target_files {
+        if project_uses_dot_claude_rules(project, f) {
+            // Save without inline rules — rules go to .claude/rules/
+            save_project_file_with_rules(&project.directory, f, user_content, &[])?;
+            if !dot_claude_synced && !rules.is_empty() {
+                sync_rules_to_dot_claude_rules(&project.directory, &rules)?;
+                dot_claude_synced = true;
+            }
+        } else {
+            save_project_file_with_rules(&project.directory, f, user_content, &rules)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Returns `true` if rules for the given project file should be written to
+/// `.claude/rules/` rather than injected inline into the project file.
+///
+/// `key` can be an actual filename (e.g. `"CLAUDE.md"`) or `"_unified"`.
+/// In unified mode `"_unified"` maps to all agents — if one of them is
+/// Claude Code with `claude_rules_in_dot_claude` enabled, this returns `true`.
+pub fn project_uses_dot_claude_rules(project: &Project, key: &str) -> bool {
+    if !project.agents.iter().any(|a| a == "claude") {
+        return false;
+    }
+    let claude_file = agent::from_id("claude")
+        .map(|a| a.project_file_name())
+        .unwrap_or("CLAUDE.md");
+    // "_unified" maps to all agents, so if Claude is present it applies.
+    if key != claude_file && key != "_unified" {
+        return false;
+    }
+    project
+        .agent_options
+        .get("claude")
+        .cloned()
+        .unwrap_or_default()
+        .claude_rules_in_dot_claude
+}
+
+/// Collect the unique project filenames for all agents in a project.
+fn collect_agent_filenames(project: &Project) -> Vec<String> {
+    let mut filenames = Vec::new();
+    for agent_id in &project.agents {
+        if let Some(a) = agent::from_id(agent_id) {
+            let f = a.project_file_name().to_string();
+            if !filenames.contains(&f) {
+                filenames.push(f);
+            }
+        }
+    }
+    filenames
+}
+
 /// Public wrapper for `strip_managed_section` (used by sync).
 pub fn strip_managed_section_pub(content: &str) -> String {
     strip_managed_section(content)

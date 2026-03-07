@@ -122,44 +122,13 @@ pub fn read_project_file(name: &str, filename: &str) -> Result<String, String> {
     }
 }
 
-/// Collect the unique project filenames for all agents in a project.
-fn collect_agent_filenames(project: &core::Project) -> Vec<String> {
-    let mut filenames = Vec::new();
-    for agent_id in &project.agents {
-        if let Some(a) = agent::from_id(agent_id) {
-            let f = a.project_file_name().to_string();
-            if !filenames.contains(&f) {
-                filenames.push(f);
-            }
-        }
-    }
-    filenames
-}
-
 #[tauri::command]
 pub fn save_project_file(name: &str, filename: &str, content: &str) -> Result<(), String> {
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
 
-    if filename == "_unified" || project.instruction_mode == "unified" {
-        // Write the same content (with rules) to every agent project file
-        let rules = project
-            .file_rules
-            .get("_unified")
-            .cloned()
-            .unwrap_or_default();
-        for f in collect_agent_filenames(&project) {
-            core::save_project_file_with_rules(&project.directory, &f, content, &rules)?;
-        }
-    } else {
-        let rules = project
-            .file_rules
-            .get(filename)
-            .cloned()
-            .unwrap_or_default();
-        core::save_project_file_with_rules(&project.directory, filename, content, &rules)?;
-    }
+    core::save_project_file_for_project(&project, filename, content)?;
 
     // Record updated hashes so drift detection reflects what we just wrote.
     core::record_instruction_hashes(name, &mut project);
@@ -169,9 +138,9 @@ pub fn save_project_file(name: &str, filename: &str, content: &str) -> Result<()
 /// Adopt the current on-disk content of an instruction file into Automatic's
 /// editor.  This is a no-op write: the file is read, its user-authored content
 /// is extracted (stripping Automatic-managed sections), and then re-written
-/// through the normal `save_project_file_with_rules` path so that managed
-/// sections are correctly re-applied.  After this call the file is considered
-/// in sync and the conflict is resolved.
+/// through the normal save path so that managed sections are correctly
+/// re-applied.  After this call the file is considered in sync and the
+/// conflict is resolved.
 ///
 /// Call this when the user chooses "Use existing file" in the conflict
 /// resolution UI.
@@ -185,23 +154,7 @@ pub fn adopt_instruction_file(name: &str, filename: &str) -> Result<String, Stri
     let user_content = core::read_project_file(&project.directory, filename)?;
 
     // Re-write through the standard path so rules are correctly applied.
-    if project.instruction_mode == "unified" {
-        let rules = project
-            .file_rules
-            .get("_unified")
-            .cloned()
-            .unwrap_or_default();
-        for f in collect_agent_filenames(&project) {
-            core::save_project_file_with_rules(&project.directory, &f, &user_content, &rules)?;
-        }
-    } else {
-        let rules = project
-            .file_rules
-            .get(filename)
-            .cloned()
-            .unwrap_or_default();
-        core::save_project_file_with_rules(&project.directory, filename, &user_content, &rules)?;
-    }
+    core::save_project_file_for_project(&project, filename, &user_content)?;
 
     // Record updated hashes so drift detection reflects what we just wrote.
     core::record_instruction_hashes(name, &mut project);
@@ -223,23 +176,7 @@ pub fn overwrite_instruction_file(name: &str, filename: &str) -> Result<(), Stri
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
 
     // Write an empty user-content file with the configured rules re-applied.
-    if project.instruction_mode == "unified" {
-        let rules = project
-            .file_rules
-            .get("_unified")
-            .cloned()
-            .unwrap_or_default();
-        for f in collect_agent_filenames(&project) {
-            core::save_project_file_with_rules(&project.directory, &f, "", &rules)?;
-        }
-    } else {
-        let rules = project
-            .file_rules
-            .get(filename)
-            .cloned()
-            .unwrap_or_default();
-        core::save_project_file_with_rules(&project.directory, filename, "", &rules)?;
-    }
+    core::save_project_file_for_project(&project, filename, "")?;
 
     // Record updated hashes so drift detection reflects what we just wrote.
     core::record_instruction_hashes(name, &mut project);
