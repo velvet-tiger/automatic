@@ -63,60 +63,26 @@ struct AnthropicErrorDetail {
 /// Resolve the API key to use for a request.
 ///
 /// Priority order:
-///   1. `VITE_ANTHROPIC_API_KEY` env var (dev mode only, compiled in via Vite).
-///      In dev builds the frontend embeds the key from `.env`; here we read it
-///      from the *process* environment so it works for backend-initiated calls.
-///   2. Key stored in the OS keychain under provider `"anthropic"`.
-///   3. The `api_key` argument (explicitly supplied by caller).
+///   1. Key stored in the OS keychain (saved via Agents > Claude).
+///   2. The `api_key` argument (explicitly supplied by the caller).
 ///
 /// Returns an error if no key is found.
 pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
-    // 1. Process environment (set in the shell before launching `tauri dev`).
-    if let Ok(k) = std::env::var("ANTHROPIC_API_KEY") {
-        if !k.is_empty() {
-            return Ok(k);
-        }
-    }
-
-    // 2. In debug builds, parse the .env file at the workspace root.
-    //    Vite reads .env for the JS bundle but does NOT inject vars into the
-    //    Rust process, so we do it ourselves here.
-    #[cfg(debug_assertions)]
-    {
-        // CARGO_MANIFEST_DIR is src-tauri/; the .env lives one level up.
-        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let env_path = manifest_dir.parent().unwrap_or(manifest_dir).join(".env");
-        if let Ok(contents) = std::fs::read_to_string(&env_path) {
-            for line in contents.lines() {
-                let line = line.trim();
-                if line.starts_with('#') || line.is_empty() {
-                    continue;
-                }
-                if let Some(rest) = line.strip_prefix("ANTHROPIC_API_KEY=") {
-                    let val = rest.trim().trim_matches('"').trim_matches('\'');
-                    if !val.is_empty() {
-                        return Ok(val.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. OS keychain (saved via Settings or the playground key panel).
+    // 1. OS keychain (saved via Agents > Claude).
     if let Ok(k) = super::credentials::get_api_key("anthropic") {
         if !k.is_empty() {
             return Ok(k);
         }
     }
 
-    // 4. Explicit argument passed by the caller.
+    // 2. Explicit argument passed by the caller.
     if let Some(k) = explicit_key {
         if !k.is_empty() {
             return Ok(k.to_string());
         }
     }
 
-    Err("No Anthropic API key found. Set ANTHROPIC_API_KEY in the environment, or add a key via Agents > Claude.".to_string())
+    Err("No Anthropic API key found. Add a key via Agents > Claude.".to_string())
 }
 
 /// Fetch the list of available model IDs from the Anthropic Models API.
@@ -331,6 +297,316 @@ fn read_file_tool_def() -> Value {
             "required": ["path"]
         }
     })
+}
+
+// ── Library tool definitions ─────────────────────────────────────────────────
+
+fn list_skills_tool_def() -> Value {
+    json!({
+        "name": "list_skills",
+        "description": "List all skill names available in the Automatic skill library \
+            (~/.agents/skills/ and ~/.claude/skills/).",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    })
+}
+
+fn read_skill_tool_def() -> Value {
+    json!({
+        "name": "read_skill",
+        "description": "Read the content of a skill from the Automatic skill library by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The skill name (directory name under ~/.agents/skills/)."
+                }
+            },
+            "required": ["name"]
+        }
+    })
+}
+
+fn list_rules_tool_def() -> Value {
+    json!({
+        "name": "list_rules",
+        "description": "List all rules available in the Automatic rules library. \
+            Returns each rule's machine name (id) and display name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    })
+}
+
+fn read_rule_tool_def() -> Value {
+    json!({
+        "name": "read_rule",
+        "description": "Read the content of a rule from the Automatic rules library by its machine name (id).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "The rule machine name (lowercase slug, e.g. \"automatic-general\")."
+                }
+            },
+            "required": ["id"]
+        }
+    })
+}
+
+fn list_templates_tool_def() -> Value {
+    json!({
+        "name": "list_templates",
+        "description": "List all instruction template names available in the Automatic templates library.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    })
+}
+
+fn read_template_tool_def() -> Value {
+    json!({
+        "name": "read_template",
+        "description": "Read the markdown content of an instruction template from the Automatic library by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The template name (filename stem without .md extension)."
+                }
+            },
+            "required": ["name"]
+        }
+    })
+}
+
+fn list_mcp_servers_tool_def() -> Value {
+    json!({
+        "name": "list_mcp_servers",
+        "description": "List all MCP server configuration names registered in the Automatic library.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    })
+}
+
+fn read_mcp_server_tool_def() -> Value {
+    json!({
+        "name": "read_mcp_server",
+        "description": "Read the configuration for a single MCP server from the Automatic library by name. \
+            Returns the JSON config (command, args, env, etc.).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The MCP server config name (filename stem without .json extension)."
+                }
+            },
+            "required": ["name"]
+        }
+    })
+}
+
+// ── Library tool executors ────────────────────────────────────────────────────
+
+fn execute_list_skills() -> String {
+    match crate::core::list_skills() {
+        Ok(skills) => {
+            let names: Vec<String> = skills.into_iter().map(|s| s.name).collect();
+            serde_json::to_string_pretty(&names).unwrap_or_else(|_| "[]".to_string())
+        }
+        Err(e) => format!("Error listing skills: {}", e),
+    }
+}
+
+fn execute_read_skill(input: &Value) -> String {
+    let name = match input.get("name").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return "Error: missing required parameter 'name'.".to_string(),
+    };
+    match crate::core::read_skill(name) {
+        Ok(content) => content,
+        Err(e) => format!("Error reading skill '{}': {}", name, e),
+    }
+}
+
+fn execute_list_rules() -> String {
+    match crate::core::list_rules() {
+        Ok(rules) => serde_json::to_string_pretty(&rules).unwrap_or_else(|_| "[]".to_string()),
+        Err(e) => format!("Error listing rules: {}", e),
+    }
+}
+
+fn execute_read_rule(input: &Value) -> String {
+    let id = match input.get("id").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return "Error: missing required parameter 'id'.".to_string(),
+    };
+    match crate::core::read_rule_content(id) {
+        Ok(content) => content,
+        Err(e) => format!("Error reading rule '{}': {}", id, e),
+    }
+}
+
+fn execute_list_templates() -> String {
+    match crate::core::list_templates() {
+        Ok(templates) => {
+            serde_json::to_string_pretty(&templates).unwrap_or_else(|_| "[]".to_string())
+        }
+        Err(e) => format!("Error listing templates: {}", e),
+    }
+}
+
+fn execute_read_template(input: &Value) -> String {
+    let name = match input.get("name").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return "Error: missing required parameter 'name'.".to_string(),
+    };
+    match crate::core::read_template(name) {
+        Ok(content) => content,
+        Err(e) => format!("Error reading template '{}': {}", name, e),
+    }
+}
+
+fn execute_list_mcp_servers() -> String {
+    match crate::core::list_mcp_server_configs() {
+        Ok(names) => serde_json::to_string_pretty(&names).unwrap_or_else(|_| "[]".to_string()),
+        Err(e) => format!("Error listing MCP servers: {}", e),
+    }
+}
+
+fn execute_read_mcp_server(input: &Value) -> String {
+    let name = match input.get("name").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return "Error: missing required parameter 'name'.".to_string(),
+    };
+    match crate::core::read_mcp_server_config(name) {
+        Ok(content) => content,
+        Err(e) => format!("Error reading MCP server config '{}': {}", name, e),
+    }
+}
+
+// ── Marketplace tool definitions ─────────────────────────────────────────────
+
+fn search_skills_marketplace_tool_def() -> Value {
+    json!({
+        "name": "search_skills_marketplace",
+        "description": "Search the skills.sh community registry for skills matching a query. \
+            Returns skill names, install counts, and source repos. \
+            Use this to discover skills that are not yet installed locally.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query — skill name, topic, or keyword."
+                }
+            },
+            "required": ["query"]
+        }
+    })
+}
+
+fn search_mcp_marketplace_tool_def() -> Value {
+    json!({
+        "name": "search_mcp_marketplace",
+        "description": "Search the featured MCP server catalogue for servers matching a query. \
+            Returns title, description, provider, classification, and install config. \
+            Use this to discover MCP servers available to add to a project.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query — server name, provider, or keyword. Leave empty to list all."
+                }
+            },
+            "required": ["query"]
+        }
+    })
+}
+
+fn search_collections_tool_def() -> Value {
+    json!({
+        "name": "search_collections",
+        "description": "Search the bundled collections catalogue for curated sets of skills, MCP servers, and templates. \
+            Returns matching collection names, descriptions, and their contents.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query — collection name, tag, or keyword. Leave empty to list all."
+                }
+            },
+            "required": ["query"]
+        }
+    })
+}
+
+fn search_templates_marketplace_tool_def() -> Value {
+    json!({
+        "name": "search_templates_marketplace",
+        "description": "Search the bundled project template marketplace for templates matching a query. \
+            Returns template names, descriptions, categories, required skills, and MCP servers.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query — template name, category, tag, or keyword. Leave empty to list all."
+                }
+            },
+            "required": ["query"]
+        }
+    })
+}
+
+// ── Marketplace tool executors ────────────────────────────────────────────────
+
+async fn execute_search_skills_marketplace(input: &Value) -> String {
+    let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    match crate::core::search_remote_skills(query).await {
+        Ok(results) => serde_json::to_string_pretty(&results).unwrap_or_else(|_| "[]".to_string()),
+        Err(e) => format!("Error searching skills marketplace: {}", e),
+    }
+}
+
+fn execute_search_mcp_marketplace(input: &Value) -> String {
+    let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    match crate::core::search_mcp_marketplace(query) {
+        Ok(json) => json,
+        Err(e) => format!("Error searching MCP marketplace: {}", e),
+    }
+}
+
+fn execute_search_collections(input: &Value) -> String {
+    let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    match crate::core::search_collections(query) {
+        Ok(json) => json,
+        Err(e) => format!("Error searching collections: {}", e),
+    }
+}
+
+fn execute_search_templates_marketplace(input: &Value) -> String {
+    let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    match crate::core::search_bundled_project_templates(query) {
+        Ok(json) => json,
+        Err(e) => format!("Error searching templates marketplace: {}", e),
+    }
 }
 
 /// Filenames (exact, case-insensitive match against the final path component)
@@ -699,7 +975,21 @@ async fn chat_with_tools_inner(
         .map(|m| json!({ "role": m.role, "content": m.content }))
         .collect();
 
-    let tools = json!([read_file_tool_def()]);
+    let tools = json!([
+        read_file_tool_def(),
+        list_skills_tool_def(),
+        read_skill_tool_def(),
+        list_rules_tool_def(),
+        read_rule_tool_def(),
+        list_templates_tool_def(),
+        read_template_tool_def(),
+        list_mcp_servers_tool_def(),
+        read_mcp_server_tool_def(),
+        search_skills_marketplace_tool_def(),
+        search_mcp_marketplace_tool_def(),
+        search_collections_tool_def(),
+        search_templates_marketplace_tool_def(),
+    ]);
     let client = reqwest::Client::new();
 
     for _turn in 0..turn_limit {
@@ -783,10 +1073,21 @@ async fn chat_with_tools_inner(
                 .to_string();
             let tool_input = block.get("input").cloned().unwrap_or(json!({}));
 
-            let result = if tool_name == "read_file" {
-                execute_read_file(&tool_input, &work_path)
-            } else {
-                format!("Error: unknown tool '{}'.", tool_name)
+            let result = match tool_name.as_str() {
+                "read_file"                  => execute_read_file(&tool_input, &work_path),
+                "list_skills"                => execute_list_skills(),
+                "read_skill"                 => execute_read_skill(&tool_input),
+                "list_rules"                 => execute_list_rules(),
+                "read_rule"                  => execute_read_rule(&tool_input),
+                "list_templates"             => execute_list_templates(),
+                "read_template"              => execute_read_template(&tool_input),
+                "list_mcp_servers"           => execute_list_mcp_servers(),
+                "read_mcp_server"            => execute_read_mcp_server(&tool_input),
+                "search_skills_marketplace"  => execute_search_skills_marketplace(&tool_input).await,
+                "search_mcp_marketplace"     => execute_search_mcp_marketplace(&tool_input),
+                "search_collections"         => execute_search_collections(&tool_input),
+                "search_templates_marketplace" => execute_search_templates_marketplace(&tool_input),
+                other                        => format!("Error: unknown tool '{}'.", other),
             };
 
             tool_results.push(json!({

@@ -1608,6 +1608,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [projectFileDirty, setProjectFileDirty] = useState(false);
   const [projectFileSaving, setProjectFileSaving] = useState(false);
   const [projectFileGenerating, setProjectFileGenerating] = useState(false);
+  // Whether an Anthropic API key is resolvable (env var or keychain).
+  // Controls whether AI Generate buttons are enabled.
+  const [hasAnthropicKey, setHasAnthropicKey] = useState(false);
   // Incremented whenever any project configuration is mutated (saved, synced,
   // instruction files written, etc.).  A useEffect watches this counter and
   // re-evaluates recommendations after every change.
@@ -1692,6 +1695,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     loadAvailableTemplates();
     loadAvailableRules();
     loadAvailableProjectTemplates();
+    // Check whether an API key is available through the full resolution chain.
+    invoke<boolean>("has_ai_key").then(setHasAnthropicKey).catch(() => setHasAnthropicKey(false));
     // Detect which editors are installed on this machine, then fetch real icons
     invoke<EditorInfo[]>("check_installed_editors").then((editors) => {
       setInstalledEditors(editors);
@@ -3547,7 +3552,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <button
                     onClick={async () => { if (selectedName) await reloadProject(selectedName); }}
                     title="Force reload project from disk"
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
+                    className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
                   >
                     <RotateCcw size={12} /> Refresh
                   </button>
@@ -3557,7 +3562,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <button
                     onClick={() => setShowProjectTemplatePicker((v) => !v)}
                     title="Apply a project template"
-                    className={`flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded text-[12px] font-medium border border-border-strong hover:border-brand/40 transition-colors shadow-sm ${showProjectTemplatePicker ? "bg-brand/10 text-brand border-brand/40" : ""}`}
+                    className={`flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded text-[12px] font-medium border border-border-strong hover:border-brand/40 transition-colors shadow-sm ${showProjectTemplatePicker ? "bg-brand/10 text-brand border-brand/40" : ""}`}
                   >
                     <LayoutTemplate size={12} /> Apply Template
                   </button>
@@ -3567,7 +3572,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <div className="relative" ref={openInDropdownRef}>
                     <button
                       onClick={() => setOpenInDropdownOpen((v) => !v)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-surface-hover text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
+                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-surface-hover text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
                       title="Open project in an editor"
                     >
                       <FolderOpen size={12} /> Open in
@@ -3600,7 +3605,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {!isCreating && selectedName && (
                   <button
                     onClick={() => handleRemove(selectedName)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded text-[12px] font-medium border border-border-strong hover:border-danger/40 transition-colors shadow-sm"
+                    className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded text-[12px] font-medium border border-border-strong hover:border-danger/40 transition-colors shadow-sm"
                     title="Remove project from Automatic"
                   >
                     <Trash2 size={12} /> Remove
@@ -3611,7 +3616,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   driftReport?.drifted ? (
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-warning/10 text-warning rounded text-[12px] font-medium border border-border-strong hover:border-warning/60 transition-colors shadow-sm"
+                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-warning/10 text-warning rounded text-[12px] font-medium border border-border-strong hover:border-warning/60 transition-colors shadow-sm"
                       title="Configuration has drifted — click to sync"
                     >
                       <RefreshCw size={12} /> Sync Configs
@@ -3619,7 +3624,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   ) : driftReport && !driftReport.drifted ? (
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-success/10 text-success rounded text-[12px] font-medium border border-border-strong hover:border-success/40 transition-colors shadow-sm"
+                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-success/10 text-success rounded text-[12px] font-medium border border-border-strong hover:border-success/40 transition-colors shadow-sm"
                       title="Configuration is up to date — click to force sync"
                     >
                       <Check size={12} /> In Sync
@@ -3628,7 +3633,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     /* driftReport === null: not yet checked */
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
+                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
                       title="Sync agent configurations"
                     >
                       <RefreshCw size={12} /> Sync Configs
@@ -4355,14 +4360,21 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             </p>
                              <div className="flex items-center gap-2">
                                {/* Primary action: Generate with AI */}
-                               <button
-                                 onClick={handleGenerateInstruction}
-                                 disabled={projectFileGenerating}
-                                 className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                               >
-                                 <Sparkles size={12} className={projectFileGenerating ? "animate-pulse" : ""} />
-                                 {projectFileGenerating ? "Generating…" : "Generate with AI"}
-                               </button>
+                                 <span className="relative group/keytip">
+                                   <button
+                                     onClick={handleGenerateInstruction}
+                                     disabled={projectFileGenerating || !hasAnthropicKey}
+                                     className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                                   >
+                                     <Sparkles size={12} className={projectFileGenerating ? "animate-pulse" : ""} />
+                                     {projectFileGenerating ? "Generating…" : "Generate with AI"}
+                                   </button>
+                                   {!hasAnthropicKey && (
+                                     <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                                       Add your Anthropic API key to access
+                                     </span>
+                                   )}
+                                 </span>
                                {/* Secondary: blank file */}
                                <button
                                   onClick={() => {
@@ -4417,16 +4429,22 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 }
                               </span>
                                <div className="flex items-center gap-1.5">
-                                 {/* Generate with AI — always visible */}
-                                 <button
-                                   onClick={handleGenerateInstruction}
-                                   disabled={projectFileGenerating || projectFileSaving}
-                                   className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                   title="Generate instruction content with AI"
-                                 >
-                                   <Sparkles size={10} className={projectFileGenerating ? "animate-pulse text-brand" : ""} />
-                                   {projectFileGenerating ? "Generating…" : "Generate"}
-                                 </button>
+                                  {/* Generate with AI — always visible */}
+                                   <span className="relative group/keytip">
+                                     <button
+                                       onClick={handleGenerateInstruction}
+                                       disabled={projectFileGenerating || projectFileSaving || !hasAnthropicKey}
+                                       className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                     >
+                                       <Sparkles size={10} className={projectFileGenerating ? "animate-pulse text-brand" : ""} />
+                                       {projectFileGenerating ? "Generating…" : "Generate"}
+                                     </button>
+                                     {!hasAnthropicKey && (
+                                       <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                                         Add your Anthropic API key to access
+                                       </span>
+                                     )}
+                                   </span>
                                  <span className="w-px h-3 bg-border-strong/40" />
                                  {!projectFileEditing ? (
                                     <button
@@ -4535,14 +4553,21 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       Define commands, entry points, architecture concepts, conventions, gotchas, and docs.
                     </p>
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={handleGenerateContext}
-                        disabled={contextGenerating}
-                        className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <Sparkles size={12} className={contextGenerating ? "animate-pulse" : ""} />
-                        {contextGenerating ? "Generating…" : "Generate with AI"}
-                      </button>
+                      <span className="relative group/keytip">
+                        <button
+                          onClick={handleGenerateContext}
+                          disabled={contextGenerating || !hasAnthropicKey}
+                          className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <Sparkles size={12} className={contextGenerating ? "animate-pulse" : ""} />
+                          {contextGenerating ? "Generating…" : "Generate with AI"}
+                        </button>
+                        {!hasAnthropicKey && (
+                          <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                            Add your Anthropic API key to access
+                          </span>
+                        )}
+                      </span>
                       <button
                         onClick={() => {
                           const template = JSON.stringify({
@@ -4583,15 +4608,21 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </span>
                       <div className="flex items-center gap-1.5">
                         {/* Generate button — always visible in the toolbar */}
-                        <button
-                          onClick={handleGenerateContext}
-                          disabled={contextGenerating || contextSaving}
-                          title="Generate context with AI"
-                          className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <Sparkles size={10} className={contextGenerating ? "animate-pulse text-brand" : ""} />
-                          {contextGenerating ? "Generating…" : "Generate"}
-                        </button>
+                        <span className="relative group/keytip">
+                          <button
+                            onClick={handleGenerateContext}
+                            disabled={contextGenerating || contextSaving || !hasAnthropicKey}
+                            className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Sparkles size={10} className={contextGenerating ? "animate-pulse text-brand" : ""} />
+                            {contextGenerating ? "Generating…" : "Generate"}
+                          </button>
+                          {!hasAnthropicKey && (
+                            <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                              Add your Anthropic API key to access
+                            </span>
+                          )}
+                        </span>
                         <div className="w-px h-3 bg-border-strong/40" />
                         {!contextEditing ? (
                           <button

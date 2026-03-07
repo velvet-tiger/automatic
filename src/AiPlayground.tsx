@@ -170,11 +170,17 @@ export default function AiPlayground() {
   const [workingDir, setWorkingDir] = useState<string>("");
   const [projects, setProjects] = useState<Array<{ name: string; directory: string }>>([]);
   const [selectedProject, setSelectedProject] = useState<string>("");
+  const [hasAnthropicKey, setHasAnthropicKey] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // ── Fetch available models from the Anthropic API ─────────────────────────
+  // ── Check API key availability and fetch available models ─────────────────
 
   useEffect(() => {
+    // Check whether a key is resolvable (env var or keychain).
+    invoke<boolean>("has_ai_key")
+      .then(setHasAnthropicKey)
+      .catch(() => setHasAnthropicKey(false));
+
     invoke<string[]>("ai_list_models")
       .then((fetched) => {
         if (fetched.length > 0) {
@@ -417,13 +423,20 @@ export default function AiPlayground() {
             rows={3}
             className="flex-1 bg-bg-input border border-border-strong/40 rounded-lg text-[13px] text-text-base px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-brand placeholder:text-text-muted/50 custom-scrollbar"
           />
-          <button
-            onClick={send}
-            disabled={!input.trim() || loading}
-            className="flex items-center justify-center w-9 h-9 mb-0.5 rounded-lg bg-brand hover:bg-brand-hover text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-          >
-            <Send size={15} />
-          </button>
+          <span className="relative group/keytip shrink-0">
+            <button
+              onClick={send}
+              disabled={!input.trim() || loading || !hasAnthropicKey}
+              className="flex items-center justify-center w-9 h-9 mb-0.5 rounded-lg bg-brand hover:bg-brand-hover text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Send size={15} />
+            </button>
+            {!hasAnthropicKey && (
+              <span className="pointer-events-none absolute bottom-full right-0 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                Add your Anthropic API key to access
+              </span>
+            )}
+          </span>
         </div>
       </div>
     </div>

@@ -59,6 +59,7 @@ pub fn run() {
             save_api_key,
             get_api_key,
             has_api_key,
+            has_ai_key,
             delete_api_key,
             list_agents,
             list_agents_with_projects,
