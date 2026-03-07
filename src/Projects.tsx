@@ -1554,7 +1554,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "memory" | "activity" | "recommendations";
+  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "rules" | "context" | "memory" | "activity" | "recommendations";
   const [projectTab, setProjectTab] = useState<ProjectTab>("summary");
 
   // Memory state
@@ -1573,6 +1573,25 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [activityPageEntries, setActivityPageEntries] = useState<ActivityEntry[]>([]);
   const [loadingActivityPage, setLoadingActivityPage] = useState(false);
   const ACTIVITY_PAGE_SIZE = 50;
+
+  // Context state
+  interface ProjectContextData {
+    commands: Record<string, string>;
+    entry_points: Record<string, string>;
+    concepts: Record<string, { files: string[]; summary: string }>;
+    conventions: Record<string, string>;
+    gotchas: Record<string, string>;
+    docs: Record<string, { path: string; summary: string }>;
+  }
+  const [projectContext, setProjectContext] = useState<ProjectContextData | null>(null);
+  const [loadingContext, setLoadingContext] = useState(false);
+  // Raw text editor state for context.json
+  const [contextRaw, setContextRaw] = useState("");
+  const [contextEditing, setContextEditing] = useState(false);
+  const [contextDirty, setContextDirty] = useState(false);
+  const [contextSaving, setContextSaving] = useState(false);
+  const [contextJsonError, setContextJsonError] = useState<string | null>(null);
+  const [contextFileExists, setContextFileExists] = useState(false);
 
   // Local skill editing state
   const [localSkillEditing, setLocalSkillEditing] = useState<string | null>(null); // skill name being edited
@@ -2256,6 +2275,53 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
+  const loadContext = async (projectName: string) => {
+    try {
+      setLoadingContext(true);
+      const [parsedRaw, rawText] = await Promise.all([
+        invoke<string>("get_project_context", { name: projectName }),
+        invoke<string>("read_project_context_raw", { name: projectName }),
+      ]);
+      setProjectContext(JSON.parse(parsedRaw));
+      setContextRaw(rawText);
+      setContextFileExists(rawText.length > 0);
+      setContextEditing(false);
+      setContextDirty(false);
+      setContextJsonError(null);
+    } catch (err: any) {
+      console.error("Failed to load project context:", err);
+      setProjectContext(null);
+      setContextRaw("");
+      setContextFileExists(false);
+    } finally {
+      setLoadingContext(false);
+    }
+  };
+
+  const handleSaveContext = async () => {
+    if (!selectedName) return;
+    try {
+      JSON.parse(contextRaw);
+    } catch (e: any) {
+      setContextJsonError(`Invalid JSON: ${e.message}`);
+      return;
+    }
+    setContextSaving(true);
+    setContextJsonError(null);
+    try {
+      await invoke("save_project_context_raw", { name: selectedName, content: contextRaw });
+      setContextDirty(false);
+      setContextEditing(false);
+      setContextFileExists(true);
+      const parsed: string = await invoke("get_project_context", { name: selectedName });
+      setProjectContext(JSON.parse(parsed));
+    } catch (err: any) {
+      setContextJsonError(`${err}`);
+    } finally {
+      setContextSaving(false);
+    }
+  };
+
   const loadRecommendations = async (projectName: string) => {
     try {
       const recs = await invoke<ProjectRecommendation[]>("evaluate_project_recommendations", { project: projectName });
@@ -2373,13 +2439,6 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setProjectFileContent(content);
       setProjectFileDirty(true);
       setProjectFileEditing(true);
-      // Auto-enable Automatic rule if rules have never been configured for this file
-      if (project && activeProjectFile) {
-        const hasAutomatic = availableRules.some(r => r.id === "automatic-service");
-        if (hasAutomatic && !project.file_rules?.[activeProjectFile]) {
-          setProject({ ...project, file_rules: { ...(project.file_rules || {}), [activeProjectFile]: ["automatic-service"] } });
-        }
-      }
       setShowTemplatePicker(false);
     } catch (err: any) {
       setError(`Failed to load template: ${err}`);
@@ -2465,6 +2524,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       await loadMemories(name);
       await loadActivity(name);
       await loadRecommendations(name);
+      await loadContext(name);
       // Reset activity tab pagination for the newly selected project
       setActivityPage(0);
       setActivityPageEntries([]);
@@ -2516,6 +2576,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       await loadMemories(name);
       await loadActivity(name);
       await loadRecommendations(name);
+      await loadContext(name);
       // Reset activity tab pagination on project reload
       setActivityPage(0);
       setActivityPageEntries([]);
@@ -3975,8 +4036,10 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                  { id: "agents" as ProjectTab, label: "Agents" },
                 { id: "skills" as ProjectTab, label: "Skills" },
                 { id: "mcp_servers" as ProjectTab, label: "MCP Servers" },
-                { id: "project_file" as ProjectTab, label: "Project Instructions" },
-                { id: "memory" as ProjectTab, label: "Memory" },
+                 { id: "project_file" as ProjectTab, label: "Project Instructions" },
+                 { id: "rules" as ProjectTab, label: "Rules" },
+                 { id: "context" as ProjectTab, label: "Context" },
+                 { id: "memory" as ProjectTab, label: "Memory" },
                 { id: "activity" as ProjectTab, label: "Activity" },
                 { id: "recommendations" as ProjectTab, label: "Recommendations" },
               ]).map((tab) => (
@@ -4145,22 +4208,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             </p>
                             <div className="flex items-center gap-2">
                               <button
-                                onClick={() => {
-                                  setProjectFileContent("");
-                                  setProjectFileEditing(true);
-                                  setProjectFileDirty(true);
-                                  // Auto-enable Automatic rule when creating a new file
-                                  if (project && activeProjectFile) {
-                                    const hasAutomatic = availableRules.some(r => r.id === "automatic-service");
-                                    if (hasAutomatic && !project.file_rules?.[activeProjectFile]) {
-                                      setProject({ ...project, file_rules: { ...(project.file_rules || {}), [activeProjectFile]: ["automatic-service"] } });
-                                    }
-                                  }
-                                }}
-                                className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5"
-                              >
-                                <Plus size={12} /> Create File
-                              </button>
+                                 onClick={() => {
+                                   setProjectFileContent("");
+                                   setProjectFileEditing(true);
+                                   setProjectFileDirty(true);
+                                 }}
+                                 className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5"
+                               >
+                                 <Plus size={12} /> Create File
+                               </button>
                               {availableTemplates.length > 0 && (
                                 <button
                                   onClick={() => setShowTemplatePicker(!showTemplatePicker)}
@@ -4190,21 +4246,6 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         );
                       }
 
-                      // File exists or we're editing a new file
-                      const currentFileRules = (project.file_rules || {})[activeProjectFile] || [];
-
-                      const handleToggleRule = (ruleName: string) => {
-                        if (!project || !activeProjectFile) return;
-                        const existing = (project.file_rules || {})[activeProjectFile] || [];
-                        const updated = existing.includes(ruleName)
-                          ? existing.filter(r => r !== ruleName)
-                          : [...existing, ruleName];
-                        const newFileRules = { ...(project.file_rules || {}), [activeProjectFile]: updated };
-                        if (updated.length === 0) delete newFileRules[activeProjectFile];
-                        setProject({ ...project, file_rules: newFileRules });
-                        setDirty(true);
-                      };
-
                       return (
                         <div className="flex-1 flex min-w-0 min-h-0">
                           {/* Editor column */}
@@ -4219,21 +4260,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               </span>
                               <div className="flex items-center gap-1.5">
                                 {!projectFileEditing ? (
-                                  <button
-                                    onClick={() => {
-                                      setProjectFileEditing(true);
-                                      // Auto-enable Automatic rule if rules have never been configured for this file
-                                      if (project && activeProjectFile) {
-                                        const hasAutomatic = availableRules.some(r => r.id === "automatic-service");
-                                        if (hasAutomatic && !project.file_rules?.[activeProjectFile]) {
-                                          setProject({ ...project, file_rules: { ...(project.file_rules || {}), [activeProjectFile]: ["automatic-service"] } });
-                                        }
-                                      }
-                                    }}
-                                    className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
-                                  >
-                                    <Edit2 size={10} /> Edit
-                                  </button>
+                                   <button
+                                     onClick={() => setProjectFileEditing(true)}
+                                     className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+                                   >
+                                     <Edit2 size={10} /> Edit
+                                   </button>
                                 ) : (
                                   <>
                                     <button
@@ -4286,44 +4318,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             )}
                           </div>
 
-                          {/* Rules sidebar */}
-                          <div className="w-44 flex-shrink-0 border-l border-border-strong/40 bg-bg-input/50 flex flex-col">
-                            <div className="h-9 px-3 border-b border-border-strong/40 flex items-center gap-2 flex-shrink-0">
-                              <ScrollText size={12} className="text-accent-hover" />
-                              <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Rules</span>
-                              {currentFileRules.length > 0 && (
-                                <span className="text-[10px] text-accent-hover bg-accent-hover/10 px-1.5 py-0.5 rounded ml-auto">{currentFileRules.length}</span>
-                              )}
-                            </div>
-                            <div className="flex-1 overflow-y-auto py-2 px-2 custom-scrollbar">
-                              {availableRules.length > 0 ? (
-                                <div className="space-y-1">
-                                  {availableRules.map(rule => {
-                                    const isSelected = currentFileRules.includes(rule.id);
-                                    return (
-                                      <button
-                                        key={rule.id}
-                                        onClick={() => handleToggleRule(rule.id)}
-                                        className={`w-full text-left px-2 py-1.5 text-[12px] rounded border transition-colors flex items-center gap-1.5 ${
-                                          isSelected
-                                            ? "rule-pill-selected font-medium"
-                                            : "bg-bg-sidebar border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
-                                        }`}
-                                      >
-                                        <ScrollText size={10} className="flex-shrink-0" />
-                                        <span className="truncate">{rule.name}</span>
-                                        {isSelected && <Check size={10} className="flex-shrink-0 ml-auto" />}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              ) : (
-                                <p className="text-[11px] text-text-muted italic leading-relaxed px-1">
-                                  No rules yet. Create rules in the Rules section.
-                                </p>
-                              )}
-                            </div>
-                          </div>
+
                         </div>
                       );
                     })() : (
@@ -4343,10 +4338,343 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
               </>
             )}
 
+            {/* ── Context tab (full-bleed, like project_file) ──────────── */}
+            {projectTab === "context" && (
+              <div className="flex-1 flex flex-col min-h-0">
+                {!project?.directory ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <p className="text-[13px] text-text-muted italic">
+                      Set a project directory to use context.
+                    </p>
+                  </div>
+                ) : loadingContext ? (
+                  <div className="flex-1 flex items-center justify-center text-text-muted">
+                    <RefreshCw size={14} className="animate-spin mr-2" />
+                    <span className="text-[13px]">Loading…</span>
+                  </div>
+                ) : !contextFileExists && !contextEditing ? (
+                  /* ── Create prompt ── */
+                  <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                    <div className="w-12 h-12 mx-auto mb-4 rounded-full border border-dashed border-border-strong flex items-center justify-center text-text-muted">
+                      <Brain size={20} strokeWidth={1.5} />
+                    </div>
+                    <h3 className="text-[14px] font-medium text-text-base mb-1">No context file</h3>
+                    <p className="text-[13px] text-text-muted mb-1 max-w-xs">
+                      Create <code className="font-mono text-[12px]">.automatic/context.json</code> to give agents structured knowledge about this project.
+                    </p>
+                    <p className="text-[12px] text-text-muted mb-5 max-w-sm">
+                      Define commands, entry points, architecture concepts, conventions, gotchas, and docs.
+                    </p>
+                    <button
+                      onClick={() => {
+                        const template = JSON.stringify({
+                          commands: { build: "npm run build", test: "npm test" },
+                          entry_points: { app: "src/main.ts" },
+                          concepts: { example: { summary: "Describe a key concept here", files: [] } },
+                          conventions: { naming: "Describe a naming convention" },
+                          gotchas: {},
+                          docs: {},
+                        }, null, 2);
+                        setContextRaw(template);
+                        setContextEditing(true);
+                        setContextDirty(true);
+                        setContextJsonError(null);
+                      }}
+                      className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5"
+                    >
+                      <Plus size={12} /> Create context.json
+                    </button>
+                  </div>
+                ) : (
+                  /* ── Editor area ── */
+                  <div className="flex-1 flex flex-col min-h-0">
+                    {/* Toolbar */}
+                    <div className="flex items-center justify-between px-4 h-9 bg-bg-input border-b border-border-strong/40 flex-shrink-0">
+                      <span className="text-[11px] text-text-muted font-mono">
+                        .automatic/context.json
+                        {!contextFileExists ? " (new)" : ""}
+                        {contextEditing ? " — Editing" : ""}
+                        {contextDirty ? " (unsaved)" : ""}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {!contextEditing ? (
+                          <button
+                            onClick={() => setContextEditing(true)}
+                            className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+                          >
+                            <Edit2 size={10} /> Edit
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => {
+                                setContextEditing(false);
+                                setContextJsonError(null);
+                                if (contextDirty && selectedName) {
+                                  if (contextFileExists) {
+                                    loadContext(selectedName);
+                                  } else {
+                                    setContextRaw("");
+                                    setContextDirty(false);
+                                  }
+                                }
+                              }}
+                              className="px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleSaveContext}
+                              disabled={!contextDirty || contextSaving}
+                              className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-brand hover:bg-brand-hover text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <Check size={10} /> {contextSaving ? "Saving…" : "Save"}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* JSON error banner */}
+                    {contextJsonError && (
+                      <div className="flex items-start gap-2 px-4 py-2 bg-error/10 border-b border-error/30 flex-shrink-0">
+                        <AlertCircle size={12} className="text-error mt-0.5 flex-shrink-0" />
+                        <span className="text-[11px] text-error font-mono">{contextJsonError}</span>
+                      </div>
+                    )}
+
+                    {/* Content: raw JSON editor or structured read-only view */}
+                    {contextEditing ? (
+                      <textarea
+                        value={contextRaw}
+                        onChange={(e) => {
+                          setContextRaw(e.target.value);
+                          setContextDirty(true);
+                          setContextJsonError(null);
+                        }}
+                        className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30 min-h-0"
+                        placeholder={`{\n  "commands": {},\n  "concepts": {},\n  "conventions": {},\n  "gotchas": {},\n  "docs": {}\n}`}
+                        spellCheck={false}
+                      />
+                    ) : (
+                      <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-5">
+                        {(() => {
+                          const ctx = projectContext;
+                          if (!ctx) return <span className="text-[13px] text-text-muted italic">Empty file.</span>;
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          const sections: any[] = [];
+
+                          if (Object.keys(ctx.commands).length > 0)
+                            sections.push(
+                              <div key="commands">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <Code size={12} className="text-text-muted" />
+                                  <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Commands</span>
+                                </div>
+                                <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                                  {Object.entries(ctx.commands).map(([name, cmd]) => (
+                                    <div key={name} className="flex items-start gap-3 px-4 py-2.5">
+                                      <span className="text-[12px] font-medium text-text-base w-32 flex-shrink-0 pt-px">{name}</span>
+                                      <code className="text-[11px] font-mono text-text-muted break-all">{cmd}</code>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+
+                          if (Object.keys(ctx.entry_points).length > 0)
+                            sections.push(
+                              <div key="entry_points">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <ArrowRight size={12} className="text-text-muted" />
+                                  <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Entry Points</span>
+                                </div>
+                                <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                                  {Object.entries(ctx.entry_points).map(([name, path]) => (
+                                    <div key={name} className="flex items-start gap-3 px-4 py-2.5">
+                                      <span className="text-[12px] font-medium text-text-base w-32 flex-shrink-0 pt-px">{name}</span>
+                                      <code className="text-[11px] font-mono text-text-muted break-all">{path}</code>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+
+                          if (Object.keys(ctx.concepts).length > 0)
+                            sections.push(
+                              <div key="concepts">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <Brain size={12} className="text-text-muted" />
+                                  <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Architecture Concepts</span>
+                                </div>
+                                <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                                  {Object.entries(ctx.concepts).map(([name, concept]) => (
+                                    <div key={name} className="px-4 py-3 space-y-1.5">
+                                      <span className="text-[12px] font-semibold text-text-base block">{name}</span>
+                                      <p className="text-[12px] text-text-muted leading-relaxed">{concept.summary}</p>
+                                      {concept.files.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {concept.files.map((f) => (
+                                            <code key={f} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-bg-sidebar border border-border-strong/30 text-text-muted">{f}</code>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+
+                          if (Object.keys(ctx.conventions).length > 0)
+                            sections.push(
+                              <div key="conventions">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <ScrollText size={12} className="text-text-muted" />
+                                  <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Conventions</span>
+                                </div>
+                                <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                                  {Object.entries(ctx.conventions).map(([name, desc]) => (
+                                    <div key={name} className="px-4 py-2.5 space-y-0.5">
+                                      <span className="text-[12px] font-medium text-text-base block">{name}</span>
+                                      <p className="text-[12px] text-text-muted leading-relaxed">{desc}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+
+                          if (Object.keys(ctx.gotchas).length > 0)
+                            sections.push(
+                              <div key="gotchas">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <AlertCircle size={12} className="text-text-muted" />
+                                  <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Gotchas</span>
+                                </div>
+                                <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                                  {Object.entries(ctx.gotchas).map(([name, desc]) => (
+                                    <div key={name} className="px-4 py-2.5 space-y-0.5">
+                                      <span className="text-[12px] font-medium text-text-base block">{name}</span>
+                                      <p className="text-[12px] text-text-muted leading-relaxed">{desc}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+
+                          if (Object.keys(ctx.docs).length > 0)
+                            sections.push(
+                              <div key="docs">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <FileText size={12} className="text-text-muted" />
+                                  <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Documentation</span>
+                                </div>
+                                <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                                  {Object.entries(ctx.docs).map(([name, doc]) => (
+                                    <div key={name} className="flex items-start gap-3 px-4 py-2.5">
+                                      <div className="flex-1 min-w-0 space-y-0.5">
+                                        <span className="text-[12px] font-medium text-text-base block">{name}</span>
+                                        <p className="text-[12px] text-text-muted">{doc.summary}</p>
+                                      </div>
+                                      <code className="text-[10px] font-mono text-text-muted flex-shrink-0 mt-0.5 max-w-[200px] truncate" title={doc.path}>{doc.path}</code>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+
+                          return sections.length > 0
+                            ? <>{sections}</>
+                            : <span className="text-[13px] text-text-muted italic">Empty context file. Click Edit to add content.</span>;
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Other tabs (padded container) */}
-            {projectTab !== "project_file" && (
+            {projectTab !== "project_file" && projectTab !== "context" && (
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div className="space-y-8">
+
+                {/* ── Rules tab ─────────────────────────────────────────── */}
+                {projectTab === "rules" && (() => {
+                  const projectRules = (project.file_rules || {})["_project"] || [];
+
+                  const handleToggleProjectRule = (ruleId: string) => {
+                    const existing = (project.file_rules || {})["_project"] || [];
+                    const updated = existing.includes(ruleId)
+                      ? existing.filter(r => r !== ruleId)
+                      : [...existing, ruleId];
+                    const newFileRules: Record<string, string[]> = { ...(project.file_rules || {}), _project: updated };
+                    if (updated.length === 0) delete newFileRules["_project"];
+                    setProject({ ...project, file_rules: newFileRules });
+                    setDirty(true);
+                  };
+
+                  return (
+                    <div className="space-y-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h2 className="text-[15px] font-semibold text-text-base">Rules</h2>
+                          <p className="text-[12px] text-text-muted mt-0.5">
+                            Select rules to inject into all project instruction files for this project.
+                          </p>
+                        </div>
+                        {projectRules.length > 0 && (
+                          <span className="text-[11px] text-accent-hover bg-accent-hover/10 px-2 py-0.5 rounded border border-accent-hover/20">
+                            {projectRules.length} active
+                          </span>
+                        )}
+                      </div>
+
+                      {availableRules.length > 0 ? (
+                        <div className="grid grid-cols-1 gap-2">
+                          {availableRules.map(rule => {
+                            const isSelected = projectRules.includes(rule.id);
+                            return (
+                              <button
+                                key={rule.id}
+                                onClick={() => handleToggleProjectRule(rule.id)}
+                                className={`w-full text-left px-4 py-3 rounded-lg border transition-colors flex items-center gap-3 ${
+                                  isSelected
+                                    ? "rule-pill-selected"
+                                    : "bg-bg-input border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong"
+                                }`}
+                              >
+                                <ScrollText size={14} className="flex-shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <div className={`text-[13px] font-medium truncate ${isSelected ? "" : "text-text-base"}`}>{rule.name}</div>
+                                  <div className="text-[11px] text-text-muted truncate">{rule.id}</div>
+                                </div>
+                                {isSelected && <Check size={14} className="flex-shrink-0 text-current" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="px-4 py-8 bg-bg-input border border-border-strong/40 rounded-lg text-center">
+                          <ScrollText size={20} className="mx-auto mb-3 text-text-muted" strokeWidth={1.5} />
+                          <p className="text-[13px] text-text-muted mb-1">No rules configured yet.</p>
+                          <p className="text-[12px] text-text-muted/70">Create rules in the Rules section of the sidebar.</p>
+                        </div>
+                      )}
+
+                      {dirty && (
+                        <div className="flex justify-end">
+                          <button
+                            onClick={handleSave}
+                            disabled={syncStatus === "syncing"}
+                            className="flex items-center gap-1.5 px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors disabled:opacity-50"
+                          >
+                            <Check size={13} /> {syncStatus === "syncing" ? "Saving…" : "Save Changes"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* ── Summary tab ──────────────────────────────────────── */}
                 {projectTab === "summary" && (

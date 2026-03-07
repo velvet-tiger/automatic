@@ -62,12 +62,19 @@ pub fn save_project_file_for_project(
 ) -> Result<(), String> {
     let is_unified = filename == "_unified" || project.instruction_mode == "unified";
 
-    let rule_key = if is_unified { "_unified" } else { filename };
-    let rules = project
-        .file_rules
-        .get(rule_key)
-        .cloned()
-        .unwrap_or_default();
+    // Resolve rules: project-level key ("_project") takes precedence over the
+    // legacy per-file / unified keys so that saves are consistent with sync.
+    let rules: Vec<String> =
+        if let Some(r) = project.file_rules.get("_project").filter(|v| !v.is_empty()) {
+            r.clone()
+        } else {
+            let rule_key = if is_unified { "_unified" } else { filename };
+            project
+                .file_rules
+                .get(rule_key)
+                .cloned()
+                .unwrap_or_default()
+        };
 
     let target_files = if is_unified {
         collect_agent_filenames(project)
@@ -96,8 +103,8 @@ pub fn save_project_file_for_project(
 /// Returns `true` if rules for the given project file should be written to
 /// `.claude/rules/` rather than injected inline into the project file.
 ///
-/// `key` can be an actual filename (e.g. `"CLAUDE.md"`) or `"_unified"`.
-/// In unified mode `"_unified"` maps to all agents — if one of them is
+/// `key` can be an actual filename (e.g. `"CLAUDE.md"`), `"_unified"`, or
+/// `"_project"`.  The latter two map to all agents — if one of them is
 /// Claude Code with `claude_rules_in_dot_claude` enabled, this returns `true`.
 pub fn project_uses_dot_claude_rules(project: &Project, key: &str) -> bool {
     if !project.agents.iter().any(|a| a == "claude") {
@@ -106,8 +113,9 @@ pub fn project_uses_dot_claude_rules(project: &Project, key: &str) -> bool {
     let claude_file = agent::from_id("claude")
         .map(|a| a.project_file_name())
         .unwrap_or("CLAUDE.md");
-    // "_unified" maps to all agents, so if Claude is present it applies.
-    if key != claude_file && key != "_unified" {
+    // "_unified" and "_project" map to all agents, so if Claude is present
+    // and the option is enabled, rules go to .claude/rules/.
+    if key != claude_file && key != "_unified" && key != "_project" {
         return false;
     }
     project

@@ -115,6 +115,9 @@ pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendat
     // ── Check 1: Rules attached to instruction files ──────────────────────────
     // A project benefits from having at least one rule attached to its
     // instruction files so agents receive consistent behavioural guidelines.
+    // A project has rules if any file_rules value is non-empty.
+    // This includes the "_project" key (project-level rules set from the Rules
+    // tab), the "_unified" key (legacy), and any per-file keys.
     let has_any_rules =
         !proj.file_rules.is_empty() && proj.file_rules.values().any(|v| !v.is_empty());
     if has_any_rules {

@@ -146,12 +146,21 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                     }
 
                     // Resolve the rules assigned to this project file.
-                    // In unified mode, rules are stored under the "_unified" key.
-                    let rules: Option<&Vec<String>> = if project.instruction_mode == "unified" {
-                        project.file_rules.get("_unified")
-                    } else {
-                        project.file_rules.get(pf)
-                    };
+                    // Priority order:
+                    //   1. "_project" — project-level rules set from the Rules tab (applies to all files)
+                    //   2. "_unified" — legacy unified-mode key
+                    //   3. Per-file key (e.g. "CLAUDE.md") — legacy per-agent mode
+                    let rules: Option<&Vec<String>> = project
+                        .file_rules
+                        .get("_project")
+                        .filter(|v| !v.is_empty())
+                        .or_else(|| {
+                            if project.instruction_mode == "unified" {
+                                project.file_rules.get("_unified")
+                            } else {
+                                project.file_rules.get(pf)
+                            }
+                        });
 
                     // Resolve per-agent options for this agent (use defaults if absent).
                     let opts = project

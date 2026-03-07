@@ -73,7 +73,9 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
                     .unwrap_or(false);
             }
 
-            let paths: Vec<PathBuf> = if *key == "_unified" {
+            // "_unified" and "_project" both apply to all agent instruction
+            // files.  Expand them to the actual filenames for the sync check.
+            let paths: Vec<PathBuf> = if *key == "_unified" || *key == "_project" {
                 let mut seen = std::collections::HashSet::new();
                 project
                     .agents

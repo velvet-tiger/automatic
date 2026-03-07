@@ -1,4 +1,5 @@
 use crate::activity::{self, ActivityEvent};
+use crate::context;
 use crate::core;
 use crate::sync;
 
@@ -237,6 +238,60 @@ pub fn delete_project(name: &str) -> Result<(), String> {
     core::delete_project(name)
 }
 
+// ── Project Context ───────────────────────────────────────────────────────────
+
+/// Return the parsed `.automatic/context.json` for the given project as JSON.
+/// Returns an empty `ProjectContext` (all empty maps) when the file does not
+/// exist yet — callers can use this to show an empty-state UI.
+#[tauri::command]
+pub fn get_project_context(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let ctx = context::get_project_context(&project.directory)?;
+    serde_json::to_string(&ctx).map_err(|e| e.to_string())
+}
+
+/// Return the raw text content of `.automatic/context.json` for editing.
+/// Returns an empty string when the file does not exist yet.
+#[tauri::command]
+pub fn read_project_context_raw(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+    let path = std::path::PathBuf::from(&project.directory)
+        .join(".automatic")
+        .join("context.json");
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+/// Write raw JSON text to `.automatic/context.json`, creating the `.automatic`
+/// directory if it does not exist.  The content is validated as JSON before
+/// being written so the file is never left in an unparseable state.
+#[tauri::command]
+pub fn save_project_context_raw(name: &str, content: &str) -> Result<(), String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    // Validate JSON before touching disk.
+    let _: serde_json::Value =
+        serde_json::from_str(content).map_err(|e| format!("Invalid JSON: {}", e))?;
+
+    let dir = std::path::PathBuf::from(&project.directory).join(".automatic");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("context.json"), content).map_err(|e| e.to_string())
+}
+
 // ── Project Sync ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -438,8 +493,12 @@ pub(crate) fn prune_rule_from_projects(rule_name: &str) {
                     eprintln!("Failed to serialize project '{}': {}", project_name, e);
                 }
             }
-            // Re-inject rules for affected files
+            // Re-inject rules for affected files, skipping any file whose rules
+            // are managed via .claude/rules/ (inline injection must not happen there).
             for (filename, rules) in &project.file_rules {
+                if core::project_uses_dot_claude_rules(project, filename) {
+                    continue;
+                }
                 let _ = core::inject_rules_into_project_file(&project.directory, filename, rules);
             }
             sync_project_if_configured(project_name, project);
