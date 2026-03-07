@@ -1,0 +1,2324 @@
+[
+  {
+    "slug": "modelcontextprotocol-fetch",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-fetch",
+    "title": "Fetch",
+    "description": "Retrieve and convert web content to markdown for analysis.",
+    "provider": "Anthropic",
+    "icon": "anthropic.com",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcp-server-fetch",
+      "version": null,
+      "transport": "stdio",
+      "command": "uvx mcp-server-fetch"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "microsoft-playwright",
+    "name": "com.pulsemcp.mirror/microsoft-playwright",
+    "title": "Playwright Browser Automation",
+    "description": "Browser automation and testing via Playwright.",
+    "provider": "Microsoft",
+    "icon": "microsoft.com",
+    "classification": "official",
+    "repository_url": "https://github.com/microsoft/playwright-mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@playwright/mcp",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx @playwright/mcp@latest"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "upstash-context7",
+    "name": "io.github.upstash/context7",
+    "title": "Context7",
+    "description": "Up-to-date code docs for any prompt",
+    "provider": "Upstash",
+    "icon": "upstash.com",
+    "classification": "official",
+    "repository_url": "https://github.com/upstash/context7",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@upstash/context7-mcp",
+      "version": "1.0.31",
+      "transport": "stdio",
+      "command": "npx -y @upstash/context7-mcp"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "CONTEXT7_API_KEY",
+          "description": "API key for authentication",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-filesystem",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-filesystem",
+    "title": "Filesystem",
+    "description": "MCP server providing secure filesystem operations including read, write, directory listing, and file search capabilities.",
+    "provider": "Anthropic",
+    "icon": "anthropic.com",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-filesystem",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-filesystem"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "github",
+    "name": "io.github.github/github-mcp-server",
+    "title": "GitHub",
+    "description": "Connect AI assistants to GitHub - manage repos, issues, PRs, and workflows through natural language.",
+    "provider": "GitHub",
+    "icon": "github.com",
+    "classification": "official",
+    "repository_url": "https://github.com/github/github-mcp-server",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "local": {
+      "registry": "oci",
+      "package": "ghcr.io/github/github-mcp-server:0.31.0",
+      "version": "",
+      "transport": "stdio",
+      "command": "docker run ghcr.io/github/github-mcp-server:0.31.0"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "aws-documentation",
+    "name": "io.github.aws/mcp-proxy-for-aws",
+    "title": "AWS MCP Server",
+    "description": "AWS MCP Server lets AI securely access AWS using docs, API calls, and SOP workflows.",
+    "provider": "AWS",
+    "icon": "aws.amazon.com",
+    "classification": "official",
+    "repository_url": null,
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcp-proxy-for-aws",
+      "version": "1.1.4",
+      "transport": "stdio",
+      "command": "uvx mcp-proxy-for-aws"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "chrome-devtools",
+    "name": "io.github.ChromeDevTools/chrome-devtools-mcp",
+    "title": "Chrome DevTools MCP",
+    "description": "MCP server for Chrome DevTools",
+    "provider": "Google",
+    "icon": "google.com",
+    "classification": "official",
+    "repository_url": "https://github.com/ChromeDevTools/chrome-devtools-mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "chrome-devtools-mcp",
+      "version": "0.18.1",
+      "transport": "stdio",
+      "command": "npx -y chrome-devtools-mcp"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-sequential-thinking",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-sequential-thinking",
+    "title": "Sequential Thinking",
+    "description": "A tool for dynamic and reflective problem-solving through sequential thinking.",
+    "provider": "Anthropic",
+    "icon": "anthropic.com",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-sequential-thinking",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-sequential-thinking"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-time",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-time",
+    "title": "Time",
+    "description": "Get current time and timezone conversion capabilities.",
+    "provider": "Anthropic",
+    "icon": "anthropic.com",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcp-server-time",
+      "version": null,
+      "transport": "stdio",
+      "command": "uvx mcp-server-time"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "nuget",
+    "name": "com.microsoft/nuget",
+    "title": "NuGet",
+    "description": "A Model Context Protocol (MCP) server for NuGet.",
+    "provider": "Microsoft",
+    "icon": "microsoft.com",
+    "classification": "official",
+    "repository_url": null,
+    "remote": null,
+    "local": {
+      "registry": "nuget",
+      "package": "NuGet.Mcp.Server",
+      "version": "1.1.29",
+      "transport": "stdio",
+      "command": "dotnet tool run NuGet.Mcp.Server"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "ruvnet-claude-flow",
+    "name": "io.github.ruvnet/claude-flow",
+    "title": "Claude Flow",
+    "description": "AI orchestration with hive-mind swarms, neural networks, and 87 MCP tools for enterprise dev.",
+    "provider": "ruvnet",
+    "classification": "community",
+    "repository_url": "https://github.com/ruvnet/claude-flow",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "claude-flow",
+      "version": "2.0.0-alpha.107",
+      "transport": "stdio",
+      "command": "npx -y claude-flow"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "description": "Anthropic API key for Claude AI models",
+          "secret": true
+        },
+        {
+          "name": "CLAUDE_FLOW_MODE",
+          "description": "Operation mode: development, production, or test",
+          "secret": false
+        },
+        {
+          "name": "CLAUDE_FLOW_MEMORY_PATH",
+          "description": "Path for persistent memory storage",
+          "secret": false
+        },
+        {
+          "name": "CLAUDE_FLOW_MAX_AGENTS",
+          "description": "Maximum number of concurrent agents",
+          "secret": false
+        },
+        {
+          "name": "CLAUDE_FLOW_PORT",
+          "description": "MCP server port",
+          "secret": false
+        },
+        {
+          "name": "GITHUB_TOKEN",
+          "description": "GitHub personal access token for repository operations",
+          "secret": true
+        },
+        {
+          "name": "FLOW_NEXUS_API_KEY",
+          "description": "Flow Nexus cloud platform API key",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "genai-toolbox",
+    "name": "io.github.googleapis/genai-toolbox",
+    "title": "MCP Toolbox for Databases",
+    "description": "MCP Toolbox for Databases enables your agent to connect to your database.",
+    "provider": "Google",
+    "icon": "google.com",
+    "classification": "official",
+    "repository_url": "https://github.com/googleapis/genai-toolbox",
+    "remote": null,
+    "local": {
+      "registry": "oci",
+      "package": "us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:0.27.0",
+      "version": "",
+      "transport": "streamable-http",
+      "command": "docker run us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:0.27.0"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "beehiveinnovations-gemini",
+    "name": "com.pulsemcp.mirror/beehiveinnovations-gemini",
+    "title": "Zen",
+    "description": "Give your development workflow access to all state of the art AI models for enhanced code analysis, problem-solving, and collaborative development.",
+    "provider": "Beehive Innovations",
+    "classification": "community",
+    "repository_url": "https://github.com/beehiveinnovations/pal-mcp-server",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "pal-mcp-server",
+      "version": null,
+      "transport": "stdio",
+      "command": "uvx --from git+https://github.com/BeehiveInnovations/pal-mcp-server.git pal-mcp-server"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "GEMINI_API_KEY",
+          "description": "Google Gemini API key for accessing Gemini models",
+          "secret": true
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "description": "OpenAI API key for accessing GPT models",
+          "secret": true
+        },
+        {
+          "name": "OPENROUTER_API_KEY",
+          "description": "OpenRouter API key for accessing multiple models via OpenRouter",
+          "secret": true
+        },
+        {
+          "name": "DISABLED_TOOLS",
+          "description": "Comma-separated list of tools to disable (e.g. analyze,refactor,testgen,secaudit,docgen,tracer)",
+          "secret": false
+        },
+        {
+          "name": "DEFAULT_MODEL",
+          "description": "Default model to use (e.g. auto, pro)",
+          "secret": false
+        }
+      ]
+    }
+  },
+  {
+    "slug": "hangwin-chrome",
+    "name": "com.pulsemcp.mirror/hangwin-chrome",
+    "title": "Chrome Browser Automation",
+    "description": "Browser automation and semantic search capabilities through Chrome extension integration.",
+    "provider": "hangye",
+    "classification": "community",
+    "repository_url": "https://github.com/hangwin/mcp-chrome",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "http://127.0.0.1:12306/mcp"
+    },
+    "local": {
+      "registry": "npm",
+      "package": "mcp-chrome-bridge",
+      "version": null,
+      "transport": "streamable-http",
+      "command": "npm install -g mcp-chrome-bridge"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-memory",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-memory",
+    "title": "Knowledge Graph Memory",
+    "description": "Persistent memory using a local knowledge graph to retain information across conversations.",
+    "provider": "Anthropic",
+    "icon": "anthropic.com",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-memory",
+      "version": "2025.11.25",
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-memory"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "supabase",
+    "name": "com.supabase/mcp",
+    "title": "Supabase",
+    "description": "MCP server for interacting with the Supabase platform",
+    "provider": "Supabase",
+    "icon": "supabase.com",
+    "classification": "official",
+    "repository_url": "https://github.com/supabase-community/supabase-mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.supabase.com/mcp"
+    },
+    "local": {
+      "registry": "npm",
+      "package": "@supabase/mcp-server-supabase",
+      "version": "0.6.3",
+      "transport": "stdio",
+      "command": "npx -y @supabase/mcp-server-supabase"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "SUPABASE_ACCESS_TOKEN",
+          "description": "Personal access token for Supabase API",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "sooperset-atlassian",
+    "name": "com.pulsemcp.mirror/sooperset-atlassian",
+    "title": "Atlassian Cloud",
+    "description": "Access Confluence pages and Jira issues via Atlassian API.",
+    "provider": "sooperset",
+    "icon": "atlassian.com",
+    "classification": "community",
+    "repository_url": "https://github.com/sooperset/mcp-atlassian",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcp-atlassian",
+      "version": null,
+      "transport": "stdio",
+      "command": "uvx mcp-atlassian"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "JIRA_URL",
+          "description": "Jira instance URL (e.g. https://your-company.atlassian.net)",
+          "secret": false
+        },
+        {
+          "name": "JIRA_USERNAME",
+          "description": "Jira username / email for Cloud authentication",
+          "secret": false
+        },
+        {
+          "name": "JIRA_API_TOKEN",
+          "description": "Jira API token for Cloud authentication",
+          "secret": true
+        },
+        {
+          "name": "CONFLUENCE_URL",
+          "description": "Confluence instance URL (e.g. https://your-company.atlassian.net/wiki)",
+          "secret": false
+        },
+        {
+          "name": "CONFLUENCE_USERNAME",
+          "description": "Confluence username / email for Cloud authentication",
+          "secret": false
+        },
+        {
+          "name": "CONFLUENCE_API_TOKEN",
+          "description": "Confluence API token for Cloud authentication",
+          "secret": true
+        },
+        {
+          "name": "JIRA_PERSONAL_TOKEN",
+          "description": "Jira Personal Access Token for Server/Data Center authentication (alternative to username + API token)",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-github",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-github",
+    "title": "GitHub (Anthropic Reference)",
+    "description": "Manage repositories, issues, and search code via GitHub API.",
+    "provider": "Anthropic",
+    "icon": "github.com",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers-archived",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-github",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-github"
+    },
+    "auth": {
+      "method": "token",
+      "env_vars": [
+        {
+          "name": "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "description": "GitHub Personal Access Token with repo scope for accessing repositories",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "eyaltoledano-task-master",
+    "name": "com.pulsemcp.mirror/eyaltoledano-task-master",
+    "title": "Task Master",
+    "description": "Task management for development workflows with PRD parsing, dependency management, and complexity analysis.",
+    "provider": "Eyal Toledano",
+    "classification": "community",
+    "repository_url": "https://github.com/eyaltoledano/claude-task-master",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "task-master-ai",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx -y task-master-ai"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "description": "Anthropic API key for Claude models",
+          "secret": true
+        },
+        {
+          "name": "PERPLEXITY_API_KEY",
+          "description": "Perplexity API key for research model",
+          "secret": true
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "description": "OpenAI API key for GPT models",
+          "secret": true
+        },
+        {
+          "name": "GOOGLE_API_KEY",
+          "description": "Google API key for Gemini models",
+          "secret": true
+        },
+        {
+          "name": "MISTRAL_API_KEY",
+          "description": "Mistral API key",
+          "secret": true
+        },
+        {
+          "name": "GROQ_API_KEY",
+          "description": "Groq API key",
+          "secret": true
+        },
+        {
+          "name": "OPENROUTER_API_KEY",
+          "description": "OpenRouter API key for accessing multiple models",
+          "secret": true
+        },
+        {
+          "name": "XAI_API_KEY",
+          "description": "xAI API key for Grok models",
+          "secret": true
+        },
+        {
+          "name": "AZURE_OPENAI_API_KEY",
+          "description": "Azure OpenAI API key",
+          "secret": true
+        },
+        {
+          "name": "OLLAMA_API_KEY",
+          "description": "Ollama API key for local models",
+          "secret": true
+        },
+        {
+          "name": "TASK_MASTER_TOOLS",
+          "description": "Tool loading mode: all, standard, core, lean, or comma-separated list of tool names",
+          "secret": false
+        }
+      ]
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-git",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-git",
+    "title": "Git",
+    "description": "Read, search, and manipulate Git repositories including commits, branches, diffs, and history.",
+    "provider": "Anthropic",
+    "icon": "anthropic.com",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcp-server-git",
+      "version": "2026.1.14",
+      "transport": "stdio",
+      "command": "uvx mcp-server-git"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "storybook-addon-mcp",
+    "name": "com.pulsemcp.mirror/storybook-addon-mcp",
+    "title": "Storybook",
+    "description": "Help agents automatically write and test stories for your UI components.",
+    "provider": "Storybook",
+    "icon": "storybook.js.org",
+    "classification": "official",
+    "repository_url": "https://github.com/storybookjs/mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@storybook/addon-mcp",
+      "version": "0.0.0",
+      "transport": "stdio",
+      "command": "npx -y @storybook/addon-mcp"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "glips-figma-context",
+    "name": "io.github.GLips/Figma-Context-MCP",
+    "title": "Figma Context",
+    "description": "Give your coding agent access to your Figma data. Implement designs in any framework in one-shot.",
+    "provider": "GLips",
+    "icon": "figma.com",
+    "classification": "community",
+    "repository_url": "https://github.com/GLips/Figma-Context-MCP",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "figma-developer-mcp",
+      "version": "0.6.4",
+      "transport": "stdio",
+      "command": "npx -y figma-developer-mcp"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "FIGMA_API_KEY",
+          "description": "Your Figma Personal Access Token, learn more here: https://www.figma.com/developers/api#access-tokens",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "idosal-git-mcp",
+    "name": "com.pulsemcp.mirror/idosal-git-mcp",
+    "title": "GitMCP (GitHub to MCP)",
+    "description": "Transform any GitHub project into a documentation hub. Allows AI tools to access up-to-date documentation and code.",
+    "provider": "Ido Salomon",
+    "icon": "github.com",
+    "classification": "community",
+    "repository_url": "https://github.com/idosal/git-mcp",
+    "remote": {
+      "transport": "sse",
+      "url": "https://gitmcp.io/"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "czlonkowski-n8n",
+    "name": "com.pulsemcp.mirror/czlonkowski-n8n",
+    "title": "n8n",
+    "description": "Integrates with n8n workflow automation platform for conversational access to 525+ nodes.",
+    "provider": "Romuald Czlonkowski",
+    "icon": "n8n.io",
+    "classification": "community",
+    "repository_url": "https://github.com/czlonkowski/n8n-mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "n8n-mcp",
+      "version": "0.0.0",
+      "transport": "stdio",
+      "command": "npx -y n8n-mcp"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "agentdeskai-browser-tools",
+    "name": "com.pulsemcp.mirror/agentdeskai-browser-tools",
+    "title": "Browser Tools",
+    "description": "Browser data capture and analysis with console logs, network monitoring, screenshots, and Lighthouse audits.",
+    "provider": "AgentDesk AI",
+    "classification": "community",
+    "repository_url": "https://github.com/agentdeskai/browser-tools-mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@agentdeskai/browser-tools-mcp",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx @agentdeskai/browser-tools-mcp@latest"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-postgres",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-postgres",
+    "title": "PostgreSQL",
+    "description": "Access and analyze Postgres databases with read-only queries.",
+    "provider": "Anthropic",
+    "icon": "postgresql.org",
+    "classification": "reference",
+    "repository_url": "https://github.com/modelcontextprotocol/servers-archived",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-postgres",
+      "version": "0.0.0",
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-postgres"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "sonnylazuardi-talk-to-figma",
+    "name": "com.pulsemcp.mirror/sonnylazuardi-talk-to-figma",
+    "title": "Talk to Figma",
+    "description": "Bidirectional communication with Figma designs through a plugin and WebSocket server.",
+    "provider": "Sonny Lazuardi",
+    "icon": "figma.com",
+    "classification": "community",
+    "repository_url": "https://github.com/grab/cursor-talk-to-figma-mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "cursor-talk-to-figma-mcp",
+      "version": null,
+      "transport": "stdio",
+      "command": "bunx cursor-talk-to-figma-mcp@latest"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "la-rebelion-labs-registry",
+    "name": "ai.com.mcp/registry",
+    "title": "MCP Registry Server",
+    "description": "Publish and discover MCP servers via the official MCP Registry. Powered by HAPI MCP server.",
+    "provider": "La Rebelion Labs",
+    "classification": "community",
+    "repository_url": "https://github.com/modelcontextprotocol/registry",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://registry.run.mcp.com.ai/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "justinpbarnett-unity",
+    "name": "com.pulsemcp.mirror/justinpbarnett-unity",
+    "title": "Unity",
+    "description": "Allow MCP clients to perform Unity Editor actions.",
+    "provider": "Justin Barnett",
+    "icon": "unity.com",
+    "classification": "community",
+    "repository_url": "https://github.com/coplaydev/unity-mcp",
+    "remote": null,
+    "local": {
+      "registry": "pypi",
+      "package": "mcpforunityserver",
+      "version": null,
+      "transport": "streamable-http",
+      "command": "uvx --from mcpforunityserver mcp-for-unity --transport stdio"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "firecrawl",
+    "name": "io.github.firecrawl/firecrawl-mcp-server",
+    "title": "Firecrawl MCP Server",
+    "description": "MCP server for Firecrawl web scraping, structured data extraction and web search integration.",
+    "provider": "Mendable",
+    "icon": "firecrawl.dev",
+    "classification": "official",
+    "repository_url": "https://github.com/firecrawl/firecrawl-mcp-server.git",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "firecrawl-mcp",
+      "version": "3.7.4",
+      "transport": "stdio",
+      "command": "npx -y firecrawl-mcp"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "FIRECRAWL_API_KEY",
+          "description": "Your API key for Firecrawl",
+          "secret": true
+        }
+      ]
+    }
+  },
+  {
+    "slug": "zapier",
+    "name": "com.pulsemcp.mirror/zapier",
+    "title": "Zapier",
+    "description": "Generate a dynamic MCP server that connects to any of your favorite 8000+ apps on Zapier.",
+    "provider": "Zapier",
+    "icon": "zapier.com",
+    "classification": "official",
+    "repository_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.zapier.com"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "modelcontextprotocol-demo-everything",
+    "name": "com.pulsemcp.mirror/modelcontextprotocol-demo-everything",
+    "title": "Demo (Everything)",
+    "description": "Test protocol features and tools for client compatibility.",
+    "provider": "Anthropic",
+    "icon": "anthropic.com",
+    "classification": "reference",
+    "repository_url": null,
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@modelcontextprotocol/server-everything",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx -y @modelcontextprotocol/server-everything"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "desktop-commander",
+    "name": "io.github.wonderwhy-er/desktop-commander",
+    "title": "Desktop Commander",
+    "description": "MCP server for terminal commands, file operations, and process management",
+    "provider": "Eduard Ruzga",
+    "classification": "official",
+    "repository_url": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@wonderwhy-er/desktop-commander",
+      "version": "0.2.37",
+      "transport": "stdio",
+      "command": "npx -y @wonderwhy-er/desktop-commander"
+    },
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "webflow",
+    "name": "com.webflow/mcp",
+    "title": "Webflow",
+    "description": "AI-powered design and management for Webflow Sites",
+    "provider": "Webflow",
+    "icon": "webflow.com",
+    "classification": "official",
+    "repository_url": "https://github.com/webflow/mcp-server",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.webflow.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "amplitude",
+    "name": "com.amplitude/mcp",
+    "title": "Amplitude",
+    "description": "Query and create Amplitude content including charts, dashboards, experiments, and cohorts using natural language.",
+    "provider": "Amplitude",
+    "icon": "amplitude.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://amplitude.com/docs/amplitude-ai/amplitude-mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.amplitude.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "amplitude-eu",
+    "name": "com.amplitude/mcp-eu",
+    "title": "Amplitude (EU)",
+    "description": "Query and create Amplitude content including charts, dashboards, experiments, and cohorts using natural language. For Amplitude accounts with EU data residency.",
+    "provider": "Amplitude",
+    "icon": "amplitude.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://amplitude.com/docs/amplitude-ai/amplitude-mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.eu.amplitude.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "notion",
+    "name": "com.notion/mcp",
+    "title": "Notion",
+    "description": "Connect your Notion workspace to search, update, and power workflows across tools.",
+    "provider": "Notion",
+    "icon": "notion.so",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://developers.notion.com/docs/mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.notion.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "figma-remote",
+    "name": "com.figma.mcp/mcp",
+    "title": "Figma",
+    "description": "Generate diagrams and better code from Figma context.",
+    "provider": "Figma",
+    "icon": "figma.com",
+    "classification": "official",
+    "repository_url": "https://github.com/figma/mcp-server-guide",
+    "docs_url": "https://help.figma.com/hc/en-us/articles/32132100833559",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.figma.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "canva",
+    "name": "com.canva.mcp/canva",
+    "title": "Canva",
+    "description": "Search, create, autofill, and export Canva designs.",
+    "provider": "Canva",
+    "icon": "canva.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://www.canva.dev/docs/connect/canva-mcp-server-setup/",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.canva.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "slack",
+    "name": "com.slack.mcp/slack",
+    "title": "Slack",
+    "description": "Send messages, create canvases, and fetch Slack data.",
+    "provider": "Slack",
+    "icon": "slack.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://docs.slack.dev/ai/mcp-server",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.slack.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "atlassian",
+    "name": "com.atlassian/atlassian-mcp-server",
+    "title": "Atlassian",
+    "description": "Access Jira & Confluence from Claude.",
+    "provider": "Atlassian",
+    "icon": "atlassian.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://community.atlassian.com/forums/Atlassian-Platform-articles/Using-the-Atlassian-Remote-MCP-Server-beta/ba-p/3005104",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.atlassian.com/v1/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "hubspot",
+    "name": "com.hubspot.mcp/hubspot",
+    "title": "HubSpot",
+    "description": "Chat with your CRM data to get personalized insights.",
+    "provider": "HubSpot",
+    "icon": "hubspot.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://knowledge.hubspot.com/integrations/set-up-and-use-the-hubspot-connector-for-claude",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.hubspot.com/anthropic"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "linear",
+    "name": "app.linear/linear",
+    "title": "Linear",
+    "description": "Manage issues, projects & team workflows in Linear.",
+    "provider": "Linear",
+    "icon": "linear.app",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://linear.app/docs/mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.linear.app/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "gamma",
+    "name": "app.gamma.mcp/gamma",
+    "title": "Gamma",
+    "description": "Create presentations, docs, socials, and sites with AI.",
+    "provider": "Gamma",
+    "icon": "gamma.app",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://gamma.app/docs/Gamma-MCP-Server-Documentation-m6p43kobgzy15zj?mode=doc",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.gamma.app/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "monday",
+    "name": "com.monday/monday.com",
+    "title": "monday.com",
+    "description": "Manage projects, boards, and workflows in monday.com.",
+    "provider": "monday.com",
+    "icon": "monday.com",
+    "classification": "official",
+    "repository_url": "https://github.com/mondaycom/mcp",
+    "docs_url": "https://developer.monday.com/apps/docs/mondaycom-mcp-integration",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.monday.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "intercom",
+    "name": "com.intercom.mcp/intercom",
+    "title": "Intercom",
+    "description": "Access Intercom conversations and customer data for better insights.",
+    "provider": "Intercom",
+    "icon": "intercom.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://developers.intercom.com/docs/guides/mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.intercom.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "box",
+    "name": "com.box.mcp/box",
+    "title": "Box",
+    "description": "Search, access and get insights on your Box enterprise content.",
+    "provider": "Box",
+    "icon": "box.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://developer.box.com/guides/box-mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.box.com"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "vercel",
+    "name": "com.vercel/vercel-mcp",
+    "title": "Vercel",
+    "description": "Analyze, debug, and manage Vercel projects and deployments.",
+    "provider": "Vercel",
+    "icon": "vercel.com",
+    "classification": "official",
+    "repository_url": "https://github.com/vercel/vercel-mcp-overview",
+    "docs_url": "https://vercel.com/docs/mcp/vercel-mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.vercel.com/"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "sentry",
+    "name": "com.sentry/mcp",
+    "title": "Sentry",
+    "description": "Debug production errors and analyze performance issues with Sentry.",
+    "provider": "Sentry",
+    "icon": "sentry.io",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://docs.sentry.io/product/sentry-mcp/",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.sentry.dev/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "granola",
+    "name": "ai.granola/mcp",
+    "title": "Granola",
+    "description": "Access your meeting notes and transcripts from Granola.",
+    "provider": "Granola",
+    "icon": "granola.ai",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.granola.ai/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "asana",
+    "name": "com.asana/mcp",
+    "title": "Asana",
+    "description": "Manage tasks, projects, and team workflows in Asana.",
+    "provider": "Asana",
+    "icon": "asana.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.asana.com/v2/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "miro",
+    "name": "com.miro/mcp",
+    "title": "Miro",
+    "description": "Create and manage boards, diagrams, and visual collaboration in Miro.",
+    "provider": "Miro",
+    "icon": "miro.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.miro.com/"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "pubmed",
+    "name": "com.anthropic/pubmed-mcp",
+    "title": "PubMed",
+    "description": "Search and retrieve biomedical literature from PubMed.",
+    "provider": "Anthropic",
+    "icon": "anthropic.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://pubmed.mcp.claude.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "huggingface",
+    "name": "co.huggingface/mcp",
+    "title": "Hugging Face",
+    "description": "Access Hugging Face models, datasets, and spaces.",
+    "provider": "Hugging Face",
+    "icon": "huggingface.co",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://huggingface.co/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "clickup",
+    "name": "com.clickup/mcp",
+    "title": "ClickUp",
+    "description": "Manage tasks, docs, goals, and productivity workflows in ClickUp.",
+    "provider": "ClickUp",
+    "icon": "clickup.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.clickup.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "stripe",
+    "name": "com.stripe/mcp",
+    "title": "Stripe",
+    "description": "Manage payments, customers, subscriptions, and financial data with Stripe.",
+    "provider": "Stripe",
+    "icon": "stripe.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.stripe.com"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "clay",
+    "name": "com.clay/mcp",
+    "title": "Clay",
+    "description": "Enrich leads, build lists, and automate outreach with Clay.",
+    "provider": "Clay",
+    "icon": "clay.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://api.clay.com/v3/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "cloudflare",
+    "name": "com.cloudflare/mcp",
+    "title": "Cloudflare",
+    "description": "Build and deploy on Cloudflare's developer platform with Workers, KV, R2, and more.",
+    "provider": "Cloudflare",
+    "icon": "cloudflare.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://bindings.mcp.cloudflare.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "ahrefs",
+    "name": "com.ahrefs/mcp",
+    "title": "Ahrefs",
+    "description": "Access SEO data, backlinks, keywords, and site audits from Ahrefs.",
+    "provider": "Ahrefs",
+    "icon": "ahrefs.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://api.ahrefs.com/mcp/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "microsoft-learn",
+    "name": "com.microsoft/learn-mcp",
+    "title": "Microsoft Learn",
+    "description": "Search and retrieve Microsoft documentation, tutorials, and learning resources.",
+    "provider": "Microsoft",
+    "icon": "microsoft.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://learn.microsoft.com/api/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "ramp",
+    "name": "com.ramp/mcp",
+    "title": "Ramp",
+    "description": "Manage corporate cards, expenses, and financial workflows with Ramp.",
+    "provider": "Ramp",
+    "icon": "ramp.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://ramp-mcp-remote.ramp.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "netlify",
+    "name": "com.netlify/mcp",
+    "title": "Netlify",
+    "description": "Deploy sites, manage builds, and configure Netlify projects.",
+    "provider": "Netlify",
+    "icon": "netlify.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://netlify-mcp.netlify.app/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "zoominfo",
+    "name": "com.zoominfo/mcp",
+    "title": "ZoomInfo",
+    "description": "Access B2B contact data, company intelligence, and sales insights from ZoomInfo.",
+    "provider": "ZoomInfo",
+    "icon": "zoominfo.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.zoominfo.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "godaddy",
+    "name": "com.godaddy/mcp",
+    "title": "GoDaddy",
+    "description": "Manage domains, DNS, and web presence with GoDaddy.",
+    "provider": "GoDaddy",
+    "icon": "godaddy.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://api.godaddy.com/v1/domains/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "wordpress",
+    "name": "com.wordpress/mcp",
+    "title": "WordPress.com",
+    "description": "Manage WordPress.com sites, posts, pages, and media.",
+    "provider": "WordPress.com",
+    "icon": "wordpress.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://public-api.wordpress.com/wpcom/v2/mcp/v1"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "paypal",
+    "name": "com.paypal/mcp",
+    "title": "PayPal",
+    "description": "Manage PayPal payments, invoices, and transaction data.",
+    "provider": "PayPal",
+    "icon": "paypal.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.paypal.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "make",
+    "name": "com.make/mcp",
+    "title": "Make",
+    "description": "Automate workflows and connect apps with Make (formerly Integromat).",
+    "provider": "Make",
+    "icon": "make.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.make.com"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "google-bigquery",
+    "name": "com.google/bigquery-mcp",
+    "title": "Google Cloud BigQuery",
+    "description": "Query and analyze data in Google BigQuery using natural language.",
+    "provider": "Google",
+    "icon": "google.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://bigquery.googleapis.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "open-targets",
+    "name": "org.opentargets/mcp",
+    "title": "Open Targets",
+    "description": "Explore drug targets and disease associations with Open Targets Platform data.",
+    "provider": "Open Targets",
+    "icon": "opentargets.org",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.platform.opentargets.org/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "biorender",
+    "name": "com.biorender/mcp",
+    "title": "BioRender",
+    "description": "Create and manage scientific figures and illustrations with BioRender.",
+    "provider": "BioRender",
+    "icon": "biorender.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.services.biorender.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "crypto-com",
+    "name": "com.crypto/market-data-mcp",
+    "title": "Crypto.com Market Data",
+    "description": "Access real-time crypto market data, prices, and trading information from Crypto.com.",
+    "provider": "Crypto.com",
+    "icon": "crypto.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.crypto.com/market-data/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "wix",
+    "name": "com.wix/mcp",
+    "title": "Wix",
+    "description": "Build and manage Wix websites, apps, and business tools.",
+    "provider": "Wix",
+    "icon": "wix.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.wix.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "klaviyo",
+    "name": "com.klaviyo/mcp",
+    "title": "Klaviyo",
+    "description": "Manage email/SMS marketing campaigns, segments, and analytics in Klaviyo.",
+    "provider": "Klaviyo",
+    "icon": "klaviyo.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.klaviyo.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "attio",
+    "name": "com.attio/mcp",
+    "title": "Attio",
+    "description": "Manage your CRM, contacts, and deals in Attio.",
+    "provider": "Attio",
+    "icon": "attio.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.attio.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "smartsheet",
+    "name": "com.smartsheet/mcp",
+    "title": "Smartsheet",
+    "description": "Manage sheets, reports, and workflows in Smartsheet.",
+    "provider": "Smartsheet",
+    "icon": "smartsheet.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.smartsheet.com"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "aws-marketplace",
+    "name": "com.amazonaws/marketplace-mcp",
+    "title": "AWS Marketplace",
+    "description": "Search, discover, and manage software from AWS Marketplace.",
+    "provider": "AWS",
+    "icon": "aws.amazon.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://marketplace-mcp.us-east-1.api.aws/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "honeycomb",
+    "name": "io.honeycomb/mcp",
+    "title": "Honeycomb",
+    "description": "Query and analyze observability data in Honeycomb.",
+    "provider": "Honeycomb",
+    "icon": "honeycomb.io",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.honeycomb.io/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "mercury",
+    "name": "com.mercury/mcp",
+    "title": "Mercury",
+    "description": "Manage banking, accounts, and financial operations with Mercury.",
+    "provider": "Mercury",
+    "icon": "mercury.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.mercury.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "square",
+    "name": "com.squareup/mcp",
+    "title": "Square",
+    "description": "Manage payments, inventory, and business data with Square.",
+    "provider": "Square",
+    "icon": "squareup.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "sse",
+      "url": "https://mcp.squareup.com/sse"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "bitly",
+    "name": "com.bitly/mcp",
+    "title": "Bitly",
+    "description": "Create and manage shortened links and track click analytics with Bitly.",
+    "provider": "Bitly",
+    "icon": "bitly.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://api-ssl.bitly.com/v4/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "egnyte",
+    "name": "com.egnyte/mcp",
+    "title": "Egnyte",
+    "description": "Search, access, and manage enterprise content in Egnyte.",
+    "provider": "Egnyte",
+    "icon": "egnyte.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp-server.egnyte.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "coupler",
+    "name": "io.coupler/mcp",
+    "title": "Coupler.io",
+    "description": "Connect and sync data from apps to spreadsheets and dashboards with Coupler.io.",
+    "provider": "Coupler.io",
+    "icon": "coupler.io",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.coupler.io/mcp/"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "similarweb",
+    "name": "com.similarweb/mcp",
+    "title": "Similarweb",
+    "description": "Access website traffic, competitive intelligence, and digital market data.",
+    "provider": "Similarweb",
+    "icon": "similarweb.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.similarweb.com"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "crossbeam",
+    "name": "com.crossbeam/mcp",
+    "title": "Crossbeam",
+    "description": "Access partner ecosystem data and account overlaps with Crossbeam.",
+    "provider": "Crossbeam",
+    "icon": "crossbeam.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.crossbeam.com"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "clockwise",
+    "name": "com.getclockwise/mcp",
+    "title": "Clockwise",
+    "description": "Optimize your calendar and schedule meetings intelligently with Clockwise.",
+    "provider": "Clockwise",
+    "icon": "getclockwise.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.getclockwise.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "consensus",
+    "name": "app.consensus/mcp",
+    "title": "Consensus",
+    "description": "Search peer-reviewed scientific research and get evidence-based answers.",
+    "provider": "Consensus",
+    "icon": "consensus.app",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.consensus.app/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "windsor",
+    "name": "ai.windsor/mcp",
+    "title": "Windsor.ai",
+    "description": "Aggregate marketing data from 315+ sources into one unified view.",
+    "provider": "Windsor.ai",
+    "icon": "windsor.ai",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.windsor.ai"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "circleback",
+    "name": "ai.circleback/mcp",
+    "title": "Circleback",
+    "description": "Access AI-powered meeting notes and action items from Circleback.",
+    "provider": "Circleback",
+    "icon": "circleback.ai",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://app.circleback.ai/api/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "day-ai",
+    "name": "ai.day/mcp",
+    "title": "Day AI",
+    "description": "Access relationship intelligence and meeting insights from Day AI.",
+    "provider": "Day AI",
+    "icon": "day.ai",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://day.ai/api/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "cdata-connect",
+    "name": "com.cdata/connect-ai-mcp",
+    "title": "CData Connect AI",
+    "description": "Connect to 300+ data sources and APIs through CData's unified data layer.",
+    "provider": "CData",
+    "icon": "cdata.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.cloud.cdata.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "lastminute",
+    "name": "com.lastminute/mcp",
+    "title": "lastminute.com",
+    "description": "Search and book flights, hotels, and travel packages with lastminute.com.",
+    "provider": "lastminute.com",
+    "icon": "lastminute.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.lastminute.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "trivago",
+    "name": "com.trivago/mcp",
+    "title": "Trivago",
+    "description": "Search and compare hotel prices across the web with Trivago.",
+    "provider": "Trivago",
+    "icon": "trivago.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.trivago.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "guru",
+    "name": "com.getguru/mcp",
+    "title": "Guru",
+    "description": "Access your team's knowledge base and verified company information in Guru.",
+    "provider": "Guru",
+    "icon": "getguru.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.api.getguru.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "jam",
+    "name": "dev.jam/mcp",
+    "title": "Jam",
+    "description": "Capture and share bug reports with full context using Jam.",
+    "provider": "Jam",
+    "icon": "jam.dev",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.jam.dev/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "scholar-gateway",
+    "name": "ai.scholargateway/mcp",
+    "title": "Scholar Gateway",
+    "description": "Search academic papers and scholarly content via Scholar Gateway.",
+    "provider": "Scholar Gateway",
+    "icon": "scholargateway.ai",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://connector.scholargateway.ai/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "clinical-trials",
+    "name": "ai.deepsense/clinical-trials-mcp",
+    "title": "Clinical Trials",
+    "description": "Search and retrieve clinical trial data from ClinicalTrials.gov.",
+    "provider": "DeepSense.ai",
+    "icon": "deepsense.ai",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.deepsense.ai/clinical_trials/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "biorxiv",
+    "name": "ai.deepsense/biorxiv-mcp",
+    "title": "bioRxiv",
+    "description": "Search and retrieve preprint biology research papers from bioRxiv.",
+    "provider": "DeepSense.ai",
+    "icon": "biorxiv.org",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.deepsense.ai/biorxiv/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "chembl",
+    "name": "ai.deepsense/chembl-mcp",
+    "title": "ChEMBL",
+    "description": "Access ChEMBL bioactivity data for drug discovery and medicinal chemistry.",
+    "provider": "DeepSense.ai",
+    "icon": "deepsense.ai",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.deepsense.ai/chembl/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "npi-registry",
+    "name": "ai.deepsense/npi-registry-mcp",
+    "title": "NPI Registry",
+    "description": "Look up healthcare provider NPI numbers and credentials.",
+    "provider": "DeepSense.ai",
+    "icon": "deepsense.ai",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.deepsense.ai/npi_registry/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "cms-coverage",
+    "name": "ai.deepsense/cms-coverage-mcp",
+    "title": "CMS Coverage",
+    "description": "Access Medicare and Medicaid coverage policies and clinical criteria.",
+    "provider": "DeepSense.ai",
+    "icon": "deepsense.ai",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.deepsense.ai/cms_coverage/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "icd10-codes",
+    "name": "ai.deepsense/icd10-mcp",
+    "title": "ICD-10 Codes",
+    "description": "Search and look up ICD-10 medical diagnosis codes.",
+    "provider": "DeepSense.ai",
+    "icon": "deepsense.ai",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.deepsense.ai/icd10_codes/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "none",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "synapse-org",
+    "name": "org.synapse/mcp",
+    "title": "Synapse.org",
+    "description": "Access biomedical research data and collaborate on Sage Bionetworks' Synapse platform.",
+    "provider": "Sage Bionetworks",
+    "icon": "synapse.org",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.synapse.org/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "vibe-prospecting",
+    "name": "ai.explorium/vibe-prospecting-mcp",
+    "title": "Vibe Prospecting",
+    "description": "AI-powered B2B prospecting with company and contact intelligence.",
+    "provider": "Explorium",
+    "icon": "explorium.ai",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://vibeprospecting.explorium.ai/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  },
+  {
+    "slug": "mt-newswires",
+    "name": "com.mtnewswires/mcp",
+    "title": "MT Newswires",
+    "description": "Access real-time financial news and market intelligence from MT Newswires.",
+    "provider": "MT Newswires",
+    "icon": "mtnewswires.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": null,
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://vast-mcp.blueskyapi.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
+  }
+]

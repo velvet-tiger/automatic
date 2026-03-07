@@ -1,0 +1,108 @@
+[
+  {
+    "id": "automatic/automatic-app",
+    "name": "Automatic Skills",
+    "slug": "automatic-skills",
+    "description": "The official collection of skills bundled with Automatic. Covers the full software development lifecycle — debugging, testing, code review, refactoring, security, API design, documentation, performance, database design, and GitHub automation.",
+    "author": {
+      "type": "provider",
+      "name": "Automatic",
+      "url": "https://automatic.sh",
+      "repository_url": "https://github.com/automatic/automatic-app"
+    },
+    "icon": "automatic.sh",
+    "tags": ["official", "development", "code-quality", "testing", "devops"],
+    "skills": [
+      {
+        "name": "automatic",
+        "display_name": "Automatic Hub",
+        "description": "Explains how to use Automatic as a skill registry, memory store, and MCP configuration hub. Use at session start to discover skills, load instructions, and retrieve memories.",
+        "source": "automatic/automatic-app",
+        "id": "automatic/automatic-app/automatic",
+        "kind": "bundled"
+      },
+      {
+        "name": "automatic-debugging",
+        "display_name": "Debugging",
+        "description": "Systematic process for diagnosing and resolving defects. Use when debugging failures, investigating errors, or reproducing issues.",
+        "source": "automatic/automatic-app",
+        "id": "automatic/automatic-app/automatic-debugging",
+        "kind": "bundled"
+      },
+      {
+        "name": "automatic-testing",
+        "display_name": "Testing",
+        "description": "Principles and patterns for writing effective tests. Use when writing unit, integration, or end-to-end tests, or reviewing test quality.",
+        "source": "automatic/automatic-app",
+        "id": "automatic/automatic-app/automatic-testing",
+        "kind": "bundled"
+      },
+      {
+        "name": "automatic-code-review",
+        "display_name": "Code Review",
+        "description": "How to conduct and receive effective code reviews. Use when reviewing a PR, requesting review, or improving review quality.",
+        "source": "automatic/automatic-app",
+        "id": "automatic/automatic-app/automatic-code-review",
+        "kind": "bundled"
+      },
+      {
+        "name": "automatic-refactoring",
+        "display_name": "Refactoring",
+        "description": "Techniques for improving code structure without changing behaviour. Use when cleaning up code, reducing complexity, or addressing technical debt.",
+        "source": "automatic/automatic-app",
+        "id": "automatic/automatic-app/automatic-refactoring",
+        "kind": "bundled"
+      },
+      {
+        "name": "automatic-security-review",
+        "display_name": "Security Review",
+        "description": "Security review checklist and threat mindset for any codebase. Use when reviewing code for vulnerabilities, implementing auth, or handling user input.",
+        "source": "automatic/automatic-app",
+        "id": "automatic/automatic-app/automatic-security-review",
+        "kind": "bundled"
+      },
+      {
+        "name": "automatic-api-design",
+        "display_name": "API Design",
+        "description": "REST API design conventions, error shapes, versioning, and pagination patterns. Use when designing or reviewing any HTTP API.",
+        "source": "automatic/automatic-app",
+        "id": "automatic/automatic-app/automatic-api-design",
+        "kind": "bundled"
+      },
+      {
+        "name": "automatic-documentation",
+        "display_name": "Documentation",
+        "description": "Principles for writing READMEs, API docs, ADRs, code comments, and changelogs. Use when creating or improving any technical documentation.",
+        "source": "automatic/automatic-app",
+        "id": "automatic/automatic-app/automatic-documentation",
+        "kind": "bundled"
+      },
+      {
+        "name": "automatic-performance",
+        "display_name": "Performance",
+        "description": "Data-driven approach to identifying and resolving performance bottlenecks. Use when investigating slow queries, high latency, or memory growth.",
+        "source": "automatic/automatic-app",
+        "id": "automatic/automatic-app/automatic-performance",
+        "kind": "bundled"
+      },
+      {
+        "name": "automatic-database-design",
+        "display_name": "Database Design",
+        "description": "Schema design conventions, normalisation, indexing, and migration practices. Use when designing or reviewing a relational database schema.",
+        "source": "automatic/automatic-app",
+        "id": "automatic/automatic-app/automatic-database-design",
+        "kind": "bundled"
+      },
+      {
+        "name": "github-workflow-automation",
+        "display_name": "GitHub Workflow Automation",
+        "description": "Advanced GitHub Actions workflow automation with AI swarm coordination, intelligent CI/CD pipelines, and comprehensive repository management.",
+        "source": "automatic/automatic-app",
+        "id": "automatic/automatic-app/github-workflow-automation",
+        "kind": "bundled"
+      }
+    ],
+    "mcp_servers": [],
+    "templates": []
+  }
+]
