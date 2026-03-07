@@ -12,6 +12,7 @@
   --color-brand-hover: var(--brand-hover);
   --color-brand-active: var(--brand-active);
   --color-brand-light: var(--brand-light);
+  --color-brand-text: var(--brand-text);
 
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
@@ -73,6 +74,7 @@
   --brand-hover: #818cf8;
   --brand-active: #4f46e5;
   --brand-light: #c7d2fe;
+  --brand-text: #ffffff;
   
   --accent: #8b5cf6; /* Violet */
   --accent-hover: #a78bfa;
@@ -182,6 +184,7 @@
   --brand-hover: #5eead4;
   --brand-active: #0891b2;
   --brand-light: #a5f3fc;
+  --brand-text: #09090b; /* Near-black — high contrast against cyan */
   
   --accent: #b026ff; /* Electric Purple */
   --accent-hover: #c084fc;
@@ -209,6 +212,12 @@
   --warning-hover: #fde047;
   --danger: #ff0055;
   --danger-hover: #f43f5e;
+}
+
+/* Cyberpunk: brand bg is bright cyan — override text to near-black for contrast */
+[data-theme="cyberpunk"] .bg-brand,
+[data-theme="cyberpunk"] .hover\:bg-brand:hover {
+  color: var(--brand-text);
 }
 
 [data-theme="synthwave-glow"] {
