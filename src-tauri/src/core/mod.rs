@@ -19,6 +19,7 @@ mod rules_injection;
 mod settings;
 mod skill_store;
 mod skills;
+pub mod task_log;
 mod templates;
 mod types;
 

@@ -166,6 +166,13 @@ pub fn run() {
             clear_recommendations,
             count_recommendations,
             evaluate_project_recommendations,
+            ai_generate_project_recommendations,
+            get_ai_recommendations_timestamp,
+            ai_suggest_skills,
+            ai_suggest_mcp_servers,
+            list_recommendations_by_source,
+            get_task_log,
+            append_task_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
