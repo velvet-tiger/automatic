@@ -60,6 +60,11 @@ import {
   Sparkles,
 } from "lucide-react";
 
+interface CustomRule {
+  name: string;
+  content: string;
+}
+
 interface Project {
   name: string;
   description: string;
@@ -77,6 +82,8 @@ interface Project {
   instruction_mode?: string;
   /** Per-agent options keyed by agent id. Agents not present use defaults. */
   agent_options?: Record<string, AgentOptions>;
+  /** Inline custom rules stored directly in this project (not in the global registry). */
+  custom_rules?: CustomRule[];
 }
 
 interface AgentInfo {
@@ -1661,6 +1668,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [localSkillIsEditing, setLocalSkillIsEditing] = useState(false);
   const [localSkillSaving, setLocalSkillSaving] = useState(false);
 
+  // Custom rule editing state (for inline project rules in the Rules tab)
+  const [customRuleEditingIdx, setCustomRuleEditingIdx] = useState<number | null>(null);
+  const [customRuleEditName, setCustomRuleEditName] = useState("");
+  const [customRuleEditContent, setCustomRuleEditContent] = useState("");
+
+  // Global rule picker state (dropdown add, mirrors SkillSelector pattern)
+  const [globalRuleAdding, setGlobalRuleAdding] = useState(false);
+  const [globalRuleSearch, setGlobalRuleSearch] = useState("");
+
   // Editor detection state
   interface EditorInfo { id: string; label: string; installed: boolean; }
   const [installedEditors, setInstalledEditors] = useState<EditorInfo[]>([]);
@@ -1736,6 +1752,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   // Reset drift + recommendations state whenever the active project changes
   useEffect(() => {
     setDriftReport(null);
+    setCustomRuleEditingIdx(null);
+    setGlobalRuleAdding(false);
+    setGlobalRuleSearch("");
     if (!selectedName) setRecommendations([]);
   }, [selectedName]);
 
@@ -2618,6 +2637,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         updated_at: stored.updated_at || new Date().toISOString(),
         file_rules: stored.file_rules || {},
         instruction_mode: stored.instruction_mode || "per-agent",
+        agent_options: stored.agent_options,
+        custom_rules: stored.custom_rules || [],
       };
 
       setSelectedName(name);
@@ -2679,6 +2700,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
         updated_at: parsed.updated_at || new Date().toISOString(),
         file_rules: parsed.file_rules || {},
         instruction_mode: parsed.instruction_mode || "per-agent",
+        agent_options: parsed.agent_options,
+        custom_rules: parsed.custom_rules || [],
       };
       setSelectedName(name);
       setIsCreating(false);
@@ -4167,6 +4190,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   key={tab.id}
                   onClick={() => {
                     setProjectTab(tab.id);
+                    // Discard any in-progress custom rule edits when leaving the tab.
+                    if (tab.id !== "rules") setCustomRuleEditingIdx(null);
                     if (tab.id === "activity" && selectedName) {
                       loadActivityPage(selectedName, 0);
                     }
@@ -4772,6 +4797,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {/* ── Rules tab ─────────────────────────────────────────── */}
                 {projectTab === "rules" && (() => {
                   const projectRules = (project.file_rules || {})["_project"] || [];
+                  const customRules: CustomRule[] = project.custom_rules || [];
 
                   const handleToggleProjectRule = (ruleId: string) => {
                     const existing = (project.file_rules || {})["_project"] || [];
@@ -4784,57 +4810,323 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     setDirty(true);
                   };
 
+                  const handleAddCustomRule = () => {
+                    const newRule: CustomRule = { name: "New Rule", content: "" };
+                    setProject({ ...project, custom_rules: [...customRules, newRule] });
+                    setCustomRuleEditingIdx(customRules.length);
+                    setCustomRuleEditName("New Rule");
+                    setCustomRuleEditContent("");
+                    setDirty(true);
+                  };
+
+                  const handleDeleteCustomRule = (idx: number) => {
+                    const updated = customRules.filter((_, i) => i !== idx);
+                    setProject({ ...project, custom_rules: updated });
+                    if (customRuleEditingIdx === idx) {
+                      setCustomRuleEditingIdx(null);
+                    } else if (customRuleEditingIdx !== null && customRuleEditingIdx > idx) {
+                      setCustomRuleEditingIdx(customRuleEditingIdx - 1);
+                    }
+                    setDirty(true);
+                  };
+
+                  const handleStartEditCustomRule = (idx: number) => {
+                    setCustomRuleEditingIdx(idx);
+                    setCustomRuleEditName(customRules[idx]?.name ?? "");
+                    setCustomRuleEditContent(customRules[idx]?.content ?? "");
+                  };
+
+                  const handleCommitCustomRule = () => {
+                    if (customRuleEditingIdx === null) return;
+                    const updated = customRules.map((r, i) =>
+                      i === customRuleEditingIdx
+                        ? { name: customRuleEditName.trim() || "Untitled Rule", content: customRuleEditContent }
+                        : r
+                    );
+                    setProject({ ...project, custom_rules: updated });
+                    setCustomRuleEditingIdx(null);
+                    setDirty(true);
+                  };
+
+                  const totalActive = projectRules.length + customRules.filter(r => r.content.trim()).length;
+
                   return (
-                    <div className="space-y-6">
+                    <div className="space-y-8">
+
+                      {/* ── Section header ── */}
                       <div className="flex items-center justify-between">
                         <div>
                           <h2 className="text-[15px] font-semibold text-text-base">Rules</h2>
                           <p className="text-[12px] text-text-muted mt-0.5">
-                            Select rules to inject into all project instruction files for this project.
+                            Rules are injected into all agent instruction files when the project is synced.
                           </p>
                         </div>
-                        {projectRules.length > 0 && (
-                          <span className="text-[11px] text-accent-hover bg-accent-hover/10 px-2 py-0.5 rounded border border-accent-hover/20">
-                            {projectRules.length} active
+                        {totalActive > 0 && (
+                          <span className="text-[11px] text-brand bg-brand/10 px-2 py-0.5 rounded border border-brand/20">
+                            {totalActive} active
                           </span>
                         )}
                       </div>
 
-                      {availableRules.length > 0 ? (
-                        <div className="grid grid-cols-1 gap-2">
-                          {availableRules.map(rule => {
-                            const isSelected = projectRules.includes(rule.id);
-                            return (
-                              <button
-                                key={rule.id}
-                                onClick={() => handleToggleProjectRule(rule.id)}
-                                className={`w-full text-left px-4 py-3 rounded-lg border transition-colors flex items-center gap-3 ${
-                                  isSelected
-                                    ? "bg-bg-input border-brand/40"
-                                    : "bg-bg-input border-border-strong/40 hover:border-border-strong"
-                                }`}
-                              >
-                                <ScrollText size={14} className={`flex-shrink-0 ${isSelected ? "text-brand" : "text-text-muted"}`} />
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-[13px] font-medium truncate text-text-base">{rule.name}</div>
-                                  <div className="text-[11px] truncate text-text-muted">{rule.id}</div>
+                      {/* ── Custom Rules ── */}
+                      <section>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <Edit2 size={13} className="text-text-muted" />
+                            <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Project Rules</span>
+                            {customRules.length > 0 && (
+                              <span className="text-[10px] bg-bg-sidebar border border-border-strong/40 rounded-full px-1.5 py-0.5 text-text-muted leading-none">
+                                {customRules.length}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            onClick={handleAddCustomRule}
+                            className="flex items-center gap-1 text-[12px] text-brand hover:text-brand-hover transition-colors font-medium"
+                          >
+                            <Plus size={12} /> Add Rule
+                          </button>
+                        </div>
+                        <p className="text-[12px] text-text-muted mb-3">
+                          Write rules directly in this project. They are injected alongside any global rules selected below.
+                        </p>
+
+                        {customRules.length === 0 ? (
+                          <button
+                            onClick={handleAddCustomRule}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-6 border border-dashed border-border-strong/60 hover:border-brand/40 rounded-lg text-text-muted hover:text-brand transition-colors text-[13px]"
+                          >
+                            <Plus size={14} /> Write your first project rule
+                          </button>
+                        ) : (
+                          <div className="space-y-2">
+                            {customRules.map((rule, idx) => {
+                              const isEditing = customRuleEditingIdx === idx;
+                              return (
+                                <div
+                                  key={idx}
+                                  className={`rounded-lg border transition-colors ${
+                                    isEditing
+                                      ? "border-brand/40 bg-bg-input"
+                                      : "border-border-strong/40 bg-bg-input hover:border-border-strong"
+                                  }`}
+                                >
+                                  {isEditing ? (
+                                    /* ── Edit mode ── */
+                                    <div className="p-3 space-y-2">
+                                      <input
+                                        type="text"
+                                        value={customRuleEditName}
+                                        onChange={(e) => setCustomRuleEditName(e.target.value)}
+                                        placeholder="Rule name"
+                                        className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/50 outline-none transition-colors font-medium"
+                                      />
+                                      <textarea
+                                        value={customRuleEditContent}
+                                        onChange={(e) => setCustomRuleEditContent(e.target.value)}
+                                        placeholder="Write the rule content in Markdown…"
+                                        rows={8}
+                                        className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-2 text-[12px] font-mono text-text-base placeholder-text-muted/50 outline-none resize-y transition-colors leading-relaxed"
+                                      />
+                                      <div className="flex items-center justify-end gap-2 pt-1">
+                                        <button
+                                          onClick={() => setCustomRuleEditingIdx(null)}
+                                          className="px-3 py-1 text-[12px] text-text-muted hover:text-text-base transition-colors"
+                                        >
+                                          Cancel
+                                        </button>
+                                        <button
+                                          onClick={handleCommitCustomRule}
+                                          className="flex items-center gap-1 px-3 py-1 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded transition-colors"
+                                        >
+                                          <Check size={11} /> Save
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    /* ── View mode ── */
+                                    <div className="flex items-center gap-3 px-3 py-2.5">
+                                      <ScrollText size={14} className="flex-shrink-0 text-text-muted" />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-[13px] font-medium text-text-base truncate">{rule.name || "Untitled Rule"}</div>
+                                        {rule.content.trim() ? (
+                                          <div className="text-[11px] text-text-muted truncate mt-0.5">
+                                            {rule.content.trim().split("\n")[0]}
+                                          </div>
+                                        ) : (
+                                          <div className="text-[11px] text-text-muted/60 italic mt-0.5">Empty — add content to activate</div>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1 flex-shrink-0">
+                                        <button
+                                          onClick={() => handleStartEditCustomRule(idx)}
+                                          className="p-1.5 text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+                                          title="Edit"
+                                        >
+                                          <Edit2 size={12} />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeleteCustomRule(idx)}
+                                          className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors"
+                                          title="Delete"
+                                        >
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                                {isSelected ? (
-                                  <Check size={14} className="flex-shrink-0 text-brand" />
-                                ) : (
-                                  <div className="w-[14px] h-[14px] flex-shrink-0 rounded border border-border-strong/60" />
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="px-4 py-8 bg-bg-input border border-border-strong/40 rounded-lg text-center">
-                          <ScrollText size={20} className="mx-auto mb-3 text-text-muted" strokeWidth={1.5} />
-                          <p className="text-[13px] text-text-muted mb-1">No rules configured yet.</p>
-                          <p className="text-[12px] text-text-muted/70">Create rules in the Rules section of the sidebar.</p>
-                        </div>
-                      )}
+                              );
+                            })}
+                          </div>
+                        )}
+                      </section>
+
+                      {/* ── Divider ── */}
+                      <div className="border-t border-border-strong/30" />
+
+                      {/* ── Global Rules ── */}
+                      {(() => {
+                        const unaddedRules = availableRules.filter(r => !projectRules.includes(r.id));
+                        const filteredRules = globalRuleSearch.trim()
+                          ? unaddedRules.filter(r =>
+                              r.name.toLowerCase().includes(globalRuleSearch.toLowerCase()) ||
+                              r.id.toLowerCase().includes(globalRuleSearch.toLowerCase())
+                            )
+                          : unaddedRules;
+
+                        return (
+                          <section>
+                            {/* Header */}
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-2">
+                                <ScrollText size={13} className="text-text-muted" />
+                                <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Global Rules</span>
+                              </div>
+                              {availableRules.length > 0 && (
+                                <button
+                                  onClick={() => setGlobalRuleAdding(true)}
+                                  className="text-[11px] text-brand hover:text-text-base flex items-center gap-1 px-2 py-1 rounded border border-brand/50 hover:border-brand hover:bg-brand/15 transition-all"
+                                >
+                                  <Plus size={11} /> Add
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Selected rules list */}
+                            {projectRules.length === 0 && !globalRuleAdding && (
+                              <p className="text-[12px] text-text-muted italic pl-1">No global rules selected.</p>
+                            )}
+                            <div className="space-y-2">
+                              {projectRules.map((ruleId) => {
+                                const meta = availableRules.find(r => r.id === ruleId);
+                                return (
+                                  <div
+                                    key={ruleId}
+                                    className="bg-bg-input border border-border-strong/40 rounded-lg group flex items-center gap-3 px-3 py-3"
+                                  >
+                                    <div className="w-8 h-8 rounded-md bg-brand/10 flex items-center justify-center flex-shrink-0">
+                                      <ScrollText size={15} className="text-brand" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-[13px] font-medium text-text-base truncate">
+                                        {meta?.name ?? ruleId}
+                                      </div>
+                                      <div className="text-[11px] text-text-muted truncate">{ruleId}</div>
+                                    </div>
+                                    <button
+                                      onClick={() => handleToggleProjectRule(ruleId)}
+                                      className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded"
+                                      title="Remove"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Searchable add dropdown */}
+                            {globalRuleAdding && (
+                              <div className="mt-2 bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+                                <div className="flex items-center gap-2 px-3 py-2 border-b border-border-strong/40">
+                                  <Search size={12} className="text-text-muted shrink-0" />
+                                  <input
+                                    type="text"
+                                    value={globalRuleSearch}
+                                    onChange={(e) => setGlobalRuleSearch(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Escape") { setGlobalRuleAdding(false); setGlobalRuleSearch(""); }
+                                      if (e.key === "Enter" && filteredRules.length === 1) {
+                                        handleToggleProjectRule(filteredRules[0]!.id);
+                                        setGlobalRuleAdding(false);
+                                        setGlobalRuleSearch("");
+                                      }
+                                    }}
+                                    placeholder="Search rules…"
+                                    autoFocus
+                                    className="flex-1 bg-transparent outline-none text-[13px] text-text-base placeholder-text-muted/50"
+                                  />
+                                  {globalRuleSearch && (
+                                    <button
+                                      onClick={() => setGlobalRuleSearch("")}
+                                      className="text-text-muted hover:text-text-base transition-colors"
+                                    >
+                                      <X size={11} />
+                                    </button>
+                                  )}
+                                </div>
+                                <div className="max-h-48 overflow-y-auto custom-scrollbar py-1">
+                                  {filteredRules.length > 0 ? (
+                                    filteredRules.map((r) => (
+                                      <button
+                                        key={r.id}
+                                        onClick={() => {
+                                          handleToggleProjectRule(r.id);
+                                          setGlobalRuleAdding(false);
+                                          setGlobalRuleSearch("");
+                                        }}
+                                        className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-sidebar text-left transition-colors"
+                                      >
+                                        <div className="w-5 h-5 rounded bg-brand/10 flex items-center justify-center flex-shrink-0">
+                                          <ScrollText size={11} className="text-brand" />
+                                        </div>
+                                        <div className="min-w-0">
+                                          <div className="text-[13px] text-text-base truncate">{r.name}</div>
+                                          <div className="text-[11px] text-text-muted truncate">{r.id}</div>
+                                        </div>
+                                      </button>
+                                    ))
+                                  ) : (
+                                    <p className="text-[12px] text-text-muted italic px-3 py-3">
+                                      {unaddedRules.length === 0 ? "All rules already added." : "No rules match."}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="border-t border-border-strong/40 px-3 py-2 flex items-center justify-between">
+                                  <span className="text-[11px] text-text-muted">
+                                    {filteredRules.length} of {unaddedRules.length} rule{unaddedRules.length !== 1 ? "s" : ""}
+                                  </span>
+                                  <button
+                                    onClick={() => { setGlobalRuleAdding(false); setGlobalRuleSearch(""); }}
+                                    className="text-[11px] text-text-muted hover:text-text-base transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {availableRules.length === 0 && (
+                              <div className="px-4 py-6 bg-bg-input border border-border-strong/40 rounded-lg text-center">
+                                <ScrollText size={18} className="mx-auto mb-2 text-text-muted" strokeWidth={1.5} />
+                                <p className="text-[13px] text-text-muted mb-1">No global rules yet.</p>
+                                <p className="text-[12px] text-text-muted/70">Create reusable rules in the Rules section of the sidebar.</p>
+                              </div>
+                            )}
+                          </section>
+                        );
+                      })()}
 
                       {dirty && (
                         <div className="flex justify-end">
