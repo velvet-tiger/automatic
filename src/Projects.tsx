@@ -1600,6 +1600,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [projectFileEditing, setProjectFileEditing] = useState(false);
   const [projectFileDirty, setProjectFileDirty] = useState(false);
   const [projectFileSaving, setProjectFileSaving] = useState(false);
+  const [projectFileGenerating, setProjectFileGenerating] = useState(false);
+  // Incremented whenever any project configuration is mutated (saved, synced,
+  // instruction files written, etc.).  A useEffect watches this counter and
+  // re-evaluates recommendations after every change.
+  const [projectVersion, setProjectVersion] = useState(0);
+  const notifyProjectUpdated = () => setProjectVersion((v) => v + 1);
   const [availableTemplates, setAvailableTemplates] = useState<string[]>([]);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
@@ -2367,6 +2373,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setContextFileExists(true);
       const parsed: string = await invoke("get_project_context", { name: selectedName });
       setProjectContext(JSON.parse(parsed));
+      notifyProjectUpdated();
     } catch (err: any) {
       setContextJsonError(`${err}`);
     } finally {
@@ -2407,6 +2414,14 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setRecommendations([]);
     }
   };
+
+  // Re-evaluate recommendations whenever any project mutation occurs.
+  // Callers signal a change by calling notifyProjectUpdated() — no need to
+  // wire loadRecommendations into every individual save handler.
+  useEffect(() => {
+    if (projectVersion === 0 || !selectedName) return;
+    loadRecommendations(selectedName);
+  }, [projectVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadActivity = async (projectName: string) => {
     try {
@@ -2499,6 +2514,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
       // Reload file list so the "exists" flag updates for newly created files
       await loadProjectFiles(selectedName);
+      notifyProjectUpdated();
     } catch (err: any) {
       setError(`Failed to save project file: ${err}`);
     } finally {
@@ -2515,6 +2531,33 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setShowTemplatePicker(false);
     } catch (err: any) {
       setError(`Failed to load template: ${err}`);
+    }
+  };
+
+  const handleGenerateInstruction = async () => {
+    if (!selectedName || !activeProjectFile) return;
+    setProjectFileGenerating(true);
+    // Resolve a human-readable label: use the agent name(s) rather than the
+    // internal "_unified" virtual filename.
+    const fileInfo = projectFiles.find((f) => f.filename === activeProjectFile);
+    const displayLabel =
+      activeProjectFile === "_unified"
+        ? (fileInfo?.agents?.join(" & ") ?? "shared instruction file")
+        : activeProjectFile;
+    const entryId = log(`Generating instruction file for ${displayLabel}…`, "running");
+    try {
+      const generated: string = await invoke("ai_generate_instruction", {
+        name: selectedName,
+        filename: activeProjectFile,
+      });
+      setProjectFileContent(generated);
+      setProjectFileEditing(true);
+      setProjectFileDirty(true);
+      update(entryId, `Instruction file for ${displayLabel} generated — review and save`, "success");
+    } catch (err: any) {
+      update(entryId, `Instruction generation failed: ${err}`, "error");
+    } finally {
+      setProjectFileGenerating(false);
     }
   };
 
@@ -2648,8 +2691,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       await loadAvailableMcpServers();
       await loadMemories(name);
       await loadActivity(name);
-      await loadRecommendations(name);
       await loadContext(name);
+      notifyProjectUpdated();
       // Reset activity tab pagination on project reload
       setActivityPage(0);
       setActivityPageEntries([]);
@@ -3065,6 +3108,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       const report = JSON.parse(raw) as DriftReport;
       setDriftReport(report);
       setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
+      notifyProjectUpdated();
     } catch (err: any) {
       setError(`Failed to adopt instruction file: ${err}`);
     } finally {
@@ -3088,6 +3132,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       const report = JSON.parse(raw) as DriftReport;
       setDriftReport(report);
       setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
+      notifyProjectUpdated();
     } catch (err: any) {
       setError(`Failed to overwrite instruction file: ${err}`);
     } finally {
@@ -3114,6 +3159,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setSyncStatus(`Synced ${files.length} config${files.length !== 1 ? "s" : ""}`);
       setDriftReport({ drifted: false, agents: [] });
       setDriftByProject((prev) => ({ ...prev, [name]: false }));
+      notifyProjectUpdated();
     } catch (err: any) {
       setSyncStatus(`Sync failed: ${err}`);
     }
@@ -4157,12 +4203,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       <div className="flex rounded overflow-hidden border border-border-strong/40">
                         <button
                           onClick={async () => {
-                            if (project.instruction_mode !== "unified" && selectedName) {
+                             if (project.instruction_mode !== "unified" && selectedName) {
                               const updated = { ...project, instruction_mode: "unified", updated_at: new Date().toISOString() };
                               setProject(updated);
                               setDirty(false);
                               await invoke("save_project", { name: selectedName, data: JSON.stringify(updated, null, 2) });
                               await loadProjectFiles(selectedName);
+                              notifyProjectUpdated();
                             }
                           }}
                           className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
@@ -4176,12 +4223,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         </button>
                         <button
                           onClick={async () => {
-                            if (project.instruction_mode !== "per-agent" && selectedName) {
+                             if (project.instruction_mode !== "per-agent" && selectedName) {
                               const updated = { ...project, instruction_mode: "per-agent", updated_at: new Date().toISOString() };
                               setProject(updated);
                               setDirty(false);
                               await invoke("save_project", { name: selectedName, data: JSON.stringify(updated, null, 2) });
                               await loadProjectFiles(selectedName);
+                              notifyProjectUpdated();
                             }
                           }}
                           className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
@@ -4280,26 +4328,37 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             <p className="text-[13px] text-text-muted mb-5 max-w-xs">
                               This file doesn't exist yet. Create it to provide project instructions for {activeFile?.agents.join(" & ")}.
                             </p>
-                            <div className="flex items-center gap-2">
-                              <button
-                                 onClick={() => {
-                                   setProjectFileContent("");
-                                   setProjectFileEditing(true);
-                                   setProjectFileDirty(true);
-                                 }}
-                                 className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5"
+                             <div className="flex items-center gap-2">
+                               {/* Primary action: Generate with AI */}
+                               <button
+                                 onClick={handleGenerateInstruction}
+                                 disabled={projectFileGenerating}
+                                 className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                                >
-                                 <Plus size={12} /> Create File
+                                 <Sparkles size={12} className={projectFileGenerating ? "animate-pulse" : ""} />
+                                 {projectFileGenerating ? "Generating…" : "Generate with AI"}
                                </button>
-                              {availableTemplates.length > 0 && (
-                                <button
-                                  onClick={() => setShowTemplatePicker(!showTemplatePicker)}
-                                  className="px-3 py-1.5 bg-bg-sidebar hover:bg-surface text-text-base text-[12px] font-medium rounded border border-border-strong/40-hover transition-colors flex items-center gap-1.5"
+                               {/* Secondary: blank file */}
+                               <button
+                                  onClick={() => {
+                                    setProjectFileContent("");
+                                    setProjectFileEditing(true);
+                                    setProjectFileDirty(true);
+                                  }}
+                                  className="px-3 py-1.5 bg-bg-sidebar hover:bg-surface text-text-base text-[12px] font-medium rounded border border-border-strong/40 transition-colors flex items-center gap-1.5"
                                 >
-                                  <LayoutTemplate size={12} /> From Template
+                                  <Plus size={12} /> Create File
                                 </button>
-                              )}
-                            </div>
+                               {/* Secondary: from template */}
+                               {availableTemplates.length > 0 && (
+                                 <button
+                                   onClick={() => setShowTemplatePicker(!showTemplatePicker)}
+                                   className="px-3 py-1.5 bg-bg-sidebar hover:bg-surface text-text-base text-[12px] font-medium rounded border border-border-strong/40 transition-colors flex items-center gap-1.5"
+                                 >
+                                   <LayoutTemplate size={12} /> From Template
+                                 </button>
+                               )}
+                             </div>
                             {showTemplatePicker && availableTemplates.length > 0 && (
                               <div className="mt-3 p-2 bg-bg-input rounded-md border border-border-strong/40">
                                 <div className="flex flex-wrap gap-1.5">
@@ -4332,42 +4391,53 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                   : <>{activeProjectFile}{!fileExists ? " (new)" : ""}{projectFileEditing ? " — Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
                                 }
                               </span>
-                              <div className="flex items-center gap-1.5">
-                                {!projectFileEditing ? (
-                                   <button
-                                     onClick={() => setProjectFileEditing(true)}
-                                     className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
-                                   >
-                                     <Edit2 size={10} /> Edit
-                                   </button>
-                                ) : (
-                                  <>
+                               <div className="flex items-center gap-1.5">
+                                 {/* Generate with AI — always visible */}
+                                 <button
+                                   onClick={handleGenerateInstruction}
+                                   disabled={projectFileGenerating || projectFileSaving}
+                                   className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                   title="Generate instruction content with AI"
+                                 >
+                                   <Sparkles size={10} className={projectFileGenerating ? "animate-pulse text-brand" : ""} />
+                                   {projectFileGenerating ? "Generating…" : "Generate"}
+                                 </button>
+                                 <span className="w-px h-3 bg-border-strong/40" />
+                                 {!projectFileEditing ? (
                                     <button
-                                      onClick={() => {
-                                        setProjectFileEditing(false);
-                                        if (projectFileDirty && selectedName && activeProjectFile) {
-                                          if (fileExists) {
-                                            loadProjectFileContent(selectedName, activeProjectFile);
-                                          } else {
-                                            setProjectFileContent("");
-                                            setProjectFileDirty(false);
-                                          }
-                                        }
-                                      }}
-                                      className="px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+                                      onClick={() => setProjectFileEditing(true)}
+                                      className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
                                     >
-                                      Cancel
+                                      <Edit2 size={10} /> Edit
                                     </button>
-                                    <button
-                                      onClick={handleSaveProjectFile}
-                                      disabled={!projectFileDirty || projectFileSaving}
-                                      className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-brand hover:bg-brand-hover text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                      <Check size={10} /> {projectFileSaving ? "Saving..." : "Save"}
-                                    </button>
-                                  </>
-                                )}
-                              </div>
+                                 ) : (
+                                   <>
+                                     <button
+                                       onClick={() => {
+                                         setProjectFileEditing(false);
+                                         if (projectFileDirty && selectedName && activeProjectFile) {
+                                           if (fileExists) {
+                                             loadProjectFileContent(selectedName, activeProjectFile);
+                                           } else {
+                                             setProjectFileContent("");
+                                             setProjectFileDirty(false);
+                                           }
+                                         }
+                                       }}
+                                       className="px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+                                     >
+                                       Cancel
+                                     </button>
+                                     <button
+                                       onClick={handleSaveProjectFile}
+                                       disabled={!projectFileDirty || projectFileSaving}
+                                       className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-brand hover:bg-brand-hover text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                     >
+                                       <Check size={10} /> {projectFileSaving ? "Saving..." : "Save"}
+                                     </button>
+                                   </>
+                                 )}
+                               </div>
                             </div>
 
                             {/* Content area */}
@@ -5144,6 +5214,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               });
                               setProject(forkedProject);
                               setDirty(false);
+                              notifyProjectUpdated();
                               setSyncStatus(`Forked "${skillName}" → local skill "${copyName}"`);
                               setTimeout(() => setSyncStatus(null), 5000);
                             } catch (err: any) {

@@ -99,6 +99,7 @@ pub fn run() {
             adopt_instruction_file,
             overwrite_instruction_file,
             get_instruction_file_conflicts,
+            ai_generate_instruction,
             get_mcp_servers,
             list_mcp_server_configs,
             read_mcp_server_config,

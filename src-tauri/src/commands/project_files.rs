@@ -183,6 +183,117 @@ pub fn overwrite_instruction_file(name: &str, filename: &str) -> Result<(), Stri
     Ok(())
 }
 
+/// Use AI to analyse the project directory and generate a starter markdown body
+/// for an agent instruction file (e.g. `CLAUDE.md` or `AGENTS.md`).
+///
+/// The generated text covers only the **user-authored section** — it does not
+/// include Automatic-managed skill/rules blocks.  The frontend previews the
+/// result in the editor before the user calls `save_project_file`.
+///
+/// `filename` is either a concrete filename (e.g. `"CLAUDE.md"`) or the
+/// virtual key `"_unified"` for unified-mode projects.  In unified mode the
+/// prompt notes that the file will be shared across all configured agents.
+#[tauri::command]
+pub async fn ai_generate_instruction(name: &str, filename: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    // Build a project snapshot the same way context generation does so the AI
+    // has a rich, factual view of the repository without needing tool calls.
+    let snapshot = crate::context::build_project_snapshot(&project.directory)?;
+
+    // Optionally include any already-generated context.json so the AI can
+    // reference discovered commands, conventions, and concepts.
+    let context_snippet = {
+        let ctx_path = std::path::PathBuf::from(&project.directory)
+            .join(".automatic")
+            .join("context.json");
+        if ctx_path.exists() {
+            match std::fs::read_to_string(&ctx_path) {
+                Ok(s) => format!("\n\n<context_json>\n{}\n</context_json>", s),
+                Err(_) => String::new(),
+            }
+        } else {
+            String::new()
+        }
+    };
+
+    // Describe which agent(s) will read this file so the AI can tailor wording.
+    let agent_context = if filename == "_unified" {
+        let labels: Vec<String> = project
+            .agents
+            .iter()
+            .filter_map(|id| crate::agent::from_id(id).map(|a| a.label().to_string()))
+            .collect();
+        if labels.is_empty() {
+            "all configured AI coding agents".to_string()
+        } else {
+            format!("all configured AI coding agents ({})", labels.join(", "))
+        }
+    } else {
+        // Attempt to map filename → agent label for a friendlier prompt.
+        let label = project
+            .agents
+            .iter()
+            .filter_map(|id| crate::agent::from_id(id))
+            .find(|a| a.project_file_name() == filename)
+            .map(|a| a.label().to_string())
+            .unwrap_or_else(|| filename.to_string());
+        label
+    };
+
+    let existing_content = core::read_project_file(&project.directory, filename).unwrap_or_default();
+    let existing_section = if existing_content.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\n<existing_user_content>\n{}\n</existing_user_content>\n\
+             The user has already written the above content. Improve and expand it — \
+             do not discard sections they have already authored.",
+            existing_content
+        )
+    };
+
+    let system = "You are a senior software engineer writing an AI coding agent instruction \
+        file for a real software project. Your output is the raw Markdown content \
+        of the file — no preamble, no code fences, no meta-commentary. \
+        Structure the document with clear ## headings. Cover: \
+        (1) Project overview — what the project does and its primary tech stack. \
+        (2) Build & run commands. \
+        (3) Architecture overview — key modules/directories and what they do. \
+        (4) Coding conventions — naming, error handling, typing, style patterns observed in the code. \
+        (5) Agent guidance — what the agent should and should not do (e.g. always run tests, \
+            never commit secrets, ask before deleting files). \
+        Keep each section concise (3–8 bullet points or 2–4 sentences). \
+        Use only information evidenced by the snapshot; do not invent facts.";
+
+    let user_msg = format!(
+        "Generate a project instruction file for **{}**.\n\
+         This file will be read by {}.\n\
+         Project name: \"{}\"\n\n\
+         Project snapshot:\n{}{}{}\n\n\
+         Write the full Markdown content of the instruction file now.",
+        filename, agent_context, name, snapshot, context_snippet, existing_section
+    );
+
+    crate::core::ai::chat(
+        vec![crate::core::ai::AiMessage {
+            role: "user".into(),
+            content: user_msg,
+        }],
+        None,
+        None,
+        Some(system.to_string()),
+        Some(4096),
+    )
+    .await
+}
+
 /// Returns the list of instruction file conflicts for a project — files that
 /// exist on disk with user content that differs from what Automatic has stored.
 /// Serialised as a JSON array of [`InstructionFileConflict`] objects.
