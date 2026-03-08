@@ -5535,29 +5535,92 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                 {/* ── Summary tab ──────────────────────────────────────── */}
                 {projectTab === "summary" && (
-                  <div className="space-y-6">
+                  <div className="grid grid-cols-[1fr_280px] gap-6">
 
-                    {/* ── Recommendations banner ───────────────────────── */}
-                    {recsDisplayCount > 0 && (
-                      <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-warning/5 border border-warning/25">
-                        <Lightbulb size={14} className="text-warning shrink-0" />
-                        <p className="flex-1 text-[12px] text-text-muted leading-snug">
-                          <span className="font-semibold text-text-base">
-                            {recsDisplayCount === 1 ? "1 recommendation" : `${recsDisplayCount} recommendations`}
-                          </span>
-                          {" "}available for this project.
-                        </p>
-                        <button
-                          onClick={() => setProjectTab("recommendations")}
-                          className="shrink-0 flex items-center gap-1 text-[12px] font-medium text-warning hover:text-warning-hover transition-colors"
-                        >
-                          Review <ArrowRight size={11} />
-                        </button>
-                      </div>
-                    )}
+                    {/* ── Column 1: Activity, recommendations, setup ──── */}
+                    <div className="space-y-6 min-w-0">
 
-                    {/* ── Resources: Skills · MCP Servers · Memory ──────── */}
-                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                      {/* Recommendations banner */}
+                      {recsDisplayCount > 0 && (
+                        <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-warning/5 border border-warning/25">
+                          <Lightbulb size={14} className="text-warning shrink-0" />
+                          <p className="flex-1 text-[12px] text-text-muted leading-snug">
+                            <span className="font-semibold text-text-base">
+                              {recsDisplayCount === 1 ? "1 recommendation" : `${recsDisplayCount} recommendations`}
+                            </span>
+                            {" "}available for this project.
+                          </p>
+                          <button
+                            onClick={() => setProjectTab("recommendations")}
+                            className="shrink-0 flex items-center gap-1 text-[12px] font-medium text-warning hover:text-warning-hover transition-colors"
+                          >
+                            Review <ArrowRight size={11} />
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Getting Started callout (incomplete setup) */}
+                      {!isCreating && (!project.directory || project.agents.length === 0) && (
+                        <section className="bg-gradient-to-br from-brand/10 to-brand/5 border border-brand/20 rounded-lg p-5">
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 bg-brand/20 rounded-lg flex-shrink-0">
+                              <Package size={18} className="text-brand" />
+                            </div>
+                            <div>
+                              <h3 className="text-[13px] font-semibold text-text-base mb-2">Complete Setup</h3>
+                              <p className="text-[12px] text-text-muted mb-3 leading-relaxed">To start using this project, complete these steps:</p>
+                              <ol className="space-y-2 text-[12px] text-text-base">
+                                {!project.directory && (
+                                  <li className="flex items-start gap-2">
+                                    <div className="w-5 h-5 rounded-full border border-brand flex items-center justify-center flex-shrink-0 mt-0.5">
+                                      <span className="text-[10px] text-brand">1</span>
+                                    </div>
+                                    <div>
+                                      <button
+                                        onClick={async () => {
+                                          const selected: string | null = await invoke("open_directory_dialog");
+                                          if (selected) updateField("directory", selected);
+                                        }}
+                                        className="text-brand hover:text-brand-hover transition-colors font-medium"
+                                      >
+                                        Set project directory
+                                      </button>
+                                      <div className="text-[11px] text-text-muted mt-0.5">Click the path below the project name, or click here</div>
+                                    </div>
+                                  </li>
+                                )}
+                                {project.agents.length === 0 && (
+                                  <li className="flex items-start gap-2">
+                                    <div className="w-5 h-5 rounded-full border border-brand flex items-center justify-center flex-shrink-0 mt-0.5">
+                                      <span className="text-[10px] text-brand">{!project.directory ? "2" : "1"}</span>
+                                    </div>
+                                    <div>
+                                      <button onClick={() => setProjectTab("agents")} className="text-brand hover:text-brand-hover transition-colors font-medium">Add agent tools</button>
+                                      <div className="text-[11px] text-text-muted mt-0.5">Select which agents will use this project</div>
+                                    </div>
+                                  </li>
+                                )}
+                                <li className="flex items-start gap-2">
+                                  <div className="w-5 h-5 rounded-full border border-text-muted/50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <span className="text-[10px] text-text-muted">•</span>
+                                  </div>
+                                  <div>
+                                    <button onClick={() => setProjectTab("skills")} className="text-text-base hover:text-brand transition-colors">Add skills (optional)</button>
+                                    <div className="text-[11px] text-text-muted mt-0.5">Give agents specialized capabilities</div>
+                                  </div>
+                                </li>
+                              </ol>
+                            </div>
+                          </div>
+                        </section>
+                      )}
+
+                      {/* Activity */}
+                      <ActivityFeed entries={activityEntries} loading={loadingActivity} />
+                    </div>
+
+                    {/* ── Column 2: Skills, MCP Servers, Rules, Memory ── */}
+                    <div className="space-y-4">
 
                       {/* Skills */}
                       <section className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden flex flex-col">
@@ -5659,6 +5722,37 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         )}
                       </section>
 
+                      {/* Rules */}
+                      {(() => {
+                        const projectRules = (project.file_rules || {})["_project"] || [];
+                        const customRules = project.custom_rules || [];
+                        const rulesCount = projectRules.length + customRules.length;
+                        return (
+                          <button
+                            onClick={() => setProjectTab("rules")}
+                            className="group w-full bg-bg-input border border-border-strong/40 hover:border-icon-rule/50 rounded-lg overflow-hidden flex flex-col text-left transition-all"
+                          >
+                            <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40 flex-shrink-0">
+                              <div className="flex items-center gap-2">
+                                <div className="p-1 bg-icon-rule/10 rounded group-hover:bg-icon-rule/20 transition-colors"><ScrollText size={12} className="text-icon-rule" /></div>
+                                <span className="text-[13px] font-semibold text-text-base">Rules</span>
+                                <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-1.5 py-0.5 leading-none">
+                                  {rulesCount}
+                                </span>
+                              </div>
+                              <ArrowRight size={13} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </div>
+                            <div className="px-4 py-2.5">
+                              <span className="text-[12px] text-text-muted">
+                                {rulesCount === 0
+                                  ? "No rules configured"
+                                  : `${projectRules.length} global, ${customRules.length} custom`}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })()}
+
                       {/* Memory */}
                       <button
                         onClick={() => setProjectTab("memory")}
@@ -5680,64 +5774,6 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </button>
                     </div>
 
-                    {/* ── Activity ─────────────────────────────────────── */}
-                    <ActivityFeed entries={activityEntries} loading={loadingActivity} />
-
-                    {/* ── Getting Started callout (incomplete setup) ────── */}
-                    {!isCreating && (!project.directory || project.agents.length === 0) && (
-                      <section className="bg-gradient-to-br from-brand/10 to-brand/5 border border-brand/20 rounded-lg p-5">
-                        <div className="flex items-start gap-3">
-                          <div className="p-2 bg-brand/20 rounded-lg flex-shrink-0">
-                            <Package size={18} className="text-brand" />
-                          </div>
-                          <div>
-                            <h3 className="text-[13px] font-semibold text-text-base mb-2">Complete Setup</h3>
-                            <p className="text-[12px] text-text-muted mb-3 leading-relaxed">To start using this project, complete these steps:</p>
-                            <ol className="space-y-2 text-[12px] text-text-base">
-                              {!project.directory && (
-                                <li className="flex items-start gap-2">
-                                  <div className="w-5 h-5 rounded-full border border-brand flex items-center justify-center flex-shrink-0 mt-0.5">
-                                    <span className="text-[10px] text-brand">1</span>
-                                  </div>
-                                  <div>
-                                    <button
-                                      onClick={async () => {
-                                        const selected: string | null = await invoke("open_directory_dialog");
-                                        if (selected) updateField("directory", selected);
-                                      }}
-                                      className="text-brand hover:text-brand-hover transition-colors font-medium"
-                                    >
-                                      Set project directory
-                                    </button>
-                                    <div className="text-[11px] text-text-muted mt-0.5">Click the path below the project name, or click here</div>
-                                  </div>
-                                </li>
-                              )}
-                              {project.agents.length === 0 && (
-                                <li className="flex items-start gap-2">
-                                  <div className="w-5 h-5 rounded-full border border-brand flex items-center justify-center flex-shrink-0 mt-0.5">
-                                    <span className="text-[10px] text-brand">{!project.directory ? "2" : "1"}</span>
-                                  </div>
-                                  <div>
-                                    <button onClick={() => setProjectTab("agents")} className="text-brand hover:text-brand-hover transition-colors font-medium">Add agent tools</button>
-                                    <div className="text-[11px] text-text-muted mt-0.5">Select which agents will use this project</div>
-                                  </div>
-                                </li>
-                              )}
-                              <li className="flex items-start gap-2">
-                                <div className="w-5 h-5 rounded-full border border-text-muted/50 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                  <span className="text-[10px] text-text-muted">•</span>
-                                </div>
-                                <div>
-                                  <button onClick={() => setProjectTab("skills")} className="text-text-base hover:text-brand transition-colors">Add skills (optional)</button>
-                                  <div className="text-[11px] text-text-muted mt-0.5">Give agents specialized capabilities</div>
-                                </div>
-                              </li>
-                            </ol>
-                          </div>
-                        </div>
-                      </section>
-                    )}
                   </div>
                 )}
 
