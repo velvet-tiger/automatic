@@ -614,6 +614,7 @@ mod tests {
                 priority    TEXT    NOT NULL DEFAULT 'normal',
                 status      TEXT    NOT NULL DEFAULT 'pending',
                 source      TEXT    NOT NULL DEFAULT '',
+                metadata    TEXT    NOT NULL DEFAULT '',
                 created_at  TEXT    NOT NULL,
                 updated_at  TEXT    NOT NULL
             );
@@ -629,8 +630,8 @@ mod tests {
     fn insert_rec(conn: &Connection, project: &str, kind: &str, title: &str) -> i64 {
         let ts = now();
         conn.execute(
-            "INSERT INTO recommendations (project, kind, title, body, priority, status, source, created_at, updated_at)
-             VALUES (?1, ?2, ?3, '', 'normal', 'pending', '', ?4, ?5)",
+            "INSERT INTO recommendations (project, kind, title, body, priority, status, source, metadata, created_at, updated_at)
+             VALUES (?1, ?2, ?3, '', 'normal', 'pending', '', '', ?4, ?5)",
             params![project, kind, title, ts, ts],
         )
         .unwrap();
