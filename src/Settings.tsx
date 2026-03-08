@@ -41,9 +41,9 @@ const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; descripti
   },
   {
     id: "agents",
-    label: "Agents",
+    label: "Providers",
     icon: <Bot size={15} />,
-    description: "Default agents",
+    description: "Default providers",
   },
   {
     id: "app",
@@ -365,17 +365,17 @@ export default function Settings() {
             </div>
           )}
 
-          {/* ── Agents page ─────────────────────────────────────────── */}
+          {/* ── Providers page ─────────────────────────────────────────── */}
           {activePage === "agents" && (
             <div>
-              <h2 className="text-lg font-medium mb-1 text-text-base">Agents</h2>
-              <p className="text-[13px] text-text-muted mb-6">Configure default agent behaviour for new projects.</p>
+              <h2 className="text-lg font-medium mb-1 text-text-base">Providers</h2>
+              <p className="text-[13px] text-text-muted mb-6">Configure default provider behaviour for new projects.</p>
 
               <div className="mb-8">
-                <h3 className="text-sm font-medium mb-2 text-text-base">Default Agents</h3>
+                <h3 className="text-sm font-medium mb-2 text-text-base">Default Providers</h3>
                 <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
-                  These agents are automatically pre-selected when creating a new
-                  project. You can add or remove agents per-project after creation.
+                  These providers are automatically pre-selected when creating a new
+                  project. You can add or remove providers per-project after creation.
                 </p>
                 <div className="p-4 rounded-lg border border-border-strong/40 bg-bg-input-dark">
                   <AgentSelector
@@ -383,8 +383,8 @@ export default function Settings() {
                     availableAgents={availableAgents}
                     onAdd={addDefaultAgent}
                     onRemove={removeDefaultAgent}
-                    label="Default Agents"
-                    emptyMessage="No default agents. New projects will start with no agents selected."
+                    label="Default Providers"
+                    emptyMessage="No default providers. New projects will start with no providers selected."
                   />
                 </div>
               </div>

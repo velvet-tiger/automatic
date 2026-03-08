@@ -88,17 +88,17 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
   const SECTIONS: ConfigSection[] = [
     {
       id: "agents",
-      label: "Agents",
-      description: "Connected AI agents and their project associations.",
+      label: "Providers",
+      description: "Connected AI providers and their project associations.",
       helpText:
-        "Agents are AI tools like Claude Code, Cursor, or custom bots linked to your projects. Automatic syncs configuration to each agent's expected directory.",
+        "Providers are AI tools like Claude Code, Cursor, or custom bots linked to your projects. Automatic syncs configuration to each provider's expected directory.",
       icon: Bot,
       iconColorClass: "text-icon-agent",
       iconBgClass: "bg-icon-agent/10 group-hover:bg-icon-agent/20",
       borderHoverClass: "hover:border-icon-agent/50",
       count: counts.agents ?? null,
       countLabel: "configured",
-      primaryAction: { label: "View Agents", tab: "agents" },
+      primaryAction: { label: "View Providers", tab: "agents" },
       secondaryActions: [],
     },
     {

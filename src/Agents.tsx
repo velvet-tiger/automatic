@@ -258,7 +258,7 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
       <div className="w-64 flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50">
         <div className="h-11 px-4 border-b border-border-strong/40 flex items-center bg-bg-base/30">
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
-            Agents
+            Providers
           </span>
         </div>
 
@@ -413,7 +413,7 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
                      </div>
                      <p className="text-[11px] text-text-muted mt-2 leading-relaxed">
                        These defaults apply when a new project is created. Each project can
-                       override them individually in its Agents tab.
+                        override them individually in its Providers tab.
                      </p>
                    </section>
                  )}
@@ -582,10 +582,10 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
               <Bot size={24} className={ICONS.agent.iconColor} strokeWidth={1.5} />
             </div>
             <h2 className="text-lg font-medium text-text-base mb-2">
-              Agents
+              Providers
             </h2>
             <p className="text-[14px] text-text-muted mb-4 leading-relaxed max-w-sm">
-              Agents are the coding tools that Automatic syncs configurations to.
+              Providers are the coding tools that Automatic syncs configurations to.
               Select one from the sidebar to see which projects use it.
             </p>
           </div>

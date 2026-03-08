@@ -6,7 +6,7 @@ import { ProfileProvider } from "./ProfileContext";
 import { useCurrentUser } from "./ProfileContext";
 import { initAnalytics, setAnalyticsEnabled, trackNavigation } from "./analytics";
 import Dashboard from "./Dashboard";
-import ConfigurationDashboard from "./ConfigurationDashboard";
+
 import Skills from "./Skills";
 import SkillStore from "./SkillStore";
 import Projects from "./Projects";
@@ -86,8 +86,8 @@ function App() {
       localStorage.removeItem("nexus.activeTab");
     }
     const saved = localStorage.getItem("automatic.activeTab") || legacy;
-    // Reset to projects if saved tab was removed (activity)
-    if (saved === "activity") return "dashboard";
+    // Reset to dashboard if saved tab was removed
+    if (saved === "activity" || saved === "configuration") return "dashboard";
     return saved || "dashboard";
   });
   const [pendingProject, setPendingProject] = useState<string | null>(null);
@@ -291,32 +291,25 @@ function App() {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-3 custom-scrollbar">
+          {/* Top-level items */}
+          <ul className="space-y-0.5 mb-6">
+            <NavItem id="dashboard" icon={LayoutDashboard} label="Dashboard" />
+            <NavItem id="recommendations" icon={Lightbulb} label="Recommendations" />
+          </ul>
+
           <div className="mb-6">
             <div className="px-3 pb-1.5 text-[11px] font-semibold text-text-muted tracking-wider flex items-center justify-between group cursor-pointer hover:text-text-base">
               <span>Workspace</span>
               <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
             <ul className="space-y-0.5">
-              <NavItem id="dashboard" icon={LayoutTemplate} label="Dashboard" />
               <NavItem id="projects" icon={FolderOpen} label="Projects" />
-            </ul>
-          </div>
-
-          <div className="mb-6">
-            <div className="px-3 pb-1.5 text-[11px] font-semibold text-text-muted tracking-wider flex items-center justify-between group cursor-pointer hover:text-text-base">
-              <span>Configuration</span>
-              <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <ul className="space-y-0.5">
-              <NavItem id="configuration" icon={LayoutDashboard} label="Overview" />
-              <NavItem id="recommendations" icon={Lightbulb} label="Recommendations" />
-              <NavItem id="agents" icon={Bot} label="Agents" />
               <NavItem id="project-templates" icon={Layers} label="Templates" />
               <NavItem id="templates" icon={LayoutTemplate} label="Instructions" />
               <NavItem id="rules" icon={ScrollText} label="Rules" />
               <NavItem id="skills" icon={Code} label="Skills" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
-              {flag("ai_playground") && <NavItem id="ai-playground" icon={FlaskConical} label="AI Playground" />}
+              <NavItem id="agents" icon={Bot} label="Providers" />
             </ul>
           </div>
 
@@ -332,6 +325,13 @@ function App() {
               <NavItem id="mcp-marketplace" icon={Server} label="MCP Servers" />
             </ul>
           </div>
+
+          {/* AI Playground — top-level, feature-flagged */}
+          {flag("ai_playground") && (
+            <ul className="space-y-0.5 mb-6">
+              <NavItem id="ai-playground" icon={FlaskConical} label="AI Playground" />
+            </ul>
+          )}
 
         </nav>
 
@@ -488,11 +488,7 @@ function App() {
               />
             </div>
           )}
-          {activeTab === "configuration" && (
-            <div className="flex-1 h-full">
-              <ConfigurationDashboard onNavigate={setActiveTab} />
-            </div>
-          )}
+
           {activeTab === "recommendations" && (
             <div className="flex-1 h-full">
               <Recommendations onNavigateToProject={navigateToProject} />

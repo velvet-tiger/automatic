@@ -4540,7 +4540,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
             <div className="flex flex-wrap items-center gap-0 px-6 border-b border-border-strong/40 flex-shrink-0">
               {([
                  { id: "summary" as ProjectTab, label: "Summary" },
-                 { id: "agents" as ProjectTab, label: "Agents" },
+                 { id: "agents" as ProjectTab, label: "Providers" },
                 { id: "skills" as ProjectTab, label: "Skills" },
                 { id: "mcp_servers" as ProjectTab, label: "MCP Servers" },
                  { id: "project_file" as ProjectTab, label: "Project Instructions" },
