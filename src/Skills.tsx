@@ -857,7 +857,6 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-base transition-colors truncate"
-                        onClick={e => e.stopPropagation()}
                       >
                         <Github size={11} />
                         {selectedEntry.source.source}
