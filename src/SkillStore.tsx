@@ -322,7 +322,7 @@ interface SkillSource {
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdConsumed }: { resetKey?: number; initialSkillId?: string | null; onInitialSkillIdConsumed?: () => void }) {
+export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdConsumed, initialQuery, onInitialQueryConsumed, initialSkillResult, onInitialSkillResultConsumed }: { resetKey?: number; initialSkillId?: string | null; onInitialSkillIdConsumed?: () => void; initialQuery?: string | null; onInitialQueryConsumed?: () => void; initialSkillResult?: RemoteSkillResult | null; onInitialSkillResultConsumed?: () => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<RemoteSkillResult[]>([]);
   const [selected, setSelected] = useState<RemoteSkillResult | null>(null);
@@ -433,6 +433,22 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
     }
     onInitialSkillIdConsumed?.();
   }, [initialSkillId, handleSelect, onInitialSkillIdConsumed]);
+
+  // ── Auto-select from AI suggestion result ────────────────────────────────
+  // When the caller has a full RemoteSkillResult (from AI suggestion metadata),
+  // select it directly — bypassing the featured-skills lookup.
+  useEffect(() => {
+    if (!initialSkillResult) return;
+    handleSelect(initialSkillResult);
+    onInitialSkillResultConsumed?.();
+  }, [initialSkillResult, handleSelect, onInitialSkillResultConsumed]);
+
+  // ── Pre-populate search from deep-link query ─────────────────────────────
+  useEffect(() => {
+    if (!initialQuery) return;
+    setQuery(initialQuery);
+    onInitialQueryConsumed?.();
+  }, [initialQuery, onInitialQueryConsumed]);
 
   // ── Import ──────────────────────────────────────────────────────────────
 

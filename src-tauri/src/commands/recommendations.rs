@@ -611,8 +611,9 @@ fn build_project_state(proj: &crate::core::Project) -> String {
     )
 }
 
-/// Run the AI with tools and return the raw text response.
-async fn run_targeted_ai(
+/// Phase 1: Run the AI with tools to gather facts (what is available in the
+/// marketplace).  Returns the raw text summary produced by the agentic loop.
+async fn run_research_phase(
     prompt: &str,
     system: &str,
     working_dir: &str,
@@ -627,6 +628,38 @@ async fn run_targeted_ai(
         Some(system.to_string()),
         Some(8192),
         working_dir.to_string(),
+    )
+    .await
+}
+
+/// Phase 2: Given a research summary, use structured outputs (JSON schema) to
+/// produce a guaranteed-valid JSON suggestions list.
+///
+/// This avoids the "model wraps output in markdown fences" failure mode that
+/// occurs when `chat_with_tools` is asked to produce structured output.
+async fn run_structured_phase(
+    research_summary: &str,
+    final_prompt: &str,
+    system: &str,
+    schema: serde_json::Value,
+) -> Result<String, String> {
+    // Combine the research output and the final formatting instruction into a
+    // single user turn so the model sees both.
+    let content = format!(
+        "Research findings:\n{research}\n\n{instruction}",
+        research = research_summary,
+        instruction = final_prompt,
+    );
+    crate::core::ai::chat_structured(
+        vec![crate::core::ai::AiMessage {
+            role: "user".into(),
+            content,
+        }],
+        None,
+        None,
+        Some(system.to_string()),
+        Some(4096),
+        schema,
     )
     .await
 }
@@ -725,11 +758,11 @@ fn persist_targeted_suggestions(
 
 /// Ask the AI to suggest specific **skills** for this project.
 ///
-/// Explores the local skill library and skills.sh marketplace, then returns
-/// 3–5 tailored suggestions that are not already installed.  Results are
-/// stored as `"automatic-ai-skills"` recommendations and replace any previous
-/// pending suggestions of that source.
+/// Two-phase approach:
+/// 1. Tool-use phase — explores the skill library and skills.sh marketplace.
+/// 2. Structured output phase — produces a guaranteed-valid JSON list via JSON schema.
 ///
+/// Results are stored as `"automatic-ai-skills"` recommendations.
 /// Returns all current pending recommendations for the project after the run.
 #[tauri::command]
 pub async fn ai_suggest_skills(project: &str) -> Result<Vec<Recommendation>, String> {
@@ -750,46 +783,99 @@ pub async fn ai_suggest_skills(project: &str) -> Result<Vec<Recommendation>, Str
             .to_string()
     };
 
-    let prompt = format!(
+    // ── Phase 1: Research ────────────────────────────────────────────────────
+    // Ask the model to use tools to discover what skills are available.
+    let research_prompt = format!(
         r#"{state}
 
-Using the list_skills and search_skills_marketplace tools, research what skills are 
-available — both locally installed and in the community registry.
+Use the list_skills and search_skills_marketplace tools to research what skills are
+available — both locally installed and in the community registry (skills.sh).
 
-Suggest 3–5 skills that would genuinely benefit this project and are NOT already in 
-the "Skills" list above. Focus on the project's evident tech stack, workflow, and 
-agent configuration. Be specific: name the exact skill and explain in 1–2 sentences 
-why it fits this project.
+For each relevant skill you find via search_skills_marketplace, record its exact
+registry fields: id (e.g. "owner/repo/skill-name"), name, source (e.g. "owner/repo"),
+and installs count.
 
-For each skill you find via search_skills_marketplace, capture its exact registry 
-fields: id, name, source (owner/repo), and installs count.
+Identify 3–5 skills that are NOT already in the "Skills" list above and would
+genuinely benefit this project given its tech stack, workflow, and agent configuration.
 
-Respond with ONLY a JSON object — no markdown fences, no extra text:
-{{ "suggestions": [ {{ "title": "skill-name", "body": "why it helps", "priority": "low"|"normal"|"high", "metadata": {{ "id": "owner/repo/skill-name", "name": "skill-name", "source": "owner/repo", "installs": 0 }} }} ] }}"#,
+Summarise your findings as plain text — list the candidate skills with their id,
+source, installs count, and a brief reason why each fits this project."#,
         state = state,
     );
 
-    let system = "You are an expert AI-development advisor. Your task is to recommend \
-        specific skills from the Automatic skill library and skills.sh community registry \
-        that would benefit the given project. Use the list_skills tool to see what is \
-        locally installed, and search_skills_marketplace to discover community skills. \
-        Only recommend skills that are NOT already configured for the project. \
-        For each recommended skill, include a metadata object with the exact id, name, \
-        source (owner/repo), and installs fields from the search result so the UI can \
-        deep-link directly to the skill. \
-        After researching, respond with ONLY a JSON object matching the requested schema.";
+    let research_system = "You are an expert AI-development advisor. \
+        Use the list_skills and search_skills_marketplace tools to explore what skills \
+        are available for the given project. Record each candidate skill's exact registry \
+        fields (id, name, source, installs). Summarise your findings as plain text.";
 
-    let response = run_targeted_ai(&prompt, system, &working_dir).await?;
-    persist_targeted_suggestions(project, "skill", "automatic-ai-skills", &response)
+    let research = run_research_phase(&research_prompt, research_system, &working_dir).await?;
+
+    // ── Phase 2: Structured output ───────────────────────────────────────────
+    // Feed the research summary back and demand JSON via schema enforcement.
+    let schema = serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["suggestions"],
+        "properties": {
+            "suggestions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["title", "body", "priority"],
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Exact skill name (e.g. 'laravel-specialist')"
+                        },
+                        "body": {
+                            "type": "string",
+                            "description": "1–2 sentence explanation of why this skill benefits the project"
+                        },
+                        "priority": {
+                            "type": "string",
+                            "enum": ["low", "normal", "high"]
+                        },
+                        "metadata": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["id", "name", "source", "installs"],
+                            "properties": {
+                                "id":       { "type": "string", "description": "Full skill ID, e.g. 'owner/repo/skill-name'" },
+                                "name":     { "type": "string", "description": "Bare skill name" },
+                                "source":   { "type": "string", "description": "Repository slug, e.g. 'owner/repo'" },
+                                "installs": { "type": "integer", "description": "Weekly install count from the registry" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let format_instruction = "Based on the research findings above, produce the final \
+        skill suggestions for this project. Include the metadata object for each skill \
+        using the exact id, name, source, and installs values found during research. \
+        Only include skills that are not already installed on the project.";
+
+    let format_system = "You are an expert AI-development advisor. \
+        Convert the provided research summary into a structured list of skill \
+        suggestions. Use the exact registry fields (id, name, source, installs) \
+        captured during research. Output must conform exactly to the provided JSON schema.";
+
+    let structured_response =
+        run_structured_phase(&research, format_instruction, format_system, schema).await?;
+
+    persist_targeted_suggestions(project, "skill", "automatic-ai-skills", &structured_response)
 }
 
 /// Ask the AI to suggest specific **MCP servers** for this project.
 ///
-/// Explores the local MCP server registry and the featured MCP catalogue,
-/// then returns 3–5 tailored suggestions that are not already configured.
-/// Results are stored as `"automatic-ai-mcp"` recommendations and replace any
-/// previous pending suggestions of that source.
+/// Two-phase approach:
+/// 1. Tool-use phase — explores the local MCP registry and featured catalogue.
+/// 2. Structured output phase — produces a guaranteed-valid JSON list via JSON schema.
 ///
+/// Results are stored as `"automatic-ai-mcp"` recommendations.
 /// Returns all current pending recommendations for the project after the run.
 #[tauri::command]
 pub async fn ai_suggest_mcp_servers(project: &str) -> Result<Vec<Recommendation>, String> {
@@ -810,29 +896,68 @@ pub async fn ai_suggest_mcp_servers(project: &str) -> Result<Vec<Recommendation>
             .to_string()
     };
 
-    let prompt = format!(
+    // ── Phase 1: Research ────────────────────────────────────────────────────
+    let research_prompt = format!(
         r#"{state}
 
-Using the list_mcp_servers and search_mcp_marketplace tools, research what MCP 
+Use the list_mcp_servers and search_mcp_marketplace tools to research what MCP
 servers are available — both locally configured and in the featured catalogue.
 
-Suggest 3–5 MCP servers that would genuinely benefit this project and are NOT 
-already in the "MCP servers" list above. Focus on the project's tech stack, 
-workflow, data sources, and the kinds of tools the agents will need. Be specific: 
-name the exact server and explain in 1–2 sentences why it fits this project.
+Identify 3–5 servers that are NOT already in the "MCP servers" list above and
+would genuinely benefit this project given its tech stack, workflow, and data sources.
 
-Respond with ONLY a JSON object — no markdown fences, no extra text:
-{{ "suggestions": [ {{ "title": "server-name", "body": "why it helps", "priority": "low"|"normal"|"high" }} ] }}"#,
+Summarise your findings as plain text — list each candidate server name and a brief
+reason why it fits this project."#,
         state = state,
     );
 
-    let system = "You are an expert AI-development advisor. Your task is to recommend \
-        specific MCP servers from the Automatic library and the featured MCP catalogue \
-        that would benefit the given project. Use the list_mcp_servers tool to see what \
-        is locally registered, and search_mcp_marketplace to discover available servers. \
-        Only recommend servers that are NOT already configured for the project. \
-        After researching, respond with ONLY a JSON object matching the requested schema.";
+    let research_system = "You are an expert AI-development advisor. \
+        Use the list_mcp_servers and search_mcp_marketplace tools to explore what MCP \
+        servers are available for the given project. Summarise your findings as plain text.";
 
-    let response = run_targeted_ai(&prompt, system, &working_dir).await?;
-    persist_targeted_suggestions(project, "mcp_server", "automatic-ai-mcp", &response)
+    let research = run_research_phase(&research_prompt, research_system, &working_dir).await?;
+
+    // ── Phase 2: Structured output ───────────────────────────────────────────
+    let schema = serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["suggestions"],
+        "properties": {
+            "suggestions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["title", "body", "priority"],
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Exact MCP server name (slug)"
+                        },
+                        "body": {
+                            "type": "string",
+                            "description": "1–2 sentence explanation of why this server benefits the project"
+                        },
+                        "priority": {
+                            "type": "string",
+                            "enum": ["low", "normal", "high"]
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let format_instruction = "Based on the research findings above, produce the final \
+        MCP server suggestions for this project. Only include servers that are not \
+        already configured on the project.";
+
+    let format_system = "You are an expert AI-development advisor. \
+        Convert the provided research summary into a structured list of MCP server \
+        suggestions. Output must conform exactly to the provided JSON schema.";
+
+    let structured_response =
+        run_structured_phase(&research, format_instruction, format_system, schema).await?;
+
+    persist_targeted_suggestions(project, "mcp_server", "automatic-ai-mcp", &structured_response)
 }

@@ -220,10 +220,14 @@ export default function McpMarketplace({
   resetKey,
   initialSlug,
   onInitialSlugConsumed,
+  initialQuery,
+  onInitialQueryConsumed,
 }: {
   resetKey?: number;
   initialSlug?: string | null;
   onInitialSlugConsumed?: () => void;
+  initialQuery?: string | null;
+  onInitialQueryConsumed?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [classification, setClassification] = useState<string>("all");
@@ -349,6 +353,13 @@ export default function McpMarketplace({
     if (server) handleSelect(server);
     onInitialSlugConsumed?.();
   }, [initialSlug, handleSelect, onInitialSlugConsumed]);
+
+  // ── Pre-populate search from deep-link query ─────────────────────────────
+  useEffect(() => {
+    if (!initialQuery) return;
+    setQuery(initialQuery);
+    onInitialQueryConsumed?.();
+  }, [initialQuery, onInitialQueryConsumed]);
 
   // ── Detail view ──────────────────────────────────────────────────────────
 

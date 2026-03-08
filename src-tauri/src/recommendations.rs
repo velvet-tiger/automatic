@@ -108,6 +108,9 @@ pub struct Recommendation {
     pub status: RecommendationStatus,
     /// Which agent or system generated this recommendation (empty string if unknown).
     pub source: String,
+    /// Optional JSON blob for extra structured data (e.g. skill registry id and source).
+    /// Empty string when not set.
+    pub metadata: String,
     /// ISO 8601 UTC creation timestamp.
     pub created_at: String,
     /// ISO 8601 UTC last-updated timestamp.
@@ -125,6 +128,9 @@ pub struct AddRecommendationParams {
     pub priority: RecommendationPriority,
     #[serde(default)]
     pub source: String,
+    /// Optional JSON metadata blob (e.g. `{"id":"owner/repo/skill","source":"owner/repo"}`).
+    #[serde(default)]
+    pub metadata: String,
 }
 
 /// Filters for listing recommendations.
@@ -134,6 +140,8 @@ pub struct ListRecommendationsFilter {
     pub status: Option<RecommendationStatus>,
     /// Only return recommendations of this kind.  `None` = all kinds.
     pub kind: Option<String>,
+    /// Only return recommendations from this source.  `None` = all sources.
+    pub source: Option<String>,
     /// Maximum number of rows to return.  `None` = 100 (default).
     pub limit: Option<usize>,
 }
@@ -165,6 +173,7 @@ fn open_conn() -> Result<Connection, String> {
             priority    TEXT    NOT NULL DEFAULT 'normal',
             status      TEXT    NOT NULL DEFAULT 'pending',
             source      TEXT    NOT NULL DEFAULT '',
+            metadata    TEXT    NOT NULL DEFAULT '',
             created_at  TEXT    NOT NULL,
             updated_at  TEXT    NOT NULL
         );
@@ -174,6 +183,11 @@ fn open_conn() -> Result<Connection, String> {
             ON recommendations (project, created_at DESC);",
     )
     .map_err(|e| format!("Failed to create recommendations table: {}", e))?;
+
+    // Migration: add `metadata` column to existing databases that predate it.
+    let _ = conn
+        .execute_batch("ALTER TABLE recommendations ADD COLUMN metadata TEXT NOT NULL DEFAULT '';");
+    // Intentionally ignore errors — SQLite returns an error if the column already exists.
 
     Ok(conn)
 }
@@ -194,8 +208,9 @@ fn row_to_recommendation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recommenda
         priority: RecommendationPriority::from_str(&row.get::<_, String>(5)?),
         status: RecommendationStatus::from_str(&row.get::<_, String>(6)?),
         source: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        metadata: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 
@@ -216,8 +231,8 @@ pub fn add_recommendation(params: AddRecommendationParams) -> Result<i64, String
     let conn = open_conn()?;
     let ts = now();
     conn.execute(
-        "INSERT INTO recommendations (project, kind, title, body, priority, status, source, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?8)",
+        "INSERT INTO recommendations (project, kind, title, body, priority, status, source, metadata, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?8, ?9)",
         params![
             params.project,
             params.kind,
@@ -225,6 +240,7 @@ pub fn add_recommendation(params: AddRecommendationParams) -> Result<i64, String
             params.body,
             params.priority.as_str(),
             params.source,
+            params.metadata,
             ts,
             ts,
         ],
@@ -322,78 +338,59 @@ pub fn list_recommendations(
     let conn = open_conn()?;
     let limit = filter.limit.unwrap_or(100) as i64;
 
-    // Build query dynamically based on which filters are active.
-    // Each arm eagerly collects into a local Vec before returning so that
-    // the `stmt` borrow is fully resolved before the arm expression exits.
-    let rows: Vec<Recommendation> = match (&filter.status, &filter.kind) {
-        (Some(s), Some(k)) => {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT id, project, kind, title, body, priority, status, source, created_at, updated_at
-                     FROM recommendations
-                     WHERE project = ?1 AND status = ?2 AND kind = ?3
-                     ORDER BY created_at DESC LIMIT ?4",
-                )
-                .map_err(|e| format!("Failed to prepare query: {}", e))?;
-            let result = stmt
-                .query_map(
-                    params![project, s.as_str(), k, limit],
-                    row_to_recommendation,
-                )
-                .map_err(|e| format!("Failed to execute query: {}", e))?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(|e| format!("Failed to read rows: {}", e))?;
-            result
-        }
-        (Some(s), None) => {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT id, project, kind, title, body, priority, status, source, created_at, updated_at
-                     FROM recommendations
-                     WHERE project = ?1 AND status = ?2
-                     ORDER BY created_at DESC LIMIT ?3",
-                )
-                .map_err(|e| format!("Failed to prepare query: {}", e))?;
-            let result = stmt
-                .query_map(params![project, s.as_str(), limit], row_to_recommendation)
-                .map_err(|e| format!("Failed to execute query: {}", e))?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(|e| format!("Failed to read rows: {}", e))?;
-            result
-        }
-        (None, Some(k)) => {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT id, project, kind, title, body, priority, status, source, created_at, updated_at
-                     FROM recommendations
-                     WHERE project = ?1 AND kind = ?2
-                     ORDER BY created_at DESC LIMIT ?3",
-                )
-                .map_err(|e| format!("Failed to prepare query: {}", e))?;
-            let result = stmt
-                .query_map(params![project, k, limit], row_to_recommendation)
-                .map_err(|e| format!("Failed to execute query: {}", e))?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(|e| format!("Failed to read rows: {}", e))?;
-            result
-        }
-        (None, None) => {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT id, project, kind, title, body, priority, status, source, created_at, updated_at
-                     FROM recommendations
-                     WHERE project = ?1
-                     ORDER BY created_at DESC LIMIT ?2",
-                )
-                .map_err(|e| format!("Failed to prepare query: {}", e))?;
-            let result = stmt
-                .query_map(params![project, limit], row_to_recommendation)
-                .map_err(|e| format!("Failed to execute query: {}", e))?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(|e| format!("Failed to read rows: {}", e))?;
-            result
-        }
-    };
+    // Build SQL dynamically so we can handle any combination of optional filters
+    // without a combinatorial explosion of match arms.
+    let mut sql = String::from(
+        "SELECT id, project, kind, title, body, priority, status, source, metadata, created_at, updated_at
+         FROM recommendations
+         WHERE project = ?1",
+    );
+    let mut param_idx = 2usize;
+    let mut extras: Vec<String> = Vec::new();
+
+    if filter.status.is_some() {
+        extras.push(format!("status = ?{}", param_idx));
+        param_idx += 1;
+    }
+    if filter.kind.is_some() {
+        extras.push(format!("kind = ?{}", param_idx));
+        param_idx += 1;
+    }
+    if filter.source.is_some() {
+        extras.push(format!("source = ?{}", param_idx));
+        param_idx += 1;
+    }
+
+    for clause in &extras {
+        sql.push_str(" AND ");
+        sql.push_str(clause);
+    }
+    sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ?{}", param_idx));
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+    // rusqlite requires all params to be bound positionally; we push each
+    // optional value only when the filter is active.
+    let mut raw_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(project.to_string())];
+    if let Some(s) = &filter.status {
+        raw_params.push(Box::new(s.as_str().to_string()));
+    }
+    if let Some(k) = &filter.kind {
+        raw_params.push(Box::new(k.clone()));
+    }
+    if let Some(src) = &filter.source {
+        raw_params.push(Box::new(src.clone()));
+    }
+    raw_params.push(Box::new(limit));
+
+    let refs: Vec<&dyn rusqlite::ToSql> = raw_params.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt
+        .query_map(refs.as_slice(), row_to_recommendation)
+        .map_err(|e| format!("Failed to execute query: {}", e))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| format!("Failed to read rows: {}", e))?;
 
     Ok(rows)
 }
@@ -402,7 +399,7 @@ pub fn list_recommendations(
 pub fn get_recommendation(id: i64) -> Result<Recommendation, String> {
     let conn = open_conn()?;
     conn.query_row(
-        "SELECT id, project, kind, title, body, priority, status, source, created_at, updated_at
+        "SELECT id, project, kind, title, body, priority, status, source, metadata, created_at, updated_at
          FROM recommendations WHERE id = ?1",
         params![id],
         row_to_recommendation,
@@ -411,6 +408,83 @@ pub fn get_recommendation(id: i64) -> Result<Recommendation, String> {
         rusqlite::Error::QueryReturnedNoRows => format!("Recommendation id {} not found", id),
         other => format!("Failed to fetch recommendation: {}", other),
     })
+}
+
+// ── AI recommendation throttle ────────────────────────────────────────────────
+
+/// Store the timestamp of the most recent AI recommendation run for a project.
+/// The value is an ISO 8601 UTC string.
+pub fn set_ai_recommendations_timestamp(project: &str) -> Result<(), String> {
+    if !crate::core::is_valid_name(project) {
+        return Err("Invalid project name".into());
+    }
+
+    let conn = open_conn()?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS recommendation_meta (
+            project     TEXT PRIMARY KEY,
+            last_ai_run TEXT NOT NULL
+        );",
+    )
+    .map_err(|e| format!("Failed to create recommendation_meta table: {}", e))?;
+
+    let ts = now();
+    conn.execute(
+        "INSERT INTO recommendation_meta (project, last_ai_run)
+         VALUES (?1, ?2)
+         ON CONFLICT(project) DO UPDATE SET last_ai_run = excluded.last_ai_run",
+        params![project, ts],
+    )
+    .map_err(|e| format!("Failed to upsert ai recommendations timestamp: {}", e))?;
+
+    Ok(())
+}
+
+/// Return the ISO 8601 UTC timestamp of the last AI recommendations run for a
+/// project, or `None` if it has never been run.
+pub fn get_ai_recommendations_timestamp(project: &str) -> Result<Option<String>, String> {
+    if !crate::core::is_valid_name(project) {
+        return Err("Invalid project name".into());
+    }
+
+    let conn = open_conn()?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS recommendation_meta (
+            project     TEXT PRIMARY KEY,
+            last_ai_run TEXT NOT NULL
+        );",
+    )
+    .map_err(|e| format!("Failed to create recommendation_meta table: {}", e))?;
+
+    let result: rusqlite::Result<String> = conn.query_row(
+        "SELECT last_ai_run FROM recommendation_meta WHERE project = ?1",
+        params![project],
+        |row| row.get(0),
+    );
+
+    match result {
+        Ok(ts) => Ok(Some(ts)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!(
+            "Failed to query ai recommendations timestamp: {}",
+            e
+        )),
+    }
+}
+
+/// Returns `true` if AI recommendations have been run for this project within
+/// the last 24 hours (once-per-day throttle).
+pub fn ai_recommendations_throttled(project: &str) -> Result<bool, String> {
+    match get_ai_recommendations_timestamp(project)? {
+        None => Ok(false),
+        Some(ts) => {
+            let last = chrono::DateTime::parse_from_rfc3339(&ts)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|e| format!("Failed to parse timestamp '{}': {}", ts, e))?;
+            let elapsed = chrono::Utc::now().signed_duration_since(last);
+            Ok(elapsed.num_hours() < 24)
+        }
+    }
 }
 
 /// Return all pending recommendations across every project, ordered by
@@ -422,7 +496,7 @@ pub fn list_all_pending_recommendations(limit: usize) -> Result<Vec<Recommendati
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, project, kind, title, body, priority, status, source, created_at, updated_at
+            "SELECT id, project, kind, title, body, priority, status, source, metadata, created_at, updated_at
              FROM recommendations
              WHERE status = 'pending'
              ORDER BY
@@ -565,7 +639,7 @@ mod tests {
 
     fn fetch_rec(conn: &Connection, id: i64) -> Option<Recommendation> {
         conn.query_row(
-            "SELECT id, project, kind, title, body, priority, status, source, created_at, updated_at
+            "SELECT id, project, kind, title, body, priority, status, source, metadata, created_at, updated_at
              FROM recommendations WHERE id = ?1",
             params![id],
             row_to_recommendation,
@@ -577,7 +651,7 @@ mod tests {
         if let Some(s) = status {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, project, kind, title, body, priority, status, source, created_at, updated_at
+                    "SELECT id, project, kind, title, body, priority, status, source, metadata, created_at, updated_at
                      FROM recommendations WHERE project = ?1 AND status = ?2 ORDER BY created_at DESC",
                 )
                 .unwrap();
@@ -588,7 +662,7 @@ mod tests {
         } else {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, project, kind, title, body, priority, status, source, created_at, updated_at
+                    "SELECT id, project, kind, title, body, priority, status, source, metadata, created_at, updated_at
                      FROM recommendations WHERE project = ?1 ORDER BY created_at DESC",
                 )
                 .unwrap();

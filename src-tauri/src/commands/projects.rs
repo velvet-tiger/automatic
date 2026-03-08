@@ -193,6 +193,38 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
         }
     }
 
+    // ── Fire-and-forget AI recommendations ───────────────────────────────────
+    // Spawn on the Tauri async runtime so we never block the UI.
+    // The throttle check inside ai_generate_project_recommendations_bg ensures
+    // this runs at most once per 24 hours automatically; on a brand-new project
+    // (is_new == true) we always run it regardless of the throttle.
+    {
+        let project_name = name.to_string();
+        let is_new_project = is_new;
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = run_ai_recommendations_bg(&project_name, is_new_project).await {
+                eprintln!("[automatic] AI recommendations skipped for '{}': {}", project_name, e);
+            }
+        });
+    }
+
+    Ok(())
+}
+
+/// Background helper: run AI recommendations for a project, respecting the
+/// once-per-day throttle unless `force` is true (used for new projects).
+async fn run_ai_recommendations_bg(project: &str, force: bool) -> Result<(), String> {
+    // Verify a key exists before attempting the (potentially slow) AI call.
+    crate::core::ai::resolve_api_key(None)?;
+
+    // Honour the throttle for existing projects; always run for new ones.
+    if !force && crate::recommendations::ai_recommendations_throttled(project)? {
+        return Ok(());
+    }
+
+    // Delegate to the full command implementation (re-uses all the same logic).
+    super::recommendations::ai_generate_project_recommendations(project, Some(force)).await?;
+
     Ok(())
 }
 

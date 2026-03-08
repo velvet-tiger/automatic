@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import mcpServersData from "./featured-mcp-servers.json";
 import { SkillSelector } from "./SkillSelector";
 import { AgentSelector } from "./AgentSelector";
 import type { AgentOptions } from "./AgentSelector";
@@ -246,6 +247,8 @@ interface ProjectRecommendation {
   priority: "low" | "normal" | "high";
   status: "pending" | "dismissed" | "actioned";
   source: string;
+  /** Optional JSON blob with extra data, e.g. `{"id":"owner/repo/skill","name":"skill","source":"owner/repo","installs":0}` */
+  metadata: string;
   created_at: string;
   updated_at: string;
 }
@@ -364,6 +367,9 @@ function emptyProject(name: string): Project {
 interface ProjectsProps {
   initialProject?: string | null;
   onInitialProjectConsumed?: () => void;
+  /** When set, switch to this project tab immediately after selecting the project. */
+  initialProjectTab?: string | null;
+  onInitialProjectTabConsumed?: () => void;
   /** Called when the user clicks "View in library" on a skill — navigates to the Skills page. */
   onNavigateToSkill?: (skillName: string) => void;
   /** Called when the user clicks "View full configuration" on an MCP server — navigates to the MCP Servers page. */
@@ -1479,7 +1485,206 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Projects({ initialProject = null, onInitialProjectConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToMcpMarketplace, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
+/**
+ * Installs an AI-suggested skill from the remote registry and then notifies
+ * the parent to add it to the project config.
+ *
+ * Error handling is explicit: on failure the button shows an error message and
+ * nothing is added to the project — no broken references are created.
+ */
+function SkillAddButton({
+  rec,
+  alreadyAdded,
+  onAdd,
+}: {
+  rec: ProjectRecommendation;
+  alreadyAdded: boolean;
+  onAdd: (skillName: string) => void;
+}) {
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleAdd = async () => {
+    setState("loading");
+    setErrorMsg(null);
+
+    // 1. Resolve skill metadata from the stored blob or by searching.
+    let meta: { id: string; name: string; source: string } | null = null;
+    if (rec.metadata) {
+      try {
+        const parsed = JSON.parse(rec.metadata) as { id: string; name: string; source: string };
+        if (parsed.name && parsed.source) meta = parsed;
+      } catch { /* fall through to search */ }
+    }
+    if (!meta) {
+      try {
+        const results = await invoke<{ id: string; name: string; source: string; installs: number }[]>(
+          "search_remote_skills", { query: rec.title },
+        );
+        const match = results.find((r) => r.name === rec.title) ?? results[0];
+        if (match) meta = { id: match.id, name: match.name, source: match.source };
+      } catch { /* search failed */ }
+    }
+
+    if (!meta) {
+      setState("error");
+      setErrorMsg("Could not find this skill in the registry.");
+      return;
+    }
+
+    // 2. Fetch the skill content from the remote registry.
+    let content: string;
+    try {
+      content = await invoke("fetch_remote_skill_content", { source: meta.source, name: meta.name });
+    } catch (err: any) {
+      setState("error");
+      setErrorMsg(`Failed to fetch skill: ${err}`);
+      return;
+    }
+
+    // 3. Install it locally.
+    try {
+      await invoke("import_remote_skill", { name: meta.name, content, source: meta.source, id: meta.id });
+    } catch (err: any) {
+      setState("error");
+      setErrorMsg(`Failed to install skill: ${err}`);
+      return;
+    }
+
+    // 4. Everything succeeded — add to project and dismiss the card.
+    setState("idle");
+    onAdd(meta.name);
+  };
+
+  if (errorMsg) {
+    return (
+      <span className="text-[11px] text-error flex items-center gap-1">
+        <AlertCircle size={10} /> {errorMsg}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      onClick={handleAdd}
+      disabled={alreadyAdded || state === "loading"}
+      className="text-[11px] font-medium text-brand hover:text-brand-hover border border-brand/40 rounded px-2 py-1 transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-default"
+    >
+      {state === "loading"
+        ? <><RefreshCw size={10} className="animate-spin" /> Installing…</>
+        : <><Plus size={10} /> {alreadyAdded ? "Added" : "Add to project"}</>
+      }
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Installs an AI-suggested MCP server config and adds it to the project.
+ *
+ * Looks up the server in the featured marketplace data by title/slug match,
+ * builds its config JSON, saves it via `save_mcp_server_config`, then notifies
+ * the parent to add it to the project config.
+ *
+ * On failure the button shows an error — nothing is added to the project.
+ */
+function McpAddButton({
+  rec,
+  alreadyAdded,
+  onAdd,
+}: {
+  rec: ProjectRecommendation;
+  alreadyAdded: boolean;
+  onAdd: (serverName: string) => void;
+}) {
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleAdd = async () => {
+    setState("loading");
+    setErrorMsg(null);
+
+    // Find the server in the local marketplace catalogue by slug or title.
+    const needle = rec.title.toLowerCase();
+    const servers = mcpServersData as Array<{
+      slug: string; name: string; title: string; provider: string;
+      repository_url: string | null;
+      remote: { transport: string; url: string } | null;
+      local: { registry: string; package: string; version: string | null; transport: string; command: string } | null;
+      auth: { method: string; env_vars: Array<{ name: string; description: string; secret: boolean }> };
+    }>;
+    const server = servers.find(
+      (s) => s.slug === needle || s.title.toLowerCase() === needle || s.name.toLowerCase() === needle,
+    );
+
+    if (!server) {
+      setState("error");
+      setErrorMsg("Server not found in the marketplace catalogue. Use the MCP Marketplace to add it manually.");
+      return;
+    }
+
+    // Build the config — same logic as McpMarketplace.buildConfig.
+    const _author: Record<string, string> = { name: server.provider };
+    if (server.repository_url) _author.repository_url = server.repository_url;
+
+    let config: Record<string, unknown>;
+    if (server.local) {
+      const parts = server.local.command.split(/\s+/);
+      const cmd = parts[0] ?? "";
+      const args = parts.slice(1);
+      const env: Record<string, string> = {};
+      server.auth.env_vars.forEach((v) => { env[v.name] = ""; });
+      config = { type: "stdio", command: cmd, _author };
+      if (args.length > 0) config.args = args;
+      if (Object.keys(env).length > 0) config.env = env;
+    } else if (server.remote) {
+      const type = server.remote.transport === "sse" ? "sse" : "http";
+      config = { type, url: server.remote.url, _author };
+    } else {
+      config = { type: "stdio", command: "", _author };
+    }
+
+    // Derive the config key — same as McpMarketplace.configName.
+    const configKey = server.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+    try {
+      await invoke("save_mcp_server_config", { name: configKey, data: JSON.stringify(config) });
+    } catch (err: any) {
+      setState("error");
+      setErrorMsg(`Failed to save server config: ${err}`);
+      return;
+    }
+
+    setState("idle");
+    onAdd(configKey);
+  };
+
+  if (errorMsg) {
+    return (
+      <span className="text-[11px] text-error flex items-center gap-1">
+        <AlertCircle size={10} /> {errorMsg}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      onClick={handleAdd}
+      disabled={alreadyAdded || state === "loading"}
+      className="text-[11px] font-medium text-brand hover:text-brand-hover border border-brand/40 rounded px-2 py-1 transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-default"
+    >
+      {state === "loading"
+        ? <><RefreshCw size={10} className="animate-spin" /> Adding…</>
+        : <><Plus size={10} /> {alreadyAdded ? "Added" : "Add to project"}</>
+      }
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function Projects({ initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToMcpMarketplace, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const { log, update } = useTaskLog();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
@@ -1641,6 +1846,19 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [aiRecsLoading, setAiRecsLoading] = useState(false);
   const [aiRecsLastRunAt, setAiRecsLastRunAt] = useState<string | null>(null);
 
+  // Derived recommendation display values.
+  // AI-skill/MCP individual records are collapsed into single rollup cards so the
+  // list stays concise — the full suggestions live on the Skills / MCP Servers tabs.
+  const normalRecs = recommendations.filter(
+    (r) => r.source !== "automatic-ai-skills" && r.source !== "automatic-ai-mcp",
+  );
+  const aiSkillsRollupCount = recommendations.filter((r) => r.source === "automatic-ai-skills").length;
+  const aiMcpRollupCount    = recommendations.filter((r) => r.source === "automatic-ai-mcp").length;
+  const recsDisplayCount =
+    normalRecs.length +
+    (aiSkillsRollupCount > 0 ? 1 : 0) +
+    (aiMcpRollupCount > 0 ? 1 : 0);
+
   // Skills tab AI suggestion state
   const [aiSkillsLoading, setAiSkillsLoading] = useState(false);
   const [aiSkillsSuggestions, setAiSkillsSuggestions] = useState<ProjectRecommendation[]>([]);
@@ -1760,6 +1978,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       onInitialProjectConsumed?.();
     }
   }, [initialProject, projects]);
+
+  // After a project is selected via initialProject, switch to the requested tab.
+  useEffect(() => {
+    if (!initialProjectTab) return;
+    const validTabs = ["summary", "agents", "skills", "mcp_servers", "project_file", "rules", "context", "memory", "activity", "recommendations"] as const;
+    type ProjectTab = typeof validTabs[number];
+    if (validTabs.includes(initialProjectTab as ProjectTab)) {
+      setProjectTab(initialProjectTab as ProjectTab);
+    }
+    onInitialProjectTabConsumed?.();
+  }, [initialProjectTab]);
 
   // Open the new-project wizard with a template pre-applied.
   // (triggered from the "New project from template" action in ProjectTemplates)
@@ -2447,6 +2676,16 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
+  // Remove a recommendation from all local state arrays and notify the global
+  // Recommendations view to re-fetch. Call this after any dismiss or action so
+  // the rollup counts (badge, Recommendations tab) stay accurate.
+  const removeRecommendation = (id: number) => {
+    setRecommendations((prev) => prev.filter((r) => r.id !== id));
+    setAiSkillsSuggestions((prev) => prev.filter((r) => r.id !== id));
+    setAiMcpSuggestions((prev) => prev.filter((r) => r.id !== id));
+    window.dispatchEvent(new CustomEvent("recommendations-updated"));
+  };
+
   const loadRecommendations = async (projectName: string) => {
     try {
       const [recs, skillRecs, mcpRecs] = await Promise.all([
@@ -3121,25 +3360,55 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
   type ListField = "skills" | "mcp_servers" | "providers" | "agents";
 
+  // Persist a project snapshot directly — used by addItem/removeItem so they
+  // can pass the already-computed new value without waiting for a React state flush.
+  const saveProjectSnapshot = async (snapshot: Project) => {
+    const folderFallback = snapshot.directory?.split("/").filter(Boolean).pop() ?? "";
+    const name = isCreating ? (newName.trim() || folderFallback) : selectedName;
+    if (!name) return;
+    try {
+      const toSave = { ...snapshot, name, updated_at: new Date().toISOString() };
+      await invoke("save_project", { name, data: JSON.stringify(toSave, null, 2) });
+      setSyncStatus(toSave.directory && toSave.agents.length > 0 ? "Saved & synced" : "Saved");
+      setProjectDetailsMap((prev) => new Map(prev).set(name, toSave));
+      setDirty(false);
+    } catch (err: any) {
+      console.error("Autosave failed:", err);
+      setSyncStatus(`Save failed: ${err}`);
+    }
+  };
+
   const addItem = (key: ListField, item: string) => {
     if (!project || !item.trim()) return;
     if (project[key].includes(item.trim())) return;
-    updateField(key, [...project[key], item.trim()]);
+    const newList = [...project[key], item.trim()];
+    updateField(key, newList);
     const pName = isCreating ? newName.trim() : (selectedName ?? "");
     if (key === "agents") trackProjectAgentAdded(pName, item.trim());
-    else if (key === "skills") trackProjectSkillAdded(pName, item.trim());
-    else if (key === "mcp_servers") trackProjectMcpServerAdded(pName, item.trim());
+    else if (key === "skills") {
+      trackProjectSkillAdded(pName, item.trim());
+      saveProjectSnapshot({ ...project, skills: newList as string[] });
+    } else if (key === "mcp_servers") {
+      trackProjectMcpServerAdded(pName, item.trim());
+      saveProjectSnapshot({ ...project, mcp_servers: newList as string[] });
+    }
   };
 
   const removeItem = (key: ListField, idx: number) => {
     if (!project) return;
     const removed = project[key][idx];
-    updateField(key, project[key].filter((_, i) => i !== idx));
+    const newList = project[key].filter((_, i) => i !== idx);
+    updateField(key, newList);
     const pName = isCreating ? newName.trim() : (selectedName ?? "");
     if (removed) {
       if (key === "agents") trackProjectAgentRemoved(pName, removed);
-      else if (key === "skills") trackProjectSkillRemoved(pName, removed);
-      else if (key === "mcp_servers") trackProjectMcpServerRemoved(pName, removed);
+      else if (key === "skills") {
+        trackProjectSkillRemoved(pName, removed);
+        saveProjectSnapshot({ ...project, skills: newList as string[] });
+      } else if (key === "mcp_servers") {
+        trackProjectMcpServerRemoved(pName, removed);
+        saveProjectSnapshot({ ...project, mcp_servers: newList as string[] });
+      }
     }
   };
 
@@ -4298,9 +4567,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   }`}
                 >
                   {tab.label}
-                  {tab.id === "recommendations" && recommendations.length > 0 && (
+                  {tab.id === "recommendations" && recsDisplayCount > 0 && (
                     <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
-                      {recommendations.length}
+                      {recsDisplayCount}
                     </span>
                   )}
                   {projectTab === tab.id && (
@@ -5269,12 +5538,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <div className="space-y-6">
 
                     {/* ── Recommendations banner ───────────────────────── */}
-                    {recommendations.length > 0 && (
+                    {recsDisplayCount > 0 && (
                       <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-warning/5 border border-warning/25">
                         <Lightbulb size={14} className="text-warning shrink-0" />
                         <p className="flex-1 text-[12px] text-text-muted leading-snug">
                           <span className="font-semibold text-text-base">
-                            {recommendations.length === 1 ? "1 recommendation" : `${recommendations.length} recommendations`}
+                            {recsDisplayCount === 1 ? "1 recommendation" : `${recsDisplayCount} recommendations`}
                           </span>
                           {" "}available for this project.
                         </p>
@@ -5631,38 +5900,51 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                    )}
                                  </div>
                                  <p className="text-[12px] text-text-muted leading-relaxed">{rec.body}</p>
-                                 <div className="flex items-center gap-2 mt-2">
-                                   {onNavigateToSkillStore && (
-                                     <button
-                                       onClick={() => onNavigateToSkillStore(rec.title)}
-                                       className="text-[11px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded px-2 py-1 transition-colors flex items-center gap-1"
-                                     >
-                                       <Search size={10} /> View
-                                     </button>
-                                   )}
-                                   <button
-                                     onClick={async () => {
-                                       addItem("skills", rec.title);
-                                       await invoke("action_recommendation", { id: rec.id });
-                                       setAiSkillsSuggestions((prev) => prev.filter((r) => r.id !== rec.id));
-                                     }}
-                                     disabled={project.skills.includes(rec.title)}
-                                     className="text-[11px] font-medium text-brand hover:text-brand-hover border border-brand/40 rounded px-2 py-1 transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-default"
-                                   >
-                                     <Plus size={10} /> {project.skills.includes(rec.title) ? "Added" : "Add to project"}
-                                   </button>
+                                  <div className="flex items-center gap-2 mt-2">
+                                    {(onNavigateToSkillStoreWithResult || onNavigateToSkillStore) && (
+                                      <button
+                                        onClick={() => {
+                                          // If the recommendation has full metadata (id, name, source, installs)
+                                          // from the AI search result, use it to deep-link directly to the skill.
+                                          if (rec.metadata && onNavigateToSkillStoreWithResult) {
+                                            try {
+                                              const meta = JSON.parse(rec.metadata) as { id: string; name: string; source: string; installs: number };
+                                              if (meta.id && meta.name && meta.source) {
+                                                onNavigateToSkillStoreWithResult(meta);
+                                                return;
+                                              }
+                                            } catch {
+                                              // fall through to plain query
+                                            }
+                                          }
+                                          onNavigateToSkillStore?.(rec.title);
+                                        }}
+                                        className="text-[11px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded px-2 py-1 transition-colors flex items-center gap-1"
+                                      >
+                                        <Search size={10} /> View
+                                      </button>
+                                    )}
+                                     <SkillAddButton
+                                      rec={rec}
+                                      alreadyAdded={project.skills.includes(rec.title)}
+                                      onAdd={(skillName) => {
+                                        addItem("skills", skillName);
+                                        invoke("action_recommendation", { id: rec.id });
+                                        removeRecommendation(rec.id);
+                                      }}
+                                    />
                                  </div>
                                </div>
-                               <button
-                                 onClick={async () => {
-                                   await invoke("dismiss_recommendation", { id: rec.id });
-                                   setAiSkillsSuggestions((prev) => prev.filter((r) => r.id !== rec.id));
-                                 }}
-                                 className="flex-shrink-0 p-1 text-text-muted hover:text-text-base transition-colors opacity-0 group-hover:opacity-100"
-                                 title="Dismiss"
-                               >
-                                 <X size={12} />
-                               </button>
+                                <button
+                                  onClick={async () => {
+                                    await invoke("dismiss_recommendation", { id: rec.id });
+                                    removeRecommendation(rec.id);
+                                  }}
+                                  className="flex-shrink-0 p-1 text-text-muted hover:text-text-base transition-colors opacity-0 group-hover:opacity-100"
+                                  title="Dismiss"
+                                >
+                                  <X size={12} />
+                                </button>
                              </div>
                            ))}
                          </div>
@@ -6101,29 +6383,27 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                         <Search size={10} /> View
                                       </button>
                                     )}
-                                    <button
-                                      onClick={async () => {
-                                        addItem("mcp_servers", rec.title);
-                                        await invoke("action_recommendation", { id: rec.id });
-                                        setAiMcpSuggestions((prev) => prev.filter((r) => r.id !== rec.id));
-                                      }}
-                                      disabled={project.mcp_servers.includes(rec.title)}
-                                      className="text-[11px] font-medium text-brand hover:text-brand-hover border border-brand/40 rounded px-2 py-1 transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-default"
-                                    >
-                                      <Plus size={10} /> {project.mcp_servers.includes(rec.title) ? "Added" : "Add to project"}
-                                    </button>
+                                      <McpAddButton
+                                       rec={rec}
+                                       alreadyAdded={project.mcp_servers.includes(rec.title)}
+                                       onAdd={(serverName) => {
+                                         addItem("mcp_servers", serverName);
+                                         invoke("action_recommendation", { id: rec.id });
+                                         removeRecommendation(rec.id);
+                                       }}
+                                     />
                                   </div>
                                 </div>
-                                <button
-                                  onClick={async () => {
-                                    await invoke("dismiss_recommendation", { id: rec.id });
-                                    setAiMcpSuggestions((prev) => prev.filter((r) => r.id !== rec.id));
-                                  }}
-                                  className="flex-shrink-0 p-1 text-text-muted hover:text-text-base transition-colors opacity-0 group-hover:opacity-100"
-                                  title="Dismiss"
-                                >
-                                  <X size={12} />
-                                </button>
+                                 <button
+                                   onClick={async () => {
+                                     await invoke("dismiss_recommendation", { id: rec.id });
+                                     removeRecommendation(rec.id);
+                                   }}
+                                   className="flex-shrink-0 p-1 text-text-muted hover:text-text-base transition-colors opacity-0 group-hover:opacity-100"
+                                   title="Dismiss"
+                                 >
+                                   <X size={12} />
+                                 </button>
                               </div>
                             ))}
                           </div>
@@ -6245,9 +6525,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                     <div className="flex items-center gap-2">
                       <Sparkles size={13} className="text-text-muted" />
                       <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Recommendations</span>
-                      {recommendations.length > 0 && (
+                      {recsDisplayCount > 0 && (
                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
-                          {recommendations.length}
+                          {recsDisplayCount}
                         </span>
                       )}
                       <div className="flex-1" />
@@ -6280,7 +6560,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </div>
                     )}
 
-                    {!aiRecsLoading && recommendations.length === 0 ? (
+                    {!aiRecsLoading && recsDisplayCount === 0 ? (
                       <div className="bg-bg-input border border-border-strong/40 rounded-lg px-4 py-10 text-center">
                         <Sparkles size={18} className="text-text-muted mx-auto mb-2" />
                         <p className="text-[13px] font-medium text-text-base mb-1">No recommendations at this time</p>
@@ -6288,7 +6568,60 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       </div>
                     ) : !aiRecsLoading ? (
                       <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
-                        {recommendations.map((rec) => (
+                        {/* AI skill rollup card */}
+                        {aiSkillsRollupCount > 0 && (
+                          <div className="flex items-start gap-3 px-4 py-4 hover:bg-surface-hover transition-colors">
+                            <Sparkles size={14} className="flex-shrink-0 mt-0.5 text-brand" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[13px] font-semibold text-text-base">
+                                  {aiSkillsRollupCount} skill{aiSkillsRollupCount !== 1 ? "s" : ""} recommended
+                                </span>
+                                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-brand/10 text-brand border border-brand/20 leading-none flex items-center gap-1">
+                                  <Sparkles size={8} /> AI
+                                </span>
+                              </div>
+                              <p className="text-[12px] text-text-muted leading-relaxed">
+                                The AI has identified {aiSkillsRollupCount} skill{aiSkillsRollupCount !== 1 ? "s" : ""} that may benefit this project. Review and add them from the Skills tab.
+                              </p>
+                              <button
+                                onClick={() => setProjectTab("skills")}
+                                className="mt-2 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
+                              >
+                                <Code size={10} /> Go to Skills tab <ArrowRight size={10} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* AI MCP rollup card */}
+                        {aiMcpRollupCount > 0 && (
+                          <div className="flex items-start gap-3 px-4 py-4 hover:bg-surface-hover transition-colors">
+                            <Sparkles size={14} className="flex-shrink-0 mt-0.5 text-brand" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[13px] font-semibold text-text-base">
+                                  {aiMcpRollupCount} MCP server{aiMcpRollupCount !== 1 ? "s" : ""} recommended
+                                </span>
+                                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-brand/10 text-brand border border-brand/20 leading-none flex items-center gap-1">
+                                  <Sparkles size={8} /> AI
+                                </span>
+                              </div>
+                              <p className="text-[12px] text-text-muted leading-relaxed">
+                                The AI has identified {aiMcpRollupCount} MCP server{aiMcpRollupCount !== 1 ? "s" : ""} that may benefit this project. Review and add them from the MCP Servers tab.
+                              </p>
+                              <button
+                                onClick={() => setProjectTab("mcp_servers")}
+                                className="mt-2 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
+                              >
+                                <Server size={10} /> Go to MCP Servers tab <ArrowRight size={10} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Normal (non-AI-suggestion) recommendation cards */}
+                        {normalRecs.map((rec) => (
                           <div key={rec.id} className="flex items-start gap-3 px-4 py-4 group hover:bg-surface-hover transition-colors">
                             <AlertCircle
                               size={14}

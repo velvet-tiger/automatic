@@ -91,6 +91,7 @@ function App() {
     return saved || "dashboard";
   });
   const [pendingProject, setPendingProject] = useState<string | null>(null);
+  const [pendingProjectTab, setPendingProjectTab] = useState<string | null>(null);
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
   const [pendingSkill, setPendingSkill] = useState<string | null>(null);
   const [pendingCreateWithTemplate, setPendingCreateWithTemplate] = useState<string | null>(null);
@@ -170,8 +171,9 @@ function App() {
     localStorage.setItem("automatic.activeTab", activeTab);
   }, [activeTab]);
 
-  const navigateToProject = (projectName: string) => {
+  const navigateToProject = (projectName: string, tab?: string) => {
     setPendingProject(projectName);
+    setPendingProjectTab(tab ?? null);
     setActiveTab("projects");
   };
 
@@ -465,6 +467,8 @@ function App() {
               <Projects
                 initialProject={pendingProject}
                 onInitialProjectConsumed={() => setPendingProject(null)}
+                initialProjectTab={pendingProjectTab}
+                onInitialProjectTabConsumed={() => setPendingProjectTab(null)}
                 onNavigateToSkill={navigateToSkill}
                 onNavigateToMcpServer={navigateToMcpServer}
                 onNavigateToSkillStore={navigateToSkillStore}
