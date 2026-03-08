@@ -2,6 +2,69 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.8.0] — 2026-03-08
+
+### Features
+
+#### Onboarding
+- Anthropic API key step added to the first-run wizard with keychain storage and an obfuscated hint display
+
+#### Dashboard
+- Projects health bar added above the use cases section, showing overall project health at a glance
+
+#### Projects
+- Two-column summary layout with a rules widget and elevated setup callout
+- Folder grouping with compact cards on the overview page
+
+#### Context
+- AI-powered project context generation with an integrated task log panel
+- Project context exposed via a dedicated MCP tool (`get_project_context`)
+- Context storage migrated from TOML to JSON; Tauri commands registered
+
+#### Instructions
+- AI generation for project instruction files with reactive recommendations
+- Externally-modified instruction files are detected to prevent accidental overwrites
+- Conflict modal simplified to a summary view with aligned `DriftReport` types
+
+#### Rules
+- Rules moved to a dedicated project tab with project-level scope
+- Custom rule editor on the Rules tab with a dropdown global rule picker
+- Inline custom project rules support
+- Rules correctly routed to `.claude/rules/` in all write paths
+- Selected rule indicators replaced solid brand fill with subtle highlights
+
+#### Recommendations
+- AI skill and MCP server suggestions with a proper install flow
+- Compact single-line rows with a collapsible description toggle
+- Recommendations now recompute on project save
+- Rules recommendation copy updated to reflect the Rules tab
+
+#### Task Log
+- Task log entries persisted to disk
+- Header toggle button and copy actions added
+
+#### Agent / AI Playground
+- API key management and live model list for AI Playground
+- Library read and marketplace search tools added to the built-in agent
+- Generate buttons gated on API key presence; environment variable fallback removed
+
+#### Skills
+- `skill.json` support added per the velvet-tiger/skills-json spec
+
+#### Plugins
+- Plugin framework introduced with a new Settings > Plugins page
+
+#### Sidebar
+- Navigation reorganised; Agents section renamed to Providers
+
+### Fixes
+- Theme: improved cyberpunk primary button text contrast
+
+### Chore
+- Version bumped to 0.7.0 with changelog (included in prior release)
+
+---
+
 ## [0.7.0] — 2026-03-06
 
 ### Features
@@ -366,10 +429,11 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Warp removal correctly deletes `WARP.md` via owned config paths
 - Junie removal deletes the entire `.junie/` directory
 
-[0.7.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.7.0
-[0.6.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.6.0
-[0.5.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.5.0
-[0.4.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.4.0
-[0.3.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.3.0
-[0.2.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.2.0
-[0.1.0]: https://github.com/velvet-tiger/automatic/releases/tag/v0.1.0
+[0.8.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.8.0
+[0.7.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.7.0
+[0.6.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.6.0
+[0.5.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.5.0
+[0.4.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.4.0
+[0.3.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.3.0
+[0.2.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.2.0
+[0.1.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.1.0
