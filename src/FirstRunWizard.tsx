@@ -13,6 +13,7 @@ interface WizardAnswers {
   aiUsage: string;
   agents: string[];
   email: string;
+  anthropicApiKey: string;
   analyticsEnabled: boolean;
   theme: Theme;
   createdProjectName?: string;
@@ -130,11 +131,11 @@ const AGENT_OPTIONS = [
 
 // ── Step indicator ────────────────────────────────────────────────────────────
 
-const STEPS = ["Your role", "AI workflow", "Your agents", "Stay in touch", "Preferences", "First project"];
+const STEPS = ["Your role", "AI workflow", "Your agents", "Stay in touch", "AI features", "Preferences", "First project"];
 
 function StepIndicator({ current }: { current: number }) {
   return (
-    <div className="flex items-center mb-10">
+    <div className="flex items-center justify-center mb-10">
       {STEPS.map((label, i) => {
         const done = i < current;
         const active = i === current;
@@ -476,6 +477,127 @@ function StepEmail({
   );
 }
 
+/** Returns a redacted display string, e.g. "sk-ant-...a1b2" */
+function obfuscateKey(key: string): string {
+  if (key.length <= 8) return "••••••••";
+  return key.slice(0, 7) + "..." + key.slice(-4);
+}
+
+function StepApiKey({
+  value,
+  onChange,
+  existingKeyHint,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  /** Last-4 hint of a key already stored in the keychain, if any. */
+  existingKeyHint: string | null;
+}) {
+  const [visible, setVisible] = useState(false);
+
+  // Whether the user is editing (has typed something) vs. showing the stored key hint.
+  const showingHint = existingKeyHint !== null && value === "";
+
+  return (
+    <div>
+      <h2 className="text-[22px] font-semibold text-text-base mb-1">
+        Unlock AI-powered features
+      </h2>
+      <p className="text-[14px] text-text-muted mb-6 leading-relaxed">
+        Add your Anthropic API key to enable AI recommendations and automatic
+        project file generation. Your key is stored securely in your system
+        keychain and never leaves your machine.
+      </p>
+
+      <div className="mb-5 space-y-3">
+        <div className="flex items-start gap-3 px-4 py-3 rounded-lg border border-border-strong/40 bg-bg-input-dark">
+          <div className="mt-0.5 w-4 h-4 rounded-full bg-brand/20 flex items-center justify-center flex-shrink-0">
+            <div className="w-1.5 h-1.5 rounded-full bg-brand" />
+          </div>
+          <div>
+            <div className="text-[13px] font-medium text-text-base">AI recommendations</div>
+            <div className="text-[12px] text-text-muted mt-0.5 leading-relaxed">
+              Get intelligent skill and MCP server suggestions tailored to your project.
+            </div>
+          </div>
+        </div>
+        <div className="flex items-start gap-3 px-4 py-3 rounded-lg border border-border-strong/40 bg-bg-input-dark">
+          <div className="mt-0.5 w-4 h-4 rounded-full bg-brand/20 flex items-center justify-center flex-shrink-0">
+            <div className="w-1.5 h-1.5 rounded-full bg-brand" />
+          </div>
+          <div>
+            <div className="text-[13px] font-medium text-text-base">Project file generation</div>
+            <div className="text-[12px] text-text-muted mt-0.5 leading-relaxed">
+              Automatically generate agent instruction files, rules, and context for your projects.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <label className="block text-[12px] font-medium text-text-muted">
+          Anthropic API key{" "}
+          <span className="text-text-muted font-normal">(optional — skip to add later in Settings)</span>
+        </label>
+
+        {showingHint ? (
+          /* Stored key display — read-only until user clicks Replace */
+          <div className="flex items-center gap-2">
+            <div className="flex-1 flex items-center px-3 py-2.5 rounded-lg border border-success/50 bg-success/5 text-[13px] font-mono text-text-muted gap-2">
+              <Check size={13} className="text-success flex-shrink-0" />
+              <span>{obfuscateKey(existingKeyHint)}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onChange(" ")}  /* triggers edit mode; user clears/types */
+              className="px-3 py-2.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[12px] text-text-muted hover:border-border-strong hover:text-text-base transition-colors flex-shrink-0"
+            >
+              Replace
+            </button>
+          </div>
+        ) : (
+          <div className="relative">
+            <input
+              type={visible ? "text" : "password"}
+              value={value.trim() === "" ? "" : value}
+              onChange={(e) => onChange(e.target.value)}
+              placeholder={existingKeyHint ? obfuscateKey(existingKeyHint) : "sk-ant-..."}
+              spellCheck={false}
+              autoComplete="off"
+              autoFocus={existingKeyHint !== null}
+              className="w-full pr-20 px-3 py-2.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] text-text-base placeholder-text-muted font-mono focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-colors"
+            />
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+              {existingKeyHint && (
+                <button
+                  type="button"
+                  onClick={() => onChange("")}
+                  className="text-[11px] text-text-muted hover:text-text-base transition-colors select-none"
+                >
+                  Cancel
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setVisible((v) => !v)}
+                className="text-[11px] text-text-muted hover:text-text-base transition-colors select-none"
+              >
+                {visible ? "Hide" : "Show"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {value.trim() && !value.trim().startsWith("sk-ant-") && (
+          <p className="text-[12px] text-warning">
+            Anthropic API keys typically start with <span className="font-mono">sk-ant-</span>
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function StepPreferences({
   analyticsEnabled,
   onToggleAnalytics,
@@ -645,6 +767,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
     aiUsage: "",
     agents: [],
     email: "",
+    anthropicApiKey: "",
     analyticsEnabled: true,
     theme: "system",
   });
@@ -658,6 +781,8 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
   const [templates, setTemplates] = useState<BundledTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [projectDir, setProjectDir] = useState("");
+  // The full key stored in the keychain (for hint display only — never re-saved unless changed).
+  const [existingApiKey, setExistingApiKey] = useState<string | null>(null);
 
   // Pre-populate answers from any previously saved onboarding data.
   // On a fresh first run (no saved agents) also auto-detect installed agents.
@@ -687,9 +812,18 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
           aiUsage: settings?.onboarding?.ai_usage ?? "",
           agents: initialAgents,
           email: settings?.onboarding?.email ?? "",
+          anthropicApiKey: "",
           analyticsEnabled: settings?.analytics_enabled ?? true,
           theme: (localStorage.getItem("automatic.theme") as Theme | null) ?? "system",
         });
+
+        // Load existing Anthropic key for hint display (non-fatal if absent).
+        try {
+          const key: string = await invoke("get_api_key", { provider: "anthropic" });
+          if (key) setExistingApiKey(key);
+        } catch {
+          // No key stored — that's fine.
+        }
       } catch (e) {
         console.error("[wizard] Failed to load saved settings:", e);
       } finally {
@@ -742,7 +876,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
     if (step === 0) return answers.role !== "";
     if (step === 1) return answers.aiUsage !== "";
     // First project step: need a directory when a template is selected.
-    if (step === 5) return !selectedTemplate || !!projectDir;
+    if (step === 6) return !selectedTemplate || !!projectDir;
     // agents step: allow skipping (zero selection)
     return true;
   };
@@ -777,6 +911,18 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
         },
       };
       await invoke("write_settings", { settings: updated });
+
+      // Save the Anthropic API key to the system keychain only if the user
+      // typed a new value (non-empty, not merely the hint-trigger placeholder).
+      const newKey = answers.anthropicApiKey.trim();
+      if (newKey && newKey !== existingApiKey) {
+        try {
+          await invoke("save_api_key", { provider: "anthropic", key: newKey });
+        } catch (e) {
+          console.error("[wizard] Failed to save Anthropic API key:", e);
+          // Non-fatal — key can be entered later in Settings.
+        }
+      }
 
       // Import MCP server configs and skills discovered in the agents' global
       // config files into Automatic's registry.
@@ -964,6 +1110,13 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
             />
           )}
           {step === 4 && (
+            <StepApiKey
+              value={answers.anthropicApiKey}
+              onChange={(v) => setAnswers((a) => ({ ...a, anthropicApiKey: v }))}
+              existingKeyHint={existingApiKey}
+            />
+          )}
+          {step === 5 && (
             <StepPreferences
               analyticsEnabled={answers.analyticsEnabled}
               onToggleAnalytics={() =>
@@ -982,7 +1135,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
               }}
             />
           )}
-          {step === 5 && (
+          {step === 6 && (
             <StepFirstProject
               templates={templates}
               selectedTemplate={selectedTemplate}
@@ -1037,7 +1190,7 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
               </button>
             )}
             {/* Allow skipping first project creation */}
-            {step === 5 && (
+            {step === 6 && (
               <button
                 onClick={() => finish(true)}
                 disabled={saving}
