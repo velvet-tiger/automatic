@@ -1,0 +1,26 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "automatic",
+  "version": "1.0.0",
+  "description": "How to use the Automatic MCP service — skill discovery, memory, project config, and session management",
+  "author": {
+    "name": "Automatic",
+    "url": "https://github.com/velvet-tiger/automatic"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velvet-tiger/automatic.git",
+    "directory": "src-tauri/skills/automatic"
+  },
+  "keywords": ["automatic", "mcp", "skills", "memory", "projects", "sessions"],
+  "skills": [
+    {
+      "name": "automatic",
+      "path": ".",
+      "description": "How to use the Automatic MCP service — skill discovery, memory, project config, and session management. Activate at the start of every session in a project managed by Automatic.",
+      "category": "development",
+      "tags": ["automatic", "mcp", "skills", "memory", "projects", "sessions", "ai-agents"]
+    }
+  ]
+}

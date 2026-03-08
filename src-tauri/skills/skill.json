@@ -16,6 +16,13 @@
   "keywords": ["automatic", "engineering", "best-practices", "ai-agents"],
   "skills": [
     {
+      "name": "automatic",
+      "path": "./automatic",
+      "description": "How to use the Automatic MCP service — skill discovery, memory, project config, and session management. Activate at the start of every session in a project managed by Automatic.",
+      "category": "development",
+      "tags": ["automatic", "mcp", "skills", "memory", "projects", "sessions", "ai-agents"]
+    },
+    {
       "name": "automatic-api-design",
       "path": "./automatic-api-design",
       "description": "REST API design conventions, error shapes, versioning, and pagination patterns. Use when designing or reviewing any HTTP API.",

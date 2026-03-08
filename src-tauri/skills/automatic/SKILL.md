@@ -1,3 +1,10 @@
+---
+name: automatic
+description: How to use the Automatic MCP service — skill discovery, memory, project config, and session management. Activate at the start of every session in a project managed by Automatic.
+authors:
+  - Automatic
+---
+
 # Automatic — Using the MCP Service
 
 Automatic is a desktop application that acts as a **skill registry, memory store, and MCP configuration hub** for AI agent tooling. It does not run agents itself. Instead, it serves data to agents on request via an MCP server interface.
