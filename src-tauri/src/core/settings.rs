@@ -64,6 +64,11 @@ pub struct Settings {
     /// use `AgentOptions::default()` when a project is created.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub default_agent_options: HashMap<String, AgentOptions>,
+    /// The app version at which bundled skills were last written to disk.
+    /// When the current app version differs from this value, all bundled
+    /// skills are overwritten with the versions shipped in the new binary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundled_skills_version: Option<String>,
 }
 
 fn default_analytics_enabled() -> bool {
@@ -81,6 +86,7 @@ impl Default for Settings {
             getting_started: GettingStartedFlags::default(),
             welcome_dismissed: false,
             default_agent_options: HashMap::new(),
+            bundled_skills_version: None,
         }
     }
 }

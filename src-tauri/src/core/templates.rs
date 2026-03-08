@@ -160,11 +160,17 @@ const TEMPLATE_SKILLS: &[(&str, &str)] = &[
     ),
 ];
 
-/// Write any missing auto-install skills to `~/.agents/skills/`.
-/// Existing files are left untouched, so user edits are always preserved.
-/// Each skill is recorded in the skills registry with source "automatic/automatic-app"
-/// so the UI resolves the author as "Automatic" rather than "You".
-pub fn install_default_skills() -> Result<(), String> {
+/// Write auto-install skills to `~/.agents/skills/`.
+///
+/// When `force` is `false` (normal first-run path), only missing skills are
+/// written — files already on disk are left untouched.
+///
+/// When `force` is `true` (version-upgrade path), every bundled skill is
+/// overwritten unconditionally so the on-disk copies always match the binary.
+///
+/// Each skill is recorded in the skills registry with source
+/// "automatic/automatic-app" so the UI resolves the author as "Automatic".
+pub fn install_default_skills_inner(force: bool) -> Result<(), String> {
     let agents_dir = get_agents_skills_dir()?;
 
     for (name, content) in AUTO_INSTALL_SKILLS {
@@ -173,7 +179,7 @@ pub fn install_default_skills() -> Result<(), String> {
             fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
         }
         let skill_path = skill_dir.join("SKILL.md");
-        if !skill_path.exists() {
+        if force || !skill_path.exists() {
             fs::write(&skill_path, content).map_err(|e| e.to_string())?;
         }
         // Register source so the UI shows "Automatic" as the author.
@@ -184,6 +190,12 @@ pub fn install_default_skills() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Convenience wrapper used by the erase-data path and the MCP tool where
+/// write-once (non-forcing) behaviour is always correct.
+pub fn install_default_skills() -> Result<(), String> {
+    install_default_skills_inner(false)
 }
 
 /// Install a subset of bundled skills by name, skipping any that are already

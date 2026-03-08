@@ -27,9 +27,34 @@ pub fn run() {
             // Code if the CLI is available.  Runs on a background thread so
             // it never blocks the UI.
             std::thread::spawn(|| {
-                if let Err(e) = core::install_default_skills() {
+                // Version-gated skill reinstall: if the stored version differs
+                // from the current binary version, overwrite all bundled skills
+                // so on-disk copies always match what shipped in this release.
+                const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+                let force_reinstall = match core::read_settings() {
+                    Ok(settings) => settings
+                        .bundled_skills_version
+                        .as_deref()
+                        .map(|v| v != APP_VERSION)
+                        .unwrap_or(true), // no version stored → treat as upgrade
+                    Err(_) => true, // can't read settings → safe to overwrite
+                };
+
+                if let Err(e) = core::install_default_skills_inner(force_reinstall) {
                     eprintln!("[automatic] skill install error: {}", e);
+                } else if force_reinstall {
+                    // Persist the current version so we don't reinstall next launch.
+                    match core::read_settings() {
+                        Ok(mut settings) => {
+                            settings.bundled_skills_version = Some(APP_VERSION.to_string());
+                            if let Err(e) = core::write_settings(&settings) {
+                                eprintln!("[automatic] failed to persist bundled_skills_version: {}", e);
+                            }
+                        }
+                        Err(e) => eprintln!("[automatic] failed to read settings after skill install: {}", e),
+                    }
                 }
+
                 if let Err(e) = core::install_default_templates() {
                     eprintln!("[automatic] template install error: {}", e);
                 }
