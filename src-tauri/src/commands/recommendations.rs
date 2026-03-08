@@ -228,6 +228,56 @@ pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendat
         }
     }
 
+    // ── Check 3: .automatic/context.json exists ───────────────────────────────
+    // The context file gives agents structured knowledge about the project
+    // (commands, entry points, concepts, conventions, gotchas, docs).
+    // Only relevant when a project directory is configured.
+    if !proj.directory.is_empty() {
+        let context_path = std::path::Path::new(&proj.directory)
+            .join(".automatic")
+            .join("context.json");
+
+        if context_path.exists() {
+            crate::recommendations::clear_system_recommendations_by_kind(
+                project,
+                "context_file",
+            )?;
+        } else {
+            let already_dismissed = crate::recommendations::list_recommendations(
+                project,
+                crate::recommendations::ListRecommendationsFilter {
+                    status: Some(RecommendationStatus::Dismissed),
+                    kind: Some("context_file".to_string()),
+                    source: None,
+                    limit: None,
+                },
+            )?
+            .into_iter()
+            .any(|r| r.source == "automatic-system");
+
+            if !already_dismissed
+                && !crate::recommendations::has_pending_system_recommendation(
+                    project,
+                    "context_file",
+                )?
+            {
+                crate::recommendations::add_recommendation(AddRecommendationParams {
+                    project: project.to_string(),
+                    kind: "context_file".to_string(),
+                    title: "Generate a project context file".to_string(),
+                    body: "No .automatic/context.json file was found in your project directory. \
+                           The context file gives agents structured knowledge about your project \
+                           (commands, entry points, concepts, conventions, and gotchas). \
+                           Open the Context tab and use \"Generate\" to create one automatically."
+                        .to_string(),
+                    priority: RecommendationPriority::Normal,
+                    source: "automatic-system".to_string(),
+                    metadata: String::new(),
+                })?;
+            }
+        }
+    }
+
     // Return all current pending recommendations for this project.
     crate::recommendations::list_recommendations(
         project,
