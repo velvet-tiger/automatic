@@ -21,6 +21,8 @@ import {
   Search,
   FolderOpen,
   LayoutTemplate,
+  Copy,
+  Lock,
 } from "lucide-react";
 import { ICONS } from "./icons";
 import { SkillAvatar } from "./SkillAvatar";
@@ -501,6 +503,32 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
 
 
+  const handleDuplicate = async (name: string) => {
+    // Build a unique local name: "<name>-local", or "<name>-local-2", etc.
+    const base = `${name}-local`;
+    let candidate = base;
+    let suffix = 2;
+    while (skills.some(s => s.name === candidate)) {
+      candidate = `${base}-${suffix}`;
+      suffix++;
+    }
+    try {
+      const raw = await invoke<string>("read_skill", { name });
+      // Strip the source from the frontmatter by rebuilding it from parsed fields.
+      const { meta, body } = parseFrontmatter(raw);
+      const dupName = candidate;
+      const dupDesc = meta.description ?? "";
+      const content = buildFrontmatter(dupName, dupDesc) + "\n" + body;
+      await invoke("save_skill", { name: dupName, content });
+      trackSkillCreated(dupName, "local");
+      await loadSkills();
+      await loadSkillContent(dupName);
+      setError(null);
+    } catch (err: any) {
+      setError(`Failed to duplicate skill: ${err}`);
+    }
+  };
+
   const startCreateNew = () => {
     setSelectedSkill(null);
     setNewSkillName("");
@@ -840,7 +868,23 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
+                {/* Remote skills are read-only — show a lock badge */}
+                {selectedEntry?.source && !isEditing && (
+                  <span className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/40" title="Installed from a remote source — editing is disabled">
+                    <Lock size={10} />
+                    <span>Read-only</span>
+                  </span>
+                )}
                 {!isEditing && (
+                  <button
+                    onClick={() => handleDuplicate(selectedSkill!)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
+                    title="Duplicate as a local, editable copy"
+                  >
+                    <Copy size={12} /> Duplicate
+                  </button>
+                )}
+                {!isEditing && !selectedEntry?.source && (
                   <button
                     onClick={() => setIsEditing(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
