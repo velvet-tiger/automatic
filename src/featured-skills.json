@@ -16,13 +16,12 @@
     "installs": 96300
   },
   {
-    "name": "audit-website",
-    "source": "squirrelscan/skills",
-    "id": "squirrelscan/skills/audit-website",
-    "displayName": "Website Audit",
-    "description": "Audits websites for SEO, performance, security and accessibility issues across 230+ rules using squirrelscan.",
-    "installs": 27100,
-    "license": "MIT"
+    "name": "skill-creator",
+    "source": "anthropics/skills",
+    "id": "anthropics/skills/skill-creator",
+    "displayName": "Skill Creator",
+    "description": "Guide for creating effective skills that extend Claude's capabilities with specialised knowledge, workflows, or tool integrations.",
+    "installs": 27100
   },
   {
     "name": "systematic-debugging",
