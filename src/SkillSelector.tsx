@@ -52,7 +52,7 @@ export function SkillSelector({
   const [expandedError, setExpandedError] = useState<string | null>(null);
   const [forkingSkill, setForkingSkill] = useState<string | null>(null);
 
-  const unaddedSkills = availableSkills.filter((s) => !skills.includes(s));
+  const unaddedSkills = availableSkills.filter((s) => !skills.includes(s) && s !== "automatic");
   const filteredSkills = search.trim()
     ? unaddedSkills.filter((s) => s.toLowerCase().includes(search.toLowerCase()))
     : unaddedSkills;
@@ -176,12 +176,14 @@ export function SkillSelector({
                   </div>
                 )}
 
+                {skill !== "automatic" && (
                 <button
                   onClick={() => onRemove(idx)}
                   className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded"
                 >
                   <Trash2 size={12} />
                 </button>
+                )}
               </div>
 
               {/* Expanded preview panel */}

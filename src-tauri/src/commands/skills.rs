@@ -24,6 +24,9 @@ pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn delete_skill(name: &str) -> Result<(), String> {
+    if core::is_builtin_skill(name) {
+        return Err(format!("Cannot delete built-in skill '{}'", name));
+    }
     core::delete_skill(name)?;
     super::projects::prune_skill_from_projects(name);
     Ok(())

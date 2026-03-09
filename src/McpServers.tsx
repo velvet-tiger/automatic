@@ -56,6 +56,8 @@ interface McpServerConfig {
   timeout?: number;
   /** Automatic-internal: author/provider metadata. Stripped before writing to agent configs. */
   _author?: McpAuthorMeta;
+  /** Automatic-internal: true for built-in servers that cannot be deleted or reconfigured. */
+  _builtin?: boolean;
 }
 
 function emptyConfig(): McpServerConfig {
@@ -98,6 +100,7 @@ function normalizeConfig(data: Partial<McpServerConfig> & { oauth?: any }): McpS
     timeout: data.timeout,
     // Preserve author metadata if present (Automatic-internal field)
     _author: data._author,
+    _builtin: data._builtin,
   };
 }
 
@@ -447,8 +450,10 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   };
 
   const isStdio = config?.type === "stdio";
-  /** Server was installed from the MCP Directory — lock core settings. */
-  const isManaged = !!config?._author;
+  /** Server was installed from the MCP Directory or is built-in — lock core settings. */
+  const isManaged = !!config?._author || !!config?._builtin;
+  /** Built-in server (e.g. Automatic itself) — lock everything including delete. */
+  const isBuiltin = !!config?._builtin;
 
   return (
     <div className="flex h-full w-full bg-bg-base">
@@ -503,6 +508,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                         {name}
                       </span>
                     </button>
+                    {name !== "automatic" && (
                     <button
                       onClick={(e) => handleDelete(name, e)}
                       className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
@@ -510,6 +516,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     >
                       <X size={12} />
                     </button>
+                    )}
                   </li>
                 );
               })}
@@ -566,7 +573,12 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
               </div>
 
               <div className="flex items-center gap-2">
-                {dirty && (
+                {isBuiltin && (
+                  <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase px-2 py-1 rounded-full bg-brand/10 border border-brand/20">
+                    Built-in
+                  </span>
+                )}
+                {dirty && !isBuiltin && (
                   <button
                     onClick={handleSave}
                     disabled={isCreating && !newName.trim()}
@@ -595,7 +607,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
                 {/* Author */}
                 {(() => {
-                  const descriptor: AuthorDescriptor = config._author
+                  const descriptor: AuthorDescriptor = isBuiltin
+                    ? { type: "provider", name: "Automatic", url: "https://automatic.sh" }
+                    : config._author
                     ? { type: "provider", name: config._author.name, url: config._author.url ?? config._author.repository_url }
                     : { type: "local" };
                   return (
@@ -612,11 +626,12 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       Type
                     </label>
                     <button
-                      onClick={() => updateConfig({ enabled: !config.enabled })}
+                      onClick={() => !isBuiltin && updateConfig({ enabled: !config.enabled })}
+                      disabled={isBuiltin}
                       className={`flex items-center gap-1.5 text-[12px] transition-colors ${
                         config.enabled !== false ? "text-success" : "text-text-muted"
-                      }`}
-                      title={config.enabled !== false ? "Enabled — click to disable" : "Disabled — click to enable"}
+                      } ${isBuiltin ? "opacity-60 cursor-not-allowed" : ""}`}
+                      title={isBuiltin ? "Built-in server — always enabled" : config.enabled !== false ? "Enabled — click to disable" : "Disabled — click to enable"}
                     >
                       {config.enabled !== false ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
                       {config.enabled !== false ? "Enabled" : "Disabled"}

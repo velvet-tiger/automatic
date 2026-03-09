@@ -240,7 +240,7 @@ export function McpSelector({
   const [search, setSearch] = useState("");
   const [expandedServer, setExpandedServer] = useState<string | null>(null);
 
-  const unaddedServers = availableServers.filter((s) => !servers.includes(s));
+  const unaddedServers = availableServers.filter((s) => !servers.includes(s) && s !== "automatic");
   const filteredServers = search.trim()
     ? unaddedServers.filter((s) => s.toLowerCase().includes(search.toLowerCase()))
     : unaddedServers;
@@ -312,12 +312,14 @@ export function McpSelector({
                   <div className="text-[13px] font-medium text-text-base">{srv}</div>
                 </div>
 
+                {srv !== "automatic" && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onRemove(idx); }}
                   className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded"
                 >
                   <Trash2 size={12} />
                 </button>
+                )}
               </div>
 
               {/* Inline config card */}

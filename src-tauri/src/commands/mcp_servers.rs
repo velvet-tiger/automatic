@@ -28,6 +28,9 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
+    if core::is_builtin_mcp_server(name) {
+        return Err(format!("Cannot delete built-in MCP server '{}'", name));
+    }
     core::delete_mcp_server_config(name)?;
     prune_mcp_server_from_projects(name);
     Ok(())

@@ -116,6 +116,118 @@ pub fn list_mcp_servers() -> Result<String, String> {
     }
 }
 
+/// The well-known name used for the Automatic MCP server everywhere:
+/// registry files, project assignments, and agent config files.
+pub const AUTOMATIC_SERVER_NAME: &str = "automatic";
+
+/// The well-known name of the bundled "automatic" skill that teaches agents
+/// how to use the Automatic MCP service.  Always assigned to every project.
+pub const AUTOMATIC_SKILL_NAME: &str = "automatic";
+
+/// Ensure the `automatic` MCP server entry is present in both the Automatic
+/// registry (`~/.automatic/mcp_servers/automatic.json`) and the global
+/// user-level Claude Code config (`~/.mcp.json`).
+///
+/// **Registry entry** — makes the server visible in the Automatic UI (MCP
+/// Servers list and per-project MCP selector).  The entry is always
+/// overwritten so the binary path stays current after updates.
+///
+/// **Global `~/.mcp.json`** — makes the server available in every Claude
+/// Code session, even for projects not yet managed by Automatic.
+///
+/// **Project assignment** — adds `"automatic"` to every registered project's
+/// `mcp_servers` list if not already present, then persists the project.
+///
+/// The binary path is resolved from the current executable so it always
+/// reflects the installed release binary rather than a hard-coded path.
+pub fn ensure_automatic_in_global_mcp() -> Result<(), String> {
+    let binary = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "automatic".to_string());
+
+    // ── 1. Registry entry ────────────────────────────────────────────────
+    let registry_config = serde_json::json!({
+        "type": "stdio",
+        "command": binary,
+        "args": ["mcp-serve"],
+        "_builtin": true
+    });
+    let registry_str = serde_json::to_string_pretty(&registry_config).map_err(|e| e.to_string())?;
+    // save_mcp_server_config handles directory creation and env encryption.
+    save_mcp_server_config(AUTOMATIC_SERVER_NAME, &registry_str)?;
+
+    // ── 2. Global ~/.mcp.json ────────────────────────────────────────────
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    let mcp_path = home.join(".mcp.json");
+
+    let mut root: serde_json::Value = if mcp_path.exists() {
+        let raw = fs::read_to_string(&mcp_path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({ "mcpServers": {} }))
+    } else {
+        serde_json::json!({ "mcpServers": {} })
+    };
+
+    let global_entry = serde_json::json!({
+        "command": binary,
+        "args": ["mcp-serve"]
+    });
+
+    if let Some(servers) = root.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
+        servers.insert(AUTOMATIC_SERVER_NAME.to_string(), global_entry);
+    } else {
+        root["mcpServers"] = serde_json::json!({ AUTOMATIC_SERVER_NAME: global_entry });
+    }
+
+    let serialized = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    fs::write(&mcp_path, serialized).map_err(|e| e.to_string())?;
+
+    // ── 3. Assign MCP server + skill to all projects ───────────────────
+    if let Ok(project_names) = super::list_projects() {
+        for name in project_names {
+            if let Ok(raw) = super::read_project(&name) {
+                if let Ok(mut project) = serde_json::from_str::<super::Project>(&raw) {
+                    let mut changed = false;
+
+                    if !project
+                        .mcp_servers
+                        .iter()
+                        .any(|s| s == AUTOMATIC_SERVER_NAME)
+                    {
+                        project.mcp_servers.push(AUTOMATIC_SERVER_NAME.to_string());
+                        changed = true;
+                    }
+
+                    if !project.skills.iter().any(|s| s == AUTOMATIC_SKILL_NAME) {
+                        project.skills.push(AUTOMATIC_SKILL_NAME.to_string());
+                        changed = true;
+                    }
+
+                    if changed {
+                        if let Ok(updated) = serde_json::to_string_pretty(&project) {
+                            let _ = super::save_project(&name, &updated);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Returns `true` if the given MCP server name is a built-in server that
+/// should not be deleted or have its core config edited by the user.
+pub fn is_builtin_mcp_server(name: &str) -> bool {
+    name == AUTOMATIC_SERVER_NAME
+}
+
+/// Returns `true` if the given skill name is a built-in skill that should
+/// not be deleted or removed from projects by the user.
+pub fn is_builtin_skill(name: &str) -> bool {
+    name == AUTOMATIC_SKILL_NAME
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

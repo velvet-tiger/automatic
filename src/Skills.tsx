@@ -662,6 +662,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                         </span>
                         {/* Hover actions */}
                         <span className="shrink-0 hidden group-hover:flex items-center gap-0.5">
+                          {skill.name !== "automatic" && (
                           <span
                             role="button"
                             onClick={(e) => handleDelete(skill.name, e)}
@@ -670,6 +671,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                           >
                             <X size={11} />
                           </span>
+                          )}
                         </span>
                       </div>
 
@@ -867,8 +869,14 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
+                {/* Built-in badge for the automatic skill */}
+                {selectedSkill === "automatic" && (
+                  <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase px-2 py-1 rounded-full bg-brand/10 border border-brand/20">
+                    Built-in
+                  </span>
+                )}
                 {/* Remote skills are read-only — show a lock badge */}
-                {selectedEntry?.source && !isEditing && (
+                {selectedEntry?.source && !isEditing && selectedSkill !== "automatic" && (
                   <span className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/40" title="Installed from a remote source — editing is disabled">
                     <Lock size={10} />
                     <span>Read-only</span>

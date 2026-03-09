@@ -66,6 +66,9 @@ pub fn run() {
                     Ok(msg) => eprintln!("[automatic] plugin startup: {}", msg),
                     Err(e) => eprintln!("[automatic] plugin startup error: {}", e),
                 }
+                if let Err(e) = core::ensure_automatic_in_global_mcp() {
+                    eprintln!("[automatic] global MCP install error: {}", e);
+                }
             });
             Ok(())
         })
