@@ -29,7 +29,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use keyring::Entry;
 use serde_json::Value;
 
-const KEYCHAIN_SERVICE: &str = "automatic_desktop";
+use crate::core::KEYCHAIN_SERVICE;
 const KEYCHAIN_USER: &str = "env_encryption_key";
 const SENTINEL: &str = "enc:v1:";
 

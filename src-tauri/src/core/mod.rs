@@ -1,3 +1,11 @@
+// Keychain service name — debug builds use a separate entry so "Always Allow"
+// only needs to be clicked once per build type, and dev/release entries never
+// collide.
+#[cfg(debug_assertions)]
+pub const KEYCHAIN_SERVICE: &str = "automatic_desktop_dev";
+#[cfg(not(debug_assertions))]
+pub const KEYCHAIN_SERVICE: &str = "automatic_desktop";
+
 pub mod ai;
 mod app_plugins;
 mod marketplace;

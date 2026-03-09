@@ -19,12 +19,13 @@ const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 // ── Keychain helpers ─────────────────────────────────────────────────────────
 //
-// All entries use the same service name ("automatic_desktop") as the existing
-// API-key storage in core::credentials.  This avoids a macOS keyring issue
-// where dynamic service names pass `set_password` but fail `get_password`.
-// Entries are differentiated by the *user* field instead.
+// All entries use the same service name as the existing API-key storage in
+// core::credentials (debug: "automatic_desktop_dev", release: "automatic_desktop").
+// This avoids a macOS keyring issue where dynamic service names pass
+// `set_password` but fail `get_password`. Entries are differentiated by the
+// *user* field instead.
 
-const KEYCHAIN_SERVICE: &str = "automatic_desktop";
+use crate::core::KEYCHAIN_SERVICE;
 
 /// User field for an OAuth bearer token entry.
 fn oauth_token_user(server_name: &str) -> String {
