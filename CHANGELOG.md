@@ -2,6 +2,20 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.9.1] — 2026-03-10
+
+### Features
+
+- **Projects**: Enforce the built-in Automatic MCP server and skill across all projects on startup — both are registered in the global registry, written to `~/.mcp.json`, and assigned to every project automatically
+- **Projects**: Built-in MCP server and skill are marked as protected; they cannot be deleted or removed via the UI (MCP Servers page, Skills page, project selectors) or the backend
+
+### CI
+
+- Remove duplicate macOS asset upload step — `tauri-action` already uploads `Automatic.app.tar.gz`; the redundant manual upload has been removed to prevent duplicate release assets
+- Rename `uploadUpdaterJson` to `includeUpdaterJson` in the release workflow to match the current `tauri-action` API
+
+---
+
 ## [0.9.0] — 2026-03-10
 
 ### Features
@@ -474,6 +488,8 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Warp removal correctly deletes `WARP.md` via owned config paths
 - Junie removal deletes the entire `.junie/` directory
 
+[0.9.1]: https://github.com/velvet-tiger/automatic/releases/tag/0.9.1
+[0.9.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.9.0
 [0.8.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.8.0
 [0.7.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.7.0
 [0.6.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.6.0
