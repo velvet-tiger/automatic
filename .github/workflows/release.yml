@@ -118,32 +118,11 @@ jobs:
           includeUpdaterJson: false
           args: ${{ matrix.args }}
 
-      # Upload the updater archives (.tar.gz / .msi.zip) and their .sig files to the release,
-      # and stash the .sig content as workflow artifacts for the publish job.
+      # Stash the macOS .sig content as a workflow artifact for the publish job.
+      # tauri-action already uploads Automatic.app.tar.gz and its .sig to the release.
       - name: List macOS bundle output (diagnostic)
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'macos-latest'
         run: ls -la src-tauri/target/universal-apple-darwin/release/bundle/macos/ || true
-
-      - name: Upload macOS updater bundle and signature
-        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'macos-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          SIG_FILE=src-tauri/target/universal-apple-darwin/release/bundle/macos/Automatic.app.tar.gz.sig
-          TAR_FILE=src-tauri/target/universal-apple-darwin/release/bundle/macos/Automatic.app.tar.gz
-
-          if [ ! -f "$SIG_FILE" ]; then
-            echo "ERROR: Signature file not found: $SIG_FILE" >&2
-            ls src-tauri/target/universal-apple-darwin/release/bundle/macos/ || true
-            exit 1
-          fi
-
-          # Upload the .tar.gz updater archive and its signature to the release
-          gh release upload "$TAG" \
-            "$TAR_FILE#Automatic_universal.app.tar.gz" \
-            "$SIG_FILE#Automatic_universal.app.tar.gz.sig" \
-            --clobber
 
       - name: Stash macOS signature as workflow artifact
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'macos-latest'
@@ -282,11 +261,11 @@ jobs:
 
           BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
-          # Updater URLs — these are the signed artifacts uploaded by the build jobs above.
-          # macOS:   Automatic_universal.app.tar.gz (uploaded with that label by the build job)
+          # Updater URLs — these are the signed artifacts uploaded by tauri-action and the build jobs above.
+          # macOS:   Automatic.app.tar.gz (uploaded by tauri-action)
           # Linux:   original AppImage filename (e.g. Automatic_0.6.0_amd64.AppImage)
           # Windows: original MSI filename (e.g. Automatic_0.6.0_x64_en-US.msi)
-          DARWIN_FILE="Automatic_universal.app.tar.gz"
+          DARWIN_FILE="Automatic.app.tar.gz"
           LINUX_FILE=$(ls sigs/linux/*.AppImage.sig | xargs -I{} basename {} .sig)
           WINDOWS_FILE=$(ls sigs/windows/*.msi.sig | xargs -I{} basename {} .sig)
 
