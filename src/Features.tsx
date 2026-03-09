@@ -1472,6 +1472,7 @@ export default function Features({ projectName }: FeaturesProps) {
   }, []);
 
   const handleSelect = (id: string) => {
+    setIsCreating(false);
     setSelectedId((prev) => (prev === id ? null : id));
   };
 
@@ -1518,7 +1519,7 @@ export default function Features({ projectName }: FeaturesProps) {
     }
   };
 
-  const detailOpen = !!selectedId;
+  const detailOpen = isCreating || !!selectedId;
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -1557,7 +1558,10 @@ export default function Features({ projectName }: FeaturesProps) {
             </button>
           </div>
           <button
-            onClick={() => setIsCreating(true)}
+            onClick={() => {
+              setSelectedId(null);
+              setIsCreating(true);
+            }}
             disabled={isCreating}
             className="flex items-center gap-1 px-2.5 py-1 rounded bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-default text-white text-[11px] font-medium transition-colors"
           >
@@ -1592,11 +1596,10 @@ export default function Features({ projectName }: FeaturesProps) {
             onFilterState={setFilterState}
             onFilterPriority={setFilterPriority}
             onSort={setSort}
-            onAddNew={() => setIsCreating(true)}
-            isCreating={isCreating}
-            projectName={projectName}
-            onCreated={handleCreated}
-            onCancelCreate={() => setIsCreating(false)}
+            onAddNew={() => {
+              setSelectedId(null);
+              setIsCreating(true);
+            }}
           />
         ) : (
           <KanbanView
@@ -1604,10 +1607,6 @@ export default function Features({ projectName }: FeaturesProps) {
             selectedId={selectedId}
             onSelect={handleSelect}
             onMove={handleMove}
-            isCreating={isCreating}
-            projectName={projectName}
-            onCreated={handleCreated}
-            onCancelCreate={() => setIsCreating(false)}
           />
         )}
       </div>
@@ -1623,7 +1622,13 @@ export default function Features({ projectName }: FeaturesProps) {
             className="flex flex-col border-l border-border-strong/40 overflow-hidden shrink-0"
             style={{ width: detailWidth }}
           >
-            {selectedId && (
+            {isCreating ? (
+              <CreateFeaturePanel
+                projectName={projectName}
+                onCreated={handleCreated}
+                onCancel={() => setIsCreating(false)}
+              />
+            ) : selectedId ? (
               <DetailPanel
                 projectName={projectName}
                 featureId={selectedId}
@@ -1631,7 +1636,7 @@ export default function Features({ projectName }: FeaturesProps) {
                 onUpdated={handleUpdated}
                 onDeleted={handleDeleted}
               />
-            )}
+            ) : null}
           </div>
         </>
       )}
