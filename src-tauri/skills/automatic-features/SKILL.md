@@ -170,9 +170,10 @@ Read the full description and all prior updates. Do not start work until you und
 
 ```
 automatic_set_feature_state(project: "my-project", feature_id: "<id>", state: "in_progress")
+automatic_update_feature(project: "my-project", feature_id: "<id>", assignee: "claude-code")
 ```
 
-Move to `in_progress` before touching any code. This signals to the user (and other agents) that the work is active.
+Move to `in_progress` and set `assignee` to your agent identity before touching any code. This signals to the user (and other agents) that the work is active and who is responsible for it. Use the same identifier consistently across all calls in the session (e.g. `"claude-code"`, `"cursor"`, `"gpt-4o"`).
 
 ### 4. Work and log
 
@@ -227,6 +228,7 @@ Do not silently fix unscoped work. Create a feature for it so the user is aware.
 
 ## Rules
 
+- **Always set assignee** — when claiming a feature, immediately call `automatic_update_feature` with your agent identity in `assignee`. Never leave a feature `in_progress` without an assignee.
 - **Never mark a feature `complete`** — that is the user's call after reviewing your work.
 - **Always log updates** — the user should be able to read the update history and understand exactly what you did and why, without asking.
 - **One feature at a time** — move a feature to `in_progress` before starting it. Do not have multiple features `in_progress` simultaneously.

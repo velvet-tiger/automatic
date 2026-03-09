@@ -1125,9 +1125,31 @@ export default function Features({ projectName }: FeaturesProps) {
     }
   }, [projectName]);
 
+  // Silent background refresh — does not touch loading/error state so the UI
+  // does not flash. Used by the polling interval.
+  const refreshFeatures = useCallback(async () => {
+    try {
+      const result = await invoke<Feature[]>("list_features", {
+        project: projectName,
+        state: null,
+      });
+      setFeatures(result);
+    } catch {
+      // Silently ignore transient poll failures.
+    }
+  }, [projectName]);
+
+  // Initial load
   useEffect(() => {
     loadFeatures();
   }, [loadFeatures]);
+
+  // Poll every 5 seconds while the component is mounted so agent-driven state
+  // changes and new features appear without requiring a manual refresh.
+  useEffect(() => {
+    const interval = setInterval(refreshFeatures, 5_000);
+    return () => clearInterval(interval);
+  }, [refreshFeatures]);
 
   // Drag resize handlers
   const handleResizeMouseDown = (e: React.MouseEvent) => {
