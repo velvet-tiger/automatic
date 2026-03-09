@@ -1927,7 +1927,76 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
   // Tab navigation within a project
   type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "rules" | "context" | "memory" | "features" | "activity" | "recommendations";
+  type ProjectGroup = "summary" | "configuration" | "instructions" | "runtime" | "planning" | "insights";
+
+  const PROJECT_GROUPS: {
+    id: ProjectGroup;
+    label: string;
+    tabs: { id: ProjectTab; label: string }[];
+  }[] = [
+    { id: "summary", label: "Summary", tabs: [] },
+    {
+      id: "configuration",
+      label: "Configuration",
+      tabs: [
+        { id: "agents", label: "Providers" },
+        { id: "skills", label: "Skills" },
+        { id: "mcp_servers", label: "MCP Servers" },
+      ],
+    },
+    {
+      id: "instructions",
+      label: "Instructions",
+      tabs: [
+        { id: "project_file", label: "Project Instructions" },
+        { id: "rules", label: "Rules" },
+        { id: "context", label: "Context" },
+      ],
+    },
+    {
+      id: "runtime",
+      label: "Runtime",
+      tabs: [
+        { id: "memory", label: "Memory" },
+        { id: "activity", label: "Activity" },
+      ],
+    },
+    { id: "planning", label: "Build", tabs: [{ id: "features", label: "Features" }] },
+    { id: "insights", label: "Insights", tabs: [{ id: "recommendations", label: "Recommendations" }] },
+  ];
+
+  /** Derive the group for a given tab id */
+  function groupForTab(tab: ProjectTab): ProjectGroup {
+    for (const g of PROJECT_GROUPS) {
+      if (g.id === "summary" && tab === "summary") return "summary";
+      if (g.tabs.some((t) => t.id === tab)) return g.id;
+    }
+    return "summary";
+  }
+
   const [projectTab, setProjectTab] = useState<ProjectTab>("summary");
+  const [projectGroup, setProjectGroup] = useState<ProjectGroup>("summary");
+
+  /** Switch to a group; auto-select first sub-tab (or "summary") */
+  function selectGroup(group: ProjectGroup) {
+    setProjectGroup(group);
+    if (group === "summary") {
+      setProjectTab("summary");
+    } else {
+      const g = PROJECT_GROUPS.find((g) => g.id === group);
+      if (g && g.tabs.length > 0) setProjectTab(g.tabs[0]!.id);
+    }
+  }
+
+  /** Switch to a specific tab and update the group accordingly */
+  function selectTab(tab: ProjectTab) {
+    setProjectTab(tab);
+    setProjectGroup(groupForTab(tab));
+    if (tab !== "rules") setCustomRuleEditingIdx(null);
+    if (tab === "activity" && selectedName) {
+      loadActivityPage(selectedName, 0);
+    }
+  }
 
   // Memory state
   const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
@@ -2077,7 +2146,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     const validTabs = ["summary", "agents", "skills", "mcp_servers", "project_file", "rules", "context", "memory", "activity", "recommendations"] as const;
     type ProjectTab = typeof validTabs[number];
     if (validTabs.includes(initialProjectTab as ProjectTab)) {
-      setProjectTab(initialProjectTab as ProjectTab);
+      selectTab(initialProjectTab as ProjectTab);
     }
     onInitialProjectTabConsumed?.();
   }, [initialProjectTab]);
@@ -4191,7 +4260,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                 {/* Right: agent icons */}
                 {project.agents.length > 0 && (
                   <button
-                    onClick={() => setProjectTab("agents")}
+                    onClick={() => selectTab("agents")}
                     className="flex items-center gap-1.5 flex-shrink-0 mt-1 group"
                     title="Agents — click to manage"
                   >
@@ -4670,48 +4739,55 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
             {/* Tab bar + content (hidden while in new-project setup) */}
             {!isCreating && <>
-            <div className="flex flex-wrap items-center gap-0 px-6 border-b border-border-strong/40 flex-shrink-0">
-              {([
-                 { id: "summary" as ProjectTab, label: "Summary" },
-                 { id: "agents" as ProjectTab, label: "Providers" },
-                { id: "skills" as ProjectTab, label: "Skills" },
-                { id: "mcp_servers" as ProjectTab, label: "MCP Servers" },
-                 { id: "project_file" as ProjectTab, label: "Project Instructions" },
-                 { id: "rules" as ProjectTab, label: "Rules" },
-                 { id: "context" as ProjectTab, label: "Context" },
-                 { id: "memory" as ProjectTab, label: "Memory" },
-                 { id: "features" as ProjectTab, label: "Features" },
-                { id: "activity" as ProjectTab, label: "Activity" },
-                { id: "recommendations" as ProjectTab, label: "Recommendations" },
-              ]).map((tab) => (
+            {/* Primary group tabs */}
+            <div className="flex items-center gap-0 px-6 border-b border-border-strong/40 flex-shrink-0">
+              {PROJECT_GROUPS.map((group) => (
                 <button
-                  key={tab.id}
-                  onClick={() => {
-                    setProjectTab(tab.id);
-                    // Discard any in-progress custom rule edits when leaving the tab.
-                    if (tab.id !== "rules") setCustomRuleEditingIdx(null);
-                    if (tab.id === "activity" && selectedName) {
-                      loadActivityPage(selectedName, 0);
-                    }
-                  }}
+                  key={group.id}
+                  onClick={() => selectGroup(group.id)}
                   className={`px-3 py-2.5 text-[13px] font-medium transition-colors relative flex items-center gap-1.5 ${
-                    projectTab === tab.id
+                    projectGroup === group.id
                       ? "text-text-base"
                       : "text-text-muted hover:text-text-base"
                   }`}
                 >
-                  {tab.label}
-                  {tab.id === "recommendations" && recsDisplayCount > 0 && (
+                  {group.label}
+                  {group.id === "insights" && recsDisplayCount > 0 && (
                     <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
                       {recsDisplayCount}
                     </span>
                   )}
-                  {projectTab === tab.id && (
+                  {projectGroup === group.id && (
                     <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
                   )}
                 </button>
               ))}
             </div>
+            {/* Secondary sub-tabs (only shown when a group with sub-tabs is active) */}
+            {projectGroup !== "summary" && (() => {
+              const activeGroup = PROJECT_GROUPS.find((g) => g.id === projectGroup);
+              if (!activeGroup || activeGroup.tabs.length <= 1) return null;
+              return (
+                <div className="flex items-center gap-0 px-6 border-b border-border-strong/20 bg-bg-input/30 flex-shrink-0">
+                  {activeGroup.tabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => selectTab(tab.id)}
+                      className={`px-3 py-2 text-[12px] font-medium transition-colors relative flex items-center gap-1.5 ${
+                        projectTab === tab.id
+                          ? "text-text-base"
+                          : "text-text-muted hover:text-text-base"
+                      }`}
+                    >
+                      {tab.label}
+                      {projectTab === tab.id && (
+                        <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand/60 rounded-t" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
 
             {/* Tab content */}
 
@@ -5692,7 +5768,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             {" "}available for this project.
                           </p>
                           <button
-                            onClick={() => setProjectTab("recommendations")}
+                            onClick={() => selectTab("recommendations")}
                             className="shrink-0 flex items-center gap-1 text-[12px] font-medium text-warning hover:text-warning-hover transition-colors"
                           >
                             Review <ArrowRight size={11} />
@@ -5736,7 +5812,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       <span className="text-[10px] text-brand">{!project.directory ? "2" : "1"}</span>
                                     </div>
                                     <div>
-                                      <button onClick={() => setProjectTab("agents")} className="text-brand hover:text-brand-hover transition-colors font-medium">Add agent tools</button>
+                                      <button onClick={() => selectTab("agents")} className="text-brand hover:text-brand-hover transition-colors font-medium">Add agent tools</button>
                                       <div className="text-[11px] text-text-muted mt-0.5">Select which agents will use this project</div>
                                     </div>
                                   </li>
@@ -5746,7 +5822,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     <span className="text-[10px] text-text-muted">•</span>
                                   </div>
                                   <div>
-                                    <button onClick={() => setProjectTab("skills")} className="text-text-base hover:text-brand transition-colors">Add skills (optional)</button>
+                                     <button onClick={() => selectTab("skills")} className="text-text-base hover:text-brand transition-colors">Add skills (optional)</button>
                                     <div className="text-[11px] text-text-muted mt-0.5">Give agents specialized capabilities</div>
                                   </div>
                                 </li>
@@ -5774,7 +5850,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             </span>
                           </div>
                           <button
-                            onClick={() => setProjectTab("skills")}
+                            onClick={() => selectTab("skills")}
                             className="flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium"
                           >
                             <Plus size={11} /> Add
@@ -5832,7 +5908,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             </span>
                           </div>
                           <button
-                            onClick={() => setProjectTab("mcp_servers")}
+                            onClick={() => selectTab("mcp_servers")}
                             className="flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium"
                           >
                             <Plus size={11} /> Add
@@ -5870,7 +5946,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         const rulesCount = projectRules.length + customRules.length;
                         return (
                           <button
-                            onClick={() => setProjectTab("rules")}
+                            onClick={() => selectTab("rules")}
                             className="group w-full bg-bg-input border border-border-strong/40 hover:border-icon-rule/50 rounded-lg overflow-hidden flex flex-col text-left transition-all"
                           >
                             <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40 flex-shrink-0">
@@ -5896,7 +5972,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                       {/* Memory */}
                       <button
-                        onClick={() => setProjectTab("memory")}
+                        onClick={() => selectTab("memory")}
                         className="group w-full bg-bg-input border border-border-strong/40 hover:border-icon-rule/50 rounded-lg overflow-hidden flex flex-col text-left transition-all"
                       >
                         <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40 flex-shrink-0">
@@ -6750,7 +6826,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 The AI has identified {aiSkillsRollupCount} skill{aiSkillsRollupCount !== 1 ? "s" : ""} that may benefit this project. Review and add them from the Skills tab.
                               </p>
                               <button
-                                onClick={() => setProjectTab("skills")}
+                                onClick={() => selectTab("skills")}
                                 className="mt-2 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
                               >
                                 <Code size={10} /> Go to Skills tab <ArrowRight size={10} />
@@ -6776,7 +6852,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 The AI has identified {aiMcpRollupCount} MCP server{aiMcpRollupCount !== 1 ? "s" : ""} that may benefit this project. Review and add them from the MCP Servers tab.
                               </p>
                               <button
-                                onClick={() => setProjectTab("mcp_servers")}
+                                onClick={() => selectTab("mcp_servers")}
                                 className="mt-2 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
                               >
                                 <Server size={10} /> Go to MCP Servers tab <ArrowRight size={10} />
@@ -6810,7 +6886,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               <p className="text-[12px] text-text-muted leading-relaxed">{rec.body}</p>
                               {rec.kind === "rule" && (
                                 <button
-                                  onClick={() => setProjectTab("project_file")}
+                                  onClick={() => selectTab("project_file")}
                                   className="mt-2 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
                                 >
                                   Open Project File <ArrowRight size={10} />
@@ -6818,7 +6894,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                               )}
                               {rec.kind === "project_file" && (
                                 <button
-                                  onClick={() => setProjectTab("project_file")}
+                                  onClick={() => selectTab("project_file")}
                                   className="mt-2 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium flex items-center gap-1"
                                 >
                                   Create Instructions File <ArrowRight size={10} />
