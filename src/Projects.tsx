@@ -1792,22 +1792,26 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const isSidebarDragging = useRef(false);
 
-  // ── Sidebar pin / hover state ────────────────────────────────────────────────
+  // ── Sidebar pin / open state ────────────────────────────────────────────────
   const SIDEBAR_PINNED_KEY = "automatic.projects.sidebar.pinned";
   const [sidebarPinned, setSidebarPinned] = useState<boolean>(() => {
     try { return localStorage.getItem(SIDEBAR_PINNED_KEY) === "true"; } catch { return false; }
   });
-  const [sidebarHovered, setSidebarHovered] = useState(false);
-  const sidebarHoverTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sidebarOpen = sidebarPinned || sidebarHovered;
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const sidebarPanelRef = useRef<HTMLDivElement>(null);
+  const sidebarTriggerRef = useRef<HTMLDivElement>(null);
+  const sidebarOpen = sidebarPinned || sidebarExpanded;
 
-  const handleSidebarMouseEnter = useCallback(() => {
-    if (sidebarHoverTimeout.current) clearTimeout(sidebarHoverTimeout.current);
-    setSidebarHovered(true);
+  const openSidebar = useCallback(() => {
+    setSidebarExpanded(true);
   }, []);
 
-  const handleSidebarMouseLeave = useCallback(() => {
-    sidebarHoverTimeout.current = setTimeout(() => setSidebarHovered(false), 200);
+  const closeSidebar = useCallback(() => {
+    setSidebarExpanded(false);
+  }, []);
+
+  const toggleSidebarOpen = useCallback(() => {
+    setSidebarExpanded((prev) => !prev);
   }, []);
 
   const toggleSidebarPin = useCallback(() => {
@@ -1816,7 +1820,34 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       try { localStorage.setItem(SIDEBAR_PINNED_KEY, String(next)); } catch {}
       return next;
     });
+    setSidebarExpanded(true);
   }, []);
+
+  useEffect(() => {
+    if (!sidebarOpen || sidebarPinned) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (sidebarPanelRef.current?.contains(target) || sidebarTriggerRef.current?.contains(target)) {
+        return;
+      }
+      setSidebarExpanded(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSidebarExpanded(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [sidebarOpen, sidebarPinned]);
 
   const onSidebarMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -3781,10 +3812,18 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       {/* Collapsed trigger strip */}
       {!isCreating && !sidebarOpen && (
         <div
+          ref={sidebarTriggerRef}
           className="flex-shrink-0 flex flex-col items-center border-r border-border-strong/40 bg-bg-input/50 relative z-30 cursor-pointer select-none"
           style={{ width: 28 }}
-          onMouseEnter={handleSidebarMouseEnter}
-          onMouseLeave={handleSidebarMouseLeave}
+          onClick={toggleSidebarOpen}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              openSidebar();
+            }
+          }}
+          role="button"
+          tabIndex={0}
           title="Show projects"
         >
           <div className="flex flex-col items-center justify-center h-full gap-1 text-text-muted hover:text-text-base transition-colors">
@@ -3802,6 +3841,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       {/* Flyout / pinned sidebar panel */}
       {!isCreating && (
         <div
+          ref={sidebarPanelRef}
           className={`flex flex-col border-r border-border-strong/40 bg-bg-input/50 relative transition-all duration-200 ${
             sidebarOpen
               ? sidebarPinned
@@ -3810,14 +3850,21 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
               : "hidden"
           }`}
           style={{ width: sidebarWidth }}
-          onMouseEnter={handleSidebarMouseEnter}
-          onMouseLeave={handleSidebarMouseLeave}
         >
         <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center bg-bg-base/30">
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             Projects
           </span>
           <div className="flex items-center gap-0.5">
+            {!sidebarPinned && (
+              <button
+                onClick={closeSidebar}
+                className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
+                title="Close project tray"
+              >
+                <X size={13} />
+              </button>
+            )}
             <button
               onClick={toggleSidebarPin}
               className={`transition-colors p-1 hover:bg-bg-sidebar rounded ${sidebarPinned ? "text-brand" : "text-text-muted hover:text-text-base"}`}
