@@ -463,28 +463,6 @@ will have the highest impact given the project's evident tech stack and workflow
         instructions = if instruction_content.is_empty() { "(no instruction file found)".to_string() } else { instruction_content },
     );
 
-    let system = "You are an expert AI-development advisor embedded in Automatic, \
-        a tool that manages skills, MCP servers, and agent configurations. \
-        Your job is to analyse a project's current setup and recommend the most \
-        valuable additions from the available catalogue. \
-        \
-        Use the list_skills, list_mcp_servers, search_skills_marketplace, \
-        search_mcp_marketplace, search_collections, and search_templates_marketplace \
-        tools to research what is available before making recommendations. \
-        Only recommend things that are genuinely relevant and not already configured. \
-        \
-        After your research, respond with ONLY a JSON object matching this schema — \
-        no markdown fences, no extra text: \
-        { \"recommendations\": [ \
-          { \"kind\": \"skill\" | \"mcp_server\" | \"template\" | \"collection\", \
-            \"title\": \"short headline (max 60 chars)\", \
-            \"body\": \"1-2 sentence explanation of why this is useful for this project\", \
-            \"priority\": \"low\" | \"normal\" | \"high\" \
-          } \
-        ] }";
-
-    // Call the AI with tool access (uses the existing chat_with_tools_inner path
-    // with a short working_dir that won't grant file access — we pass a temp dir).
     // We need a valid directory for the tool sandbox but we do not grant any file
     // reads (the AI has no reason to read files for this task).
     let working_dir = if !proj.directory.is_empty() {
@@ -497,31 +475,95 @@ will have the highest impact given the project's evident tech stack and workflow
             .to_string()
     };
 
-    let ai_response = crate::core::ai::chat_with_tools(
+    // ── Phase 1: tool-assisted research ─────────────────────────────────────
+    // Let the model call list_skills, search_mcp_marketplace, etc. to gather
+    // facts.  We capture the full conversation history so we can pass it to
+    // the structured-output call below.
+
+    let research_system = "You are an expert AI-development advisor embedded in Automatic, \
+        a tool that manages skills, MCP servers, and agent configurations. \
+        Your job is to analyse a project's current setup and identify the most \
+        valuable additions from the available catalogue. \
+        \
+        Use the list_skills, list_mcp_servers, search_skills_marketplace, \
+        search_mcp_marketplace, search_collections, and search_templates_marketplace \
+        tools to research what is available. \
+        Only consider things that are genuinely relevant and not already configured. \
+        After you have finished researching, write a brief plain-text summary of \
+        your findings — the structured output will be requested separately.";
+
+    let (_research_text, history) = crate::core::ai::chat_with_tools_returning_history(
         vec![crate::core::ai::AiMessage {
             role: "user".into(),
             content: user_msg,
         }],
         None,
         None,
-        Some(system.to_string()),
+        Some(research_system.to_string()),
         Some(8192),
         working_dir,
     )
     .await?;
 
-    // ── Parse the structured JSON response ───────────────────────────────────
+    // ── Phase 2: structured JSON output ─────────────────────────────────────
+    // Re-use the research conversation as context, then ask for JSON output
+    // using Anthropic's structured-output mode (guarantees valid JSON).
 
-    // Strip markdown fences if the model wrapped the output despite instructions.
-    let clean = ai_response
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "recommendations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "kind":     { "type": "string", "enum": ["skill", "mcp_server", "template", "collection"] },
+                        "title":    { "type": "string" },
+                        "body":     { "type": "string" },
+                        "priority": { "type": "string", "enum": ["low", "normal", "high"] }
+                    },
+                    "required": ["kind", "title", "body", "priority"]
+                }
+            }
+        },
+        "required": ["recommendations"]
+    });
 
-    let parsed: AiRecommendationsOutput = serde_json::from_str(clean)
-        .map_err(|e| format!("Failed to parse AI recommendations JSON: {} — raw: {}", e, clean))?;
+    // Build a message list from the raw history (which holds JSON Values) plus
+    // a final user turn asking for the structured output.
+    let mut structured_messages: Vec<crate::core::ai::AiMessage> = history
+        .iter()
+        .filter_map(|v| {
+            let role = v.get("role")?.as_str()?.to_string();
+            // Only carry simple text turns; skip tool-result turns which the
+            // structured endpoint cannot process.
+            let content = v.get("content")?.as_str()?.to_string();
+            Some(crate::core::ai::AiMessage { role, content })
+        })
+        .collect();
+
+    structured_messages.push(crate::core::ai::AiMessage {
+        role: "user".into(),
+        content: "Based on your research above, produce the structured recommendations JSON.".into(),
+    });
+
+    let structured_system = "You are an expert AI-development advisor. \
+        Based on the research conversation above, output structured recommendations \
+        for the project. Include 3-7 specific, practical items that are not already \
+        installed or configured.";
+
+    let json_text = crate::core::ai::chat_structured(
+        structured_messages,
+        None,
+        None,
+        Some(structured_system.to_string()),
+        Some(4096),
+        schema,
+    )
+    .await?;
+
+    let parsed: AiRecommendationsOutput = serde_json::from_str(&json_text)
+        .map_err(|e| format!("Failed to parse AI recommendations JSON: {} — raw: {}", e, json_text))?;
 
     // ── Persist the AI recommendations ──────────────────────────────────────
     // Clear previous AI-generated pending recommendations before inserting fresh ones

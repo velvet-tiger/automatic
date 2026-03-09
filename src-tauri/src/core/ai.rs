@@ -949,6 +949,21 @@ pub async fn chat_with_tools(
     max_tokens: Option<u32>,
     working_dir: String,
 ) -> Result<String, String> {
+    let (text, _) = chat_with_tools_inner(messages, api_key, model, system, max_tokens, working_dir, None).await?;
+    Ok(text)
+}
+
+/// Like `chat_with_tools` but also returns the full accumulated message history
+/// (as `AiMessage` pairs suitable for passing to `chat_structured` as a second
+/// phase).  The final assistant text is included as the last message.
+pub async fn chat_with_tools_returning_history(
+    messages: Vec<AiMessage>,
+    api_key: Option<String>,
+    model: Option<String>,
+    system: Option<String>,
+    max_tokens: Option<u32>,
+    working_dir: String,
+) -> Result<(String, Vec<Value>), String> {
     chat_with_tools_inner(messages, api_key, model, system, max_tokens, working_dir, None).await
 }
 
@@ -961,7 +976,7 @@ async fn chat_with_tools_inner(
     max_tokens: Option<u32>,
     working_dir: String,
     max_turns_override: Option<usize>,
-) -> Result<String, String> {
+) -> Result<(String, Vec<Value>), String> {
     let work_path = validate_working_dir(&working_dir)?;
 
     let key = resolve_api_key(api_key.as_deref())?;
@@ -1045,14 +1060,15 @@ async fn chat_with_tools_inner(
         msg_array.push(json!({ "role": "assistant", "content": content_blocks.clone() }));
 
         if stop_reason != "tool_use" {
-            // Extract the final text response.
-            return content_blocks
+            // Extract the final text response and return it alongside the full history.
+            let text = content_blocks
                 .iter()
                 .find(|b| b.get("type").and_then(|t| t.as_str()) == Some("text"))
                 .and_then(|b| b.get("text"))
                 .and_then(|t| t.as_str())
                 .map(|s| s.to_string())
-                .ok_or_else(|| "Anthropic returned no text content".to_string());
+                .ok_or_else(|| "Anthropic returned no text content".to_string())?;
+            return Ok((text, msg_array));
         }
 
         // Process all tool_use blocks and build a tool_result user message.
