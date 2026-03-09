@@ -70,6 +70,7 @@ const STATES = [
   { id: "in_progress", label: "In Progress" },
   { id: "review", label: "Review" },
   { id: "complete", label: "Complete" },
+  { id: "cancelled", label: "Cancelled" },
 ] as const;
 
 const PRIORITIES = ["low", "medium", "high"] as const;
@@ -81,6 +82,7 @@ const STATE_STYLES: Record<string, string> = {
   in_progress: "bg-amber-500/20 text-amber-400",
   review: "bg-blue-500/20 text-blue-400",
   complete: "bg-green-500/20 text-success",
+  cancelled: "bg-text-muted/10 text-text-muted line-through",
 };
 
 const PRIORITY_DOT: Record<string, string> = {
@@ -895,26 +897,29 @@ function ListView({
 interface KanbanCardProps {
   feature: Feature;
   isSelected: boolean;
+  isDragging: boolean;
   onSelect: (id: string) => void;
-  onDragStart: (e: React.DragEvent, feature: Feature) => void;
+  onGripDown: (feature: Feature, e: React.PointerEvent) => void;
 }
 
-function KanbanCard({ feature, isSelected, onSelect, onDragStart }: KanbanCardProps) {
+function KanbanCard({ feature, isSelected, isDragging, onSelect, onGripDown }: KanbanCardProps) {
   return (
     <div
-      draggable
-      onDragStart={(e) => onDragStart(e, feature)}
-      onClick={() => onSelect(feature.id)}
+      onClick={() => { if (!isDragging) onSelect(feature.id); }}
       className={`group bg-bg-base border rounded-lg p-2.5 cursor-pointer transition-colors select-none ${
-        isSelected
+        isDragging
+          ? "opacity-40"
+          : isSelected
           ? "border-brand/60 bg-bg-sidebar"
           : "border-border-strong/40 hover:border-border-strong/60"
       }`}
     >
       <div className="flex items-start gap-1.5 mb-1.5">
+        {/* Grip handle — pointer-down here initiates drag */}
         <GripVertical
           size={12}
-          className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity mt-0.5 shrink-0"
+          className="text-text-muted opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity mt-0.5 shrink-0 cursor-grab active:cursor-grabbing touch-none"
+          onPointerDown={(e) => onGripDown(feature, e)}
         />
         <span className="text-[13px] font-medium text-text-base leading-snug flex-1">
           {feature.title}
@@ -946,6 +951,8 @@ function KanbanCard({ feature, isSelected, onSelect, onDragStart }: KanbanCardPr
 }
 
 // ── Kanban View ───────────────────────────────────────────────────────────────
+// Uses pointer events instead of HTML5 DnD — WKWebView (Tauri) does not fire
+// dragstart reliably, but pointer events work fine (same approach as Projects.tsx).
 
 interface KanbanViewProps {
   features: Feature[];
@@ -970,8 +977,14 @@ function KanbanView({
   onCreated,
   onCancelCreate,
 }: KanbanViewProps) {
+  // id of the card currently being dragged
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  // stateId of the column the pointer is currently hovering over
   const [dragOverState, setDragOverState] = useState<string | null>(null);
+  // ghost label that follows the cursor
+  const [ghost, setGhost] = useState<{ title: string; x: number; y: number } | null>(null);
+  // refs to each column element, keyed by stateId
+  const colRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const grouped = STATES.reduce(
     (acc, s) => {
@@ -981,109 +994,130 @@ function KanbanView({
     {} as Record<string, Feature[]>
   );
 
-  const handleDragStart = (e: React.DragEvent, feature: Feature) => {
+  /** Walk point (x, y) through colRefs to find which state column it's over. */
+  const resolveColumn = (x: number, y: number): string | null => {
+    for (const stateId of Object.keys(colRefs.current)) {
+      const el = colRefs.current[stateId];
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        return stateId;
+      }
+    }
+    return null;
+  };
+
+  const handleGripDown = (feature: Feature, e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
     setDraggingId(feature.id);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("feature_id", feature.id);
-  };
+    setGhost({ title: feature.title, x: e.clientX, y: e.clientY });
 
-  const handleDragOver = (e: React.DragEvent, stateId: string) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDragOverState(stateId);
-  };
+    const onPointerMove = (ev: PointerEvent) => {
+      setGhost({ title: feature.title, x: ev.clientX, y: ev.clientY });
+      setDragOverState(resolveColumn(ev.clientX, ev.clientY));
+    };
 
-  const handleDrop = (e: React.DragEvent, stateId: string) => {
-    e.preventDefault();
-    const featureId = e.dataTransfer.getData("feature_id");
-    if (!featureId) return;
-    const colFeatures = grouped[stateId] ?? [];
-    const newPosition = colFeatures.length; // append to end
-    onMove(featureId, stateId, newPosition);
-    setDraggingId(null);
-    setDragOverState(null);
-  };
+    const onPointerUp = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
 
-  const handleDragEnd = () => {
-    setDraggingId(null);
-    setDragOverState(null);
+      const targetState = resolveColumn(ev.clientX, ev.clientY);
+
+      setDraggingId(null);
+      setDragOverState(null);
+      setGhost(null);
+
+      if (!targetState) return;
+      const colFeatures = grouped[targetState] ?? [];
+      const newPosition = colFeatures.length;
+      onMove(feature.id, targetState, newPosition);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
   };
 
   return (
-    <div className="flex h-full overflow-x-auto gap-3 p-3 custom-scrollbar">
-      {STATES.map((s) => {
-        const col = grouped[s.id] ?? [];
-        const isOver = dragOverState === s.id;
-        return (
-          <div
-            key={s.id}
-            className="flex flex-col shrink-0 w-[220px]"
-            onDragOver={(e) => handleDragOver(e, s.id)}
-            onDrop={(e) => handleDrop(e, s.id)}
-            onDragLeave={() => setDragOverState(null)}
-          >
-            {/* Column header */}
+    <>
+      <div className="flex h-full overflow-x-auto gap-3 p-3 custom-scrollbar">
+        {STATES.map((s) => {
+          const col = grouped[s.id] ?? [];
+          const isOver = dragOverState === s.id;
+          return (
             <div
-              className={`flex items-center justify-between px-2 py-1.5 rounded-t border border-border-strong/40 ${
-                STATE_STYLES[s.id] ?? "bg-bg-sidebar text-text-muted"
-              }`}
+              key={s.id}
+              ref={(el: HTMLDivElement | null) => { colRefs.current[s.id] = el; }}
+              className="flex flex-col shrink-0 w-[220px]"
             >
-              <span className="text-[11px] font-semibold">{s.label}</span>
-              <span className="text-[10px] opacity-70">{col.length}</span>
-            </div>
+              {/* Column header */}
+              <div
+                className={`flex items-center justify-between px-2 py-1.5 rounded-t border border-border-strong/40 ${
+                  STATE_STYLES[s.id] ?? "bg-bg-sidebar text-text-muted"
+                }`}
+              >
+                <span className="text-[11px] font-semibold">{s.label}</span>
+                <span className="text-[10px] opacity-70">{col.length}</span>
+              </div>
 
-            {/* Cards */}
-            <div
-              className={`flex-1 overflow-y-auto custom-scrollbar border-x border-b border-border-strong/40 rounded-b p-1.5 space-y-1.5 min-h-[120px] transition-colors ${
-                isOver ? "bg-bg-sidebar/60" : "bg-bg-input"
-              }`}
-            >
-              {/* New feature form only appears in backlog column */}
-              {isCreating && s.id === "backlog" && (
-                <NewFeatureForm
-                  projectName={projectName}
-                  onCreated={onCreated}
-                  onCancel={onCancelCreate}
-                />
-              )}
+              {/* Cards */}
+              <div
+                className={`flex-1 overflow-y-auto custom-scrollbar border-x border-b border-border-strong/40 rounded-b p-1.5 space-y-1.5 min-h-[120px] transition-colors ${
+                  isOver ? "bg-bg-sidebar/60 ring-1 ring-brand/30" : "bg-bg-input"
+                }`}
+              >
+                {isCreating && s.id === "backlog" && (
+                  <NewFeatureForm
+                    projectName={projectName}
+                    onCreated={onCreated}
+                    onCancel={onCancelCreate}
+                  />
+                )}
 
-              {col.map((f) => (
-                <div
-                  key={f.id}
-                  className={`transition-opacity ${
-                    draggingId === f.id ? "opacity-40" : ""
-                  }`}
-                  onDragEnd={handleDragEnd}
-                >
+                {col.map((f) => (
                   <KanbanCard
+                    key={f.id}
                     feature={f}
                     isSelected={selectedId === f.id}
+                    isDragging={draggingId === f.id}
                     onSelect={onSelect}
-                    onDragStart={handleDragStart}
+                    onGripDown={handleGripDown}
                   />
-                </div>
-              ))}
+                ))}
 
-              {col.length === 0 && !isCreating && (
-                <div className="flex items-center justify-center h-16 text-[11px] text-text-muted opacity-50">
-                  Drop here
-                </div>
-              )}
+                {col.length === 0 && !isCreating && (
+                  <div className="flex items-center justify-center h-16 text-[11px] text-text-muted opacity-50">
+                    Drop here
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
 
-      {/* Add button column */}
-      <div className="shrink-0 flex items-start pt-1">
-        <button
-          onClick={onAddNew}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-brand hover:bg-brand-hover text-white text-[11px] font-medium transition-colors whitespace-nowrap"
-        >
-          <Plus size={11} /> New feature
-        </button>
+        {/* Add button column */}
+        <div className="shrink-0 flex items-start pt-1">
+          <button
+            onClick={onAddNew}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-brand hover:bg-brand-hover text-white text-[11px] font-medium transition-colors whitespace-nowrap"
+          >
+            <Plus size={11} /> New feature
+          </button>
+        </div>
       </div>
-    </div>
+
+      {/* Drag ghost — follows cursor while dragging */}
+      {ghost && (
+        <div
+          className="fixed pointer-events-none z-50 px-2.5 py-1.5 bg-bg-base border border-brand/60 rounded-lg shadow-xl text-[12px] font-medium text-text-base max-w-[200px] truncate"
+          style={{ left: ghost.x + 12, top: ghost.y - 16 }}
+        >
+          {ghost.title}
+        </div>
+      )}
+    </>
   );
 }
 

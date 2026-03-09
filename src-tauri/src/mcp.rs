@@ -112,7 +112,7 @@ pub struct GetProjectContextParams {
 pub struct ListFeaturesParams {
     /// The project name as registered in Automatic
     pub project: String,
-    /// Optional state filter: backlog, todo, in_progress, review, or complete
+    /// Optional state filter: backlog, todo, in_progress, review, complete, or cancelled
     pub state: Option<String>,
 }
 
@@ -174,7 +174,7 @@ pub struct SetFeatureStateParams {
     pub project: String,
     /// The feature UUID
     pub feature_id: String,
-    /// New state: backlog, todo, in_progress, review, or complete
+    /// New state: backlog, todo, in_progress, review, complete, or cancelled
     pub state: String,
 }
 
@@ -720,7 +720,7 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_list_features",
-        description = "List all features for a project. Optionally filter by state: backlog, todo, in_progress, review, or complete. Returns features grouped by state with id, title, priority, effort, and assignee."
+        description = "List all features for a project. Optionally filter by state: backlog, todo, in_progress, review, complete, or cancelled. Returns features grouped by state with id, title, priority, effort, and assignee."
     )]
     async fn list_features(
         &self,
@@ -842,7 +842,7 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_set_feature_state",
-        description = "Change a feature's lifecycle state. Valid states: backlog, todo, in_progress, review, complete. The feature is placed at the end of the target state column."
+        description = "Change a feature's lifecycle state. Valid states: backlog, todo, in_progress, review, complete, cancelled. The feature is placed at the end of the target state column."
     )]
     async fn set_feature_state(
         &self,

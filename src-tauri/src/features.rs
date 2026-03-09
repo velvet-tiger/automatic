@@ -1,4 +1,4 @@
-//! Feature tracking: per-project work items with a five-stage lifecycle.
+//! Feature tracking: per-project work items with a six-stage lifecycle.
 //!
 //! Schema (features.db):
 //!
@@ -37,7 +37,7 @@ use std::path::PathBuf;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-/// The five lifecycle states a feature can occupy.
+/// The lifecycle states a feature can occupy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FeatureState {
@@ -46,6 +46,7 @@ pub enum FeatureState {
     InProgress,
     Review,
     Complete,
+    Cancelled,
 }
 
 impl FeatureState {
@@ -56,6 +57,7 @@ impl FeatureState {
             Self::InProgress => "in_progress",
             Self::Review => "review",
             Self::Complete => "complete",
+            Self::Cancelled => "cancelled",
         }
     }
 
@@ -66,8 +68,9 @@ impl FeatureState {
             "in_progress" => Ok(Self::InProgress),
             "review" => Ok(Self::Review),
             "complete" => Ok(Self::Complete),
+            "cancelled" => Ok(Self::Cancelled),
             other => Err(format!(
-                "Invalid feature state '{}'. Valid states: backlog, todo, in_progress, review, complete",
+                "Invalid feature state '{}'. Valid states: backlog, todo, in_progress, review, complete, cancelled",
                 other
             )),
         }
@@ -748,8 +751,22 @@ pub fn format_features_markdown(features: &[Feature], project: &str) -> String {
     let mut out = format!("# Features for '{}'\n\n", project);
     out.push_str(&format!("{} feature(s) total\n\n", features.len()));
 
-    let states = ["backlog", "todo", "in_progress", "review", "complete"];
-    let state_labels = ["Backlog", "To Do", "In Progress", "Review", "Complete"];
+    let states = [
+        "backlog",
+        "todo",
+        "in_progress",
+        "review",
+        "complete",
+        "cancelled",
+    ];
+    let state_labels = [
+        "Backlog",
+        "To Do",
+        "In Progress",
+        "Review",
+        "Complete",
+        "Cancelled",
+    ];
 
     for (state, label) in states.iter().zip(state_labels.iter()) {
         let group: Vec<&Feature> = features.iter().filter(|f| f.state == *state).collect();
