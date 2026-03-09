@@ -272,11 +272,13 @@ fn collect_instruction_file_conflicts(
             })
             .collect();
 
-        // The "Automatic content" is what Automatic would generate for this
-        // file: empty user content (since any real content was set by the user
-        // externally) plus whatever rules are configured.  We return empty
-        // here so the UI correctly shows that Automatic has no stored content.
-        let automatic_content = String::new();
+        // The "Automatic content" is what Automatic last wrote to this file
+        // (user-content portion only), read from the snapshot it saves on
+        // every write.  If no snapshot exists Automatic has never written the
+        // file, so we leave it empty — the UI will show a plain preview.
+        let automatic_content =
+            crate::core::read_instruction_snapshot(project.directory.as_str(), filename)
+                .unwrap_or_default();
 
         conflicts.push(InstructionFileConflict {
             filename: filename.clone(),

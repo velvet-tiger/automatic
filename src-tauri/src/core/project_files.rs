@@ -95,9 +95,46 @@ pub fn save_project_file_for_project(
         } else {
             save_project_file_with_rules(&project.directory, f, user_content, &rules)?;
         }
+
+        // Persist a snapshot of the user content so drift detection can diff
+        // against what Automatic last wrote, not just detect that a change occurred.
+        let _ = save_instruction_snapshot(&project.directory, f, user_content);
     }
 
     Ok(())
+}
+
+// ── Instruction file snapshots ───────────────────────────────────────────────
+
+/// Directory (relative to project root) where Automatic stores its snapshots.
+const SNAPSHOT_DIR: &str = ".automatic/snapshots";
+
+/// Persist `user_content` for `filename` into `<project>/.automatic/snapshots/<filename>`.
+///
+/// This is called every time Automatic writes an instruction file so that
+/// drift detection can diff the on-disk content against what Automatic last wrote.
+pub fn save_instruction_snapshot(
+    directory: &str,
+    filename: &str,
+    user_content: &str,
+) -> Result<(), String> {
+    if directory.is_empty() {
+        return Ok(());
+    }
+    let snap_dir = PathBuf::from(directory).join(SNAPSHOT_DIR);
+    fs::create_dir_all(&snap_dir).map_err(|e| e.to_string())?;
+    let path = snap_dir.join(filename);
+    fs::write(&path, user_content).map_err(|e| e.to_string())
+}
+
+/// Read the snapshot for `filename` from `<project>/.automatic/snapshots/<filename>`.
+/// Returns `None` if no snapshot exists (Automatic has never written this file).
+pub fn read_instruction_snapshot(directory: &str, filename: &str) -> Option<String> {
+    if directory.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(directory).join(SNAPSHOT_DIR).join(filename);
+    fs::read_to_string(&path).ok()
 }
 
 /// Returns `true` if rules for the given project file should be written to

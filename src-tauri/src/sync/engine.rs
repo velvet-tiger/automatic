@@ -376,12 +376,40 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         }
     }
 
-    // ── Step 4: Record instruction file hashes ───────────────────────────
+    // ── Step 4: Record instruction file hashes and snapshots ────────────
     //
     // After all writes are complete, snapshot the current on-disk content of
     // every instruction file so drift detection can compare against it later.
     let project_name = project.name.clone();
     crate::core::record_instruction_hashes(&project_name, project);
+
+    // Save a user-content snapshot for every instruction file that was
+    // touched during this sync so the conflict diff has something to compare
+    // against.  We read from disk (user section only) at this point because
+    // the individual write paths (rules injection, unified replication) don't
+    // all go through save_project_file_for_project.
+    let mut snap_seen: HashSet<String> = HashSet::new();
+    for agent_id in &project.agents {
+        if let Some(a) = agent::from_id(agent_id) {
+            if !a.capabilities().instructions {
+                continue;
+            }
+            let filename = a.project_file_name().to_string();
+            if snap_seen.contains(&filename) {
+                continue;
+            }
+            snap_seen.insert(filename.clone());
+
+            if let Ok(user_content) = crate::core::read_project_file(&project.directory, &filename)
+            {
+                let _ = crate::core::save_instruction_snapshot(
+                    &project.directory,
+                    &filename,
+                    &user_content,
+                );
+            }
+        }
+    }
 
     Ok(written_files)
 }

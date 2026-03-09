@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import mcpServersData from "./featured-mcp-servers.json";
 import { SkillSelector } from "./SkillSelector";
 import { AgentSelector } from "./AgentSelector";
@@ -919,10 +919,44 @@ function InstructionConflictModal({
   }, [onClose]);
 
   const hasAutomaticContent = conflict.automatic_content.trim().length > 0;
-  const diskLines = conflict.disk_content.split("\n");
-  const diskLineCount = diskLines.length;
-  const previewLines = diskLines.slice(0, 10);
-  const hasMore = diskLineCount > 10;
+
+  // Compute a simple line-level diff (LCS-based)
+  type DiffLine = { type: "same" | "added" | "removed"; text: string };
+  const diffLines = useMemo((): DiffLine[] => {
+    const aLines = (hasAutomaticContent ? conflict.automatic_content : "").split("\n");
+    const bLines = conflict.disk_content.split("\n");
+    // LCS table
+    const m = aLines.length, n = bLines.length;
+    const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = m - 1; i >= 0; i--) {
+      for (let j = n - 1; j >= 0; j--) {
+        dp[i]![j] = aLines[i] === bLines[j]
+          ? 1 + (dp[i + 1]?.[j + 1] ?? 0)
+          : Math.max(dp[i + 1]?.[j] ?? 0, dp[i]?.[j + 1] ?? 0);
+      }
+    }
+    // Traceback
+    const result: DiffLine[] = [];
+    let i = 0, j = 0;
+    while (i < m || j < n) {
+      if (i < m && j < n && aLines[i] === bLines[j]) {
+        result.push({ type: "same", text: aLines[i]! });
+        i++; j++;
+      } else if (j < n && (i >= m || (dp[i + 1]?.[j] ?? 0) <= (dp[i]?.[j + 1] ?? 0))) {
+        result.push({ type: "added", text: bLines[j]! });
+        j++;
+      } else {
+        result.push({ type: "removed", text: aLines[i]! });
+        i++;
+      }
+    }
+    return result;
+  }, [conflict.automatic_content, conflict.disk_content, hasAutomaticContent]);
+
+  const addedCount = diffLines.filter((l: DiffLine) => l.type === "added").length;
+  const removedCount = diffLines.filter((l: DiffLine) => l.type === "removed").length;
+  const diskLineCount = conflict.disk_content.split("\n").length;
+  const noDiff = addedCount === 0 && removedCount === 0;
 
   return (
     <div
@@ -932,7 +966,7 @@ function InstructionConflictModal({
     >
       <div
         className="flex flex-col bg-bg-sidebar border border-border-strong/40 rounded-xl shadow-2xl overflow-hidden"
-        style={{ width: "min(560px, 90vw)" }}
+        style={{ width: "min(640px, 90vw)", maxHeight: "85vh" }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border-strong flex-shrink-0">
@@ -952,22 +986,52 @@ function InstructionConflictModal({
         </div>
 
         {/* Body */}
-        <div className="px-5 py-4 space-y-4">
+        <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
           <p className="text-[13px] text-text-base">
             <span className="font-mono text-warning">{conflict.filename}</span>
             {" "}has been modified outside Automatic.
           </p>
 
-          {/* Summary: line count + first 10 lines preview */}
+          {/* Diff view */}
           <div className="rounded-lg border border-border-strong/40 overflow-hidden">
             <div className="bg-bg-input px-3 py-2 flex items-center justify-between border-b border-border-strong/30">
-              <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">On disk</span>
-              <span className="text-[11px] text-text-muted">{diskLineCount} line{diskLineCount !== 1 ? "s" : ""}</span>
+              <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
+                {hasAutomaticContent ? "Changes vs Automatic" : "On disk"}
+              </span>
+              <span className="text-[11px] text-text-muted flex items-center gap-2">
+                {hasAutomaticContent && !noDiff && (
+                  <>
+                    {addedCount > 0 && <span className="text-success">+{addedCount}</span>}
+                    {removedCount > 0 && <span className="text-danger">−{removedCount}</span>}
+                    <span className="text-border-strong/60">·</span>
+                  </>
+                )}
+                <span>{diskLineCount} line{diskLineCount !== 1 ? "s" : ""}</span>
+              </span>
             </div>
-            <pre className="text-[12px] font-mono text-text-muted p-3 whitespace-pre-wrap leading-relaxed">
-              {previewLines.join("\n").trim() || <em className="not-italic text-text-subtle">empty</em>}
-              {hasMore && (
-                <span className="text-text-subtle italic">{"\n"}... {diskLineCount - 10} more line{diskLineCount - 10 !== 1 ? "s" : ""}</span>
+            <pre className="text-[12px] font-mono p-0 whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+              {noDiff || !hasAutomaticContent ? (
+                <span className="block p-3 text-text-muted">
+                  {conflict.disk_content.trim() || <em className="not-italic text-text-subtle">empty</em>}
+                </span>
+              ) : (
+                diffLines.map((line: DiffLine, idx: number) => (
+                  <span
+                    key={idx}
+                    className={
+                      line.type === "added"
+                        ? "block px-3 py-px bg-success/10 text-success"
+                        : line.type === "removed"
+                        ? "block px-3 py-px bg-danger/10 text-danger line-through decoration-danger/40"
+                        : "block px-3 py-px text-text-muted"
+                    }
+                  >
+                    <span className="select-none mr-2 opacity-50 w-4 inline-block text-right">
+                      {line.type === "added" ? "+" : line.type === "removed" ? "−" : " "}
+                    </span>
+                    {line.text || " "}
+                  </span>
+                ))
               )}
             </pre>
           </div>
