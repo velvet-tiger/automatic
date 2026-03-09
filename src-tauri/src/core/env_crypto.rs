@@ -149,3 +149,164 @@ pub fn decrypt_env_values(env: &mut Value) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── is_encrypted ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn is_encrypted_recognises_sentinel_prefix() {
+        assert!(is_encrypted("enc:v1:somepayload"));
+    }
+
+    #[test]
+    fn is_encrypted_returns_false_for_plaintext() {
+        assert!(!is_encrypted("my-api-key"));
+        assert!(!is_encrypted(""));
+        assert!(!is_encrypted("enc:v2:something")); // wrong version
+    }
+
+    // ── encrypt_value / decrypt_value roundtrip ───────────────────────────────
+
+    #[test]
+    fn encrypt_produces_sentinel_prefixed_string() {
+        let encrypted = encrypt_value("secret").expect("encrypt");
+        assert!(encrypted.starts_with("enc:v1:"));
+    }
+
+    #[test]
+    fn encrypt_decrypt_roundtrip() {
+        let plaintext = "my-secret-api-key-12345";
+        let encrypted = encrypt_value(plaintext).expect("encrypt");
+        let decrypted = decrypt_value(&encrypted).expect("decrypt");
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn encrypt_decrypt_empty_string() {
+        let encrypted = encrypt_value("").expect("encrypt empty");
+        let decrypted = decrypt_value(&encrypted).expect("decrypt empty");
+        assert_eq!(decrypted, "");
+    }
+
+    #[test]
+    fn encrypt_decrypt_unicode_string() {
+        let plaintext = "日本語テスト 🔑 secret";
+        let encrypted = encrypt_value(plaintext).expect("encrypt unicode");
+        let decrypted = decrypt_value(&encrypted).expect("decrypt unicode");
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn two_encryptions_of_same_plaintext_produce_different_ciphertexts() {
+        // Nonces are random — ciphertexts must differ even for the same input.
+        let a = encrypt_value("same").expect("encrypt a");
+        let b = encrypt_value("same").expect("encrypt b");
+        assert_ne!(a, b, "identical nonces would be a security flaw");
+    }
+
+    #[test]
+    fn decrypt_rejects_non_sentinel_string() {
+        let result = decrypt_value("plaintext");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decrypt_rejects_truncated_payload() {
+        // "enc:v1:" followed by base64 of fewer than 12 bytes (the nonce minimum).
+        let short = format!(
+            "enc:v1:{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"short")
+        );
+        let result = decrypt_value(&short);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decrypt_rejects_corrupted_ciphertext() {
+        let encrypted = encrypt_value("original").expect("encrypt");
+        // Flip the last character to corrupt the GCM tag.
+        let mut corrupted = encrypted.clone();
+        let last = corrupted.pop().unwrap();
+        corrupted.push(if last == 'A' { 'B' } else { 'A' });
+        let result = decrypt_value(&corrupted);
+        assert!(result.is_err());
+    }
+
+    // ── encrypt_env_values / decrypt_env_values (JSON object helpers) ─────────
+
+    #[test]
+    fn encrypt_env_values_encrypts_all_strings() {
+        let mut env = json!({ "KEY_ONE": "secret1", "KEY_TWO": "secret2" });
+        encrypt_env_values(&mut env).expect("encrypt env");
+
+        let obj = env.as_object().unwrap();
+        assert!(obj["KEY_ONE"].as_str().unwrap().starts_with("enc:v1:"));
+        assert!(obj["KEY_TWO"].as_str().unwrap().starts_with("enc:v1:"));
+    }
+
+    #[test]
+    fn encrypt_env_values_is_idempotent() {
+        let mut env = json!({ "KEY": "value" });
+        encrypt_env_values(&mut env).expect("first encrypt");
+        let after_first = env["KEY"].as_str().unwrap().to_string();
+
+        encrypt_env_values(&mut env).expect("second encrypt");
+        let after_second = env["KEY"].as_str().unwrap().to_string();
+
+        // Already-encrypted values must not be double-encrypted.
+        assert_eq!(after_first, after_second);
+    }
+
+    #[test]
+    fn decrypt_env_values_restores_plaintext() {
+        let mut env = json!({ "KEY": "my-api-key" });
+        encrypt_env_values(&mut env).expect("encrypt");
+        decrypt_env_values(&mut env).expect("decrypt");
+        assert_eq!(env["KEY"].as_str().unwrap(), "my-api-key");
+    }
+
+    #[test]
+    fn decrypt_env_values_leaves_plaintext_values_untouched() {
+        // Backward-compat: values without the sentinel are left as-is.
+        let mut env = json!({ "KEY": "already-plaintext" });
+        decrypt_env_values(&mut env).expect("decrypt");
+        assert_eq!(env["KEY"].as_str().unwrap(), "already-plaintext");
+    }
+
+    #[test]
+    fn encrypt_env_values_ignores_non_string_values() {
+        let mut env = json!({ "NUM": 42, "FLAG": true, "NULL": null });
+        encrypt_env_values(&mut env).expect("encrypt non-strings");
+        // Values should be unchanged.
+        assert_eq!(env["NUM"], json!(42));
+        assert_eq!(env["FLAG"], json!(true));
+        assert_eq!(env["NULL"], json!(null));
+    }
+
+    #[test]
+    fn encrypt_env_values_on_non_object_is_noop() {
+        let mut env = json!("not an object");
+        encrypt_env_values(&mut env).expect("no error");
+        assert_eq!(env, json!("not an object"));
+    }
+
+    #[test]
+    fn full_roundtrip_via_env_helpers() {
+        let mut env = json!({
+            "ANTHROPIC_API_KEY": "sk-ant-test-1234",
+            "OPENAI_KEY": "sk-openai-5678"
+        });
+        encrypt_env_values(&mut env).expect("encrypt");
+        decrypt_env_values(&mut env).expect("decrypt");
+
+        assert_eq!(
+            env["ANTHROPIC_API_KEY"].as_str().unwrap(),
+            "sk-ant-test-1234"
+        );
+        assert_eq!(env["OPENAI_KEY"].as_str().unwrap(), "sk-openai-5678");
+    }
+}

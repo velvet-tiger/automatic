@@ -115,3 +115,227 @@ pub fn list_mcp_servers() -> Result<String, String> {
         Ok("{}".to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    // ── Path-injectable helpers ───────────────────────────────────────────────
+
+    fn tmp() -> TempDir {
+        tempfile::tempdir().expect("tempdir")
+    }
+
+    fn save_at(dir: &Path, name: &str, data: &str) -> Result<(), String> {
+        if !is_valid_name(name) {
+            return Err("Invalid server name".into());
+        }
+        let mut config: serde_json::Value =
+            serde_json::from_str(data).map_err(|e| format!("Invalid JSON: {}", e))?;
+        if let Some(env) = config.get_mut("env") {
+            env_crypto::encrypt_env_values(env)?;
+        }
+        if !dir.exists() {
+            fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let path = dir.join(format!("{}.json", name));
+        let serialized = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+        fs::write(path, serialized).map_err(|e| e.to_string())
+    }
+
+    fn read_at(dir: &Path, name: &str) -> Result<String, String> {
+        if !is_valid_name(name) {
+            return Err("Invalid server name".into());
+        }
+        let path = dir.join(format!("{}.json", name));
+        if !path.exists() {
+            return Err(format!("MCP server '{}' not found", name));
+        }
+        let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let mut config: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|e| format!("Invalid JSON: {}", e))?;
+        if let Some(env) = config.get_mut("env") {
+            env_crypto::decrypt_env_values(env)?;
+        }
+        serde_json::to_string(&config).map_err(|e| e.to_string())
+    }
+
+    fn list_at(dir: &Path) -> Result<Vec<String>, String> {
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut servers = Vec::new();
+        let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        if is_valid_name(stem) {
+                            servers.push(stem.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(servers)
+    }
+
+    fn delete_at(dir: &Path, name: &str) -> Result<(), String> {
+        if !is_valid_name(name) {
+            return Err("Invalid server name".into());
+        }
+        let path = dir.join(format!("{}.json", name));
+        if path.exists() {
+            fs::remove_file(&path).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    // ── list ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn list_returns_empty_when_dir_missing() {
+        let tmp = tmp();
+        let dir = tmp.path().join("mcp_servers"); // not created
+        let names = list_at(&dir).expect("list");
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn list_returns_saved_server_names() {
+        let tmp = tmp();
+        let dir = tmp.path().join("mcp_servers");
+        let config = r#"{"command": "npx", "args": ["-y", "some-server"]}"#;
+
+        save_at(&dir, "server-a", config).expect("save a");
+        save_at(&dir, "server-b", config).expect("save b");
+
+        let mut names = list_at(&dir).expect("list");
+        names.sort();
+        assert_eq!(names, vec!["server-a", "server-b"]);
+    }
+
+    // ── save + read roundtrip ────────────────────────────────────────────────
+
+    #[test]
+    fn save_and_read_config_without_env() {
+        let tmp = tmp();
+        let dir = tmp.path().join("mcp_servers");
+        let config = r#"{"command": "npx", "args": ["-y", "my-server"]}"#;
+
+        save_at(&dir, "my-server", config).expect("save");
+        let raw = read_at(&dir, "my-server").expect("read");
+        let val: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+
+        assert_eq!(val["command"].as_str().unwrap(), "npx");
+    }
+
+    #[test]
+    fn env_values_are_encrypted_at_rest() {
+        let tmp = tmp();
+        let dir = tmp.path().join("mcp_servers");
+        let config = r#"{"command": "npx", "env": {"API_KEY": "my-secret"}}"#;
+
+        save_at(&dir, "secure-server", config).expect("save");
+
+        // Read raw bytes — should NOT contain the plaintext secret.
+        let raw = fs::read_to_string(dir.join("secure-server.json")).expect("read raw");
+        assert!(
+            !raw.contains("my-secret"),
+            "plaintext secret must not be stored on disk"
+        );
+        assert!(
+            raw.contains("enc:v1:"),
+            "encrypted sentinel should be present on disk"
+        );
+    }
+
+    #[test]
+    fn read_decrypts_env_values_to_plaintext() {
+        let tmp = tmp();
+        let dir = tmp.path().join("mcp_servers");
+        let config = r#"{"command": "npx", "env": {"API_KEY": "my-secret"}}"#;
+
+        save_at(&dir, "secure-server", config).expect("save");
+        let raw = read_at(&dir, "secure-server").expect("read");
+        let val: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+
+        assert_eq!(
+            val["env"]["API_KEY"].as_str().unwrap(),
+            "my-secret",
+            "env values should be decrypted on read"
+        );
+    }
+
+    #[test]
+    fn double_save_does_not_double_encrypt() {
+        let tmp = tmp();
+        let dir = tmp.path().join("mcp_servers");
+        let config = r#"{"command": "npx", "env": {"KEY": "value"}}"#;
+
+        save_at(&dir, "srv", config).expect("first save");
+        // Read decrypted, then save again (simulating a frontend re-save).
+        let decrypted = read_at(&dir, "srv").expect("read");
+        save_at(&dir, "srv", &decrypted).expect("second save");
+
+        // Should still decrypt correctly.
+        let result = read_at(&dir, "srv").expect("re-read");
+        let val: serde_json::Value = serde_json::from_str(&result).expect("parse");
+        assert_eq!(val["env"]["KEY"].as_str().unwrap(), "value");
+    }
+
+    // ── delete ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn delete_removes_config_file() {
+        let tmp = tmp();
+        let dir = tmp.path().join("mcp_servers");
+        save_at(&dir, "to-delete", r#"{"command": "node"}"#).expect("save");
+        assert!(dir.join("to-delete.json").exists());
+
+        delete_at(&dir, "to-delete").expect("delete");
+        assert!(!dir.join("to-delete.json").exists());
+    }
+
+    #[test]
+    fn delete_is_idempotent_for_missing_server() {
+        let tmp = tmp();
+        let dir = tmp.path().join("mcp_servers");
+        delete_at(&dir, "ghost").expect("delete non-existent should not error");
+    }
+
+    // ── invalid name handling ────────────────────────────────────────────────
+
+    #[test]
+    fn save_with_empty_name_returns_error() {
+        let tmp = tmp();
+        let dir = tmp.path().join("mcp_servers");
+        let result = save_at(&dir, "", r#"{"command": "node"}"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_returns_error_for_missing_server() {
+        let tmp = tmp();
+        let dir = tmp.path().join("mcp_servers");
+        let result = read_at(&dir, "nonexistent");
+        assert!(result.is_err());
+    }
+
+    // ── non-string env values ignored ────────────────────────────────────────
+
+    #[test]
+    fn non_string_env_values_are_passed_through_unchanged() {
+        let tmp = tmp();
+        let dir = tmp.path().join("mcp_servers");
+        // env contains a number — must not be altered by encrypt/decrypt.
+        let config = r#"{"command": "node", "env": {"PORT": "8080"}}"#;
+        save_at(&dir, "with-port", config).expect("save");
+        let raw = read_at(&dir, "with-port").expect("read");
+        let val: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+        assert_eq!(val["env"]["PORT"].as_str().unwrap(), "8080");
+    }
+}

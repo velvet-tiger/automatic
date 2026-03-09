@@ -324,3 +324,329 @@ pub fn inject_rules_into_project_file_with_custom(
         Ok(false)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    fn tmp() -> TempDir {
+        tempfile::tempdir().expect("tempdir")
+    }
+
+    fn custom(s: &str) -> Vec<String> {
+        vec![s.to_string()]
+    }
+
+    fn customs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn no_rules() -> Vec<String> {
+        vec![]
+    }
+
+    // ── strip_rules_section ──────────────────────────────────────────────────
+
+    #[test]
+    fn strip_leaves_content_without_markers_unchanged() {
+        let content = "# My file\n\nSome content here.";
+        assert_eq!(strip_rules_section(content), content);
+    }
+
+    #[test]
+    fn strip_removes_rules_section_between_markers() {
+        let content = "# Header\n\n<!-- automatic:rules:start -->\nrule content\n<!-- automatic:rules:end -->\n\nTrailing.";
+        let result = strip_rules_section(content);
+        assert!(!result.contains("<!-- automatic:rules:start -->"));
+        assert!(!result.contains("rule content"));
+        assert!(result.contains("# Header"));
+        assert!(result.contains("Trailing."));
+    }
+
+    #[test]
+    fn strip_returns_empty_string_when_only_rules_section() {
+        let content = "<!-- automatic:rules:start -->\nsome rule\n<!-- automatic:rules:end -->";
+        let result = strip_rules_section(content);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn strip_is_idempotent() {
+        let content =
+            "# File\n\n<!-- automatic:rules:start -->\nrule\n<!-- automatic:rules:end -->";
+        let once = strip_rules_section(content);
+        let twice = strip_rules_section(&once);
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn strip_handles_missing_end_marker_by_leaving_content() {
+        let content = "# File\n\n<!-- automatic:rules:start -->\nrule content";
+        let result = strip_rules_section(content);
+        // Only one marker present — content is returned as-is.
+        assert_eq!(result, content);
+    }
+
+    // ── build_rules_section_with_custom ──────────────────────────────────────
+
+    #[test]
+    fn build_returns_empty_when_no_rules_and_no_custom() {
+        let result = build_rules_section_with_custom(&[], &[]).expect("build");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn build_wraps_custom_content_in_markers() {
+        let result = build_rules_section_with_custom(&[], &custom("Do the thing.")).expect("build");
+        assert!(result.starts_with("<!-- automatic:rules:start -->"));
+        assert!(result.ends_with("<!-- automatic:rules:end -->"));
+        assert!(result.contains("Do the thing."));
+    }
+
+    #[test]
+    fn build_skips_empty_custom_content() {
+        let result = build_rules_section_with_custom(&[], &customs(&["", "  ", "real rule"]))
+            .expect("build");
+        // Only the non-empty entry should appear.
+        assert!(result.contains("real rule"));
+        // Blank entries produce no extra separating newlines between markers and content.
+        assert!(!result.contains("  \n"));
+    }
+
+    #[test]
+    fn build_joins_multiple_custom_rules_with_newline() {
+        let result =
+            build_rules_section_with_custom(&[], &customs(&["Rule A.", "Rule B."])).expect("build");
+        assert!(result.contains("Rule A."));
+        assert!(result.contains("Rule B."));
+    }
+
+    #[test]
+    fn build_trims_custom_content_whitespace() {
+        let result =
+            build_rules_section_with_custom(&[], &custom("  trimmed content  ")).expect("build");
+        // The trimmed version should appear; leading/trailing spaces should not.
+        assert!(result.contains("trimmed content"));
+    }
+
+    // ── inject_rules_into_project_file_with_custom ───────────────────────────
+
+    #[test]
+    fn inject_returns_false_when_directory_is_empty() {
+        let result = inject_rules_into_project_file_with_custom(
+            "",
+            "AGENTS.md",
+            &no_rules(),
+            &custom("A rule."),
+        );
+        assert_eq!(result, Ok(false));
+    }
+
+    #[test]
+    fn inject_returns_false_when_file_does_not_exist() {
+        let dir = tmp();
+        let result = inject_rules_into_project_file_with_custom(
+            dir.path().to_str().unwrap(),
+            "MISSING.md",
+            &no_rules(),
+            &custom("A rule."),
+        );
+        assert_eq!(result, Ok(false));
+    }
+
+    #[test]
+    fn inject_appends_rules_to_existing_file() {
+        let dir = tmp();
+        let file = dir.path().join("AGENTS.md");
+        fs::write(&file, "# My File\n\nUser content.").expect("write");
+
+        let changed = inject_rules_into_project_file_with_custom(
+            dir.path().to_str().unwrap(),
+            "AGENTS.md",
+            &no_rules(),
+            &custom("Always be kind."),
+        )
+        .expect("inject");
+
+        assert!(changed);
+        let on_disk = fs::read_to_string(&file).expect("read");
+        assert!(on_disk.contains("User content."));
+        assert!(on_disk.contains("Always be kind."));
+        assert!(on_disk.contains("<!-- automatic:rules:start -->"));
+        assert!(on_disk.contains("<!-- automatic:rules:end -->"));
+    }
+
+    #[test]
+    fn inject_replaces_existing_rules_section() {
+        let dir = tmp();
+        let file = dir.path().join("AGENTS.md");
+
+        // Write initial file with a rules section.
+        let initial =
+            "# File\n\n<!-- automatic:rules:start -->\nOld rule.\n<!-- automatic:rules:end -->\n";
+        fs::write(&file, initial).expect("write");
+
+        inject_rules_into_project_file_with_custom(
+            dir.path().to_str().unwrap(),
+            "AGENTS.md",
+            &no_rules(),
+            &custom("New rule."),
+        )
+        .expect("inject");
+
+        let on_disk = fs::read_to_string(&file).expect("read");
+        assert!(on_disk.contains("New rule."));
+        assert!(!on_disk.contains("Old rule."));
+        // No duplicate markers.
+        assert_eq!(on_disk.matches("<!-- automatic:rules:start -->").count(), 1);
+    }
+
+    #[test]
+    fn inject_returns_false_when_content_unchanged() {
+        let dir = tmp();
+        let file = dir.path().join("AGENTS.md");
+
+        // Create the file with user content first.
+        fs::write(&file, "# My File\n\nUser content.").expect("write initial");
+
+        // First inject to establish the rules section.
+        inject_rules_into_project_file_with_custom(
+            dir.path().to_str().unwrap(),
+            "AGENTS.md",
+            &no_rules(),
+            &custom("Stable rule."),
+        )
+        .expect("first inject");
+
+        let before = fs::read_to_string(&file).expect("read after first inject");
+
+        // Second inject with the same rule — content is already current, should not change.
+        let changed = inject_rules_into_project_file_with_custom(
+            dir.path().to_str().unwrap(),
+            "AGENTS.md",
+            &no_rules(),
+            &custom("Stable rule."),
+        )
+        .expect("second inject");
+
+        let after = fs::read_to_string(&file).expect("read after second inject");
+        assert!(!changed, "content should not have changed on second inject");
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn inject_removes_rules_section_when_no_rules_given() {
+        let dir = tmp();
+        let file = dir.path().join("AGENTS.md");
+
+        let initial =
+            "# File\n\n<!-- automatic:rules:start -->\nSome rule.\n<!-- automatic:rules:end -->\n";
+        fs::write(&file, initial).expect("write");
+
+        inject_rules_into_project_file_with_custom(
+            dir.path().to_str().unwrap(),
+            "AGENTS.md",
+            &no_rules(),
+            &[],
+        )
+        .expect("inject");
+
+        let on_disk = fs::read_to_string(&file).expect("read");
+        assert!(!on_disk.contains("<!-- automatic:rules:start -->"));
+        assert!(!on_disk.contains("Some rule."));
+    }
+
+    // ── is_file_rules_current_with_custom ────────────────────────────────────
+
+    #[test]
+    fn file_with_correct_rules_is_reported_as_current() {
+        let dir = tmp();
+        let file = dir.path().join("AGENTS.md");
+
+        // Build and write the section we will then check against.
+        let section =
+            build_rules_section_with_custom(&[], &custom("My rule.")).expect("build section");
+        let content = format!("# File\n\n{}\n", section);
+        fs::write(&file, &content).expect("write");
+
+        let is_current = is_file_rules_current_with_custom(&file, &no_rules(), &custom("My rule."))
+            .expect("check");
+        assert!(is_current);
+    }
+
+    #[test]
+    fn file_with_stale_rules_is_reported_as_not_current() {
+        let dir = tmp();
+        let file = dir.path().join("AGENTS.md");
+        fs::write(
+            &file,
+            "# File\n\n<!-- automatic:rules:start -->\nOld rule.\n<!-- automatic:rules:end -->\n",
+        )
+        .expect("write");
+
+        let is_current =
+            is_file_rules_current_with_custom(&file, &no_rules(), &custom("New rule."))
+                .expect("check");
+        assert!(!is_current);
+    }
+
+    #[test]
+    fn missing_file_is_reported_as_not_current() {
+        let dir = tmp();
+        let file = dir.path().join("NONEXISTENT.md");
+
+        let is_current = is_file_rules_current_with_custom(&file, &no_rules(), &custom("A rule."))
+            .expect("check");
+        assert!(!is_current);
+    }
+
+    // ── sync_rules_to_dot_claude_rules ───────────────────────────────────────
+
+    #[test]
+    fn sync_creates_dot_claude_rules_directory() {
+        let dir = tmp();
+        let rules_dir = dir.path().join(".claude").join("rules");
+        assert!(!rules_dir.exists());
+
+        // No rule names → nothing to write, but dir should be created.
+        sync_rules_to_dot_claude_rules(dir.path().to_str().unwrap(), &no_rules()).expect("sync");
+
+        assert!(rules_dir.exists());
+    }
+
+    #[test]
+    fn sync_with_no_rules_removes_managed_files() {
+        let dir = tmp();
+        let rules_dir = dir.path().join(".claude").join("rules");
+        fs::create_dir_all(&rules_dir).expect("create dir");
+
+        // Write a managed file manually.
+        let managed_content =
+            "<!-- managed by Automatic — do not edit by hand -->\n\nSome content.\n";
+        fs::write(rules_dir.join("old-rule.md"), managed_content).expect("write managed");
+
+        sync_rules_to_dot_claude_rules(dir.path().to_str().unwrap(), &no_rules()).expect("sync");
+
+        // Managed file should have been removed.
+        assert!(!rules_dir.join("old-rule.md").exists());
+    }
+
+    #[test]
+    fn sync_does_not_remove_unmanaged_user_files() {
+        let dir = tmp();
+        let rules_dir = dir.path().join(".claude").join("rules");
+        fs::create_dir_all(&rules_dir).expect("create dir");
+
+        // Write a file WITHOUT the managed header.
+        fs::write(rules_dir.join("user-file.md"), "# User wrote this").expect("write user file");
+
+        sync_rules_to_dot_claude_rules(dir.path().to_str().unwrap(), &no_rules()).expect("sync");
+
+        // User file should be untouched.
+        assert!(rules_dir.join("user-file.md").exists());
+    }
+}

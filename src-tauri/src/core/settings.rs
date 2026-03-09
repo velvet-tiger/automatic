@@ -161,3 +161,173 @@ pub fn dismiss_welcome() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    // ── Path-injectable helpers ───────────────────────────────────────────────
+
+    fn settings_path(base: &Path) -> std::path::PathBuf {
+        base.join("settings.json")
+    }
+
+    fn read_at(base: &Path) -> Result<Settings, String> {
+        let path = settings_path(base);
+        if !path.exists() {
+            return Ok(Settings::default());
+        }
+        let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        Ok(serde_json::from_str(&raw).unwrap_or_default())
+    }
+
+    fn write_at(base: &Path, settings: &Settings) -> Result<(), String> {
+        let path = settings_path(base);
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+        }
+        let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+        fs::write(&path, raw).map_err(|e| e.to_string())
+    }
+
+    fn tmp() -> TempDir {
+        tempfile::tempdir().expect("tempdir")
+    }
+
+    // ── Default values ────────────────────────────────────────────────────────
+
+    #[test]
+    fn default_settings_have_expected_values() {
+        let s = Settings::default();
+        assert_eq!(s.skill_sync_mode, "symlink");
+        assert!(s.analytics_enabled);
+        assert!(!s.wizard_completed);
+        assert!(!s.welcome_dismissed);
+        assert!(s.default_agents.is_empty());
+    }
+
+    // ── Read (missing file) ───────────────────────────────────────────────────
+
+    #[test]
+    fn read_returns_defaults_when_file_missing() {
+        let dir = tmp();
+        let settings = read_at(dir.path()).expect("read");
+        assert_eq!(settings.skill_sync_mode, "symlink");
+        assert!(settings.analytics_enabled);
+    }
+
+    // ── Write + Read roundtrip ────────────────────────────────────────────────
+
+    #[test]
+    fn write_and_read_roundtrip() {
+        let dir = tmp();
+        let mut s = Settings::default();
+        s.skill_sync_mode = "copy".to_string();
+        s.analytics_enabled = false;
+        s.wizard_completed = true;
+
+        write_at(dir.path(), &s).expect("write");
+        let loaded = read_at(dir.path()).expect("read");
+
+        assert_eq!(loaded.skill_sync_mode, "copy");
+        assert!(!loaded.analytics_enabled);
+        assert!(loaded.wizard_completed);
+    }
+
+    #[test]
+    fn write_creates_parent_directories() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let nested = tmp.path().join("a").join("b").join("c");
+        let s = Settings::default();
+        write_at(&nested, &s).expect("write to nested dir");
+        assert!(settings_path(&nested).exists());
+    }
+
+    // ── Overwrite ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn second_write_overwrites_first() {
+        let dir = tmp();
+
+        let mut s1 = Settings::default();
+        s1.wizard_completed = false;
+        write_at(dir.path(), &s1).expect("write s1");
+
+        let mut s2 = Settings::default();
+        s2.wizard_completed = true;
+        write_at(dir.path(), &s2).expect("write s2");
+
+        let loaded = read_at(dir.path()).expect("read");
+        assert!(loaded.wizard_completed);
+    }
+
+    // ── Default agents ────────────────────────────────────────────────────────
+
+    #[test]
+    fn default_agents_are_preserved() {
+        let dir = tmp();
+        let mut s = Settings::default();
+        s.default_agents = vec!["claude".to_string(), "cursor".to_string()];
+        write_at(dir.path(), &s).expect("write");
+
+        let loaded = read_at(dir.path()).expect("read");
+        assert_eq!(loaded.default_agents, vec!["claude", "cursor"]);
+    }
+
+    // ── Onboarding ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn onboarding_data_round_trips() {
+        let dir = tmp();
+        let mut s = Settings::default();
+        s.onboarding = OnboardingData {
+            role: "fullstack".to_string(),
+            ai_usage: "full_agentic".to_string(),
+            agents: vec!["claude".to_string()],
+            email: "test@example.com".to_string(),
+        };
+        write_at(dir.path(), &s).expect("write");
+
+        let loaded = read_at(dir.path()).expect("read");
+        assert_eq!(loaded.onboarding.role, "fullstack");
+        assert_eq!(loaded.onboarding.email, "test@example.com");
+    }
+
+    // ── Corrupt file falls back to defaults ───────────────────────────────────
+
+    #[test]
+    fn corrupt_settings_file_falls_back_to_default() {
+        let dir = tmp();
+        fs::write(settings_path(dir.path()), "this is not json").expect("write corrupt");
+
+        let loaded = read_at(dir.path()).expect("read");
+        // unwrap_or_default() means we get defaults, not an error.
+        assert_eq!(loaded.skill_sync_mode, "symlink");
+    }
+
+    // ── Getting-started flags ─────────────────────────────────────────────────
+
+    #[test]
+    fn getting_started_flags_default_to_false() {
+        let s = Settings::default();
+        assert!(!s.getting_started.skill_installed);
+        assert!(!s.getting_started.template_imported);
+    }
+
+    #[test]
+    fn getting_started_flags_persist() {
+        let dir = tmp();
+        let mut s = Settings::default();
+        s.getting_started.skill_installed = true;
+        write_at(dir.path(), &s).expect("write");
+
+        let loaded = read_at(dir.path()).expect("read");
+        assert!(loaded.getting_started.skill_installed);
+        assert!(!loaded.getting_started.template_imported);
+    }
+}
