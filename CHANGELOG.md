@@ -2,6 +2,51 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.9.0] — 2026-03-10
+
+### Features
+
+#### Features Tracking
+- Per-project feature tracking with a full Kanban board UI and build list view
+- MCP tools for agents to create, list, update, and claim features with assignee enforcement
+- Build list columns are sortable; build filters persist per project
+- Build view preference remembered per project
+- New features open in the side panel for focused editing
+
+#### Projects
+- Project list sidebar auto-hides with a hover flyout and a pin toggle to keep it open
+- Project tray opens on click (not hover) and closes automatically when unpinned after selection
+- Project tabs grouped into collapsible sections for a cleaner layout
+
+#### Skills
+- Version-gated reinstall of bundled skills on app update ensures the latest built-in skill is always deployed
+- Remote (store-installed) skills are now locked for editing; a Duplicate button creates an editable copy
+- Bundled Automatic skill includes frontmatter and `skill.json` metadata
+
+#### Recommendations
+- System check added for missing `.automatic/context.json` to surface setup gaps early
+- Two-phase AI inference approach guarantees structured JSON output from the recommendations engine
+
+#### Conflicts
+- Instruction file conflict modal now shows a full line-level diff for precise change review
+
+### Fixes
+
+- **Features**: Kanban drag-and-drop replaced HTML5 DnD with pointer-event handling to fix reliability on macOS
+- **Recommendations**: Missing `metadata` column added to test schema, preventing DB errors
+- **Skills**: `stopPropagation` call removed that was blocking clicks on GitHub links in skill cards
+- **Projects**: OpenCode restart warning removed from the MCP Servers tab (no longer applicable)
+- **Keychain**: Debug builds now use a separate keychain service name to avoid colliding with production credentials
+
+### Tests
+
+- 113 new unit tests added across 7 previously untested Rust modules
+
+### Chores
+
+- Skill Store: replaced Website Audit with Skill Creator in the featured skills list
+- Updater: public key in `tauri.conf.json` refreshed
+
 ## [0.8.0] — 2026-03-08
 
 ### Features
