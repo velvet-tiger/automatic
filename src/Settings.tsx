@@ -71,6 +71,8 @@ export default function Settings() {
   const [showEraseDataModal, setShowEraseDataModal] = useState(false);
   const [eraseInput, setEraseInput] = useState("");
   const [erasingData, setErasingData] = useState(false);
+  const [reinstallStatus, setReinstallStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [reinstallError, setReinstallError] = useState("");
 
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
     let saved = localStorage.getItem("automatic.theme") as string;
@@ -214,6 +216,19 @@ export default function Settings() {
 
   function restartApp() {
     invoke("restart_app");
+  }
+
+  async function reinstallDefaultSkills() {
+    setReinstallStatus("running");
+    setReinstallError("");
+    try {
+      await invoke("reinstall_default_skills");
+      setReinstallStatus("done");
+      setTimeout(() => setReinstallStatus("idle"), 3000);
+    } catch (e) {
+      setReinstallError(String(e));
+      setReinstallStatus("error");
+    }
   }
 
   async function resetToFactorySettings() {
@@ -361,6 +376,34 @@ export default function Settings() {
                     </div>
                   </button>
                 </div>
+              </div>
+
+              {/* Default Skills */}
+              <div className="mb-8">
+                <h3 className="text-sm font-medium mb-2 text-text-base">Default Skills</h3>
+                <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
+                  Reinstall all bundled default skills, overwriting any local edits with the
+                  versions shipped in this release.
+                </p>
+
+                {reinstallStatus === "done" && (
+                  <div className="mb-3 p-3 rounded-lg border border-success bg-success/10 text-[13px] text-success">
+                    Default skills reinstalled successfully.
+                  </div>
+                )}
+                {reinstallStatus === "error" && reinstallError && (
+                  <div className="mb-3 p-3 rounded-lg border border-danger bg-danger/10 text-[13px] text-danger">
+                    {reinstallError}
+                  </div>
+                )}
+
+                <button
+                  onClick={reinstallDefaultSkills}
+                  disabled={reinstallStatus === "running"}
+                  className="px-4 py-2 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {reinstallStatus === "running" ? "Reinstalling..." : "Reinstall Default Skills"}
+                </button>
               </div>
             </div>
           )}

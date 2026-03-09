@@ -23,6 +23,13 @@
       "tags": ["automatic", "mcp", "skills", "memory", "projects", "sessions", "ai-agents"]
     },
     {
+      "name": "automatic-features",
+      "path": "./automatic-features",
+      "description": "How to use Automatic's feature tracking system — creating, progressing, and updating per-project work items via MCP. Activate when working on a project that has feature tracking enabled.",
+      "category": "development",
+      "tags": ["automatic", "features", "tracking", "backlog", "kanban", "workflow", "ai-agents"]
+    },
+    {
       "name": "automatic-api-design",
       "path": "./automatic-api-design",
       "description": "REST API design conventions, error shapes, versioning, and pagination patterns. Use when designing or reviewing any HTTP API.",
@@ -91,6 +98,13 @@
       "description": "Principles and patterns for writing effective tests. Use when writing unit, integration, or end-to-end tests, or reviewing test quality.",
       "category": "testing",
       "tags": ["testing", "unit-tests", "integration-tests", "e2e", "tdd", "test-quality"]
+    },
+    {
+      "name": "github-workflow-automation",
+      "path": "./github-workflow-automation",
+      "description": "Advanced GitHub Actions workflow automation with AI swarm coordination, intelligent CI/CD pipelines, and comprehensive repository management.",
+      "category": "github",
+      "tags": ["github", "github-actions", "ci-cd", "workflows", "automation", "pipelines"]
     }
   ]
 }

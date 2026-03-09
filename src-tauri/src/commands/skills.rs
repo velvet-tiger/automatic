@@ -73,6 +73,13 @@ pub fn sync_local_skills(name: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
 }
 
+/// Reinstall all bundled default skills, overwriting existing on-disk copies.
+/// Useful for recovering after accidental edits or upgrading bundled skill content.
+#[tauri::command]
+pub fn reinstall_default_skills() -> Result<(), String> {
+    core::install_default_skills_inner(true)
+}
+
 /// Read the SKILL.md content of a local skill from the project directory.
 /// Returns the raw file content as a string.
 #[tauri::command]

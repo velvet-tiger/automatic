@@ -1,5 +1,6 @@
 mod activity;
 mod ai;
+mod features;
 mod app_plugins;
 mod credentials;
 mod flags;
@@ -21,6 +22,7 @@ mod oauth;
 
 pub use activity::*;
 pub use ai::*;
+pub use features::*;
 pub use app_plugins::*;
 pub use credentials::*;
 pub use flags::*;

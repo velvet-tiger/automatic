@@ -106,6 +106,98 @@ pub struct GetProjectContextParams {
     pub project: String,
 }
 
+// ── Feature Tool Parameter Types ─────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ListFeaturesParams {
+    /// The project name as registered in Automatic
+    pub project: String,
+    /// Optional state filter: backlog, todo, in_progress, review, or complete
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct GetFeatureParams {
+    /// The project name as registered in Automatic
+    pub project: String,
+    /// The feature UUID
+    pub feature_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct CreateFeatureParams {
+    /// The project name as registered in Automatic
+    pub project: String,
+    /// Short title for the feature (required)
+    pub title: String,
+    /// Markdown description of the work to be done
+    pub description: Option<String>,
+    /// Priority: low, medium (default), or high
+    pub priority: Option<String>,
+    /// Agent id or name to assign this feature to
+    pub assignee: Option<String>,
+    /// List of searchable tags
+    pub tags: Option<Vec<String>>,
+    /// List of file paths in the project this feature relates to
+    pub linked_files: Option<Vec<String>>,
+    /// Effort estimate: xs, s, m, l, or xl
+    pub effort: Option<String>,
+    /// Identifier for the agent or tool creating this feature
+    pub created_by: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct UpdateFeatureParams {
+    /// The project name as registered in Automatic
+    pub project: String,
+    /// The feature UUID
+    pub feature_id: String,
+    /// New title (omit to leave unchanged)
+    pub title: Option<String>,
+    /// New markdown description (omit to leave unchanged)
+    pub description: Option<String>,
+    /// New priority: low, medium, or high (omit to leave unchanged)
+    pub priority: Option<String>,
+    /// New assignee (omit to leave unchanged, pass null to clear)
+    pub assignee: Option<String>,
+    /// New tags list (omit to leave unchanged)
+    pub tags: Option<Vec<String>>,
+    /// New linked files list (omit to leave unchanged)
+    pub linked_files: Option<Vec<String>>,
+    /// New effort: xs, s, m, l, or xl (omit to leave unchanged, pass null to clear)
+    pub effort: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct SetFeatureStateParams {
+    /// The project name as registered in Automatic
+    pub project: String,
+    /// The feature UUID
+    pub feature_id: String,
+    /// New state: backlog, todo, in_progress, review, or complete
+    pub state: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct DeleteFeatureParams {
+    /// The project name as registered in Automatic
+    pub project: String,
+    /// The feature UUID to delete permanently
+    pub feature_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct AddFeatureUpdateParams {
+    /// The project name as registered in Automatic
+    pub project: String,
+    /// The feature UUID to add an update to
+    pub feature_id: String,
+    /// Markdown content of the progress update
+    pub content: String,
+    /// Agent id or name authoring this update
+    pub author: Option<String>,
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Verify that `project` is a registered project name.
@@ -619,6 +711,217 @@ impl AutomaticMcpServer {
             }
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to read Claude auto-memory: {}",
+                e
+            ))])),
+        }
+    }
+
+    // ── Feature tools ─────────────────────────────────────────────────────
+
+    #[tool(
+        name = "automatic_list_features",
+        description = "List all features for a project. Optionally filter by state: backlog, todo, in_progress, review, or complete. Returns features grouped by state with id, title, priority, effort, and assignee."
+    )]
+    async fn list_features(
+        &self,
+        params: Parameters<ListFeaturesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        match crate::features::list_features(&params.0.project, params.0.state.as_deref()) {
+            Ok(features) => {
+                let output = crate::features::format_features_markdown(&features, &params.0.project);
+                Ok(CallToolResult::success(vec![Content::text(output)]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to list features: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_get_feature",
+        description = "Get full detail for a specific feature by id, including description and all update history."
+    )]
+    async fn get_feature(
+        &self,
+        params: Parameters<GetFeatureParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        match crate::features::get_feature_with_updates(&params.0.project, &params.0.feature_id) {
+            Ok(fw) => {
+                let output = crate::features::format_feature_detail_markdown(&fw);
+                Ok(CallToolResult::success(vec![Content::text(output)]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to get feature: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_create_feature",
+        description = "Create a new feature in a project's backlog. Returns the created feature including its id, which you will need for subsequent calls."
+    )]
+    async fn create_feature(
+        &self,
+        params: Parameters<CreateFeatureParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        let p = params.0;
+        match crate::features::create_feature(
+            &p.project,
+            &p.title,
+            p.description.as_deref().unwrap_or(""),
+            p.priority.as_deref().unwrap_or("medium"),
+            p.assignee.as_deref(),
+            p.tags.as_deref().unwrap_or(&[]),
+            p.linked_files.as_deref().unwrap_or(&[]),
+            p.effort.as_deref(),
+            p.created_by.as_deref(),
+        ) {
+            Ok(feature) => {
+                let output = format!(
+                    "Feature created successfully.\n\n**ID:** `{}`\n**Title:** {}\n**State:** backlog\n**Priority:** {}\n",
+                    feature.id, feature.title, feature.priority
+                );
+                Ok(CallToolResult::success(vec![Content::text(output)]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to create feature: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_update_feature",
+        description = "Update a feature's metadata fields (title, description, priority, assignee, tags, linked_files, effort). Omit any field to leave it unchanged."
+    )]
+    async fn update_feature(
+        &self,
+        params: Parameters<UpdateFeatureParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        let p = params.0;
+        let patch = crate::features::FeaturePatch {
+            title: p.title,
+            description: p.description,
+            state: None,
+            priority: p.priority,
+            // MCP passes Option<String>; None means unchanged, Some(v) sets it.
+            // There's no way to clear via this tool — use update_feature for that.
+            assignee: p.assignee.map(Some),
+            tags: p.tags,
+            linked_files: p.linked_files,
+            effort: p.effort.map(Some),
+        };
+        match crate::features::update_feature(&p.project, &p.feature_id, patch) {
+            Ok(feature) => {
+                let output = format!(
+                    "Feature updated successfully.\n\n**ID:** `{}`\n**Title:** {}\n**State:** {}\n**Priority:** {}\n",
+                    feature.id, feature.title, feature.state, feature.priority
+                );
+                Ok(CallToolResult::success(vec![Content::text(output)]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to update feature: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_set_feature_state",
+        description = "Change a feature's lifecycle state. Valid states: backlog, todo, in_progress, review, complete. The feature is placed at the end of the target state column."
+    )]
+    async fn set_feature_state(
+        &self,
+        params: Parameters<SetFeatureStateParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        match crate::features::set_feature_state(
+            &params.0.project,
+            &params.0.feature_id,
+            &params.0.state,
+        ) {
+            Ok(feature) => {
+                let output = format!(
+                    "Feature state updated.\n\n**ID:** `{}`\n**Title:** {}\n**New state:** {}\n",
+                    feature.id, feature.title, feature.state
+                );
+                Ok(CallToolResult::success(vec![Content::text(output)]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to set feature state: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_delete_feature",
+        description = "Permanently delete a feature and all its updates. This cannot be undone."
+    )]
+    async fn delete_feature(
+        &self,
+        params: Parameters<DeleteFeatureParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        match crate::features::delete_feature(&params.0.project, &params.0.feature_id) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Feature '{}' deleted from project '{}'.",
+                params.0.feature_id, params.0.project
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to delete feature: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_add_feature_update",
+        description = "Append a markdown progress update to a feature. Use this to log decisions, blockers, or progress notes. Updates are append-only and ordered newest-first."
+    )]
+    async fn add_feature_update(
+        &self,
+        params: Parameters<AddFeatureUpdateParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        match crate::features::add_feature_update(
+            &params.0.project,
+            &params.0.feature_id,
+            &params.0.content,
+            params.0.author.as_deref(),
+        ) {
+            Ok(update) => {
+                let output = format!(
+                    "Update added to feature '{}'.\n\n**Update ID:** {}\n**Timestamp:** {}\n**Author:** {}\n",
+                    params.0.feature_id,
+                    update.id,
+                    update.timestamp,
+                    update.author.as_deref().unwrap_or("unknown")
+                );
+                Ok(CallToolResult::success(vec![Content::text(output)]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to add feature update: {}",
                 e
             ))])),
         }

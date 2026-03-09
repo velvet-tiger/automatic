@@ -10,6 +10,7 @@ import { useCurrentUser } from "./ProfileContext";
 import { useTaskLog } from "./TaskLogContext";
 import { MemoryBrowser } from "./MemoryBrowser";
 import { ClaudeMemoryPanel } from "./ClaudeMemoryPanel";
+import Features from "./Features";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
@@ -1897,7 +1898,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "rules" | "context" | "memory" | "activity" | "recommendations";
+  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "rules" | "context" | "memory" | "features" | "activity" | "recommendations";
   const [projectTab, setProjectTab] = useState<ProjectTab>("summary");
 
   // Memory state
@@ -4610,6 +4611,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                  { id: "rules" as ProjectTab, label: "Rules" },
                  { id: "context" as ProjectTab, label: "Context" },
                  { id: "memory" as ProjectTab, label: "Memory" },
+                 { id: "features" as ProjectTab, label: "Features" },
                 { id: "activity" as ProjectTab, label: "Activity" },
                 { id: "recommendations" as ProjectTab, label: "Recommendations" },
               ]).map((tab) => (
@@ -5242,8 +5244,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
               </div>
             )}
 
+            {/* Features tab — full-height, no padding (handles its own layout) */}
+            {projectTab === "features" && selectedName && (
+              <div className="flex-1 overflow-hidden">
+                <Features projectName={selectedName} />
+              </div>
+            )}
+
             {/* Other tabs (padded container) */}
-            {projectTab !== "project_file" && projectTab !== "context" && (
+            {projectTab !== "project_file" && projectTab !== "context" && projectTab !== "features" && (
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div className="space-y-8">
 

@@ -142,6 +142,32 @@ Automatic provides a persistent key-value store for agents to retain context, us
 
 ---
 
+### Agent Feature Tools
+
+Automatic provides project-scoped feature tracking. Features represent discrete units of work with a five-stage lifecycle visible to users in the Automatic UI.
+
+**States:** `backlog` → `todo` → `in_progress` → `review` → `complete`  
+**Priority:** `low` | `medium` | `high`  
+**Effort:** `xs` | `s` | `m` | `l` | `xl`
+
+- **`automatic_list_features`**: List features for a project. Optionally pass `state` to filter (e.g. `"todo"`). Returns feature titles, IDs, priorities, efforts, and assignees grouped by state.
+- **`automatic_get_feature`**: Get full detail for a specific feature by `feature_id`, including description and all update history.
+- **`automatic_create_feature`**: Create a new feature in the backlog. Requires `project` and `title`. Optional: `description`, `priority`, `assignee`, `tags`, `linked_files`, `effort`, `created_by`. Returns the created feature including its `id`.
+- **`automatic_update_feature`**: Update feature metadata fields (title, description, priority, assignee, tags, linked_files, effort). Omit any field to leave it unchanged.
+- **`automatic_set_feature_state`**: Change a feature's lifecycle state. Valid states: `backlog`, `todo`, `in_progress`, `review`, `complete`.
+- **`automatic_delete_feature`**: Permanently delete a feature and all its updates.
+- **`automatic_add_feature_update`**: Append a markdown progress update to a feature. Pass `author` to identify the agent.
+
+**Agent workflow for Features:**
+
+1. At session start, call `automatic_list_features` with `state: "todo"` to see planned work.
+2. Before starting a task, call `automatic_set_feature_state` to move it to `in_progress`.
+3. During work, call `automatic_add_feature_update` to log significant progress, decisions, or blockers.
+4. On completion, call `automatic_set_feature_state` to move to `review` — let the user verify before marking `complete`.
+5. If new work is discovered during implementation, call `automatic_create_feature` to capture it in the backlog.
+
+---
+
 ## Recommended Workflow
 
 1. **On session start** — call `automatic_list_skills` to see what skills are available. If a skill matches the current task domain, call `automatic_read_skill` to load it and view its companion resources. Optionally call `automatic_search_memories` to retrieve past learnings for the current project.
@@ -153,6 +179,8 @@ Automatic provides a persistent key-value store for agents to retain context, us
 4. **For skill discovery** — call `automatic_search_skills` to find community skills relevant to the task at hand.
 
 5. **Wrapping up a session** — Call `automatic_store_memory` to capture any new project-specific conventions, pitfalls, or setup steps discovered so they aren't lost in future sessions.
+
+6. **For project features** — call `automatic_list_features` to see planned work. Use `automatic_set_feature_state` and `automatic_add_feature_update` to track progress across sessions.
 
 ## Configuration
 

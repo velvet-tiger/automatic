@@ -59,6 +59,14 @@ pub enum ActivityEvent {
     MemoryDeleted,
     /// Memory entries were bulk-cleared (all or by pattern).
     MemoryCleared,
+    /// A new feature was created in the project.
+    FeatureCreated,
+    /// A feature's metadata was updated.
+    FeatureUpdated,
+    /// A feature's state was changed (e.g. todo → in_progress).
+    FeatureStateChanged,
+    /// A feature was permanently deleted.
+    FeatureDeleted,
 }
 
 impl ActivityEvent {
@@ -76,6 +84,10 @@ impl ActivityEvent {
             Self::MemoryStored => "memory_stored",
             Self::MemoryDeleted => "memory_deleted",
             Self::MemoryCleared => "memory_cleared",
+            Self::FeatureCreated => "feature_created",
+            Self::FeatureUpdated => "feature_updated",
+            Self::FeatureStateChanged => "feature_state_changed",
+            Self::FeatureDeleted => "feature_deleted",
         }
     }
 }
@@ -437,6 +449,10 @@ mod tests {
             ActivityEvent::MemoryStored,
             ActivityEvent::MemoryDeleted,
             ActivityEvent::MemoryCleared,
+            ActivityEvent::FeatureCreated,
+            ActivityEvent::FeatureUpdated,
+            ActivityEvent::FeatureStateChanged,
+            ActivityEvent::FeatureDeleted,
         ];
         let strings: Vec<&str> = all.iter().map(|e| e.as_str()).collect();
         let unique: std::collections::HashSet<&str> = strings.iter().copied().collect();

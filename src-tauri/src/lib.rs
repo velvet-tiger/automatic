@@ -2,6 +2,7 @@ pub mod activity;
 pub mod agent;
 pub mod context;
 pub mod core;
+pub mod features;
 pub mod languages;
 pub mod mcp;
 pub mod memory;
@@ -98,6 +99,7 @@ pub fn run() {
             delete_skill,
             sync_skill,
             sync_all_skills,
+            reinstall_default_skills,
             get_skill_resources,
             get_templates,
             read_template,
@@ -198,6 +200,16 @@ pub fn run() {
             list_recommendations_by_source,
             get_task_log,
             append_task_log,
+            list_features,
+            get_feature,
+            get_feature_with_updates,
+            create_feature,
+            update_feature,
+            set_feature_state,
+            move_feature,
+            delete_feature,
+            add_feature_update,
+            get_feature_updates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
