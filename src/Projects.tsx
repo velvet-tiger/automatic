@@ -3174,6 +3174,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setDirty(detectedDiffers);
       setIsCreating(false);
       setError(null);
+      if (!sidebarPinned) {
+        setSidebarExpanded(false);
+      }
       // Load project files for this project
       if (data.directory && data.agents.length > 0) {
         await loadProjectFiles(name);
