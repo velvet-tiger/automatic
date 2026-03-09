@@ -1131,6 +1131,26 @@ function buildViewStorageKey(projectName: string): string {
   return `automatic.projects.${projectName}.build.view`;
 }
 
+function buildFilterStorageKey(projectName: string): string {
+  return `automatic.projects.${projectName}.build.filters`;
+}
+
+function readStoredFilters(projectName: string): { filterState: string | null; filterPriority: string | null } {
+  try {
+    const raw = localStorage.getItem(buildFilterStorageKey(projectName));
+    if (!raw) {
+      return { filterState: null, filterPriority: null };
+    }
+    const parsed = JSON.parse(raw) as { filterState?: unknown; filterPriority?: unknown };
+    return {
+      filterState: typeof parsed.filterState === "string" && parsed.filterState.length > 0 ? parsed.filterState : null,
+      filterPriority: typeof parsed.filterPriority === "string" && parsed.filterPriority.length > 0 ? parsed.filterPriority : null,
+    };
+  } catch {
+    return { filterState: null, filterPriority: null };
+  }
+}
+
 export default function Features({ projectName }: FeaturesProps) {
   const [features, setFeatures] = useState<Feature[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1145,8 +1165,8 @@ export default function Features({ projectName }: FeaturesProps) {
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [filterState, setFilterState] = useState<string | null>(null);
-  const [filterPriority, setFilterPriority] = useState<string | null>(null);
+  const [filterState, setFilterState] = useState<string | null>(() => readStoredFilters(projectName).filterState);
+  const [filterPriority, setFilterPriority] = useState<string | null>(() => readStoredFilters(projectName).filterPriority);
 
   // Resizable split pane
   const [detailWidth, setDetailWidth] = useState(DETAIL_DEFAULT);
@@ -1212,6 +1232,23 @@ export default function Features({ projectName }: FeaturesProps) {
       // Ignore storage failures and keep the in-memory preference.
     }
   }, [projectName, view]);
+
+  useEffect(() => {
+    const stored = readStoredFilters(projectName);
+    setFilterState(stored.filterState);
+    setFilterPriority(stored.filterPriority);
+  }, [projectName]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        buildFilterStorageKey(projectName),
+        JSON.stringify({ filterState, filterPriority })
+      );
+    } catch {
+      // Ignore storage failures and keep the in-memory filters.
+    }
+  }, [filterPriority, filterState, projectName]);
 
   // Drag resize handlers
   const handleResizeMouseDown = (e: React.MouseEvent) => {
