@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -62,6 +62,14 @@ export interface FeaturePatch {
   effort?: string | null;
 }
 
+type ListSortKey = "title" | "state" | "priority" | "effort" | "assignee" | "updated";
+type SortDirection = "asc" | "desc";
+
+interface ListSort {
+  key: ListSortKey;
+  direction: SortDirection;
+}
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const STATES = [
@@ -75,6 +83,10 @@ const STATES = [
 
 const PRIORITIES = ["low", "medium", "high"] as const;
 const EFFORTS = ["xs", "s", "m", "l", "xl"] as const;
+
+const STATE_ORDER = new Map(STATES.map((state, index) => [state.id, index]));
+const PRIORITY_ORDER = new Map(PRIORITIES.map((priority, index) => [priority, index]));
+const EFFORT_ORDER = new Map(EFFORTS.map((effort, index) => [effort, index]));
 
 const STATE_STYLES: Record<string, string> = {
   backlog: "bg-bg-sidebar text-text-muted",
@@ -119,6 +131,45 @@ function formatDateTime(iso: string): string {
     });
   } catch {
     return iso;
+  }
+}
+
+function compareText(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function compareNullableText(a: string | null, b: string | null): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return compareText(a, b);
+}
+
+function compareNullableRank(
+  a: string | null,
+  b: string | null,
+  order: ReadonlyMap<string, number>
+): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return (order.get(a) ?? Number.MAX_SAFE_INTEGER) - (order.get(b) ?? Number.MAX_SAFE_INTEGER);
+}
+
+function compareFeatures(a: Feature, b: Feature, key: ListSortKey): number {
+  switch (key) {
+    case "title":
+      return compareText(a.title, b.title);
+    case "state":
+      return compareNullableRank(a.state, b.state, STATE_ORDER);
+    case "priority":
+      return compareNullableRank(a.priority, b.priority, PRIORITY_ORDER);
+    case "effort":
+      return compareNullableRank(a.effort, b.effort, EFFORT_ORDER);
+    case "assignee":
+      return compareNullableText(a.assignee, b.assignee);
+    case "updated":
+      return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime();
   }
 }
 
@@ -733,9 +784,11 @@ interface ListViewProps {
   selectedId: string | null;
   filterState: string | null;
   filterPriority: string | null;
+  sort: ListSort | null;
   onSelect: (id: string) => void;
   onFilterState: (s: string | null) => void;
   onFilterPriority: (p: string | null) => void;
+  onSort: (sort: ListSort) => void;
   onAddNew: () => void;
   isCreating: boolean;
   projectName: string;
@@ -743,25 +796,75 @@ interface ListViewProps {
   onCancelCreate: () => void;
 }
 
+interface SortableHeaderProps {
+  label: string;
+  column: ListSortKey;
+  sort: ListSort | null;
+  onSort: (sort: ListSort) => void;
+}
+
+function SortableHeader({ label, column, sort, onSort }: SortableHeaderProps) {
+  const isActive = sort?.key === column;
+  const nextDirection: SortDirection = isActive && sort.direction === "asc" ? "desc" : "asc";
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSort({ key: column, direction: nextDirection })}
+      className="group inline-flex items-center gap-1 text-inherit transition-colors hover:text-text-base"
+    >
+      <span>{label}</span>
+      <ChevronDown
+        size={12}
+        className={`shrink-0 transition-all ${
+          isActive
+            ? sort.direction === "asc"
+              ? "opacity-100 rotate-180 text-text-base"
+              : "opacity-100 text-text-base"
+            : "opacity-0 group-hover:opacity-50"
+        }`}
+      />
+    </button>
+  );
+}
+
 function ListView({
   features,
   selectedId,
   filterState,
   filterPriority,
+  sort,
   onSelect,
   onFilterState,
   onFilterPriority,
+  onSort,
   onAddNew,
   isCreating,
   projectName,
   onCreated,
   onCancelCreate,
 }: ListViewProps) {
-  const filtered = features.filter((f) => {
-    if (filterState && f.state !== filterState) return false;
-    if (filterPriority && f.priority !== filterPriority) return false;
-    return true;
-  });
+  const filtered = useMemo(() => {
+    const visible = features.filter((f) => {
+      if (filterState && f.state !== filterState) return false;
+      if (filterPriority && f.priority !== filterPriority) return false;
+      return true;
+    });
+
+    if (!sort) {
+      return visible;
+    }
+
+    const direction = sort.direction === "asc" ? 1 : -1;
+
+    return visible
+      .map((feature, index) => ({ feature, index }))
+      .sort((a, b) => {
+        const comparison = compareFeatures(a.feature, b.feature, sort.key) * direction;
+        return comparison !== 0 ? comparison : a.index - b.index;
+      })
+      .map(({ feature }) => feature);
+  }, [features, filterPriority, filterState, sort]);
 
   return (
     <div className="flex flex-col h-full">
@@ -786,13 +889,6 @@ function ListView({
             ...PRIORITIES.map((p) => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) })),
           ]}
         />
-        <div className="flex-1" />
-        <button
-          onClick={onAddNew}
-          className="flex items-center gap-1 px-2.5 py-0.5 rounded bg-brand hover:bg-brand-hover text-white text-[11px] font-medium transition-colors"
-        >
-          <Plus size={11} /> New
-        </button>
       </div>
 
       {/* List */}
@@ -823,22 +919,22 @@ function ListView({
             <thead className="sticky top-0 bg-bg-base z-10">
               <tr className="border-b border-border-strong/40">
                 <th className="text-left px-3 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-                  Title
+                  <SortableHeader label="Title" column="title" sort={sort} onSort={onSort} />
                 </th>
                 <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-24">
-                  State
+                  <SortableHeader label="State" column="state" sort={sort} onSort={onSort} />
                 </th>
                 <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-20">
-                  Priority
+                  <SortableHeader label="Priority" column="priority" sort={sort} onSort={onSort} />
                 </th>
                 <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-16">
-                  Effort
+                  <SortableHeader label="Effort" column="effort" sort={sort} onSort={onSort} />
                 </th>
                 <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-28">
-                  Assignee
+                  <SortableHeader label="Assignee" column="assignee" sort={sort} onSort={onSort} />
                 </th>
                 <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-24">
-                  Updated
+                  <SortableHeader label="Updated" column="updated" sort={sort} onSort={onSort} />
                 </th>
               </tr>
             </thead>
@@ -959,7 +1055,6 @@ interface KanbanViewProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onMove: (featureId: string, newState: string, newPosition: number) => void;
-  onAddNew: () => void;
   isCreating: boolean;
   projectName: string;
   onCreated: (f: Feature) => void;
@@ -971,7 +1066,6 @@ function KanbanView({
   selectedId,
   onSelect,
   onMove,
-  onAddNew,
   isCreating,
   projectName,
   onCreated,
@@ -1096,16 +1190,6 @@ function KanbanView({
             </div>
           );
         })}
-
-        {/* Add button column */}
-        <div className="shrink-0 flex items-start pt-1">
-          <button
-            onClick={onAddNew}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-brand hover:bg-brand-hover text-white text-[11px] font-medium transition-colors whitespace-nowrap"
-          >
-            <Plus size={11} /> New feature
-          </button>
-        </div>
       </div>
 
       {/* Drag ghost — follows cursor while dragging */}
@@ -1135,6 +1219,10 @@ function buildFilterStorageKey(projectName: string): string {
   return `automatic.projects.${projectName}.build.filters`;
 }
 
+function buildSortStorageKey(projectName: string): string {
+  return `automatic.projects.${projectName}.build.sort`;
+}
+
 function readStoredFilters(projectName: string): { filterState: string | null; filterPriority: string | null } {
   try {
     const raw = localStorage.getItem(buildFilterStorageKey(projectName));
@@ -1148,6 +1236,33 @@ function readStoredFilters(projectName: string): { filterState: string | null; f
     };
   } catch {
     return { filterState: null, filterPriority: null };
+  }
+}
+
+function readStoredSort(projectName: string): ListSort | null {
+  try {
+    const raw = localStorage.getItem(buildSortStorageKey(projectName));
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as { key?: unknown; direction?: unknown };
+    const validKeys: ListSortKey[] = ["title", "state", "priority", "effort", "assignee", "updated"];
+
+    if (
+      typeof parsed.key === "string" &&
+      validKeys.includes(parsed.key as ListSortKey) &&
+      (parsed.direction === "asc" || parsed.direction === "desc")
+    ) {
+      return {
+        key: parsed.key as ListSortKey,
+        direction: parsed.direction,
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -1167,6 +1282,7 @@ export default function Features({ projectName }: FeaturesProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [filterState, setFilterState] = useState<string | null>(() => readStoredFilters(projectName).filterState);
   const [filterPriority, setFilterPriority] = useState<string | null>(() => readStoredFilters(projectName).filterPriority);
+  const [sort, setSort] = useState<ListSort | null>(() => readStoredSort(projectName));
 
   // Resizable split pane
   const [detailWidth, setDetailWidth] = useState(DETAIL_DEFAULT);
@@ -1240,6 +1356,10 @@ export default function Features({ projectName }: FeaturesProps) {
   }, [projectName]);
 
   useEffect(() => {
+    setSort(readStoredSort(projectName));
+  }, [projectName]);
+
+  useEffect(() => {
     try {
       localStorage.setItem(
         buildFilterStorageKey(projectName),
@@ -1249,6 +1369,19 @@ export default function Features({ projectName }: FeaturesProps) {
       // Ignore storage failures and keep the in-memory filters.
     }
   }, [filterPriority, filterState, projectName]);
+
+  useEffect(() => {
+    try {
+      if (!sort) {
+        localStorage.removeItem(buildSortStorageKey(projectName));
+        return;
+      }
+
+      localStorage.setItem(buildSortStorageKey(projectName), JSON.stringify(sort));
+    } catch {
+      // Ignore storage failures and keep the in-memory sort.
+    }
+  }, [projectName, sort]);
 
   // Drag resize handlers
   const handleResizeMouseDown = (e: React.MouseEvent) => {
@@ -1364,6 +1497,13 @@ export default function Features({ projectName }: FeaturesProps) {
               <Kanban size={11} /> Board
             </button>
           </div>
+          <button
+            onClick={() => setIsCreating(true)}
+            disabled={isCreating}
+            className="flex items-center gap-1 px-2.5 py-1 rounded bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-default text-white text-[11px] font-medium transition-colors"
+          >
+            <Plus size={11} /> New feature
+          </button>
         </div>
 
         {/* Error banner */}
@@ -1388,9 +1528,11 @@ export default function Features({ projectName }: FeaturesProps) {
             selectedId={selectedId}
             filterState={filterState}
             filterPriority={filterPriority}
+            sort={sort}
             onSelect={handleSelect}
             onFilterState={setFilterState}
             onFilterPriority={setFilterPriority}
+            onSort={setSort}
             onAddNew={() => setIsCreating(true)}
             isCreating={isCreating}
             projectName={projectName}
@@ -1403,7 +1545,6 @@ export default function Features({ projectName }: FeaturesProps) {
             selectedId={selectedId}
             onSelect={handleSelect}
             onMove={handleMove}
-            onAddNew={() => setIsCreating(true)}
             isCreating={isCreating}
             projectName={projectName}
             onCreated={handleCreated}
