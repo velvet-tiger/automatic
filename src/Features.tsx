@@ -1127,11 +1127,22 @@ interface FeaturesProps {
   projectName: string;
 }
 
+function buildViewStorageKey(projectName: string): string {
+  return `automatic.projects.${projectName}.build.view`;
+}
+
 export default function Features({ projectName }: FeaturesProps) {
   const [features, setFeatures] = useState<Feature[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"list" | "kanban">("list");
+  const [view, setView] = useState<"list" | "kanban">(() => {
+    try {
+      const stored = localStorage.getItem(buildViewStorageKey(projectName));
+      return stored === "kanban" ? "kanban" : "list";
+    } catch {
+      return "list";
+    }
+  });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [filterState, setFilterState] = useState<string | null>(null);
@@ -1184,6 +1195,23 @@ export default function Features({ projectName }: FeaturesProps) {
     const interval = setInterval(refreshFeatures, 5_000);
     return () => clearInterval(interval);
   }, [refreshFeatures]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(buildViewStorageKey(projectName));
+      setView(stored === "kanban" ? "kanban" : "list");
+    } catch {
+      setView("list");
+    }
+  }, [projectName]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(buildViewStorageKey(projectName), view);
+    } catch {
+      // Ignore storage failures and keep the in-memory preference.
+    }
+  }, [projectName, view]);
 
   // Drag resize handlers
   const handleResizeMouseDown = (e: React.MouseEvent) => {
