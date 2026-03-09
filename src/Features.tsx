@@ -8,7 +8,6 @@ import {
   X,
   Kanban,
   List,
-  GripVertical,
   MessageSquare,
   Send,
   Trash2,
@@ -683,20 +682,26 @@ function DetailPanel({
   );
 }
 
-// ── New Feature Form ──────────────────────────────────────────────────────────
+// ── Create Feature Panel ───────────────────────────────────────────────────────
 
-interface NewFeatureFormProps {
+interface CreateFeaturePanelProps {
   projectName: string;
   onCreated: (f: Feature) => void;
   onCancel: () => void;
 }
 
-function NewFeatureForm({ projectName, onCreated, onCancel }: NewFeatureFormProps) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState("medium");
+function CreateFeaturePanel({ projectName, onCreated, onCancel }: CreateFeaturePanelProps) {
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editState, setEditState] = useState("backlog");
+  const [editPriority, setEditPriority] = useState("medium");
+  const [editAssignee, setEditAssignee] = useState("");
+  const [editEffort, setEditEffort] = useState("");
+  const [editTagsRaw, setEditTagsRaw] = useState("");
+  const [editLinkedFilesRaw, setEditLinkedFilesRaw] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [descPreview, setDescPreview] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -704,72 +709,161 @@ function NewFeatureForm({ projectName, onCreated, onCancel }: NewFeatureFormProp
   }, []);
 
   const handleCreate = async () => {
-    if (!title.trim()) return;
+    if (!editTitle.trim()) return;
     setSaving(true);
     setError(null);
     try {
+      const tags = editTagsRaw.split(",").map((tag) => tag.trim()).filter(Boolean);
+      const linked_files = editLinkedFilesRaw.split("\n").map((file) => file.trim()).filter(Boolean);
       const feature = await invoke<Feature>("create_feature", {
         project: projectName,
-        title: title.trim(),
-        description,
-        priority,
+        title: editTitle.trim(),
+        description: editDescription,
+        state: editState,
+        priority: editPriority,
+        assignee: editAssignee.trim() || null,
+        effort: editEffort || null,
+        tags,
+        linked_files,
       });
       onCreated(feature);
     } catch (err: any) {
       setError(String(err));
+    } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="border border-border-strong/40 rounded-lg overflow-hidden bg-bg-input">
-      <div className="px-3 py-2.5 border-b border-border-strong/40 flex items-center justify-between">
-        <span className="text-[13px] font-medium text-text-base">New feature</span>
-        <button onClick={onCancel} className="text-text-muted hover:text-text-base transition-colors">
-          <X size={13} />
-        </button>
-      </div>
-      <div className="px-3 py-2.5 space-y-2.5">
-        {error && (
-          <div className="text-[12px] text-danger">{error}</div>
-        )}
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-border-strong/40 shrink-0">
         <input
           ref={inputRef}
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          value={editTitle}
+          onChange={(e) => setEditTitle(e.target.value)}
+          className="flex-1 bg-transparent text-[14px] font-semibold text-text-base outline-none border-b border-transparent focus:border-border-strong/60 transition-colors"
           placeholder="Feature title"
-          className="w-full bg-bg-base border border-border-strong/40 rounded px-2.5 py-1.5 text-[13px] text-text-base outline-none focus:border-brand/50 transition-colors"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleCreate();
-            if (e.key === "Escape") onCancel();
-          }}
         />
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          rows={2}
-          placeholder="Description (optional)"
-          className="w-full bg-bg-base border border-border-strong/40 rounded px-2.5 py-1.5 text-[13px] text-text-base outline-none focus:border-brand/50 transition-colors resize-none"
-        />
-        <div className="flex items-center gap-2">
-          <Select
-            value={priority}
-            onChange={setPriority}
-            options={PRIORITIES.map((p) => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) }))}
+        <button onClick={onCancel} className="text-text-muted hover:text-text-base transition-colors">
+          <X size={14} />
+        </button>
+      </div>
+
+        {error && (
+          <div className="mx-4 mt-3 px-3 py-2 bg-danger/10 border border-danger/30 rounded text-[12px] text-danger flex items-center gap-2 shrink-0">
+            <AlertCircle size={12} />
+            <span className="flex-1">{error}</span>
+            <button onClick={() => setError(null)}>
+              <X size={11} />
+            </button>
+          </div>
+        )}
+
+      <div className="flex-1 overflow-y-auto custom-scrollbar px-4 py-3 space-y-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-text-muted">State</span>
+            <Select
+              value={editState}
+              onChange={setEditState}
+              options={STATES.map((s) => ({ value: s.id, label: s.label }))}
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-text-muted">Priority</span>
+            <Select
+              value={editPriority}
+              onChange={setEditPriority}
+              options={PRIORITIES.map((p) => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) }))}
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-text-muted">Effort</span>
+            <Select
+              value={editEffort}
+              onChange={setEditEffort}
+              options={[
+                { value: "", label: "—" },
+                ...EFFORTS.map((e) => ({ value: e, label: e.toUpperCase() })),
+              ]}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[11px] text-text-muted mb-1">Assignee</label>
+          <input
+            value={editAssignee}
+            onChange={(e) => setEditAssignee(e.target.value)}
+            placeholder="Agent id or name"
+            className="w-full bg-bg-input border border-border-strong/40 rounded px-2.5 py-1.5 text-[13px] text-text-base outline-none focus:border-brand/50 transition-colors"
           />
-          <div className="flex-1" />
-          <button
-            onClick={onCancel}
-            className="px-3 py-1 text-[12px] text-text-muted hover:text-text-base transition-colors"
-          >
-            Cancel
-          </button>
+        </div>
+
+        <div>
+          <label className="block text-[11px] text-text-muted mb-1 flex items-center gap-1">
+            <Tag size={11} /> Tags (comma-separated)
+          </label>
+          <input
+            value={editTagsRaw}
+            onChange={(e) => setEditTagsRaw(e.target.value)}
+            placeholder="e.g. frontend, auth, bug"
+            className="w-full bg-bg-input border border-border-strong/40 rounded px-2.5 py-1.5 text-[13px] text-text-base outline-none focus:border-brand/50 transition-colors"
+          />
+        </div>
+
+        <div>
+          <label className="block text-[11px] text-text-muted mb-1 flex items-center gap-1">
+            <Link size={11} /> Linked files (one per line)
+          </label>
+          <textarea
+            value={editLinkedFilesRaw}
+            onChange={(e) => setEditLinkedFilesRaw(e.target.value)}
+            rows={2}
+            placeholder="src/components/Foo.tsx"
+            className="w-full bg-bg-input border border-border-strong/40 rounded px-2.5 py-1.5 text-[13px] text-text-base outline-none focus:border-brand/50 transition-colors resize-none font-mono"
+          />
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[11px] text-text-muted">Description</label>
+            <button
+              onClick={() => setDescPreview((prev) => !prev)}
+              className="text-[11px] text-text-muted hover:text-text-base transition-colors"
+            >
+              {descPreview ? "Edit" : "Preview"}
+            </button>
+          </div>
+          {descPreview ? (
+            <div className="bg-bg-input border border-border-strong/40 rounded px-3 py-2 min-h-[80px] text-[13px]">
+              <MarkdownPreview content={editDescription || "*No description*"} />
+            </div>
+          ) : (
+            <textarea
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+              rows={5}
+              placeholder="Describe the feature in markdown…"
+              className="w-full bg-bg-input border border-border-strong/40 rounded px-2.5 py-1.5 text-[13px] text-text-base outline-none focus:border-brand/50 transition-colors resize-none font-mono"
+            />
+          )}
+        </div>
+
+        <div className="flex items-center justify-between">
           <button
             onClick={handleCreate}
-            disabled={saving || !title.trim()}
-            className="px-3 py-1 rounded bg-brand hover:bg-brand-hover disabled:opacity-50 text-white text-[12px] font-medium transition-colors"
+            disabled={saving || !editTitle.trim()}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-brand hover:bg-brand-hover disabled:opacity-50 text-white text-[12px] font-medium transition-colors"
           >
-            {saving ? "Creating…" : "Create"}
+            <Check size={12} />
+            {saving ? "Creating…" : "Create feature"}
+          </button>
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
+          >
+            Cancel
           </button>
         </div>
       </div>
@@ -790,10 +884,6 @@ interface ListViewProps {
   onFilterPriority: (p: string | null) => void;
   onSort: (sort: ListSort) => void;
   onAddNew: () => void;
-  isCreating: boolean;
-  projectName: string;
-  onCreated: (f: Feature) => void;
-  onCancelCreate: () => void;
 }
 
 interface SortableHeaderProps {
@@ -839,10 +929,6 @@ function ListView({
   onFilterPriority,
   onSort,
   onAddNew,
-  isCreating,
-  projectName,
-  onCreated,
-  onCancelCreate,
 }: ListViewProps) {
   const filtered = useMemo(() => {
     const visible = features.filter((f) => {
@@ -893,17 +979,7 @@ function ListView({
 
       {/* List */}
       <div className="flex-1 overflow-y-auto custom-scrollbar">
-        {isCreating && (
-          <div className="p-2">
-            <NewFeatureForm
-              projectName={projectName}
-              onCreated={onCreated}
-              onCancel={onCancelCreate}
-            />
-          </div>
-        )}
-
-        {filtered.length === 0 && !isCreating ? (
+        {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-text-muted py-12">
             <Kanban size={22} />
             <span className="text-[13px]">No features</span>
@@ -1002,7 +1078,12 @@ function KanbanCard({ feature, isSelected, isDragging, onSelect, onGripDown }: K
   return (
     <div
       onClick={() => { if (!isDragging) onSelect(feature.id); }}
-      className={`group bg-bg-base border rounded-lg p-2.5 cursor-pointer transition-colors select-none ${
+      onPointerDown={(e) => {
+        // Only initiate drag if left-clicking on the card itself (not its interactive children)
+        if (e.button !== 0) return;
+        onGripDown(feature, e);
+      }}
+      className={`group bg-bg-base border rounded-lg p-3 cursor-grab active:cursor-grabbing touch-none transition-colors select-none ${
         isDragging
           ? "opacity-40"
           : isSelected
@@ -1010,19 +1091,13 @@ function KanbanCard({ feature, isSelected, isDragging, onSelect, onGripDown }: K
           : "border-border-strong/40 hover:border-border-strong/60"
       }`}
     >
-      <div className="flex items-start gap-1.5 mb-1.5">
-        {/* Grip handle — pointer-down here initiates drag */}
-        <GripVertical
-          size={12}
-          className="text-text-muted opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity mt-0.5 shrink-0 cursor-grab active:cursor-grabbing touch-none"
-          onPointerDown={(e) => onGripDown(feature, e)}
-        />
+      <div className="flex items-start gap-2 mb-2">
         <span className="text-[13px] font-medium text-text-base leading-snug flex-1">
           {feature.title}
         </span>
         <PriorityDot priority={feature.priority} />
       </div>
-      <div className="flex items-center gap-1.5 flex-wrap ml-4">
+      <div className="flex items-center gap-1.5 flex-wrap">
         {feature.effort && (
           <span className="text-[10px] bg-bg-sidebar text-text-muted px-1.5 py-0.5 rounded uppercase">
             {feature.effort}
@@ -1055,10 +1130,6 @@ interface KanbanViewProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onMove: (featureId: string, newState: string, newPosition: number) => void;
-  isCreating: boolean;
-  projectName: string;
-  onCreated: (f: Feature) => void;
-  onCancelCreate: () => void;
 }
 
 function KanbanView({
@@ -1066,10 +1137,6 @@ function KanbanView({
   selectedId,
   onSelect,
   onMove,
-  isCreating,
-  projectName,
-  onCreated,
-  onCancelCreate,
 }: KanbanViewProps) {
   // id of the card currently being dragged
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -1162,14 +1229,6 @@ function KanbanView({
                   isOver ? "bg-bg-sidebar/60 ring-1 ring-brand/30" : "bg-bg-input"
                 }`}
               >
-                {isCreating && s.id === "backlog" && (
-                  <NewFeatureForm
-                    projectName={projectName}
-                    onCreated={onCreated}
-                    onCancel={onCancelCreate}
-                  />
-                )}
-
                 {col.map((f) => (
                   <KanbanCard
                     key={f.id}
@@ -1181,7 +1240,7 @@ function KanbanView({
                   />
                 ))}
 
-                {col.length === 0 && !isCreating && (
+                {col.length === 0 && (
                   <div className="flex items-center justify-center h-16 text-[11px] text-text-muted opacity-50">
                     Drop here
                   </div>
