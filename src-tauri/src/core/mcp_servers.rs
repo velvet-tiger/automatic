@@ -124,19 +124,21 @@ pub const AUTOMATIC_SERVER_NAME: &str = "automatic";
 /// how to use the Automatic MCP service.  Always assigned to every project.
 pub const AUTOMATIC_SKILL_NAME: &str = "automatic";
 
-/// Ensure the `automatic` MCP server entry is present in both the Automatic
-/// registry (`~/.automatic/mcp_servers/automatic.json`) and the global
-/// user-level Claude Code config (`~/.mcp.json`).
+/// Ensure the `automatic` MCP server entry is present in the Automatic
+/// registry and assigned to all projects.
 ///
 /// **Registry entry** — makes the server visible in the Automatic UI (MCP
 /// Servers list and per-project MCP selector).  The entry is always
 /// overwritten so the binary path stays current after updates.
 ///
-/// **Global `~/.mcp.json`** — makes the server available in every Claude
-/// Code session, even for projects not yet managed by Automatic.
-///
 /// **Project assignment** — adds `"automatic"` to every registered project's
 /// `mcp_servers` list if not already present, then persists the project.
+///
+/// The MCP server is exposed to agents via per-project config files written
+/// during agent sync (e.g. `.mcp.json` for Claude Code).  We intentionally
+/// do NOT write to the global `~/.mcp.json` or the plugin `.mcp.json` —
+/// having multiple registrations of the same server causes Claude Code to
+/// deduplicate and drop tools.
 ///
 /// The binary path is resolved from the current executable so it always
 /// reflects the installed release binary rather than a hard-coded path.
@@ -157,32 +159,7 @@ pub fn ensure_automatic_in_global_mcp() -> Result<(), String> {
     // save_mcp_server_config handles directory creation and env encryption.
     save_mcp_server_config(AUTOMATIC_SERVER_NAME, &registry_str)?;
 
-    // ── 2. Global ~/.mcp.json ────────────────────────────────────────────
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    let mcp_path = home.join(".mcp.json");
-
-    let mut root: serde_json::Value = if mcp_path.exists() {
-        let raw = fs::read_to_string(&mcp_path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({ "mcpServers": {} }))
-    } else {
-        serde_json::json!({ "mcpServers": {} })
-    };
-
-    let global_entry = serde_json::json!({
-        "command": binary,
-        "args": ["mcp-serve"]
-    });
-
-    if let Some(servers) = root.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
-        servers.insert(AUTOMATIC_SERVER_NAME.to_string(), global_entry);
-    } else {
-        root["mcpServers"] = serde_json::json!({ AUTOMATIC_SERVER_NAME: global_entry });
-    }
-
-    let serialized = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
-    fs::write(&mcp_path, serialized).map_err(|e| e.to_string())?;
-
-    // ── 3. Assign MCP server + skill to all projects ───────────────────
+    // ── 2. Assign MCP server + skill to all projects ───────────────────
     if let Ok(project_names) = super::list_projects() {
         for name in project_names {
             if let Ok(raw) = super::read_project(&name) {

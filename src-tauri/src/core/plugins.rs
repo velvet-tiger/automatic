@@ -190,16 +190,6 @@ fn make_executable(_path: &std::path::Path) -> Result<(), String> {
     Ok(()) // no-op on Windows
 }
 
-/// Resolve the Automatic binary path.  Uses the current executable when available
-/// (gives an absolute path that survives being called from any directory),
-/// otherwise falls back to "automatic" on PATH.
-fn find_automatic_binary() -> String {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.to_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "automatic".to_string())
-}
-
 /// Write the full Automatic plugin to disk.
 fn write_automatic_plugin(plugin_dir: &std::path::Path) -> Result<(), String> {
     // .claude-plugin/plugin.json
@@ -216,20 +206,11 @@ fn write_automatic_plugin(plugin_dir: &std::path::Path) -> Result<(), String> {
         &serde_json::to_string_pretty(&plugin_json).map_err(|e| format!("JSON error: {}", e))?,
     )?;
 
-    // .mcp.json — makes the Automatic MCP server available in every session
-    let automatic_binary = find_automatic_binary();
-    let mcp_json = serde_json::json!({
-        "mcpServers": {
-            "automatic": {
-                "command": automatic_binary,
-                "args": ["mcp-serve"]
-            }
-        }
-    });
-    write_file(
-        &plugin_dir.join(".mcp.json"),
-        &serde_json::to_string_pretty(&mcp_json).map_err(|e| format!("JSON error: {}", e))?,
-    )?;
+    // NOTE: No .mcp.json here — the Automatic MCP server is registered
+    // per-project via agent sync (e.g. claude_code.rs) with the correct
+    // AUTOMATIC_PROJECT env var.  A plugin-level .mcp.json would create a
+    // duplicate "automatic" server without project context, causing Claude
+    // Code to deduplicate and drop tools.
 
     // hooks/hooks.json
     let hooks_dir = plugin_dir.join("hooks");
@@ -261,7 +242,6 @@ fn write_automatic_plugin(plugin_dir: &std::path::Path) -> Result<(), String> {
 ///   └── automatic/
 ///       ├── .claude-plugin/
 ///       │   └── plugin.json
-///       ├── .mcp.json
 ///       ├── hooks/
 ///       │   └── hooks.json
 ///       └── scripts/
