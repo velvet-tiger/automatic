@@ -3380,13 +3380,18 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
           .map((e) => e.content)
           .filter(Boolean)
           .join("\n\n---\n\n");
-        // If any template had rules, persist them into file_rules before writing
+        // If any template had rules, persist them into file_rules._project before writing.
+        // Using _project (not _unified) ensures template rules are visible in the Rules tab
+        // and are not silently dropped when the user later toggles rules from the Rules UI
+        // (which only reads/writes _project).
         if (mergedRules.length > 0) {
           const latestRaw: string = await invoke("read_project", { name });
           const latestProj = JSON.parse(latestRaw);
+          const existingProjectRules: string[] = (latestProj.file_rules || {})["_project"] || [];
+          const combinedRules = [...new Set([...existingProjectRules, ...mergedRules])];
           const withRules = {
             ...latestProj,
-            file_rules: { ...(latestProj.file_rules || {}), _unified: mergedRules },
+            file_rules: { ...(latestProj.file_rules || {}), _project: combinedRules },
           };
           await invoke("save_project", { name, data: JSON.stringify(withRules, null, 2) });
         }

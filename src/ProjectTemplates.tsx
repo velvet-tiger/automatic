@@ -370,11 +370,17 @@ export default function ProjectTemplates({
         const latestRaw: string = await invoke("read_project", { name: projectName });
         const latestProj = JSON.parse(latestRaw);
         if (hasUnifiedRules) {
+          // Merge template rules into _project (the canonical key used by the
+          // Rules tab and sync engine).  Using _project ensures template rules
+          // are visible in the Rules UI and are not silently dropped when the
+          // user later toggles rules from the Rules tab (which only writes _project).
+          const existingProjectRules: string[] = (latestProj.file_rules || {})["_project"] || [];
+          const mergedRules = [...new Set([...existingProjectRules, ...(template.unified_rules || [])])];
           const withRules = {
             ...latestProj,
             file_rules: {
               ...(latestProj.file_rules || {}),
-              _unified: template.unified_rules,
+              _project: mergedRules,
             },
           };
           await invoke("save_project", { name: projectName, data: JSON.stringify(withRules, null, 2) });
