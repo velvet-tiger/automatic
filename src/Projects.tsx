@@ -1088,6 +1088,8 @@ interface ProjectsOverviewProps {
   folders: ProjectFolder[];
   onSelect: (name: string) => void;
   onCreate: () => void;
+  onSyncAll?: () => void;
+  syncAllStatus?: "idle" | "syncing";
 }
 
 function ProjectStatusBadge({ drift }: { drift: boolean | undefined }) {
@@ -1354,7 +1356,7 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject }: Project
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, folders, onSelect, onCreate }: ProjectsOverviewProps) {
+function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, folders, onSelect, onCreate, onSyncAll, syncAllStatus }: ProjectsOverviewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState<"alphabetical" | "created" | "updated" | "last_activity">("updated");
   // Track which folder groups are collapsed in the overview (independent of sidebar state)
@@ -1459,6 +1461,16 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
               className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-muted"
             />
           </div>
+          {onSyncAll && projects.some((n) => driftByProject[n] === true) && (
+            <button
+              onClick={onSyncAll}
+              disabled={syncAllStatus === "syncing"}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-warning/10 hover:bg-warning/20 text-warning border border-warning/30 rounded text-[12px] font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <RefreshCw size={12} className={syncAllStatus === "syncing" ? "animate-spin" : ""} />
+              {syncAllStatus === "syncing" ? "Syncing…" : "Sync all"}
+            </button>
+          )}
           <button
             onClick={onCreate}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors shadow-sm"
@@ -1909,6 +1921,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
   // Inline add state
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  // "Sync all" button status for the overview grid
+  const [syncAllStatus, setSyncAllStatus] = useState<"idle" | "syncing">("idle");
 
   // Drift detection state
   // null = unknown/not yet checked, DriftReport = result of last check
@@ -3749,6 +3763,33 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     setTimeout(() => setSyncStatus(null), 4000);
   };
 
+  const handleSyncAll = async () => {
+    // Collect all projects currently showing drift
+    const driftedProjects = projects.filter((n) => driftByProject[n] === true);
+    if (driftedProjects.length === 0) return;
+
+    setSyncAllStatus("syncing");
+    try {
+      // Sync each drifted project sequentially so we don't flood the backend
+      for (const name of driftedProjects) {
+        try {
+          const result: string = await invoke("sync_project", { name });
+          const files: string[] = JSON.parse(result);
+          trackProjectSynced(name);
+          // Mark this project as clean immediately so the UI reflects progress
+          setDriftByProject((prev) => ({ ...prev, [name]: false }));
+          // Satisfy the 'files' variable (used for analytics / future use)
+          void files;
+        } catch (_err) {
+          // Continue with the next project even if one fails
+        }
+      }
+      notifyProjectUpdated();
+    } finally {
+      setSyncAllStatus("idle");
+    }
+  };
+
   const handleOpenInEditor = async (editorId: string) => {
     if (!project?.directory) return;
     setOpenInDropdownOpen(false);
@@ -3787,6 +3828,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
             selectProject(name);
           }}
           onCreate={() => startCreate()}
+          onSyncAll={handleSyncAll}
+          syncAllStatus={syncAllStatus}
         />
         {driftDiffFile && (
           <DriftDiffModal
