@@ -1266,7 +1266,10 @@ function KanbanCard({ feature, isSelected, isDragging, onSelect, onGripDown }: K
             {feature.title}
           </span>
         </div>
-        <PriorityDot priority={feature.priority} />
+        <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+          <PromptButton feature={feature} />
+          <PriorityDot priority={feature.priority} />
+        </div>
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
         {feature.effort && (
@@ -1287,7 +1290,6 @@ function KanbanCard({ feature, isSelected, isDragging, onSelect, onGripDown }: K
             {tag}
           </span>
         ))}
-        <PromptButton feature={feature} className="ml-auto" />
       </div>
     </div>
   );
