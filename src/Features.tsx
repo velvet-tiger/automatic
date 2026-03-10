@@ -668,6 +668,7 @@ function DetailPanel({
           className="flex-1 bg-transparent text-[14px] font-semibold text-text-base outline-none border-b border-transparent focus:border-border-strong/60 transition-colors"
           placeholder="Feature title"
         />
+        <PromptButton feature={feature} />
         <button
           onClick={onClose}
           className="text-text-muted hover:text-text-base transition-colors"
