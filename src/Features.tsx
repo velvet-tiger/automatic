@@ -338,7 +338,7 @@ function DetailPanel({
   const [editTagsRaw, setEditTagsRaw] = useState("");
   const [editLinkedFilesRaw, setEditLinkedFilesRaw] = useState("");
   const [saving, setSaving] = useState(false);
-  const [descPreview, setDescPreview] = useState(false);
+  const [descPreview, setDescPreview] = useState(true);
 
   // Update input
   const [updateContent, setUpdateContent] = useState("");
