@@ -1585,6 +1585,13 @@ export default function Features({ projectName }: FeaturesProps) {
     return () => clearInterval(interval);
   }, [refreshFeatures]);
 
+  // Clear selection and creation state when the project changes so the detail
+  // panel does not attempt to load a feature ID that belongs to a different project.
+  useEffect(() => {
+    setSelectedId(null);
+    setIsCreating(false);
+  }, [projectName]);
+
   useEffect(() => {
     try {
       const stored = localStorage.getItem(buildViewStorageKey(projectName));
