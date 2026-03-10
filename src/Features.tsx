@@ -327,14 +327,13 @@ function PromptButton({ feature, className = "" }: { feature: Feature; className
       type="button"
       onClick={handleClick}
       title="Copy prompt to clipboard"
-      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+      className={`flex items-center justify-center w-5 h-5 rounded transition-colors ${
         copied
-          ? "bg-success/20 text-success"
-          : "bg-bg-sidebar text-text-muted hover:bg-brand/10 hover:text-brand"
+          ? "text-success"
+          : "text-text-muted hover:text-brand"
       } ${className}`}
     >
-      <Clipboard size={10} />
-      {copied ? "Copied!" : "Prompt"}
+      <Clipboard size={11} />
     </button>
   );
 }
@@ -1169,7 +1168,7 @@ function KanbanCard({ feature, isSelected, isDragging, onSelect, onGripDown }: K
             {tag}
           </span>
         ))}
-        <PromptButton feature={feature} className="ml-auto opacity-0 group-hover:opacity-100" />
+        <PromptButton feature={feature} className="ml-auto" />
       </div>
     </div>
   );
