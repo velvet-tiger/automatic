@@ -1321,13 +1321,15 @@ function KanbanView({
   // refs to each column element, keyed by stateId
   const colRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  const grouped = STATES.reduce(
+  const grouped = useMemo(() => STATES.reduce(
     (acc, s) => {
-      acc[s.id] = features.filter((f) => f.state === s.id);
+      acc[s.id] = features
+        .filter((f) => f.state === s.id)
+        .sort((a, b) => a.position - b.position);
       return acc;
     },
     {} as Record<string, Feature[]>
-  );
+  ), [features]);
 
   /** Walk point (x, y) through colRefs to find which state column it's over. */
   const resolveColumn = (x: number, y: number): string | null => {
@@ -1546,14 +1548,26 @@ export default function Features({ projectName }: FeaturesProps) {
   }, [projectName]);
 
   // Silent background refresh — does not touch loading/error state so the UI
-  // does not flash. Used by the polling interval.
+  // does not flash. Used by the polling interval and post-move sync.
+  // Only updates state when the data has actually changed to avoid
+  // unnecessary re-renders that could cause visible reordering flicker.
   const refreshFeatures = useCallback(async () => {
     try {
       const result = await invoke<Feature[]>("list_features", {
         project: projectName,
         state: null,
       });
-      setFeatures(result);
+      setFeatures((prev) => {
+        if (prev.length !== result.length) return result;
+        const changed = result.some(
+          (f, i) =>
+            f.id !== prev[i].id ||
+            f.state !== prev[i].state ||
+            f.position !== prev[i].position ||
+            f.updated_at !== prev[i].updated_at
+        );
+        return changed ? result : prev;
+      });
     } catch {
       // Silently ignore transient poll failures.
     }
@@ -1657,7 +1671,7 @@ export default function Features({ projectName }: FeaturesProps) {
   };
 
   const handleCreated = (f: Feature) => {
-    setFeatures((prev) => [f, ...prev]);
+    setFeatures((prev) => [...prev, f]);
     setIsCreating(false);
     setSelectedId(f.id);
   };
@@ -1691,11 +1705,11 @@ export default function Features({ projectName }: FeaturesProps) {
         newState,
         newPosition,
       });
-      // Reload to get server-side canonical ordering
-      await loadFeatures();
+      // Silently sync with server-side canonical ordering (no loading flash)
+      await refreshFeatures();
     } catch (err: any) {
       setError(String(err));
-      await loadFeatures(); // revert optimistic update
+      await refreshFeatures(); // revert optimistic update
     }
   };
 
