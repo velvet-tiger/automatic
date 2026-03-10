@@ -129,7 +129,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sig-macos
-          path: src-tauri/target/universal-apple-darwin/release/bundle/macos/Automatic.app.tar.gz.sig
+          path: src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: error
 
       - name: List Linux bundle output (diagnostic)
@@ -262,10 +262,10 @@ jobs:
           BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
           # Updater URLs — these are the signed artifacts uploaded by tauri-action and the build jobs above.
-          # macOS:   Automatic.app.tar.gz (uploaded by tauri-action)
+          # macOS:   derived from the .sig filename (e.g. Automatic_universal.app.tar.gz)
           # Linux:   original AppImage filename (e.g. Automatic_0.6.0_amd64.AppImage)
           # Windows: original MSI filename (e.g. Automatic_0.6.0_x64_en-US.msi)
-          DARWIN_FILE="Automatic.app.tar.gz"
+          DARWIN_FILE=$(ls sigs/macos/*.app.tar.gz.sig | xargs -I{} basename {} .sig)
           LINUX_FILE=$(ls sigs/linux/*.AppImage.sig | xargs -I{} basename {} .sig)
           WINDOWS_FILE=$(ls sigs/windows/*.msi.sig | xargs -I{} basename {} .sig)
 
@@ -281,7 +281,8 @@ jobs:
           python3 - <<PYEOF
           import json, glob, os
 
-          darwin_sig  = open('sigs/macos/Automatic.app.tar.gz.sig').read().strip()
+          darwin_sig_f = glob.glob('sigs/macos/*.app.tar.gz.sig')[0]
+          darwin_sig  = open(darwin_sig_f).read().strip()
           linux_sig_f = glob.glob('sigs/linux/*.AppImage.sig')[0]
           linux_sig   = open(linux_sig_f).read().strip()
           win_sig_f   = glob.glob('sigs/windows/*.msi.sig')[0]
