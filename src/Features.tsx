@@ -549,8 +549,8 @@ function DetailPanel({
   const [editEffort, setEditEffort] = useState("");
   const [editTags, setEditTags] = useState<string[]>([]);
   const [editLinkedFilesRaw, setEditLinkedFilesRaw] = useState("");
-  const [saving, setSaving] = useState(false);
   const [descPreview, setDescPreview] = useState(true);
+  const descDirtyRef = useRef(false);
 
   // Update input
   const [updateContent, setUpdateContent] = useState("");
@@ -584,26 +584,11 @@ function DetailPanel({
     load();
   }, [load]);
 
-  const handleSave = async () => {
+  /** Save a single-field patch atomically. */
+  const saveField = useCallback(async (patch: FeaturePatch) => {
     if (!feature) return;
-    setSaving(true);
     setError(null);
     try {
-      const tags = editTags;
-      const linked_files = editLinkedFilesRaw
-        .split("\n")
-        .map((f) => f.trim())
-        .filter(Boolean);
-      const patch: FeaturePatch = {
-        title: editTitle,
-        description: editDescription,
-        state: editState,
-        priority: editPriority,
-        assignee: editAssignee.trim() || null,
-        effort: editEffort || null,
-        tags,
-        linked_files,
-      };
       const updated = await invoke<Feature>("update_feature", {
         project: projectName,
         featureId,
@@ -615,10 +600,8 @@ function DetailPanel({
       onUpdated(updated);
     } catch (err: any) {
       setError(String(err));
-    } finally {
-      setSaving(false);
     }
-  };
+  }, [feature, projectName, featureId, onUpdated]);
 
   const handleAddUpdate = async () => {
     if (!updateContent.trim()) return;
@@ -681,6 +664,7 @@ function DetailPanel({
         <input
           value={editTitle}
           onChange={(e) => setEditTitle(e.target.value)}
+          onBlur={() => { if (editTitle.trim()) saveField({ title: editTitle }); }}
           className="flex-1 bg-transparent text-[14px] font-semibold text-text-base outline-none border-b border-transparent focus:border-border-strong/60 transition-colors"
           placeholder="Feature title"
         />
@@ -711,7 +695,7 @@ function DetailPanel({
             <span className="text-[11px] text-text-muted">State</span>
             <Select
               value={editState}
-              onChange={setEditState}
+              onChange={(v) => { setEditState(v); saveField({ state: v }); }}
               options={STATES.map((s) => ({ value: s.id, label: s.label }))}
             />
           </div>
@@ -719,7 +703,7 @@ function DetailPanel({
             <span className="text-[11px] text-text-muted">Priority</span>
             <Select
               value={editPriority}
-              onChange={setEditPriority}
+              onChange={(v) => { setEditPriority(v); saveField({ priority: v }); }}
               options={PRIORITIES.map((p) => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) }))}
             />
           </div>
@@ -727,7 +711,7 @@ function DetailPanel({
             <span className="text-[11px] text-text-muted">Effort</span>
             <Select
               value={editEffort}
-              onChange={setEditEffort}
+              onChange={(v) => { setEditEffort(v); saveField({ effort: v || null }); }}
               options={[
                 { value: "", label: "—" },
                 ...EFFORTS.map((e) => ({ value: e, label: e.toUpperCase() })),
@@ -742,6 +726,7 @@ function DetailPanel({
           <input
             value={editAssignee}
             onChange={(e) => setEditAssignee(e.target.value)}
+            onBlur={() => { saveField({ assignee: editAssignee.trim() || null }); }}
             placeholder="Agent id or name"
             className="w-full bg-bg-input border border-border-strong/40 rounded px-2.5 py-1.5 text-[13px] text-text-base outline-none focus:border-brand/50 transition-colors"
           />
@@ -750,7 +735,11 @@ function DetailPanel({
         {/* Tags */}
         <div>
           <label className="block text-[11px] text-text-muted mb-1">Tags</label>
-          <TagInput tags={editTags} onChange={setEditTags} suggestions={allTags} />
+          <TagInput
+            tags={editTags}
+            onChange={(newTags) => { setEditTags(newTags); saveField({ tags: newTags }); }}
+            suggestions={allTags}
+          />
         </div>
 
         {/* Linked files */}
@@ -761,6 +750,10 @@ function DetailPanel({
           <textarea
             value={editLinkedFilesRaw}
             onChange={(e) => setEditLinkedFilesRaw(e.target.value)}
+            onBlur={() => {
+              const linked_files = editLinkedFilesRaw.split("\n").map((f) => f.trim()).filter(Boolean);
+              saveField({ linked_files });
+            }}
             rows={2}
             placeholder="src/components/Foo.tsx"
             className="w-full bg-bg-input border border-border-strong/40 rounded px-2.5 py-1.5 text-[13px] text-text-base outline-none focus:border-brand/50 transition-colors resize-none font-mono"
@@ -772,7 +765,14 @@ function DetailPanel({
           <div className="flex items-center justify-between mb-1">
             <label className="text-[11px] text-text-muted">Description</label>
             <button
-              onClick={() => setDescPreview((p) => !p)}
+              onClick={() => {
+                if (!descPreview && descDirtyRef.current) {
+                  // Switching from edit to preview — save if edited
+                  saveField({ description: editDescription });
+                  descDirtyRef.current = false;
+                }
+                setDescPreview((p) => !p);
+              }}
               className="text-[11px] text-text-muted hover:text-text-base transition-colors"
             >
               {descPreview ? "Edit" : "Preview"}
@@ -785,7 +785,13 @@ function DetailPanel({
           ) : (
             <textarea
               value={editDescription}
-              onChange={(e) => setEditDescription(e.target.value)}
+              onChange={(e) => { setEditDescription(e.target.value); descDirtyRef.current = true; }}
+              onBlur={() => {
+                if (descDirtyRef.current) {
+                  saveField({ description: editDescription });
+                  descDirtyRef.current = false;
+                }
+              }}
               rows={5}
               placeholder="Describe the feature in markdown…"
               className="w-full bg-bg-input border border-border-strong/40 rounded px-2.5 py-1.5 text-[13px] text-text-base outline-none focus:border-brand/50 transition-colors resize-none font-mono"
@@ -793,16 +799,8 @@ function DetailPanel({
           )}
         </div>
 
-        {/* Save button */}
-        <div className="flex items-center justify-between">
-          <button
-            onClick={handleSave}
-            disabled={saving || !editTitle.trim()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-brand hover:bg-brand-hover disabled:opacity-50 text-white text-[12px] font-medium transition-colors"
-          >
-            <Check size={12} />
-            {saving ? "Saving…" : "Save changes"}
-          </button>
+        {/* Actions */}
+        <div className="flex items-center justify-end">
           <button
             onClick={handleDelete}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded text-danger hover:bg-danger/10 text-[12px] font-medium transition-colors"
