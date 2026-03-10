@@ -596,10 +596,10 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
                 {/* Beta notice — library servers only */}
                 {isManaged && (
-                  <div className="flex items-start gap-3 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                    <Info size={15} className="flex-shrink-0 mt-0.5 text-amber-400" />
-                    <p className="text-[12px] leading-relaxed text-amber-200">
-                      <span className="font-semibold">MCP configuration and authorisation is in beta.</span>{" "}
+                  <div className="flex items-start gap-3 px-4 py-3 rounded-lg bg-warning/10 border border-warning/20">
+                    <Info size={15} className="flex-shrink-0 mt-0.5 text-warning" />
+                    <p className="text-[12px] leading-relaxed text-warning/80">
+                      <span className="font-semibold text-warning">MCP configuration and authorisation is in beta.</span>{" "}
                       Some settings may change and certain authentication flows are not yet fully supported.
                     </p>
                   </div>
