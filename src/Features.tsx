@@ -997,7 +997,7 @@ function ListView({
                 <th className="text-left px-3 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider">
                   <SortableHeader label="Title" column="title" sort={sort} onSort={onSort} />
                 </th>
-                <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-24">
+                <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-28">
                   <SortableHeader label="State" column="state" sort={sort} onSort={onSort} />
                 </th>
                 <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-20">
