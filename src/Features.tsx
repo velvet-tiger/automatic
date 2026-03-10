@@ -354,7 +354,7 @@ function DetailPanel({
       });
       setFeature(fw);
       setEditTitle(fw.title);
-      setEditDescription(fw.description);
+      setEditDescription(fw.description.replace(/\\n/g, "\n"));
       setEditState(fw.state);
       setEditPriority(fw.priority);
       setEditAssignee(fw.assignee ?? "");
