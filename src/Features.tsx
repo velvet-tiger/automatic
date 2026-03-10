@@ -1025,10 +1025,10 @@ function ListView({
                       : "hover:bg-bg-sidebar/50"
                   }`}
                 >
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-2">
+                   <td className="px-3 py-2 w-full min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
                       <PriorityDot priority={f.priority} />
-                      <span className="font-medium text-text-base truncate max-w-[200px]">
+                      <span className="font-medium text-text-base truncate min-w-0">
                         {f.title}
                       </span>
                       {f.tags.length > 0 && (
