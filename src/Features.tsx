@@ -12,7 +12,6 @@ import {
   Send,
   Trash2,
   Check,
-  Tag,
   Link,
   AlertCircle,
   ChevronDown,
@@ -338,6 +337,140 @@ function PromptButton({ feature, className = "" }: { feature: Feature; className
   );
 }
 
+// ── Tag Input ─────────────────────────────────────────────────────────────────
+
+interface TagInputProps {
+  tags: string[];
+  onChange: (tags: string[]) => void;
+  suggestions: string[];
+}
+
+function TagInput({ tags, onChange, suggestions }: TagInputProps) {
+  const [inputValue, setInputValue] = useState("");
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    const query = inputValue.trim().toLowerCase();
+    if (!query) return suggestions.filter((s) => !tags.includes(s));
+    return suggestions.filter(
+      (s) => s.toLowerCase().includes(query) && !tags.includes(s)
+    );
+  }, [inputValue, suggestions, tags]);
+
+  const commitInput = (value: string) => {
+    const trimmed = value.trim().replace(/,$/, "").trim();
+    if (trimmed && !tags.includes(trimmed)) {
+      onChange([...tags, trimmed]);
+    }
+    setInputValue("");
+    setOpen(false);
+  };
+
+  const removeTag = (tag: string) => {
+    onChange(tags.filter((t) => t !== tag));
+  };
+
+  const openMenu = () => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    setMenuStyle({
+      position: "fixed",
+      left: rect.left,
+      top: rect.bottom + 2,
+      width: rect.width,
+      zIndex: 99999,
+    });
+    setOpen(true);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (
+        menuRef.current && !menuRef.current.contains(e.target as Node) &&
+        containerRef.current && !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      commitInput(inputValue);
+    } else if (e.key === "Backspace" && !inputValue && tags.length > 0) {
+      onChange(tags.slice(0, -1));
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <>
+      <div
+        ref={containerRef}
+        onClick={() => inputRef.current?.focus()}
+        className="flex flex-wrap items-center gap-1.5 min-h-[34px] bg-bg-input border border-border-strong/40 rounded px-2 py-1.5 cursor-text focus-within:border-brand/50 transition-colors"
+      >
+        {tags.map((tag) => (
+          <span
+            key={tag}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand/15 text-brand text-[11px] font-medium"
+          >
+            {tag}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); removeTag(tag); }}
+              className="text-brand/60 hover:text-brand transition-colors leading-none"
+            >
+              <X size={9} />
+            </button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          value={inputValue}
+          onChange={(e) => {
+            setInputValue(e.target.value);
+            if (e.target.value.trim()) openMenu(); else setOpen(filtered.length > 0);
+          }}
+          onFocus={() => { if (filtered.length > 0 || !inputValue) openMenu(); }}
+          onKeyDown={handleKeyDown}
+          placeholder={tags.length === 0 ? "Add tags…" : ""}
+          className="flex-1 min-w-[80px] bg-transparent text-[12px] text-text-base outline-none placeholder:text-text-muted"
+        />
+      </div>
+
+      {open && filtered.length > 0 && createPortal(
+        <div
+          ref={menuRef}
+          style={menuStyle}
+          className="bg-bg-input border border-border-strong/60 rounded-md shadow-xl overflow-hidden py-1 max-h-40 overflow-y-auto"
+        >
+          {filtered.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); commitInput(s); }}
+              className="w-full text-left px-3 py-1.5 text-[12px] text-text-base hover:bg-bg-sidebar transition-colors"
+            >
+              {s}
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 function PriorityDot({ priority }: { priority: string }) {
   return (
     <span
@@ -354,6 +487,7 @@ function PriorityDot({ priority }: { priority: string }) {
 interface DetailPanelProps {
   projectName: string;
   featureId: string;
+  allTags: string[];
   onClose: () => void;
   onUpdated: (f: Feature) => void;
   onDeleted: (id: string) => void;
@@ -362,6 +496,7 @@ interface DetailPanelProps {
 function DetailPanel({
   projectName,
   featureId,
+  allTags,
   onClose,
   onUpdated,
   onDeleted,
@@ -377,7 +512,7 @@ function DetailPanel({
   const [editPriority, setEditPriority] = useState("");
   const [editAssignee, setEditAssignee] = useState("");
   const [editEffort, setEditEffort] = useState("");
-  const [editTagsRaw, setEditTagsRaw] = useState("");
+  const [editTags, setEditTags] = useState<string[]>([]);
   const [editLinkedFilesRaw, setEditLinkedFilesRaw] = useState("");
   const [saving, setSaving] = useState(false);
   const [descPreview, setDescPreview] = useState(true);
@@ -401,7 +536,7 @@ function DetailPanel({
       setEditPriority(fw.priority);
       setEditAssignee(fw.assignee ?? "");
       setEditEffort(fw.effort ?? "");
-      setEditTagsRaw(fw.tags.join(", "));
+      setEditTags(fw.tags);
       setEditLinkedFilesRaw(fw.linked_files.join("\n"));
     } catch (err: any) {
       setError(String(err));
@@ -419,10 +554,7 @@ function DetailPanel({
     setSaving(true);
     setError(null);
     try {
-      const tags = editTagsRaw
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
+      const tags = editTags;
       const linked_files = editLinkedFilesRaw
         .split("\n")
         .map((f) => f.trim())
@@ -582,15 +714,8 @@ function DetailPanel({
 
         {/* Tags */}
         <div>
-          <label className="block text-[11px] text-text-muted mb-1 flex items-center gap-1">
-            <Tag size={11} /> Tags (comma-separated)
-          </label>
-          <input
-            value={editTagsRaw}
-            onChange={(e) => setEditTagsRaw(e.target.value)}
-            placeholder="e.g. frontend, auth, bug"
-            className="w-full bg-bg-input border border-border-strong/40 rounded px-2.5 py-1.5 text-[13px] text-text-base outline-none focus:border-brand/50 transition-colors"
-          />
+          <label className="block text-[11px] text-text-muted mb-1">Tags</label>
+          <TagInput tags={editTags} onChange={setEditTags} suggestions={allTags} />
         </div>
 
         {/* Linked files */}
@@ -728,18 +853,19 @@ function DetailPanel({
 
 interface CreateFeaturePanelProps {
   projectName: string;
+  allTags: string[];
   onCreated: (f: Feature) => void;
   onCancel: () => void;
 }
 
-function CreateFeaturePanel({ projectName, onCreated, onCancel }: CreateFeaturePanelProps) {
+function CreateFeaturePanel({ projectName, allTags, onCreated, onCancel }: CreateFeaturePanelProps) {
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editState, setEditState] = useState("backlog");
   const [editPriority, setEditPriority] = useState("medium");
   const [editAssignee, setEditAssignee] = useState("");
   const [editEffort, setEditEffort] = useState("");
-  const [editTagsRaw, setEditTagsRaw] = useState("");
+  const [editTags, setEditTags] = useState<string[]>([]);
   const [editLinkedFilesRaw, setEditLinkedFilesRaw] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -755,7 +881,7 @@ function CreateFeaturePanel({ projectName, onCreated, onCancel }: CreateFeatureP
     setSaving(true);
     setError(null);
     try {
-      const tags = editTagsRaw.split(",").map((tag) => tag.trim()).filter(Boolean);
+      const tags = editTags;
       const linked_files = editLinkedFilesRaw.split("\n").map((file) => file.trim()).filter(Boolean);
       const feature = await invoke<Feature>("create_feature", {
         project: projectName,
@@ -843,15 +969,8 @@ function CreateFeaturePanel({ projectName, onCreated, onCancel }: CreateFeatureP
         </div>
 
         <div>
-          <label className="block text-[11px] text-text-muted mb-1 flex items-center gap-1">
-            <Tag size={11} /> Tags (comma-separated)
-          </label>
-          <input
-            value={editTagsRaw}
-            onChange={(e) => setEditTagsRaw(e.target.value)}
-            placeholder="e.g. frontend, auth, bug"
-            className="w-full bg-bg-input border border-border-strong/40 rounded px-2.5 py-1.5 text-[13px] text-text-base outline-none focus:border-brand/50 transition-colors"
-          />
+          <label className="block text-[11px] text-text-muted mb-1">Tags</label>
+          <TagInput tags={editTags} onChange={setEditTags} suggestions={allTags} />
         </div>
 
         <div>
@@ -1396,6 +1515,12 @@ export default function Features({ projectName }: FeaturesProps) {
   const [filterPriority, setFilterPriority] = useState<string | null>(() => readStoredFilters(projectName).filterPriority);
   const [sort, setSort] = useState<ListSort | null>(() => readStoredSort(projectName));
 
+  // All unique tags across all features — used for autocomplete suggestions
+  const allTags = useMemo(
+    () => Array.from(new Set(features.flatMap((f) => f.tags))).sort(),
+    [features]
+  );
+
   // Resizable split pane
   const [detailWidth, setDetailWidth] = useState(DETAIL_DEFAULT);
   const resizing = useRef(false);
@@ -1678,6 +1803,7 @@ export default function Features({ projectName }: FeaturesProps) {
             {isCreating ? (
               <CreateFeaturePanel
                 projectName={projectName}
+                allTags={allTags}
                 onCreated={handleCreated}
                 onCancel={() => setIsCreating(false)}
               />
@@ -1685,6 +1811,7 @@ export default function Features({ projectName }: FeaturesProps) {
               <DetailPanel
                 projectName={projectName}
                 featureId={selectedId}
+                allTags={allTags}
                 onClose={() => setSelectedId(null)}
                 onUpdated={handleUpdated}
                 onDeleted={handleDeleted}
