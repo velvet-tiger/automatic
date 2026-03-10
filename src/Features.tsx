@@ -16,6 +16,7 @@ import {
   Link,
   AlertCircle,
   ChevronDown,
+  Clipboard,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -172,6 +173,38 @@ function compareFeatures(a: Feature, b: Feature, key: ListSortKey): number {
   }
 }
 
+/** Returns a short human-readable ticket ID derived from the UUID, e.g. "#A1B2C3D4". */
+function ticketId(feature: Feature): string {
+  return "#" + feature.id.replace(/-/g, "").slice(0, 8).toUpperCase();
+}
+
+/** Builds an LLM prompt for the given feature and copies it to the clipboard. */
+function copyPrompt(feature: Feature): void {
+  const id = ticketId(feature);
+  const lines: string[] = [
+    `Please work on the following task from our project backlog.`,
+    ``,
+    `**Ticket:** ${id} — ${feature.title}`,
+    `**Project:** ${feature.project}`,
+    `**State:** ${feature.state}`,
+    `**Priority:** ${feature.priority}`,
+    ...(feature.effort ? [`**Effort:** ${feature.effort.toUpperCase()}`] : []),
+    ...(feature.assignee ? [`**Assignee:** ${feature.assignee}`] : []),
+    ...(feature.tags.length > 0 ? [`**Tags:** ${feature.tags.join(", ")}`] : []),
+    ...(feature.linked_files.length > 0
+      ? [`**Linked files:**\n${feature.linked_files.map((f) => `- ${f}`).join("\n")}`]
+      : []),
+    ``,
+    `**Description:**`,
+    feature.description.trim() || "(No description provided.)",
+    ``,
+    `Please implement this task, following the project conventions. When done, summarise what was changed.`,
+  ];
+  navigator.clipboard.writeText(lines.join("\n")).catch(() => {
+    // Fallback: silently ignore if clipboard API is unavailable
+  });
+}
+
 // ── Portal Select ─────────────────────────────────────────────────────────────
 // Renders the dropdown list via a portal mounted at document.body so it floats
 // above all stacking contexts and window chrome in the Tauri WebView.
@@ -293,6 +326,31 @@ function StateBadge({ state }: { state: string }) {
     >
       {label}
     </span>
+  );
+}
+
+function PromptButton({ feature, className = "" }: { feature: Feature; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    copyPrompt(feature);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      title="Copy prompt to clipboard"
+      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+        copied
+          ? "bg-success/20 text-success"
+          : "bg-bg-sidebar text-text-muted hover:bg-brand/10 hover:text-brand"
+      } ${className}`}
+    >
+      <Clipboard size={10} />
+      {copied ? "Copied!" : "Prompt"}
+    </button>
   );
 }
 
@@ -1009,11 +1067,12 @@ function ListView({
                 <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-28">
                   <SortableHeader label="Assignee" column="assignee" sort={sort} onSort={onSort} />
                 </th>
-                <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-24">
-                  <SortableHeader label="Updated" column="updated" sort={sort} onSort={onSort} />
-                </th>
-              </tr>
-            </thead>
+                 <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-24">
+                   <SortableHeader label="Updated" column="updated" sort={sort} onSort={onSort} />
+                 </th>
+                 <th className="px-2 py-2 w-16" />
+               </tr>
+             </thead>
             <tbody>
               {filtered.map((f) => (
                 <tr
@@ -1028,11 +1087,14 @@ function ListView({
                    <td className="px-3 py-2 w-full min-w-0">
                     <div className="flex items-center gap-2 min-w-0">
                       <PriorityDot priority={f.priority} />
+                      <span className="font-mono text-[10px] text-text-muted shrink-0">
+                        {ticketId(f)}
+                      </span>
                       <span className="font-medium text-text-base truncate min-w-0">
                         {f.title}
                       </span>
                       {f.tags.length > 0 && (
-                        <span className="text-[10px] text-text-muted">
+                        <span className="text-[10px] text-text-muted shrink-0">
                           {f.tags.slice(0, 2).join(", ")}
                           {f.tags.length > 2 && " +"}
                         </span>
@@ -1053,6 +1115,9 @@ function ListView({
                   </td>
                   <td className="px-2 py-2 text-text-muted">
                     {formatDate(f.updated_at)}
+                  </td>
+                  <td className="px-2 py-2">
+                    <PromptButton feature={f} />
                   </td>
                 </tr>
               ))}
@@ -1091,10 +1156,13 @@ function KanbanCard({ feature, isSelected, isDragging, onSelect, onGripDown }: K
           : "border-border-strong/40 hover:border-border-strong/60"
       }`}
     >
-      <div className="flex items-start gap-2 mb-2">
-        <span className="text-[13px] font-medium text-text-base leading-snug flex-1">
-          {feature.title}
-        </span>
+      <div className="flex items-start gap-2 mb-1.5">
+        <div className="flex-1 min-w-0">
+          <div className="font-mono text-[10px] text-text-muted mb-0.5">{ticketId(feature)}</div>
+          <span className="text-[13px] font-medium text-text-base leading-snug">
+            {feature.title}
+          </span>
+        </div>
         <PriorityDot priority={feature.priority} />
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
@@ -1116,6 +1184,7 @@ function KanbanCard({ feature, isSelected, isDragging, onSelect, onGripDown }: K
             {tag}
           </span>
         ))}
+        <PromptButton feature={feature} className="ml-auto opacity-0 group-hover:opacity-100" />
       </div>
     </div>
   );
