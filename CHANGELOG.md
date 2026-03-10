@@ -2,6 +2,35 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.9.2] — 2026-03-10
+
+### Features
+
+- **Features**: Tags field on feature cards replaced with a pill-based `TagInput` component with autocomplete from existing project tags
+- **Features**: Prompt button added to list rows and Kanban cards; copies a compact prompt containing the ticket ID, name, and instruction to fetch the full feature via the Automatic MCP
+
+### Fixes
+
+- **Features**: Prompt button repositioned to the Kanban card header row, beside the priority dot, for consistent placement
+- **Features**: Prompt button is icon-only and always visible (removed conditional visibility)
+- **Features**: Prompt text simplified to ticket ID, name, and a single MCP fetch instruction
+- **Features**: Literal `\n` escape sequences in stored descriptions are now correctly unescaped on load
+- **Features**: Description panel defaults to rendered Markdown preview (not raw edit mode) when opening a feature
+- **Features**: "In Progress" badge no longer truncated — State column width increased to fit the label
+- **Features**: List view title column no longer hard-truncated at a fixed max-width
+- **MCP Servers**: Duplicate MCP server registrations that silently dropped tools have been removed
+- **MCP Servers**: Beta notice banner now uses semantic warning design tokens instead of hardcoded colours
+
+### CI
+
+- Derive the macOS artifact filename dynamically in the release workflow, fixing updater 404 errors caused by a mismatched static filename
+
+### Chores
+
+- Remove obsolete `daemon-state.json` file
+
+---
+
 ## [0.9.1] — 2026-03-10
 
 ### Features
