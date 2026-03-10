@@ -315,25 +315,60 @@ function StateBadge({ state }: { state: string }) {
 
 function PromptButton({ feature, className = "" }: { feature: Feature; className?: string }) {
   const [copied, setCopied] = useState(false);
+  const [toastPos, setToastPos] = useState<{ x: number; y: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     copyPrompt(feature);
+    if (btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setToastPos({ x: rect.left + rect.width / 2, y: rect.top });
+    }
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    setTimeout(() => {
+      setCopied(false);
+      setToastPos(null);
+    }, 1500);
   };
+
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      title="Copy prompt to clipboard"
-      className={`flex items-center justify-center w-5 h-5 rounded transition-colors ${
-        copied
-          ? "text-success"
-          : "text-text-muted hover:text-brand"
-      } ${className}`}
-    >
-      <Clipboard size={11} />
-    </button>
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={handleClick}
+        title="Copy prompt to clipboard"
+        className={`flex items-center justify-center w-5 h-5 rounded transition-colors ${
+          copied
+            ? "text-success"
+            : "text-text-muted hover:text-brand"
+        } ${className}`}
+      >
+        <Clipboard size={11} />
+      </button>
+      {copied && toastPos &&
+        createPortal(
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              position: "fixed",
+              left: toastPos.x,
+              top: toastPos.y - 8,
+              transform: "translate(-50%, -100%)",
+              zIndex: 9999,
+              pointerEvents: "none",
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-surface border border-border-strong shadow-lg text-xs text-text-base animate-fade-in whitespace-nowrap"
+          >
+            <Check size={11} className="text-success flex-shrink-0" />
+            Prompt copied
+          </div>,
+          document.body
+        )
+      }
+    </>
   );
 }
 
