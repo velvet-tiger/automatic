@@ -181,26 +181,11 @@ function ticketId(feature: Feature): string {
 /** Builds an LLM prompt for the given feature and copies it to the clipboard. */
 function copyPrompt(feature: Feature): void {
   const id = ticketId(feature);
-  const lines: string[] = [
-    `Please work on the following task from our project backlog.`,
-    ``,
-    `**Ticket:** ${id} — ${feature.title}`,
-    `**Project:** ${feature.project}`,
-    `**State:** ${feature.state}`,
-    `**Priority:** ${feature.priority}`,
-    ...(feature.effort ? [`**Effort:** ${feature.effort.toUpperCase()}`] : []),
-    ...(feature.assignee ? [`**Assignee:** ${feature.assignee}`] : []),
-    ...(feature.tags.length > 0 ? [`**Tags:** ${feature.tags.join(", ")}`] : []),
-    ...(feature.linked_files.length > 0
-      ? [`**Linked files:**\n${feature.linked_files.map((f) => `- ${f}`).join("\n")}`]
-      : []),
-    ``,
-    `**Description:**`,
-    feature.description.trim() || "(No description provided.)",
-    ``,
-    `Please implement this task, following the project conventions. When done, summarise what was changed.`,
-  ];
-  navigator.clipboard.writeText(lines.join("\n")).catch(() => {
+  const prompt =
+    `Please work on ticket ${id} — "${feature.title}" in project "${feature.project}". ` +
+    `Use the Automatic MCP tool to fetch the full feature details (automatic_get_feature) before starting. ` +
+    `Follow the project conventions and update the feature status as you progress.`;
+  navigator.clipboard.writeText(prompt).catch(() => {
     // Fallback: silently ignore if clipboard API is unavailable
   });
 }
