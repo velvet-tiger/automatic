@@ -119,7 +119,9 @@ jobs:
           args: ${{ matrix.args }}
 
       # Stash the macOS .sig content as a workflow artifact for the publish job.
-      # tauri-action already uploads Automatic.app.tar.gz and its .sig to the release.
+      # tauri-action already uploads the .app.tar.gz and its .sig to the release.
+      # The publish job looks up the actual asset name from the release rather than
+      # deriving it from the .sig filename, to avoid mismatches from tauri-action renames.
       - name: List macOS bundle output (diagnostic)
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'macos-latest'
         run: ls -la src-tauri/target/universal-apple-darwin/release/bundle/macos/ || true
@@ -261,13 +263,28 @@ jobs:
 
           BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
-          # Updater URLs — these are the signed artifacts uploaded by tauri-action and the build jobs above.
-          # macOS:   derived from the .sig filename (e.g. Automatic_universal.app.tar.gz)
-          # Linux:   original AppImage filename (e.g. Automatic_0.6.0_amd64.AppImage)
-          # Windows: original MSI filename (e.g. Automatic_0.6.0_x64_en-US.msi)
-          DARWIN_FILE=$(ls sigs/macos/*.app.tar.gz.sig | xargs -I{} basename {} .sig)
-          LINUX_FILE=$(ls sigs/linux/*.AppImage.sig | xargs -I{} basename {} .sig)
-          WINDOWS_FILE=$(ls sigs/windows/*.msi.sig | xargs -I{} basename {} .sig)
+          # Updater URLs — look up the actual asset names from the GitHub release to avoid
+          # mismatches between the on-disk .sig filename and what tauri-action uploads.
+          # macOS:   find the .app.tar.gz asset on the release (tauri-action may rename it)
+          # Linux:   find the .AppImage asset on the release
+          # Windows: find the .msi asset on the release
+          DARWIN_FILE=$(gh release view "$TAG" --json assets -q '.assets[].name' | grep '\.app\.tar\.gz$' | grep -v '\.sig' | head -1)
+          LINUX_FILE=$(gh release view "$TAG" --json assets -q '.assets[].name' | grep '\.AppImage$' | grep -v '\.sig' | head -1)
+          WINDOWS_FILE=$(gh release view "$TAG" --json assets -q '.assets[].name' | grep '\.msi$' | grep -v '\.sig' | head -1)
+
+          if [ -z "$DARWIN_FILE" ] || [ -z "$LINUX_FILE" ] || [ -z "$WINDOWS_FILE" ]; then
+            echo "ERROR: Could not find all platform artifacts on the release."
+            echo "  DARWIN_FILE='$DARWIN_FILE'"
+            echo "  LINUX_FILE='$LINUX_FILE'"
+            echo "  WINDOWS_FILE='$WINDOWS_FILE'"
+            gh release view "$TAG" --json assets -q '.assets[].name'
+            exit 1
+          fi
+
+          echo "Resolved artifact filenames:"
+          echo "  Darwin:  $DARWIN_FILE"
+          echo "  Linux:   $LINUX_FILE"
+          echo "  Windows: $WINDOWS_FILE"
 
           export DARWIN_URL="${BASE_URL}/${DARWIN_FILE}"
           export LINUX_URL="${BASE_URL}/${LINUX_FILE}"
