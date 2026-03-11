@@ -361,28 +361,60 @@ pub fn list_features(project: &str, state_filter: Option<&str>) -> Result<Vec<Fe
 }
 
 /// Get a single feature by ID (without updates).
+///
+/// Accepts either a full UUID or a unique case-insensitive prefix.  If the
+/// prefix matches more than one feature an error is returned so the caller
+/// can disambiguate.
 pub fn get_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
     let conn = open_conn()?;
-    conn.query_row(
+
+    // 1. Try exact match first (fast path).
+    let exact = conn.query_row(
         "SELECT id, project, title, description, state, priority, assignee,
                 tags, linked_files, effort, created_at, updated_at, created_by, position
          FROM features
          WHERE id = ?1 AND project = ?2",
         params![feature_id, project],
         row_to_feature,
-    )
-    .map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => {
-            format!(
-                "Feature '{}' not found in project '{}'",
-                feature_id, project
-            )
-        }
-        other => format!("Failed to get feature: {}", other),
-    })
+    );
+
+    match exact {
+        Ok(f) => return Ok(f),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {} // fall through to prefix search
+        Err(e) => return Err(format!("Failed to get feature: {}", e)),
+    }
+
+    // 2. Case-insensitive prefix search.
+    let prefix_pattern = format!("{}%", feature_id.to_lowercase());
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, project, title, description, state, priority, assignee,
+                    tags, linked_files, effort, created_at, updated_at, created_by, position
+             FROM features
+             WHERE LOWER(id) LIKE ?1 AND project = ?2",
+        )
+        .map_err(|e| format!("Failed to prepare prefix query: {}", e))?;
+
+    let matches: Vec<Feature> = stmt
+        .query_map(params![prefix_pattern, project], row_to_feature)
+        .map_err(|e| format!("Failed to query features by prefix: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    match matches.len() {
+        0 => Err(format!(
+            "Feature '{}' not found in project '{}'",
+            feature_id, project
+        )),
+        1 => Ok(matches.into_iter().next().unwrap()),
+        n => Err(format!(
+            "Partial ID '{}' is ambiguous: {} features match in project '{}'. Provide more characters.",
+            feature_id, n, project
+        )),
+    }
 }
 
 /// Get a feature together with its full update history (updates newest-first).
