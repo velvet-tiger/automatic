@@ -4,25 +4,11 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { THEMES, applyTheme, Theme } from "./theme";
 
 import { getVersion } from "@tauri-apps/api/app";
-import { check, type Update } from "@tauri-apps/plugin-updater";
-import {
-  setAnalyticsEnabled,
-  trackSettingChanged,
-  trackUpdateChecked,
-  trackUpdateInstalled,
-} from "./analytics";
+import { setAnalyticsEnabled, trackSettingChanged } from "./analytics";
+import { useUpdate } from "./UpdateContext";
 import { AgentSelector, type AgentInfo } from "./AgentSelector";
 import SettingsPlugins from "./plugins/SettingsPlugins";
 import { Code2, Bot, AppWindow, Puzzle, X } from "lucide-react";
-
-type UpdateStatus =
-  | "idle"
-  | "checking"
-  | "up-to-date"
-  | "available"
-  | "downloading"
-  | "installed"
-  | "error";
 
 type SettingsPage = "skills" | "agents" | "app" | "plugins";
 
@@ -100,15 +86,9 @@ export default function Settings() {
     }
   };
 
-  // Update state
+  // Update state — sourced from the shared UpdateContext
   const [appVersion, setAppVersion] = useState<string>("");
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
-  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
-  const [updateInfo, setUpdateInfo] = useState<{
-    version: string;
-    notes?: string;
-  } | null>(null);
-  const [updateError, setUpdateError] = useState<string>("");
+  const { status: updateStatus, updateInfo, errorMessage: updateError, checkAndDownload, restartApp } = useUpdate();
 
   useEffect(() => {
     async function loadSettings() {
@@ -173,49 +153,6 @@ export default function Settings() {
     };
     setSettings(updated);
     await persistSettings(updated);
-  }
-
-  async function checkForUpdates() {
-    setUpdateStatus("checking");
-    setUpdateError("");
-    setPendingUpdate(null);
-    setUpdateInfo(null);
-    try {
-      const update = await check();
-      if (update) {
-        setPendingUpdate(update);
-        setUpdateInfo({
-          version: update.version,
-          notes: update.body ?? undefined,
-        });
-        setUpdateStatus("available");
-        trackUpdateChecked("available");
-      } else {
-        setUpdateStatus("up-to-date");
-        trackUpdateChecked("not_available");
-      }
-    } catch (e) {
-      setUpdateError(String(e));
-      setUpdateStatus("error");
-      trackUpdateChecked("error");
-    }
-  }
-
-  async function installUpdate() {
-    if (!pendingUpdate) return;
-    setUpdateStatus("downloading");
-    try {
-      await pendingUpdate.downloadAndInstall();
-      setUpdateStatus("installed");
-      trackUpdateInstalled(pendingUpdate.version);
-    } catch (e) {
-      setUpdateError(String(e));
-      setUpdateStatus("error");
-    }
-  }
-
-  function restartApp() {
-    invoke("restart_app");
   }
 
   async function reinstallDefaultSkills() {
@@ -575,39 +512,30 @@ export default function Settings() {
                   )}
                 </div>
 
-                {/* Update available banner */}
-                {updateStatus === "available" && updateInfo && (
-                  <div className="mb-4 p-4 rounded-lg border border-brand bg-brand/10">
+                {/* Downloading in background */}
+                {updateStatus === "downloading" && updateInfo && (
+                  <div className="mb-4 p-4 rounded-lg border border-brand/40 bg-brand/5 text-[13px] text-text-muted">
+                    Downloading {updateInfo.version}…
+                  </div>
+                )}
+                {updateStatus === "downloading" && !updateInfo && (
+                  <div className="mb-4 p-4 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] text-text-muted">
+                    Downloading update…
+                  </div>
+                )}
+
+                {/* Ready — prompt restart (also shown via UpdateToast globally) */}
+                {updateStatus === "ready" && (
+                  <div className="mb-4 p-4 rounded-lg border border-success bg-success/10">
                     <div className="text-[13px] font-medium text-text-base mb-1">
-                      Version {updateInfo.version} available
+                      Update installed
+                      {updateInfo ? ` — v${updateInfo.version}` : ""}
                     </div>
-                    {updateInfo.notes && (
+                    {updateInfo?.notes && (
                       <p className="text-[12px] text-text-muted mb-3 leading-relaxed whitespace-pre-wrap">
                         {updateInfo.notes}
                       </p>
                     )}
-                    <button
-                      onClick={installUpdate}
-                      className="px-3 py-1.5 rounded text-[12px] font-medium bg-brand text-white hover:bg-brand-active transition-colors"
-                    >
-                      Download &amp; Install
-                    </button>
-                  </div>
-                )}
-
-                {/* Downloading */}
-                {updateStatus === "downloading" && (
-                  <div className="mb-4 p-4 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] text-text-muted">
-                    Downloading update...
-                  </div>
-                )}
-
-                {/* Installed — prompt restart */}
-                {updateStatus === "installed" && (
-                  <div className="mb-4 p-4 rounded-lg border border-success bg-success/10">
-                    <div className="text-[13px] font-medium text-text-base mb-1">
-                      Update installed
-                    </div>
                     <p className="text-[12px] text-text-muted mb-3">
                       Restart Automatic to apply the update.
                     </p>
@@ -627,14 +555,14 @@ export default function Settings() {
                   </div>
                 )}
 
-                {/* Check button */}
-                {updateStatus !== "downloading" && updateStatus !== "installed" && (
+                {/* Check button — hidden while downloading or ready */}
+                {updateStatus !== "downloading" && updateStatus !== "ready" && (
                   <button
-                    onClick={checkForUpdates}
+                    onClick={checkAndDownload}
                     disabled={updateStatus === "checking"}
                     className="px-4 py-2 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {updateStatus === "checking" ? "Checking..." : "Check for Updates"}
+                    {updateStatus === "checking" ? "Checking…" : "Check for Updates"}
                   </button>
                 )}
               </div>

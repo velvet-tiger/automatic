@@ -24,6 +24,8 @@ import AiPlayground from "./AiPlayground";
 import FirstRunWizard from "./FirstRunWizard";
 import { TaskLogProvider, useTaskLog } from "./TaskLogContext";
 import TaskLog from "./TaskLog";
+import { UpdateProvider } from "./UpdateContext";
+import UpdateToast from "./UpdateToast";
 import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb, List } from "lucide-react";
 import { flag } from "./flags";
 import graphLogo from "../logos/graph_5.svg";
@@ -266,6 +268,7 @@ function App() {
   };
 
   return (
+    <UpdateProvider>
     <TaskLogProvider>
     <ProfileProvider>
     <AnalyticsBootstrap />
@@ -450,6 +453,9 @@ function App() {
           </div>
         </header>
 
+        {/* Update toast — shown when a background update is ready to apply */}
+        <UpdateToast />
+
         {/* Content Area */}
         <div className="flex-1 overflow-hidden flex flex-col">
           {activeTab === "dashboard" && (
@@ -582,6 +588,7 @@ function App() {
     </div>
     </ProfileProvider>
     </TaskLogProvider>
+    </UpdateProvider>
   );
 }
 
