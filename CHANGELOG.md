@@ -2,6 +2,30 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.9.4] — 2026-03-11
+
+### Features
+
+- **Drift**: Show on-disk `SKILL.md` content in the stale skill modal for accurate review before taking action
+- **Drift**: Adopt, remove, or overwrite actions added to stale skill directories
+- **Rules**: Built-in rules are now locked with a Built-in badge and read-only indicator; a Duplicate button creates an editable copy
+- **Rules**: `automatic-checklist` rule is automatically migrated to `automatic-process` on install
+- **Features**: Copy prompt button added to detail panel header
+- **Features**: Fields auto-save atomically — no manual save button required
+- **Features**: Floating toast confirmation shown on prompt copy
+- **Projects**: Project listing sidebar shown on overview page with a folder context filter
+- **Projects**: Sync all button added to overview, syncing all drifted projects in one action
+
+### Fixes
+
+- **Rules**: `automatic-` prefix is now stripped when duplicating built-in rules
+- **Features**: Selected feature is cleared when switching projects
+- **Features**: Feature ordering is stable across Kanban and list views
+- **Features**: Partial ID lookup supported in `get_feature` MCP tool
+- **Templates**: Applied rules are stored under the `_project` key so they appear in the Rules tab
+
+---
+
 ## [0.9.2] — 2026-03-10
 
 ### Features
