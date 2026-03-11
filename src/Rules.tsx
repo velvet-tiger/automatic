@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { Plus, X, Edit2, FileText, Check, ScrollText, RefreshCw, FolderGit2 } from "lucide-react";
+import { Plus, X, Edit2, FileText, Check, ScrollText, RefreshCw, FolderGit2, Copy, Lock } from "lucide-react";
 import { ICONS } from "./icons";
 import { AuthorSection } from "./AuthorPanel";
 
@@ -223,6 +223,34 @@ export default function Rules() {
 
   const selectedEntry = rules.find(r => r.id === selectedId);
 
+  /** Default rules are those shipped with the app — machine names start with "automatic-". */
+  const isDefaultRule = (id: string) => id.startsWith("automatic-");
+
+  const handleDuplicate = async (id: string) => {
+    // Build a unique local name: "<id>-local", or "<id>-local-2", etc.
+    const base = `${id}-local`;
+    let candidate = base;
+    let suffix = 2;
+    while (rules.some(r => r.id === candidate)) {
+      candidate = `${base}-${suffix}`;
+      suffix++;
+    }
+    try {
+      const raw: string = await invoke("read_rule", { machineName: id });
+      const rule: Rule = JSON.parse(raw);
+      // Use the original display name as the starting point for the duplicate.
+      const dupName = rule.name;
+      await invoke("save_rule", { machineName: candidate, name: dupName, content: rule.content });
+      const newEntry: RuleEntry = { id: candidate, name: dupName };
+      setRules(prev => [...prev, newEntry].sort((a, b) => a.name.localeCompare(b.name)));
+      await loadRule(candidate);
+      setIsEditing(true);
+      setError(null);
+    } catch (err: any) {
+      setError(`Failed to duplicate rule: ${err}`);
+    }
+  };
+
   return (
     <div className="flex h-full w-full bg-bg-base">
       {/* Left Sidebar - Rule List */}
@@ -273,13 +301,15 @@ export default function Rules() {
                         <div className="text-[10px] text-text-muted truncate">{entry.id}</div>
                       </div>
                     </button>
-                    <button
-                      onClick={(e) => handleDelete(entry.id, e)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                      title="Delete Rule"
-                    >
-                      <X size={12} />
-                    </button>
+                    {!isDefaultRule(entry.id) && (
+                      <button
+                        onClick={(e) => handleDelete(entry.id, e)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
+                        title="Delete Rule"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
                   </li>
                 );
               })}
@@ -343,14 +373,42 @@ export default function Rules() {
               </div>
 
               <div className="flex items-center gap-2 flex-shrink-0">
-                {!isEditing ? (
+                {/* Built-in badge for default rules */}
+                {selectedId && isDefaultRule(selectedId) && !isEditing && (
+                  <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase px-2 py-1 rounded-full bg-brand/10 border border-brand/20">
+                    Built-in
+                  </span>
+                )}
+                {/* Lock badge — default rules are read-only */}
+                {selectedId && isDefaultRule(selectedId) && !isEditing && (
+                  <span
+                    className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/40"
+                    title="Default rule provided by Automatic — editing is disabled. Duplicate to create a local copy."
+                  >
+                    <Lock size={10} />
+                    <span>Read-only</span>
+                  </span>
+                )}
+                {/* Duplicate button — always shown when not editing */}
+                {!isEditing && selectedId && (
+                  <button
+                    onClick={() => handleDuplicate(selectedId)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
+                    title="Duplicate as a local, editable copy"
+                  >
+                    <Copy size={12} /> Duplicate
+                  </button>
+                )}
+                {/* Edit button — only for non-default rules */}
+                {!isEditing && selectedId && !isDefaultRule(selectedId) && (
                   <button
                     onClick={() => setIsEditing(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
                   >
                     <Edit2 size={12} /> Edit
                   </button>
-                ) : (
+                )}
+                {isEditing && (
                   <>
                     {!isCreating && (
                       <button
@@ -391,7 +449,13 @@ export default function Rules() {
                   <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
                     {/* Author section */}
                     <div className="px-6 pt-4 pb-3 border-b border-border-strong/40">
-                      <AuthorSection descriptor={{ type: "local" }} />
+                      <AuthorSection
+                        descriptor={
+                          selectedId && isDefaultRule(selectedId)
+                            ? { type: "provider", name: "Automatic", url: "https://automatic.computer" }
+                            : { type: "local" }
+                        }
+                      />
                     </div>
                     <div className="p-6 font-mono text-[13px] whitespace-pre-wrap text-text-base leading-relaxed">
                       {ruleContent || <span className="text-text-muted italic">This rule is empty. Click edit to add content.</span>}
