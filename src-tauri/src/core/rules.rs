@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::paths::get_automatic_dir;
 
@@ -166,9 +166,9 @@ const DEFAULT_RULES: &[(&str, &str, &str)] = &[
         include_str!("../../rules/automatic/code-style.md"),
     ),
     (
-        "automatic-checklist",
-        "Checklist",
-        include_str!("../../rules/automatic/checklist.md"),
+        "automatic-process",
+        "Agent process",
+        include_str!("../../rules/automatic/process.md"),
     ),
     (
         "automatic-service",
@@ -206,10 +206,176 @@ pub fn install_default_rules() -> Result<(), String> {
                     }
                 }
             }
+        } else if *machine_name == "automatic-process" {
+            // Migration: always overwrite with the latest content so the new
+            // process rule replaces the old checklist rule's content on disk.
+            let rule = Rule {
+                name: display_name.to_string(),
+                content: content.to_string(),
+            };
+            if let Ok(pretty) = serde_json::to_string_pretty(&rule) {
+                let _ = fs::write(&path, pretty);
+            }
+        }
+    }
+
+    // Migration: automatic-checklist was renamed to automatic-process.
+    // 1. Delete the old rule file.
+    // 2. Replace all project file_rules references.
+    // 3. Rename .claude/rules/automatic-checklist.md in project directories.
+    migrate_checklist_to_process(&dir)?;
+
+    Ok(())
+}
+
+/// Migrate the `automatic-checklist` rule to `automatic-process` across all
+/// projects and on-disk rule files.
+///
+/// This migration is idempotent: if the old file is already gone and no
+/// projects reference `automatic-checklist`, it is a no-op.
+fn migrate_checklist_to_process(rules_dir: &Path) -> Result<(), String> {
+    const OLD: &str = "automatic-checklist";
+    const NEW: &str = "automatic-process";
+
+    // 1. Remove the old rule file if it still exists.
+    let old_rule_path = rules_dir.join(format!("{}.json", OLD));
+    if old_rule_path.exists() {
+        fs::remove_file(&old_rule_path)
+            .map_err(|e| format!("Failed to remove old rule file {}.json: {}", OLD, e))?;
+    }
+
+    // 2. Walk every project and update file_rules references.
+    let projects_dir = match super::paths::get_projects_dir() {
+        Ok(p) => p,
+        Err(_) => return Ok(()), // no projects dir yet — nothing to migrate
+    };
+    if !projects_dir.exists() {
+        return Ok(());
+    }
+
+    let entries = match fs::read_dir(&projects_dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+
+    for entry in entries.flatten() {
+        let registry_path = entry.path();
+        if !registry_path.is_file()
+            || registry_path.extension().and_then(|e| e.to_str()) != Some("json")
+        {
+            continue;
+        }
+
+        let raw = match fs::read_to_string(&registry_path) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        // The registry entry may be a lightweight pointer {"name":…,"directory":…}
+        // or a full project config.  Parse as a generic JSON value so we can
+        // handle both without losing unknown fields.
+        let mut value: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Determine the project directory (if any).
+        let project_dir = value
+            .get("directory")
+            .and_then(|d| d.as_str())
+            .filter(|d| !d.is_empty())
+            .map(|d| d.to_string());
+
+        // If there is a project directory, the authoritative config lives there.
+        // We update that file; the registry entry is just a pointer and doesn't
+        // need touching.
+        if let Some(ref dir) = project_dir {
+            let config_path = std::path::PathBuf::from(dir)
+                .join(".automatic")
+                .join("project.json");
+            if config_path.exists() {
+                if let Ok(config_raw) = fs::read_to_string(&config_path) {
+                    if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&config_raw) {
+                        if replace_rule_in_file_rules(&mut config, OLD, NEW) {
+                            if let Ok(pretty) = serde_json::to_string_pretty(&config) {
+                                let _ = fs::write(&config_path, pretty);
+                            }
+                        }
+                    }
+                }
+
+                // 3. Rename .claude/rules/automatic-checklist.md if present.
+                rename_dot_claude_rule(dir, OLD, NEW);
+
+                continue; // registry entry is just a pointer — skip it
+            }
+        }
+
+        // No project directory or config file there — update the registry entry
+        // directly (legacy / no-directory projects).
+        if replace_rule_in_file_rules(&mut value, OLD, NEW) {
+            if let Ok(pretty) = serde_json::to_string_pretty(&value) {
+                let _ = fs::write(&registry_path, pretty);
+            }
         }
     }
 
     Ok(())
+}
+
+/// Replace all occurrences of `old_rule` with `new_rule` inside the
+/// `file_rules` map of a JSON project value.
+///
+/// Returns `true` if any replacement was made.
+fn replace_rule_in_file_rules(
+    project: &mut serde_json::Value,
+    old_rule: &str,
+    new_rule: &str,
+) -> bool {
+    let file_rules = match project
+        .get_mut("file_rules")
+        .and_then(|v| v.as_object_mut())
+    {
+        Some(m) => m,
+        None => return false,
+    };
+
+    let mut changed = false;
+    for rules in file_rules.values_mut() {
+        if let Some(arr) = rules.as_array_mut() {
+            for entry in arr.iter_mut() {
+                if entry.as_str() == Some(old_rule) {
+                    *entry = serde_json::Value::String(new_rule.to_string());
+                    changed = true;
+                }
+            }
+        }
+    }
+    changed
+}
+
+/// Rename `<project_dir>/.claude/rules/<old>.md` to `<new>.md` when it
+/// exists and carries the Automatic-managed header.  User-authored files
+/// are never renamed.
+fn rename_dot_claude_rule(project_dir: &str, old_name: &str, new_name: &str) {
+    const MANAGED_HEADER: &str = "<!-- managed by Automatic — do not edit by hand -->\n\n";
+
+    let rules_dir = std::path::PathBuf::from(project_dir)
+        .join(".claude")
+        .join("rules");
+    let old_path = rules_dir.join(format!("{}.md", old_name));
+    let new_path = rules_dir.join(format!("{}.md", new_name));
+
+    if !old_path.exists() {
+        return;
+    }
+
+    // Only rename files we own.
+    if let Ok(content) = fs::read_to_string(&old_path) {
+        if content.starts_with(MANAGED_HEADER) {
+            let _ = fs::rename(&old_path, &new_path);
+        }
+    }
 }
 
 #[cfg(test)]
