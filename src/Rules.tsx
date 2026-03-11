@@ -227,8 +227,10 @@ export default function Rules() {
   const isDefaultRule = (id: string) => id.startsWith("automatic-");
 
   const handleDuplicate = async (id: string) => {
-    // Build a unique local name: "<id>-local", or "<id>-local-2", etc.
-    const base = `${id}-local`;
+    // Strip the built-in "automatic-" prefix so the duplicate is user-owned.
+    // e.g. "automatic-general" → "general-copy", never starts with "automatic-".
+    const strippedId = id.startsWith("automatic-") ? id.slice("automatic-".length) : id;
+    const base = `${strippedId}-copy`;
     let candidate = base;
     let suffix = 2;
     while (rules.some(r => r.id === candidate)) {
