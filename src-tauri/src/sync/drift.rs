@@ -473,11 +473,16 @@ fn collect_skills_drift(
                             && !selected.contains(name)
                             && !preserved.contains(name)
                         {
+                            // Read the on-disk SKILL.md so the UI can preview
+                            // what the user is adopting or removing.
+                            let skill_md = disk_path.join("SKILL.md");
+                            let actual = fs::read_to_string(&skill_md).ok();
+
                             out.push(DriftedFile {
                                 path: format!("{}/{}", relative.display(), name),
                                 reason: "stale".into(),
                                 expected: None,
-                                actual: None,
+                                actual,
                             });
                         }
                     }

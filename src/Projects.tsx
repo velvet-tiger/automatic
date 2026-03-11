@@ -905,6 +905,36 @@ function DriftDiffModal({ file, agentLabel, projectName, onClose, onResolved }: 
                 ))}
               </tbody>
             </table>
+          ) : file.reason === "stale" && file.actual ? (
+            /* Stale skill with on-disk content: show a header + content preview */
+            <div className="flex flex-col h-full">
+              <div className="flex flex-col items-center py-4 text-text-muted border-b border-border-strong flex-shrink-0">
+                <p className="text-[13px] font-medium text-text-base mb-1">Stale directory</p>
+                <p className="text-[12px]">
+                  This skill exists on disk but is not in the project config.
+                  {staleSkillName && (
+                    <> Choose how to resolve <span className="font-mono font-medium text-text-base">{staleSkillName}</span>.</>
+                  )}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 px-5 py-1.5 border-b border-border-strong bg-bg-input flex-shrink-0">
+                <span className="text-[11px] text-text-muted">Content on disk (SKILL.md)</span>
+              </div>
+              <table className="w-full border-collapse">
+                <tbody>
+                  {file.actual.split("\n").map((line, idx) => (
+                    <tr key={idx} className="hover:bg-surface-hover">
+                      <td className="select-none text-right text-border-strong px-3 py-0.5 w-12 border-r border-border-strong min-w-[3rem]">
+                        {idx + 1}
+                      </td>
+                      <td className="px-3 py-0.5 whitespace-pre text-text-muted">
+                        {line}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : (
             /* Non-modified reasons: nothing to diff — show a descriptive message */
             <div className="flex flex-col items-center justify-center h-full py-16 text-text-muted">
