@@ -749,12 +749,22 @@ function computeLineDiff(expected: string, actual: string): DiffLine[] {
 interface DriftDiffModalProps {
   file: DriftedFile;
   agentLabel: string;
+  projectName?: string;
   onClose: () => void;
+  onResolved?: () => void;
 }
 
-function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
+function DriftDiffModal({ file, agentLabel, projectName, onClose, onResolved }: DriftDiffModalProps) {
   const diffLines = file.expected != null && file.actual != null
     ? computeLineDiff(file.expected, file.actual)
+    : null;
+
+  const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+
+  // Extract skill name from a stale drift path like ".agents/skills/my-skill"
+  // or ".claude/skills/my-skill".  The skill name is the last path segment.
+  const staleSkillName = file.reason === "stale"
+    ? file.path.split("/").pop() ?? null
     : null;
 
   // Close on Escape
@@ -763,6 +773,45 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
+
+  const handleAdoptSkill = async () => {
+    if (!projectName || !staleSkillName) return;
+    setActionInProgress("adopt");
+    try {
+      await invoke("adopt_stale_skill", { name: projectName, skillName: staleSkillName });
+      onResolved?.();
+      onClose();
+    } catch (err: any) {
+      console.error("Failed to adopt stale skill:", err);
+      setActionInProgress(null);
+    }
+  };
+
+  const handleRemoveSkill = async () => {
+    if (!projectName || !staleSkillName) return;
+    setActionInProgress("remove");
+    try {
+      await invoke("remove_stale_skill", { name: projectName, skillName: staleSkillName });
+      onResolved?.();
+      onClose();
+    } catch (err: any) {
+      console.error("Failed to remove stale skill:", err);
+      setActionInProgress(null);
+    }
+  };
+
+  const handleSyncOverwrite = async () => {
+    if (!projectName) return;
+    setActionInProgress("overwrite");
+    try {
+      await invoke("sync_project", { name: projectName });
+      onResolved?.();
+      onClose();
+    } catch (err: any) {
+      console.error("Failed to sync project:", err);
+      setActionInProgress(null);
+    }
+  };
 
   return (
     <div
@@ -869,7 +918,11 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
                 <>
                   <p className="text-[13px] font-medium text-text-base mb-2">Stale directory</p>
                   <p className="text-[12px]">This skill directory exists on disk but is no longer in the project config.</p>
-                  <p className="text-[12px] mt-1">Sync the project to remove it.</p>
+                  {staleSkillName && (
+                    <p className="text-[12px] mt-3 text-text-base">
+                      Choose how to resolve <span className="font-mono font-medium">{staleSkillName}</span>:
+                    </p>
+                  )}
                 </>
               )}
               {file.reason === "unreadable" && (
@@ -883,13 +936,50 @@ function DriftDiffModal({ file, agentLabel, onClose }: DriftDiffModalProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border-strong flex-shrink-0">
-          <button
-            onClick={onClose}
-            className="px-3 py-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
-          >
-            Close
-          </button>
+        <div className="flex items-center justify-between px-5 py-3 border-t border-border-strong flex-shrink-0">
+          {/* Stale skill resolution actions */}
+          {file.reason === "stale" && staleSkillName && projectName ? (
+            <>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleAdoptSkill}
+                  disabled={actionInProgress !== null}
+                  className="px-3 py-1.5 text-[12px] font-medium rounded bg-success/15 text-success border border-success/30 hover:bg-success/25 hover:border-success/50 transition-colors disabled:opacity-50"
+                >
+                  {actionInProgress === "adopt" ? "Adding..." : "Add to project"}
+                </button>
+                <button
+                  onClick={handleSyncOverwrite}
+                  disabled={actionInProgress !== null}
+                  className="px-3 py-1.5 text-[12px] font-medium rounded bg-warning/15 text-warning border border-warning/30 hover:bg-warning/25 hover:border-warning/50 transition-colors disabled:opacity-50"
+                >
+                  {actionInProgress === "overwrite" ? "Syncing..." : "Overwrite (re-sync)"}
+                </button>
+                <button
+                  onClick={handleRemoveSkill}
+                  disabled={actionInProgress !== null}
+                  className="px-3 py-1.5 text-[12px] font-medium rounded bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25 hover:border-danger/50 transition-colors disabled:opacity-50"
+                >
+                  {actionInProgress === "remove" ? "Removing..." : "Remove from disk"}
+                </button>
+              </div>
+              <button
+                onClick={onClose}
+                className="px-3 py-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
+              >
+                Close
+              </button>
+            </>
+          ) : (
+            <div className="ml-auto">
+              <button
+                onClick={onClose}
+                className="px-3 py-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -3786,6 +3876,24 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
+  /** Re-check drift after a stale skill was adopted, removed, or overwritten. */
+  const handleDriftResolved = async () => {
+    const name = selectedName;
+    if (!name) return;
+    try {
+      const raw: string = await invoke("check_project_drift", { name });
+      const report = JSON.parse(raw) as DriftReport;
+      setDriftReport(report);
+      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
+      notifyProjectUpdated();
+      // Re-read the project to pick up config changes (e.g. adopted skill).
+      const projRaw: string = await invoke("read_project", { name });
+      setProject(JSON.parse(projRaw));
+    } catch {
+      // Silently ignore — next periodic check will catch up.
+    }
+  };
+
   const handleSync = async () => {
     const name = isCreating ? newName.trim() : selectedName;
     if (!name || !project) return;
@@ -4185,7 +4293,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
           <DriftDiffModal
             file={driftDiffFile.file}
             agentLabel={driftDiffFile.agentLabel}
+            projectName={selectedName ?? undefined}
             onClose={() => setDriftDiffFile(null)}
+            onResolved={handleDriftResolved}
           />
         )}
         {instructionConflict && selectedName && (
@@ -7393,7 +7503,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       <DriftDiffModal
         file={driftDiffFile.file}
         agentLabel={driftDiffFile.agentLabel}
+        projectName={selectedName ?? undefined}
         onClose={() => setDriftDiffFile(null)}
+        onResolved={handleDriftResolved}
       />
     )}
 

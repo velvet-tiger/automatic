@@ -652,6 +652,108 @@ pub fn check_project_drift(name: &str) -> Result<String, String> {
     serde_json::to_string(&report).map_err(|e| e.to_string())
 }
 
+/// Adopt a stale skill by adding it to the project's skill list and re-syncing.
+///
+/// `skill_name` is the bare skill name (e.g. `"my-skill"`).  The skill must
+/// already exist in the global registry (`~/.agents/skills/`) for the sync to
+/// succeed — if it only exists locally in the project directory, it is imported
+/// as a local skill instead.
+///
+/// Call this when the user chooses "Add to project" in the drift resolution UI
+/// for a stale skill directory.
+#[tauri::command]
+pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
+    let raw = core::read_project(name)?;
+    let mut project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    // Only add if not already present.
+    if !project.skills.contains(&skill_name.to_string()) {
+        project.skills.push(skill_name.to_string());
+    }
+
+    project.updated_at = chrono::Utc::now().to_rfc3339();
+    let data = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
+    core::save_project(name, &data)?;
+
+    activity::log(
+        name,
+        ActivityEvent::SkillAdded,
+        "Skill adopted from disk",
+        skill_name,
+    );
+
+    // Re-sync so the skill is properly linked for all agents.
+    if !project.directory.is_empty() && !project.agents.is_empty() {
+        sync::sync_project_without_autodetect(&mut project)?;
+    }
+
+    Ok(())
+}
+
+/// Remove a stale skill directory from disk without changing the project config.
+///
+/// `skill_name` is the bare skill name (e.g. `"my-skill"`).  This deletes the
+/// skill directory from every agent's skill location within the project directory
+/// (e.g. `.agents/skills/<name>`, `.claude/skills/<name>`, `.cursor/skills/<name>`).
+///
+/// Call this when the user chooses "Remove from disk" in the drift resolution UI
+/// for a stale skill directory.
+#[tauri::command]
+pub fn remove_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    let dir = std::path::PathBuf::from(&project.directory);
+    if !dir.exists() {
+        return Err("Project directory does not exist".into());
+    }
+
+    let mut removed_any = false;
+
+    for agent_id in &project.agents {
+        if let Some(agent_instance) = crate::agent::from_id(agent_id) {
+            for skill_dir in agent_instance.skill_dirs(&dir) {
+                let target = skill_dir.join(skill_name);
+                if target.is_dir() {
+                    std::fs::remove_dir_all(&target)
+                        .map_err(|e| format!("Failed to remove {}: {}", target.display(), e))?;
+                    removed_any = true;
+                }
+            }
+        }
+    }
+
+    // Also check the project hub (.agents/skills/)
+    let hub_dir = dir.join(".agents").join("skills").join(skill_name);
+    if hub_dir.is_dir() {
+        std::fs::remove_dir_all(&hub_dir)
+            .map_err(|e| format!("Failed to remove {}: {}", hub_dir.display(), e))?;
+        removed_any = true;
+    }
+
+    if !removed_any {
+        return Err(format!(
+            "Skill directory '{}' was not found in any agent skill location",
+            skill_name
+        ));
+    }
+
+    activity::log(
+        name,
+        ActivityEvent::SkillRemoved,
+        "Stale skill removed from disk",
+        skill_name,
+    );
+
+    Ok(())
+}
+
 // ── Cross-cutting helpers ────────────────────────────────────────────────────
 //
 // These are used by skills, rules, mcp_servers, and skill_store modules when
