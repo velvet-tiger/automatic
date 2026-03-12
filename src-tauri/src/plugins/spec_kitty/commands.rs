@@ -2,6 +2,44 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+// ── Plugin dispatch ───────────────────────────────────────────────────────────
+
+/// Route an `invoke_tool_command` call to the correct handler within this
+/// plugin.  `command` is the string name the frontend passes; `payload` is
+/// the raw JSON arguments object.
+///
+/// This is the only entry point the generic dispatcher in `commands/tools.rs`
+/// needs.  No individual command function name from this module is referenced
+/// outside the plugin folder.
+pub fn dispatch(command: &str, payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    match command {
+        "list_features" => {
+            let project_dir: String = payload
+                .get("projectDir")
+                .and_then(|v| v.as_str())
+                .ok_or("missing field: projectDir")?
+                .to_string();
+            let result = list_spec_kitty_features(project_dir)?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        "get_status" => {
+            let project_dir: String = payload
+                .get("projectDir")
+                .and_then(|v| v.as_str())
+                .ok_or("missing field: projectDir")?
+                .to_string();
+            let feature_slug: String = payload
+                .get("featureSlug")
+                .and_then(|v| v.as_str())
+                .ok_or("missing field: featureSlug")?
+                .to_string();
+            let result = get_spec_kitty_status(project_dir, feature_slug)?;
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+        other => Err(format!("Unknown spec-kitty command: '{}'", other)),
+    }
+}
+
 // ── Types returned to the frontend ───────────────────────────────────────────
 
 /// Minimal metadata about a Spec Kitty feature, read from

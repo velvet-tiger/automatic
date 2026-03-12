@@ -78,7 +78,9 @@ pub struct ToolDefinition {
     /// exists, the tool is considered present in that project regardless of
     /// whether `detect_binary` is found on PATH.
     ///
-    /// Example: `"kitty-specs"` for spec-kitty.
+    /// This is the authoritative project-level signal: a binary on PATH merely
+    /// means the tool is installed on the machine, not that it has been set up
+    /// in this project.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detect_dir: Option<String>,
 
@@ -344,10 +346,10 @@ mod tests {
     fn save_roundtrip() {
         let tmp = tmp();
         let dir = tmp.path().join("tools");
-        save_at(&dir, "spec-kitty", &make_tool("spec-kitty")).unwrap();
-        let raw = fs::read_to_string(dir.join("spec-kitty.json")).unwrap();
+        save_at(&dir, "example-tool", &make_tool("example-tool")).unwrap();
+        let raw = fs::read_to_string(dir.join("example-tool.json")).unwrap();
         let def: ToolDefinition = serde_json::from_str(&raw).unwrap();
-        assert_eq!(def.name, "spec-kitty");
+        assert_eq!(def.name, "example-tool");
         assert_eq!(def.display_name, "Test Tool");
     }
 
@@ -414,27 +416,27 @@ mod tests {
 
     /// When detect_dir is set but the directory does NOT exist, the tool must NOT
     /// be detected — even if the binary is on PATH.  This is the core regression
-    /// test: a pyenv shim on PATH must not trigger project-level detection.
+    /// test: a version manager shim on PATH must not trigger project-level detection.
     #[test]
     fn detect_dir_absent_suppresses_binary_match() {
         let tmp = tmp();
         let tools_dir = tmp.path().join("tools");
         let project_dir = tmp.path().join("project");
         fs::create_dir_all(&project_dir).unwrap();
-        // kitty-specs does NOT exist inside project_dir.
+        // ".example-data" does NOT exist inside project_dir.
 
         // Save a tool that has both signals — detect_dir wins.
         save_at(
             &tools_dir,
-            "spec-kitty",
-            &make_tool_with_signals("spec-kitty", "kitty-specs", "spec-kitty"),
+            "example-tool",
+            &make_tool_with_signals("example-tool", ".example-data", "example-tool"),
         )
         .unwrap();
 
         // Call the public function using the real tools dir via env override is not
         // straightforward, so we exercise the logic directly by constructing a
         // ToolDefinition and applying the same rule.
-        let raw = fs::read_to_string(tools_dir.join("spec-kitty.json")).unwrap();
+        let raw = fs::read_to_string(tools_dir.join("example-tool.json")).unwrap();
         let def: ToolDefinition = serde_json::from_str(&raw).unwrap();
 
         let present = match def.detect_dir.as_deref() {
@@ -459,17 +461,17 @@ mod tests {
         let tmp = tmp();
         let tools_dir = tmp.path().join("tools");
         let project_dir = tmp.path().join("project");
-        let kitty_specs = project_dir.join("kitty-specs");
-        fs::create_dir_all(&kitty_specs).unwrap();
+        let data_dir = project_dir.join(".example-data");
+        fs::create_dir_all(&data_dir).unwrap();
 
         save_at(
             &tools_dir,
-            "spec-kitty",
-            &make_tool_with_signals("spec-kitty", "kitty-specs", "spec-kitty"),
+            "example-tool",
+            &make_tool_with_signals("example-tool", ".example-data", "example-tool"),
         )
         .unwrap();
 
-        let raw = fs::read_to_string(tools_dir.join("spec-kitty.json")).unwrap();
+        let raw = fs::read_to_string(tools_dir.join("example-tool.json")).unwrap();
         let def: ToolDefinition = serde_json::from_str(&raw).unwrap();
 
         let present = match def.detect_dir.as_deref() {

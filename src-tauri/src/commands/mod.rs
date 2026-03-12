@@ -43,4 +43,9 @@ pub use memory::*;
 pub use misc::*;
 pub use oauth::*;
 pub use tools::*;
-pub use crate::plugins::spec_kitty::*;
+
+// ── Plugin dispatch ───────────────────────────────────────────────────────────
+// All plugin commands flow through the single `invoke_tool_command` dispatcher
+// defined in tools.rs.  No individual plugin command name appears here or in
+// lib.rs.  The dispatch table in tools.rs maps tool names to plugin dispatch
+// functions; plugin folders are entirely self-contained.

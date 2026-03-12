@@ -145,7 +145,11 @@ export function SpecKittyPanel({ projectDir, sidebar }: SpecKittyPanelProps) {
     if (!projectDir) { setLoadingFeatures(false); return; }
     setLoadingFeatures(true);
     setFeaturesError(null);
-    invoke<SpecKittyFeatureMeta[]>("list_spec_kitty_features", { projectDir })
+    invoke<SpecKittyFeatureMeta[]>("invoke_tool_command", {
+        tool: "spec-kitty",
+        command: "list_features",
+        payload: { projectDir },
+      })
       .then((data) => { setFeatures(data); setLoadingFeatures(false); })
       .catch((err) => { setFeaturesError(String(err)); setLoadingFeatures(false); });
   }
@@ -165,7 +169,11 @@ export function SpecKittyPanel({ projectDir, sidebar }: SpecKittyPanelProps) {
     setExpandedSlug(slug);
     if (!statusMap[slug]) {
       setStatusMap((prev) => ({ ...prev, [slug]: "loading" }));
-      invoke<SpecKittyFeatureStatus>("get_spec_kitty_status", { projectDir, featureSlug: slug })
+      invoke<SpecKittyFeatureStatus>("invoke_tool_command", {
+          tool: "spec-kitty",
+          command: "get_status",
+          payload: { projectDir, featureSlug: slug },
+        })
         .then((data) => setStatusMap((prev) => ({ ...prev, [slug]: data })))
         .catch(() => setStatusMap((prev) => ({ ...prev, [slug]: "error" })));
     }
