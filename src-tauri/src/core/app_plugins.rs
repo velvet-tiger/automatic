@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 
 use super::paths::get_automatic_dir;
+use super::tools::{delete_tool, save_tool, ToolDefinition, ToolKind};
 
 // ── Plugin types ─────────────────────────────────────────────────────────────
 
@@ -31,6 +32,55 @@ impl PluginCategory {
     }
 }
 
+/// A tool declared by a plugin.  When the plugin is enabled, Automatic
+/// writes this definition to the tools registry so it appears in the Tools
+/// workspace view and is included in project autodetection.
+///
+/// When the plugin is disabled, the tool is removed from the registry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginToolDeclaration {
+    /// The `ToolDefinition.name` that will be written to the registry.
+    pub name: String,
+    /// Human-readable display name.
+    pub display_name: String,
+    /// Short description.
+    pub description: String,
+    /// Canonical URL (e.g. GitHub repo).
+    pub url: String,
+    /// `"owner/repo"` — used to fetch the GitHub owner avatar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_repo: Option<String>,
+    /// Broad tool category.
+    pub kind: ToolKind,
+    /// Binary name to check with `which` for PATH-based detection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detect_binary: Option<String>,
+    /// Relative directory path that signals this tool is initialised in a
+    /// project (e.g. `"kitty-specs"` for spec-kitty).  The autodetect pass
+    /// checks whether `<project_dir>/<detect_dir>` exists.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detect_dir: Option<String>,
+}
+
+impl PluginToolDeclaration {
+    /// Convert this declaration into the `ToolDefinition` that is written to
+    /// `~/.automatic/tools/<name>.json`.
+    pub fn to_tool_definition(&self, plugin_id: &str) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name.clone(),
+            display_name: self.display_name.clone(),
+            description: self.description.clone(),
+            url: self.url.clone(),
+            github_repo: self.github_repo.clone(),
+            kind: self.kind.clone(),
+            detect_binary: self.detect_binary.clone(),
+            detect_dir: self.detect_dir.clone(),
+            plugin_id: Some(plugin_id.to_string()),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+}
+
 /// Static definition of a bundled plugin. These are compiled into the binary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
@@ -46,6 +96,10 @@ pub struct PluginManifest {
     pub category: PluginCategory,
     /// Whether the plugin is enabled when first seen by the user.
     pub enabled_by_default: bool,
+    /// Optional tool this plugin declares.  When the plugin is enabled, the
+    /// tool is written to `~/.automatic/tools/`.  When disabled, it is removed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<PluginToolDeclaration>,
 }
 
 /// A plugin manifest combined with its current enabled/disabled state.
@@ -72,10 +126,33 @@ struct PluginState {
 ///
 /// To add a new plugin:
 ///   1. Add an entry here with a stable `id`.
-///   2. Implement the feature in the frontend, gated behind `usePlugin(id)`.
+///   2. If the plugin declares a tool, populate the `tool` field.
 ///   3. The user can then enable/disable it from Settings > Plugins.
+///      Enabling registers the tool; disabling removes it.
 fn bundled_plugins() -> Vec<PluginManifest> {
-    vec![]
+    vec![PluginManifest {
+        id: "spec-kitty".to_string(),
+        name: "Spec Kitty".to_string(),
+        description: "Spec-driven development for AI coding agents. Tracks specs, plans, and work \
+                 packages via kitty-specs/ in your project."
+            .to_string(),
+        version: "1.0.0".to_string(),
+        category: PluginCategory::Integrations,
+        enabled_by_default: false,
+        tool: Some(PluginToolDeclaration {
+            name: "spec-kitty".to_string(),
+            display_name: "Spec Kitty".to_string(),
+            description:
+                "Spec-driven development CLI for AI agents. Generates spec.md, plan.md, and \
+                     tasks.md in kitty-specs/<feature>/ and provides a live kanban dashboard."
+                    .to_string(),
+            url: "https://github.com/Priivacy-ai/spec-kitty".to_string(),
+            github_repo: Some("Priivacy-ai/spec-kitty".to_string()),
+            kind: ToolKind::DocGen,
+            detect_binary: Some("spec-kitty".to_string()),
+            detect_dir: Some("kitty-specs".to_string()),
+        }),
+    }]
 }
 
 // ── Persistence ──────────────────────────────────────────────────────────────
@@ -104,6 +181,49 @@ fn write_state(state: &PluginState) -> Result<(), String> {
     fs::write(&path, raw).map_err(|e| e.to_string())
 }
 
+// ── Tool sync ────────────────────────────────────────────────────────────────
+
+/// Ensure the tools registry reflects the current enabled state of all plugins
+/// that declare tools.  Called on app startup and after any plugin toggle.
+///
+/// - Enabled plugin with a tool declaration → write the tool to the registry.
+/// - Disabled plugin with a tool declaration → remove the tool from the registry.
+///
+/// This is idempotent: re-running it with the same state produces no net change.
+fn sync_plugin_tools(manifests: &[PluginManifest], state: &PluginState) {
+    for manifest in manifests {
+        let Some(ref decl) = manifest.tool else {
+            continue;
+        };
+
+        let enabled = state
+            .plugins
+            .get(&manifest.id)
+            .copied()
+            .unwrap_or(manifest.enabled_by_default);
+
+        if enabled {
+            let def = decl.to_tool_definition(&manifest.id);
+            match serde_json::to_string_pretty(&def) {
+                Ok(json) => {
+                    if let Err(e) = save_tool(&def.name, &json) {
+                        eprintln!(
+                            "[automatic] failed to register tool '{}' for plugin '{}': {}",
+                            def.name, manifest.id, e
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[automatic] failed to serialize tool '{}': {}", def.name, e);
+                }
+            }
+        } else {
+            // Best-effort removal; ignore errors if the file doesn't exist.
+            let _ = delete_tool(&decl.name);
+        }
+    }
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /// Return all bundled plugins, merged with their current enabled/disabled state.
@@ -125,12 +245,21 @@ pub fn list_app_plugins() -> Result<Vec<PluginEntry>, String> {
     Ok(plugins)
 }
 
-/// Enable or disable a plugin by id. Unknown ids are persisted so future
+/// Enable or disable a plugin by id.  Unknown ids are persisted so future
 /// versions that add matching plugins pick up the user's preference.
+///
+/// When the plugin declares a tool, enabling/disabling it registers or removes
+/// that tool from the tools registry.
 pub fn set_app_plugin_enabled(id: &str, enabled: bool) -> Result<(), String> {
     let mut state = read_state()?;
     state.plugins.insert(id.to_string(), enabled);
-    write_state(&state)
+    write_state(&state)?;
+
+    // Sync tool declarations for the changed plugin.
+    let manifests = bundled_plugins();
+    sync_plugin_tools(&manifests, &state);
+
+    Ok(())
 }
 
 /// Returns true if the given plugin id is currently enabled.
@@ -149,4 +278,22 @@ pub fn is_app_plugin_enabled(id: &str) -> Result<bool, String> {
         .map(|m| m.enabled_by_default)
         .unwrap_or(false);
     Ok(enabled)
+}
+
+/// Called once on app startup to reconcile the tools registry with the current
+/// plugin states.  Ensures that a tool is present iff its declaring plugin is
+/// enabled, even across app restarts.
+pub fn reconcile_plugin_tools_on_startup() {
+    match read_state() {
+        Ok(state) => {
+            let manifests = bundled_plugins();
+            sync_plugin_tools(&manifests, &state);
+        }
+        Err(e) => {
+            eprintln!(
+                "[automatic] failed to reconcile plugin tools on startup: {}",
+                e
+            );
+        }
+    }
 }

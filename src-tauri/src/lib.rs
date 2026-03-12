@@ -7,6 +7,7 @@ pub mod languages;
 pub mod mcp;
 pub mod memory;
 pub mod oauth;
+pub mod plugins;
 pub mod proxy;
 pub mod recommendations;
 pub mod sync;
@@ -69,6 +70,8 @@ pub fn run() {
                 if let Err(e) = core::ensure_automatic_in_global_mcp() {
                     eprintln!("[automatic] global MCP install error: {}", e);
                 }
+                // Reconcile tool registry with current plugin enabled states.
+                core::reconcile_plugin_tools_on_startup();
             });
             Ok(())
         })
@@ -206,6 +209,14 @@ pub fn run() {
             ai_suggest_skills,
             ai_suggest_mcp_servers,
             list_recommendations_by_source,
+            list_tools,
+            read_tool,
+            save_tool,
+            delete_tool,
+            list_tools_with_detection,
+            autodetect_tools_for_project,
+            list_spec_kitty_features,
+            get_spec_kitty_status,
             get_task_log,
             append_task_log,
             list_features,

@@ -98,5 +98,36 @@ pub(super) fn autodetect_inner(
         }
     }
 
+    // ── Detect tools declared by enabled plugins ─────────────────────────────
+    //
+    // Detection precedence (first match wins):
+    //   1. detect_dir set  → present only if <project_dir>/<detect_dir> exists.
+    //      The directory is the canonical "initialised in this project" signal;
+    //      a binary on PATH is machine-level, not project-level.
+    //   2. detect_dir unset, detect_binary set → present if binary is on PATH.
+    //   3. Neither set → never auto-detected.
+    //
+    // No code from the tool itself is read or executed.
+    if let Ok(tool_names) = crate::core::tools::list_tools() {
+        for tool_name in &tool_names {
+            if let Ok(raw) = crate::core::tools::read_tool(tool_name) {
+                if let Ok(tool) = serde_json::from_str::<crate::core::tools::ToolDefinition>(&raw) {
+                    let present = match tool.detect_dir.as_deref() {
+                        Some(rel) => dir.join(rel).exists(),
+                        None => tool
+                            .detect_binary
+                            .as_deref()
+                            .map(crate::core::tools::which_binary)
+                            .unwrap_or(false),
+                    };
+
+                    if present {
+                        add_unique(&mut updated_project.tools, tool_name.as_str());
+                    }
+                }
+            }
+        }
+    }
+
     Ok((updated_project, discovered_servers))
 }

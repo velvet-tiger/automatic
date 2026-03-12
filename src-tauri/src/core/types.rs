@@ -208,6 +208,10 @@ pub struct Project {
     pub providers: Vec<String>,
     #[serde(default)]
     pub agents: Vec<String>,
+    /// Tool names assigned to this project. Tool definitions live in
+    /// `~/.automatic/tools/`. Populated by autodetection or manual addition.
+    #[serde(default)]
+    pub tools: Vec<String>,
     #[serde(default)]
     pub created_at: String,
     #[serde(default)]

@@ -19,6 +19,7 @@ mod agents;
 mod memory;
 mod misc;
 mod oauth;
+mod tools;
 
 pub use activity::*;
 pub use ai::*;
@@ -41,3 +42,5 @@ pub use agents::*;
 pub use memory::*;
 pub use misc::*;
 pub use oauth::*;
+pub use tools::*;
+pub use crate::plugins::spec_kitty::*;

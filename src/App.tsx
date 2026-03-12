@@ -15,6 +15,7 @@ import McpServers from "./McpServers";
 import Templates from "./Templates";
 import Rules from "./Rules";
 import Agents from "./Agents";
+import Tools from "./Tools";
 import Recommendations from "./Recommendations";
 import Settings from "./Settings";
 import TemplateMarketplace from "./TemplateMarketplace";
@@ -26,7 +27,7 @@ import { TaskLogProvider, useTaskLog } from "./TaskLogContext";
 import TaskLog from "./TaskLog";
 import { UpdateProvider } from "./UpdateContext";
 import UpdateToast from "./UpdateToast";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb, List } from "lucide-react";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb, List, Wrench } from "lucide-react";
 import { flag } from "./flags";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
@@ -313,6 +314,7 @@ function App() {
               <NavItem id="skills" icon={Code} label="Skills" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
               <NavItem id="agents" icon={Bot} label="Providers" />
+              <NavItem id="tools" icon={Wrench} label="Tools" />
             </ul>
           </div>
 
@@ -503,6 +505,11 @@ function App() {
           {activeTab === "agents" && (
             <div className="flex-1 h-full">
               <Agents onNavigateToProject={navigateToProject} />
+            </div>
+          )}
+          {activeTab === "tools" && (
+            <div className="flex-1 h-full">
+              <Tools />
             </div>
           )}
           {activeTab === "skills" && (

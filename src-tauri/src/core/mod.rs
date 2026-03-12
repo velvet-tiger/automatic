@@ -29,6 +29,7 @@ mod skill_store;
 mod skills;
 pub mod task_log;
 mod templates;
+pub mod tools;
 mod types;
 
 pub use app_plugins::*;
@@ -51,4 +52,5 @@ pub use settings::*;
 pub use skill_store::*;
 pub use skills::*;
 pub use templates::*;
+pub use tools::*;
 pub use types::*;
