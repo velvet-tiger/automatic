@@ -294,6 +294,84 @@ pub async fn ai_generate_instruction(name: &str, filename: &str) -> Result<Strin
     .await
 }
 
+// ── Doc Notes ────────────────────────────────────────────────────────────────
+
+/// Read the contents of a Markdown note stored in `{project_dir}/.automatic/docs/<name>.md`.
+///
+/// Returns an empty string if the file does not exist yet (so the frontend
+/// can treat it as a new note without an extra existence check).
+#[tauri::command]
+pub fn read_doc_note(name: &str, note_name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    let note_path = std::path::PathBuf::from(&project.directory)
+        .join(".automatic")
+        .join("docs")
+        .join(note_name);
+
+    if !note_path.exists() {
+        return Ok(String::new());
+    }
+
+    std::fs::read_to_string(&note_path).map_err(|e| format!("Failed to read note: {}", e))
+}
+
+/// Write a Markdown note to `{project_dir}/.automatic/docs/<name>.md`.
+///
+/// Creates the `.automatic/docs/` directory if it does not exist.
+#[tauri::command]
+pub fn save_doc_note(name: &str, note_name: &str, content: &str) -> Result<(), String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    let docs_dir = std::path::PathBuf::from(&project.directory)
+        .join(".automatic")
+        .join("docs");
+
+    std::fs::create_dir_all(&docs_dir)
+        .map_err(|e| format!("Failed to create docs directory: {}", e))?;
+
+    let note_path = docs_dir.join(note_name);
+    std::fs::write(&note_path, content).map_err(|e| format!("Failed to save note: {}", e))
+}
+
+/// Delete a Markdown note file from `{project_dir}/.automatic/docs/<name>.md`.
+///
+/// Returns `Ok(())` if the file did not exist (idempotent).
+#[tauri::command]
+pub fn delete_doc_note(name: &str, note_name: &str) -> Result<(), String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    let note_path = std::path::PathBuf::from(&project.directory)
+        .join(".automatic")
+        .join("docs")
+        .join(note_name);
+
+    if note_path.exists() {
+        std::fs::remove_file(&note_path)
+            .map_err(|e| format!("Failed to delete note: {}", e))?;
+    }
+
+    Ok(())
+}
+
 /// Returns the list of instruction file conflicts for a project — files that
 /// exist on disk with user content that differs from what Automatic has stored.
 /// Serialised as a JSON array of [`InstructionFileConflict`] objects.
