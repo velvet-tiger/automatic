@@ -911,7 +911,12 @@ function CreateFeaturePanel({ projectName, allTags, onCreated, onCancel }: Creat
   }, []);
 
   const handleCreate = async () => {
-    if (!editTitle.trim()) return;
+    if (!editTitle.trim()) {
+      setError("Feature title is required.");
+      inputRef.current?.focus();
+      return;
+    }
+
     setSaving(true);
     setError(null);
     try {
@@ -1048,7 +1053,7 @@ function CreateFeaturePanel({ projectName, allTags, onCreated, onCancel }: Creat
         <div className="flex items-center justify-between">
           <button
             onClick={handleCreate}
-            disabled={saving || !editTitle.trim()}
+            disabled={saving}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-brand hover:bg-brand-hover disabled:opacity-50 text-white text-[12px] font-medium transition-colors"
           >
             <Check size={12} />
