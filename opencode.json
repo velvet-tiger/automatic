@@ -18,9 +18,6 @@
         "/Applications/Automatic.app/Contents/MacOS/automatic",
         "mcp-serve"
       ],
-      "environment": {
-        "AUTOMATIC_PROJECT": "automatic-app"
-      },
       "type": "local"
     }
   }
