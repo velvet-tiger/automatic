@@ -2,6 +2,7 @@ use crate::activity::{self, ActivityEvent};
 use crate::context;
 use crate::core;
 use crate::sync;
+use std::collections::HashMap;
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 
@@ -273,6 +274,7 @@ pub fn delete_project(name: &str) -> Result<(), String> {
 // ── Project Context ───────────────────────────────────────────────────────────
 
 /// Return the parsed `.automatic/context.json` for the given project as JSON.
+/// Documentation entries are merged in from `.automatic/docs.json`.
 /// Returns an empty `ProjectContext` (all empty maps) when the file does not
 /// exist yet — callers can use this to show an empty-state UI.
 #[tauri::command]
@@ -296,16 +298,30 @@ pub fn read_project_context_raw(name: &str) -> Result<String, String> {
     }
     let path = std::path::PathBuf::from(&project.directory)
         .join(".automatic")
-        .join("context.json");
+        .join(context::CONTEXT_FILE_NAME);
     if !path.exists() {
         return Ok(String::new());
     }
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut value: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(value) => value,
+        Err(_) => return Ok(content),
+    };
+
+    if let Some(obj) = value.as_object_mut() {
+        if obj.remove("docs").is_some() {
+            return serde_json::to_string_pretty(&value).map_err(|e| e.to_string());
+        }
+    }
+
+    Ok(content)
 }
 
 /// Write raw JSON text to `.automatic/context.json`, creating the `.automatic`
 /// directory if it does not exist.  The content is validated as JSON before
 /// being written so the file is never left in an unparseable state.
+/// If a legacy `docs` field is present, it is migrated to `.automatic/docs.json`.
 #[tauri::command]
 pub fn save_project_context_raw(name: &str, content: &str) -> Result<(), String> {
     let raw = core::read_project(name)?;
@@ -315,13 +331,65 @@ pub fn save_project_context_raw(name: &str, content: &str) -> Result<(), String>
         return Err("Project has no directory configured".into());
     }
 
-    // Validate JSON before touching disk.
-    let _: serde_json::Value =
+    let mut value: serde_json::Value =
         serde_json::from_str(content).map_err(|e| format!("Invalid JSON: {}", e))?;
+
+    if let Some(obj) = value.as_object_mut() {
+        if let Some(raw_docs) = obj.remove("docs") {
+            let docs: HashMap<String, context::DocEntry> = serde_json::from_value(raw_docs)
+                .map_err(|e| format!("Invalid docs index: {}", e))?;
+            context::save_project_docs(&project.directory, &docs)?;
+        }
+    }
 
     let dir = std::path::PathBuf::from(&project.directory).join(".automatic");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join("context.json"), content).map_err(|e| e.to_string())
+    let formatted = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join(context::CONTEXT_FILE_NAME), formatted).map_err(|e| e.to_string())
+}
+
+/// Return the parsed `.automatic/docs.json` for the given project as JSON.
+/// Returns an empty object when the file does not exist yet.
+#[tauri::command]
+pub fn get_project_docs(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let docs = context::get_project_docs(&project.directory)?;
+    serde_json::to_string(&docs).map_err(|e| e.to_string())
+}
+
+/// Return the raw text content of `.automatic/docs.json` for editing.
+/// Returns an empty string when the file does not exist yet.
+#[tauri::command]
+pub fn read_project_docs_raw(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    let path = std::path::PathBuf::from(&project.directory)
+        .join(".automatic")
+        .join(context::DOCS_FILE_NAME);
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+/// Write raw JSON text to `.automatic/docs.json`, creating the `.automatic`
+/// directory if it does not exist.
+#[tauri::command]
+pub fn save_project_docs_raw(name: &str, content: &str) -> Result<(), String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let docs: HashMap<String, context::DocEntry> =
+        serde_json::from_str(content).map_err(|e| format!("Invalid docs JSON: {}", e))?;
+
+    context::save_project_docs(&project.directory, &docs)
 }
 
 /// Use AI to analyse the project directory and generate a `.automatic/context.json`
@@ -357,7 +425,7 @@ pub async fn ai_generate_context(name: &str) -> Result<String, String> {
     let context_schema = json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["commands", "entry_points", "concepts", "conventions", "gotchas", "docs"],
+        "required": ["commands", "entry_points", "concepts", "conventions", "gotchas"],
         "properties": {
             "commands": {
                 "type": "array",
@@ -424,20 +492,6 @@ pub async fn ai_generate_context(name: &str) -> Result<String, String> {
                         "description": { "type": "string" }
                     }
                 }
-            },
-            "docs": {
-                "type": "array",
-                "description": "Significant documentation files.",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["label", "path", "summary"],
-                    "properties": {
-                        "label":   { "type": "string" },
-                        "path":    { "type": "string", "description": "Relative path." },
-                        "summary": { "type": "string", "description": "One sentence description." }
-                    }
-                }
             }
         }
     });
@@ -451,7 +505,6 @@ pub async fn ai_generate_context(name: &str) -> Result<String, String> {
         - concepts: 3-8 key architecture concepts with the files that implement them. \
         - conventions: naming, file structure, or code style patterns you can observe. \
         - gotchas: build quirks, unusual dependencies, or known pitfalls. \
-        - docs: significant documentation files visible in the tree. \
         Use empty arrays [] for sections where the snapshot provides no clear evidence. \
         File paths must be relative to the project root. \
         Keep all summaries to 1-2 sentences.";
@@ -493,8 +546,7 @@ pub async fn ai_generate_context(name: &str) -> Result<String, String> {
 ///   "entry_points":[{ "label": "app",  "path": "src/main.rs" }, ...],
 ///   "concepts":    [{ "name": "MCP",   "summary": "...", "files": [...] }, ...],
 ///   "conventions": [{ "name": "naming","description": "..." }, ...],
-///   "gotchas":     [{ "name": "lock",  "description": "..." }, ...],
-///   "docs":        [{ "label": "README","path": "README.md", "summary": "..." }, ...]
+///   "gotchas":     [{ "name": "lock",  "description": "..." }, ...]
 /// }
 /// ```
 ///
@@ -505,8 +557,7 @@ pub async fn ai_generate_context(name: &str) -> Result<String, String> {
 ///   "entry_points":{ "app": "src/main.rs" },
 ///   "concepts":    { "MCP": { "summary": "...", "files": [...] } },
 ///   "conventions": { "naming": "..." },
-///   "gotchas":     { "lock": "..." },
-///   "docs":        { "README": { "path": "README.md", "summary": "..." } }
+///   "gotchas":     { "lock": "..." }
 /// }
 /// ```
 fn convert_arrays_to_context_maps(ai: &serde_json::Value) -> Result<serde_json::Value, String> {
@@ -574,19 +625,6 @@ fn convert_arrays_to_context_maps(ai: &serde_json::Value) -> Result<serde_json::
         gotchas.insert(name, Value::String(desc));
     }
     out.insert("gotchas".into(), Value::Object(gotchas));
-
-    // docs: [{ label, path, summary }] → { label: { path, summary } }
-    let mut docs = Map::new();
-    for item in arr(ai, "docs")? {
-        let label   = str_field(item, "label")?.to_string();
-        let path    = str_field(item, "path")?.to_string();
-        let summary = str_field(item, "summary")?.to_string();
-        let mut doc = Map::new();
-        doc.insert("path".into(), Value::String(path));
-        doc.insert("summary".into(), Value::String(summary));
-        docs.insert(label, Value::Object(doc));
-    }
-    out.insert("docs".into(), Value::Object(docs));
 
     Ok(Value::Object(out))
 }

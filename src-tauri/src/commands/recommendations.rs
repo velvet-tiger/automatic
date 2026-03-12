@@ -230,7 +230,7 @@ pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendat
 
     // ── Check 3: .automatic/context.json exists ───────────────────────────────
     // The context file gives agents structured knowledge about the project
-    // (commands, entry points, concepts, conventions, gotchas, docs).
+    // (commands, entry points, concepts, conventions, and gotchas).
     // Only relevant when a project directory is configured.
     if !proj.directory.is_empty() {
         let context_path = std::path::Path::new(&proj.directory)

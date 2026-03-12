@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub const CONTEXT_FILE_NAME: &str = "context.json";
+pub const DOCS_FILE_NAME: &str = "docs.json";
+
 // ── Project snapshot for AI context generation ────────────────────────────────
 
 /// Directory / file names that are never worth including in a project snapshot.
@@ -308,21 +311,63 @@ pub struct DocEntry {
     pub summary: String,
 }
 
+fn load_project_docs(directory: &str) -> Result<Option<HashMap<String, DocEntry>>, String> {
+    let docs_path = PathBuf::from(directory)
+        .join(".automatic")
+        .join(DOCS_FILE_NAME);
+
+    if !docs_path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(&docs_path).map_err(|e| e.to_string())?;
+    let docs = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse {}: {}", DOCS_FILE_NAME, e))?;
+
+    Ok(Some(docs))
+}
+
+pub fn get_project_docs(directory: &str) -> Result<HashMap<String, DocEntry>, String> {
+    if directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    Ok(load_project_docs(directory)?.unwrap_or_default())
+}
+
+pub fn save_project_docs(directory: &str, docs: &HashMap<String, DocEntry>) -> Result<(), String> {
+    if directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    let dir = PathBuf::from(directory).join(".automatic");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let content = serde_json::to_string_pretty(docs).map_err(|e| e.to_string())?;
+    fs::write(dir.join(DOCS_FILE_NAME), content).map_err(|e| e.to_string())
+}
+
 pub fn get_project_context(directory: &str) -> Result<ProjectContext, String> {
     if directory.is_empty() {
         return Err("Project has no directory configured".into());
     }
 
     let dir_path = PathBuf::from(directory);
-    let context_path = dir_path.join(".automatic").join("context.json");
+    let context_path = dir_path.join(".automatic").join(CONTEXT_FILE_NAME);
+    let separated_docs = load_project_docs(directory)?;
 
     if !context_path.exists() {
-        return Ok(ProjectContext::default());
+        let mut context = ProjectContext::default();
+        context.docs = separated_docs.unwrap_or_default();
+        return Ok(context);
     }
 
     let content = fs::read_to_string(&context_path).map_err(|e| e.to_string())?;
-    let context: ProjectContext = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse context.json: {}", e))?;
+    let mut context: ProjectContext = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse {}: {}", CONTEXT_FILE_NAME, e))?;
+
+    if let Some(docs) = separated_docs {
+        context.docs = docs;
+    }
 
     Ok(context)
 }
@@ -487,7 +532,7 @@ pub fn get_docs(
 ) -> Result<String, String> {
     if context.docs.is_empty() {
         return Ok(format!(
-            "No documentation index found for '{}'. Define them in .automatic/context.json under \"docs\".",
+            "No documentation index found for '{}'. Define them in .automatic/docs.json.",
             project_name
         ));
     }

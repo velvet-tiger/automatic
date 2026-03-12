@@ -358,9 +358,9 @@ impl AutomaticMcpServer {
     #[tool(
         name = "automatic_get_project_context",
         description = "Read the project context for a registered project. Returns commands, entry points, \
-                       architecture concepts, conventions, gotchas, and documentation index from \
-                       .automatic/context.json in the project directory. Returns an empty context \
-                       (all sections present but empty) when the file does not exist yet."
+                       architecture concepts, conventions, gotchas, and a documentation index merged from \
+                       .automatic/context.json and .automatic/docs.json in the project directory. Returns \
+                       an empty context (all sections present but empty) when the files do not exist yet."
     )]
     async fn get_project_context(
         &self,
