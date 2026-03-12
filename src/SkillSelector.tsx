@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Code, Plus, Search, Trash2, X, ExternalLink, GitFork, ChevronRight } from "lucide-react";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { TokenPill } from "./TokenPill";
 
 interface SkillSelectorProps {
   /** Currently selected skills */
@@ -51,11 +52,41 @@ export function SkillSelector({
   const [expandedLoading, setExpandedLoading] = useState(false);
   const [expandedError, setExpandedError] = useState<string | null>(null);
   const [forkingSkill, setForkingSkill] = useState<string | null>(null);
+  const [skillContentCache, setSkillContentCache] = useState<Record<string, string>>({});
 
   const unaddedSkills = availableSkills.filter((s) => !skills.includes(s) && s !== "automatic");
   const filteredSkills = search.trim()
     ? unaddedSkills.filter((s) => s.toLowerCase().includes(search.toLowerCase()))
     : unaddedSkills;
+
+  useEffect(() => {
+    if (!onReadSkill || skills.length === 0) return;
+    const readSkill = onReadSkill;
+
+    let cancelled = false;
+
+    async function warmSkillContent(): Promise<void> {
+      for (const skill of skills) {
+        if (skillContentCache[skill] !== undefined) continue;
+        try {
+          const content = await readSkill(skill);
+          if (!cancelled) {
+            setSkillContentCache((prev) => (prev[skill] !== undefined ? prev : { ...prev, [skill]: content }));
+          }
+        } catch {
+          if (!cancelled) {
+            setSkillContentCache((prev) => (prev[skill] !== undefined ? prev : { ...prev, [skill]: "" }));
+          }
+        }
+      }
+    }
+
+    void warmSkillContent();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onReadSkill, skillContentCache, skills]);
 
   function handleAdd(skill: string) {
     onAdd(skill);
@@ -175,6 +206,8 @@ export function SkillSelector({
                     <div className="text-[13px] font-medium text-text-base">{skill}</div>
                   </div>
                 )}
+
+                <TokenPill text={skillContentCache[skill] ?? ""} />
 
                 {skill !== "automatic" && (
                 <button

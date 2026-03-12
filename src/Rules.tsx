@@ -4,6 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, FileText, Check, ScrollText, RefreshCw, FolderGit2, Copy, Lock } from "lucide-react";
 import { ICONS } from "./icons";
 import { AuthorSection } from "./AuthorPanel";
+import { TokenPill } from "./TokenPill";
 
 interface RuleEntry {
   id: string;
@@ -375,6 +376,7 @@ export default function Rules() {
               </div>
 
               <div className="flex items-center gap-2 flex-shrink-0">
+                <TokenPill text={ruleContent} />
                 {/* Built-in badge for default rules */}
                 {selectedId && isDefaultRule(selectedId) && !isEditing && (
                   <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase px-2 py-1 rounded-full bg-brand/10 border border-brand/20">

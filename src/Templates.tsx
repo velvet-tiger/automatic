@@ -4,6 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, FileText, Check, LayoutTemplate } from "lucide-react";
 import { ICONS } from "./icons";
 import { AuthorSection } from "./AuthorPanel";
+import { TokenPill } from "./TokenPill";
 
 export default function Templates() {
   const [templates, setTemplates] = useState<string[]>([]);
@@ -177,6 +178,7 @@ export default function Templates() {
               </div>
 
               <div className="flex items-center gap-2">
+                <TokenPill text={templateContent} />
                 {!isEditing ? (
                   <button
                     onClick={() => setIsEditing(true)}

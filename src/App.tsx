@@ -22,12 +22,13 @@ import TemplateMarketplace from "./TemplateMarketplace";
 import McpMarketplace from "./McpMarketplace";
 import CollectionMarketplace from "./CollectionMarketplace";
 import AiPlayground from "./AiPlayground";
+import TokenEstimator from "./TokenEstimator";
 import FirstRunWizard from "./FirstRunWizard";
 import { TaskLogProvider, useTaskLog } from "./TaskLogContext";
 import TaskLog from "./TaskLog";
 import { UpdateProvider } from "./UpdateContext";
 import UpdateToast from "./UpdateToast";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb, List, Wrench } from "lucide-react";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb, List, Wrench, Hash } from "lucide-react";
 import { flag } from "./flags";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
@@ -331,6 +332,17 @@ function App() {
             </ul>
           </div>
 
+          {/* Tools section */}
+          <div className="mb-6">
+            <div className="px-3 pb-1.5 text-[11px] font-semibold text-text-muted tracking-wider flex items-center justify-between group cursor-pointer hover:text-text-base">
+              <span>Utilities</span>
+              <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+            <ul className="space-y-0.5">
+              <NavItem id="token-estimator" icon={Hash} label="Token Estimator" />
+            </ul>
+          </div>
+
           {/* AI Playground — top-level, feature-flagged */}
           {flag("ai_playground") && (
             <ul className="space-y-0.5 mb-6">
@@ -582,6 +594,11 @@ function App() {
           {activeTab === "settings" && (
             <div className="flex-1 h-full">
               <Settings />
+            </div>
+          )}
+          {activeTab === "token-estimator" && (
+            <div className="flex-1 h-full">
+              <TokenEstimator />
             </div>
           )}
           {flag("ai_playground") && activeTab === "ai-playground" && (

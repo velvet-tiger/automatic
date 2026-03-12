@@ -155,8 +155,11 @@ pub fn run() {
             adopt_stale_skill,
             remove_stale_skill,
             get_project_context,
+            get_project_docs,
             read_project_context_raw,
+            read_project_docs_raw,
             save_project_context_raw,
+            save_project_docs_raw,
             ai_generate_context,
             import_local_skill,
             sync_local_skills,
@@ -228,6 +231,7 @@ pub fn run() {
             delete_feature,
             add_feature_update,
             get_feature_updates,
+            estimate_tokens,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

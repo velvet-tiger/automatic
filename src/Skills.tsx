@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { ICONS } from "./icons";
 import { SkillAvatar } from "./SkillAvatar";
+import { TokenPill } from "./TokenPill";
 
 interface SkillSource {
   source: string; // "owner/repo"
@@ -869,6 +870,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
+                <TokenPill text={isEditing ? editBody : skillContent} />
                 {/* Built-in badge for the automatic skill */}
                 {selectedSkill === "automatic" && (
                   <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase px-2 py-1 rounded-full bg-brand/10 border border-brand/20">

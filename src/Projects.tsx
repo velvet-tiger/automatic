@@ -7,6 +7,7 @@ import type { AgentOptions } from "./AgentSelector";
 import { AgentIcon } from "./AgentIcon";
 import { McpSelector } from "./McpSelector";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { TokenPill } from "./TokenPill";
 import { useCurrentUser } from "./ProfileContext";
 import { useTaskLog } from "./TaskLogContext";
 import { MemoryBrowser } from "./MemoryBrowser";
@@ -2297,7 +2298,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     gotchas: Record<string, string>;
     docs: Record<string, { path: string; summary: string }>;
   }
+  type ProjectDocsData = Record<string, { path: string; summary: string }>;
   const [projectContext, setProjectContext] = useState<ProjectContextData | null>(null);
+  const [projectDocs, setProjectDocs] = useState<ProjectDocsData>({});
   const [loadingContext, setLoadingContext] = useState(false);
   // Raw text editor state for context.json
   const [contextRaw, setContextRaw] = useState("");
@@ -2327,6 +2330,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   // Local skill editing state
   const [localSkillEditing, setLocalSkillEditing] = useState<string | null>(null); // skill name being edited
   const [localSkillContent, setLocalSkillContent] = useState(""); // raw SKILL.md content
+  const [localSkillContentCache, setLocalSkillContentCache] = useState<Record<string, string>>({});
   const [localSkillEditName, setLocalSkillEditName] = useState("");
   const [localSkillEditDescription, setLocalSkillEditDescription] = useState("");
   const [localSkillEditBody, setLocalSkillEditBody] = useState("");
@@ -2338,6 +2342,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [customRuleEditingIdx, setCustomRuleEditingIdx] = useState<number | null>(null);
   const [customRuleEditName, setCustomRuleEditName] = useState("");
   const [customRuleEditContent, setCustomRuleEditContent] = useState("");
+  const [globalRuleContentCache, setGlobalRuleContentCache] = useState<Record<string, string>>({});
 
   // Global rule picker state (dropdown add, mirrors SkillSelector pattern)
   const [globalRuleAdding, setGlobalRuleAdding] = useState(false);
@@ -2382,6 +2387,65 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       });
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const ruleIds = ((project?.file_rules || {})["_project"] || []) as string[];
+    if (ruleIds.length === 0) return;
+
+    let cancelled = false;
+
+    async function warmGlobalRuleContent(): Promise<void> {
+      for (const ruleId of ruleIds) {
+        if (globalRuleContentCache[ruleId] !== undefined) continue;
+        try {
+          const content: string = await invoke("read_rule", { machineName: ruleId });
+          if (!cancelled) {
+            setGlobalRuleContentCache((prev) => (prev[ruleId] !== undefined ? prev : { ...prev, [ruleId]: content }));
+          }
+        } catch {
+          if (!cancelled) {
+            setGlobalRuleContentCache((prev) => (prev[ruleId] !== undefined ? prev : { ...prev, [ruleId]: "" }));
+          }
+        }
+      }
+    }
+
+    void warmGlobalRuleContent();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [globalRuleContentCache, project?.file_rules]);
+
+  useEffect(() => {
+    const localSkills = project?.local_skills || [];
+    if (!selectedName || localSkills.length === 0) return;
+
+    let cancelled = false;
+
+    async function warmLocalSkillContent(): Promise<void> {
+      for (const skillName of localSkills) {
+        if (localSkillContentCache[skillName] !== undefined) continue;
+        try {
+          const content: string = await invoke("read_local_skill", { name: selectedName, skillName });
+          const { body } = parseLocalSkillFrontmatter(content);
+          if (!cancelled) {
+            setLocalSkillContentCache((prev) => (prev[skillName] !== undefined ? prev : { ...prev, [skillName]: body }));
+          }
+        } catch {
+          if (!cancelled) {
+            setLocalSkillContentCache((prev) => (prev[skillName] !== undefined ? prev : { ...prev, [skillName]: "" }));
+          }
+        }
+      }
+    }
+
+    void warmLocalSkillContent();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [localSkillContentCache, project?.local_skills, selectedName]);
 
   // Close "Open in" dropdown when clicking outside
   useEffect(() => {
@@ -3039,11 +3103,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const loadContext = async (projectName: string) => {
     try {
       setLoadingContext(true);
-      const [parsedRaw, rawText] = await Promise.all([
+      const [parsedRaw, rawText, docsRaw] = await Promise.all([
         invoke<string>("get_project_context", { name: projectName }),
         invoke<string>("read_project_context_raw", { name: projectName }),
+        invoke<string>("get_project_docs", { name: projectName }),
       ]);
       setProjectContext(JSON.parse(parsedRaw));
+      setProjectDocs(JSON.parse(docsRaw));
       setContextRaw(rawText);
       setContextFileExists(rawText.length > 0);
       setContextEditing(false);
@@ -3052,6 +3118,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     } catch (err: any) {
       console.error("Failed to load project context:", err);
       setProjectContext(null);
+      setProjectDocs({});
       setContextRaw("");
       setContextFileExists(false);
     } finally {
@@ -3074,8 +3141,12 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setContextDirty(false);
       setContextEditing(false);
       setContextFileExists(true);
-      const parsed: string = await invoke("get_project_context", { name: selectedName });
+      const [parsed, docsRaw]: [string, string] = await Promise.all([
+        invoke<string>("get_project_context", { name: selectedName }),
+        invoke<string>("get_project_docs", { name: selectedName }),
+      ]);
       setProjectContext(JSON.parse(parsed));
+      setProjectDocs(JSON.parse(docsRaw));
       notifyProjectUpdated();
     } catch (err: any) {
       setContextJsonError(`${err}`);
@@ -3108,40 +3179,21 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   // ── Documentation tab helpers ─────────────────────────────────────────────
 
   /**
-   * Parse the docs map from the current contextRaw string.
-   * Returns an empty object if contextRaw is not valid JSON or has no docs field.
+   * Return the docs index loaded from `.automatic/docs.json`.
    */
-  const parsedDocs = (): Record<string, { path: string; summary: string }> => {
-    try {
-      const obj = JSON.parse(contextRaw);
-      return (obj.docs as Record<string, { path: string; summary: string }>) ?? {};
-    } catch {
-      return {};
-    }
-  };
+  const parsedDocs = (): ProjectDocsData => projectDocs;
 
   /**
-   * Merge an updated docs map back into contextRaw and persist to disk.
-   * No-op if there is no selected project or contextRaw is not initialised.
+   * Persist an updated docs index to `.automatic/docs.json`.
    */
   const saveDocsToContext = async (
-    newDocs: Record<string, { path: string; summary: string }>
+    newDocs: ProjectDocsData
   ): Promise<void> => {
     if (!selectedName) return;
-    let obj: Record<string, unknown> = {};
-    try {
-      obj = JSON.parse(contextRaw);
-    } catch {
-      // contextRaw not initialised yet — start with an empty context skeleton
-      obj = { commands: {}, entry_points: {}, concepts: {}, conventions: {}, gotchas: {}, docs: {} };
-    }
-    obj.docs = newDocs;
-    const updated = JSON.stringify(obj, null, 2);
-    await invoke("save_project_context_raw", { name: selectedName, content: updated });
-    setContextRaw(updated);
-    setContextFileExists(true);
-    const parsed: string = await invoke("get_project_context", { name: selectedName });
-    setProjectContext(JSON.parse(parsed));
+    const updated = JSON.stringify(newDocs, null, 2);
+    await invoke("save_project_docs_raw", { name: selectedName, content: updated });
+    setProjectDocs(newDocs);
+    setProjectContext((prev) => (prev ? { ...prev, docs: newDocs } : prev));
   };
 
   /** Add or update a file/dir entry in the docs map. */
@@ -3221,7 +3273,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
   };
 
-  /** Create a new note: adds index entry to context.json, then opens the editor. */
+  /** Create a new note: adds an index entry to docs.json, then opens the editor. */
   const createDocNote = async (noteName: string): Promise<void> => {
     if (!noteName.trim() || !selectedName) return;
     // Sanitise: lowercase, spaces → hyphens, strip non-alphanumeric except hyphens
@@ -5804,14 +5856,17 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         <div className="flex-1 flex min-w-0 min-h-0">
                           {/* Editor column */}
                           <div className="flex-1 flex flex-col min-w-0">
-                            {/* Editor toolbar */}
-                            <div className="flex items-center justify-between px-4 h-9 bg-bg-input border-b border-border-strong/40 flex-shrink-0">
-                              <span className="text-[11px] text-text-muted">
-                                {activeProjectFile === "_unified"
-                                  ? <>{projectFileEditing ? "Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
-                                  : <>{activeProjectFile}{!fileExists ? " (new)" : ""}{projectFileEditing ? " — Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
-                                }
-                              </span>
+                             {/* Editor toolbar */}
+                             <div className="flex items-center justify-between px-4 h-9 bg-bg-input border-b border-border-strong/40 flex-shrink-0">
+                               <div className="flex items-center gap-2 min-w-0">
+                                 <span className="text-[11px] text-text-muted">
+                                   {activeProjectFile === "_unified"
+                                     ? <>{projectFileEditing ? "Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
+                                     : <>{activeProjectFile}{!fileExists ? " (new)" : ""}{projectFileEditing ? " — Editing" : ""}{projectFileDirty ? " (unsaved)" : ""}</>
+                                   }
+                                 </span>
+                                 <TokenPill text={projectFileContent} />
+                               </div>
                                <div className="flex items-center gap-1.5">
                                   {/* Generate with AI — always visible */}
                                    <span className="relative group/keytip">
@@ -5934,7 +5989,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       Create <code className="font-mono text-[12px]">.automatic/context.json</code> to give agents structured knowledge about this project.
                     </p>
                     <p className="text-[12px] text-text-muted mb-5 max-w-sm">
-                      Define commands, entry points, architecture concepts, conventions, gotchas, and docs.
+                      Define commands, entry points, architecture concepts, conventions, and gotchas.
                     </p>
                     <div className="flex items-center gap-2">
                       <span className="relative group/keytip">
@@ -5960,7 +6015,6 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                             concepts: { example: { summary: "Describe a key concept here", files: [] } },
                             conventions: { naming: "Describe a naming convention" },
                             gotchas: {},
-                            docs: {},
                           }, null, 2);
                           setContextRaw(template);
                           setContextEditing(true);
@@ -5984,12 +6038,15 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   <div className="flex-1 flex flex-col min-h-0">
                     {/* Toolbar */}
                     <div className="flex items-center justify-between px-4 h-9 bg-bg-input border-b border-border-strong/40 flex-shrink-0">
-                      <span className="text-[11px] text-text-muted font-mono">
-                        .automatic/context.json
-                        {!contextFileExists ? " (new)" : ""}
-                        {contextEditing ? " — Editing" : ""}
-                        {contextDirty ? " (unsaved)" : ""}
-                      </span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-[11px] text-text-muted font-mono">
+                          .automatic/context.json
+                          {!contextFileExists ? " (new)" : ""}
+                          {contextEditing ? " — Editing" : ""}
+                          {contextDirty ? " (unsaved)" : ""}
+                        </span>
+                        <TokenPill text={contextRaw} />
+                      </div>
                       <div className="flex items-center gap-1.5">
                         {/* Generate button — always visible in the toolbar */}
                         <span className="relative group/keytip">
@@ -6064,7 +6121,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           setContextJsonError(null);
                         }}
                         className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30 min-h-0"
-                        placeholder={`{\n  "commands": {},\n  "concepts": {},\n  "conventions": {},\n  "gotchas": {},\n  "docs": {}\n}`}
+                        placeholder={`{\n  "commands": {},\n  "concepts": {},\n  "conventions": {},\n  "gotchas": {}\n}`}
                         spellCheck={false}
                       />
                     ) : (
@@ -6166,27 +6223,6 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     <div key={name} className="px-4 py-2.5 space-y-0.5">
                                       <span className="text-[12px] font-medium text-text-base block">{name}</span>
                                       <p className="text-[12px] text-text-muted leading-relaxed">{desc}</p>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-
-                          if (Object.keys(ctx.docs).length > 0)
-                            sections.push(
-                              <div key="docs">
-                                <div className="flex items-center gap-2 mb-2">
-                                  <FileText size={12} className="text-text-muted" />
-                                  <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Documentation</span>
-                                </div>
-                                <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
-                                  {Object.entries(ctx.docs).map(([name, doc]) => (
-                                    <div key={name} className="flex items-start gap-3 px-4 py-2.5">
-                                      <div className="flex-1 min-w-0 space-y-0.5">
-                                        <span className="text-[12px] font-medium text-text-base block">{name}</span>
-                                        <p className="text-[12px] text-text-muted">{doc.summary}</p>
-                                      </div>
-                                      <code className="text-[10px] font-mono text-text-muted flex-shrink-0 mt-0.5 max-w-[200px] truncate" title={doc.path}>{doc.path}</code>
                                     </div>
                                   ))}
                                 </div>
@@ -6430,6 +6466,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                           <div className="text-[11px] text-text-muted/60 italic mt-0.5">Empty — add content to activate</div>
                                         )}
                                       </div>
+                                      <TokenPill text={rule.content} />
                                       <div className="flex items-center gap-1 flex-shrink-0">
                                         <button
                                           onClick={() => handleStartEditCustomRule(idx)}
@@ -6507,6 +6544,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                       </div>
                                       <div className="text-[11px] text-text-muted truncate">{ruleId}</div>
                                     </div>
+                                    <TokenPill text={globalRuleContentCache[ruleId] ?? ""} />
                                     <button
                                       onClick={() => handleToggleProjectRule(ruleId)}
                                       className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded"
@@ -7143,6 +7181,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                 >
                                   <Code size={12} className="text-text-muted" />
                                   <span>{s}</span>
+                                  <TokenPill text={localSkillContentCache[s] ?? ""} />
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted border border-border-strong/40">
                                     local
                                   </span>
@@ -7538,7 +7577,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         <div>
                           <h3 className="text-[13px] font-semibold text-text-base mb-1">Files &amp; Directories</h3>
                           <p className="text-[12px] text-text-muted mb-4">
-                            Add local files or directories to include as project documentation. These are recorded in <code className="font-mono text-[11px]">.automatic/context.json</code> and surfaced to agents via MCP.
+                            Add local files or directories to include as project documentation. These are recorded in <code className="font-mono text-[11px]">.automatic/docs.json</code> and surfaced to agents via MCP.
                           </p>
 
                           {/* Existing file/dir entries */}

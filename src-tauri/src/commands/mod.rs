@@ -19,6 +19,7 @@ mod agents;
 mod memory;
 mod misc;
 mod oauth;
+mod tokens;
 mod tools;
 
 pub use activity::*;
@@ -42,6 +43,7 @@ pub use agents::*;
 pub use memory::*;
 pub use misc::*;
 pub use oauth::*;
+pub use tokens::*;
 pub use tools::*;
 
 // ── Plugin dispatch ───────────────────────────────────────────────────────────
