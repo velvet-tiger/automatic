@@ -2,6 +2,29 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.10.0] — 2026-03-12
+
+### Features
+
+- **Updater**: Background hourly update check with silent download and a restart toast notification when a new version is ready
+- **Projects**: Documentation tab added with Files, Links, and Notes sub-tabs for project-level reference material
+- **Projects**: Instructions tab renamed to Context for clarity
+- **Tools**: Tools architecture introduced with a plugin framework and agent tool auto-detection
+- **Plugins**: Spec Kitty plugin added with a features list and work-in-progress Kanban board
+- **UI**: Reusable token estimate display added across all instruction and context editors
+
+### Fixes
+
+- **Projects**: Rules summary card layout aligned with Skills and MCP Servers cards
+- **Projects**: Documentation tab layout aligned with the project detail panel structure
+- **Context**: Documentation index split from generated context to avoid coupling
+
+### Refactored
+
+- **Plugins**: Plugin commands and manifest abstracted behind a clean plugin boundary
+
+---
+
 ## [0.9.4] — 2026-03-11
 
 ### Features
@@ -541,6 +564,7 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Warp removal correctly deletes `WARP.md` via owned config paths
 - Junie removal deletes the entire `.junie/` directory
 
+[0.10.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.10.0
 [0.9.1]: https://github.com/velvet-tiger/automatic/releases/tag/0.9.1
 [0.9.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.9.0
 [0.8.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.8.0
