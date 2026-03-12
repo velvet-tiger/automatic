@@ -6700,28 +6700,30 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         const customRules = project.custom_rules || [];
                         const rulesCount = projectRules.length + customRules.length;
                         return (
-                          <button
-                            onClick={() => selectTab("rules")}
-                            className="group w-full bg-bg-input border border-border-strong/40 hover:border-icon-rule/50 rounded-lg overflow-hidden flex flex-col text-left transition-all"
-                          >
-                            <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40 flex-shrink-0">
+                          <section className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden flex flex-col">
+                            <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40">
                               <div className="flex items-center gap-2">
-                                <div className="p-1 bg-icon-rule/10 rounded group-hover:bg-icon-rule/20 transition-colors"><ScrollText size={12} className="text-icon-rule" /></div>
+                                <div className="p-1 bg-icon-rule/10 rounded"><ScrollText size={12} className="text-icon-rule" /></div>
                                 <span className="text-[13px] font-semibold text-text-base">Rules</span>
                                 <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-1.5 py-0.5 leading-none">
                                   {rulesCount}
                                 </span>
                               </div>
-                              <ArrowRight size={13} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                              <button
+                                onClick={() => selectTab("rules")}
+                                className="flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium"
+                              >
+                                <Plus size={11} /> Add
+                              </button>
                             </div>
-                            <div className="px-4 py-2.5">
-                              <span className="text-[12px] text-text-muted">
+                            <div className="px-4 py-4 flex-1">
+                              <p className="text-[12px] text-text-muted italic">
                                 {rulesCount === 0
                                   ? "No rules configured"
                                   : `${projectRules.length} global, ${customRules.length} custom`}
-                              </span>
+                              </p>
                             </div>
-                          </button>
+                          </section>
                         );
                       })()}
 
