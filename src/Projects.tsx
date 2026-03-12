@@ -1931,6 +1931,32 @@ function McpAddButton({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+function isHttpDocPath(path: string): boolean {
+  return path.startsWith("http://") || path.startsWith("https://");
+}
+
+function isManagedDocNotePath(path: string): boolean {
+  return path.startsWith(".automatic/docs/");
+}
+
+function getProjectRelativeDocPath(projectDirectory: string | undefined, path: string): string | null {
+  if (!projectDirectory) return null;
+
+  const normalizedDirectory = projectDirectory.replace(/\/+$/, "");
+  const normalizedPath = path.replace(/\/+$/, "");
+
+  if (normalizedPath === normalizedDirectory) {
+    return ".";
+  }
+
+  const prefix = `${normalizedDirectory}/`;
+  if (!normalizedPath.startsWith(prefix)) {
+    return null;
+  }
+
+  return normalizedPath.slice(prefix.length);
+}
+
 export default function Projects({ initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToMcpMarketplace, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const { log, update } = useTaskLog();
@@ -2326,6 +2352,19 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [docNoteLoading, setDocNoteLoading] = useState(false);
   const [docNewNoteName, setDocNewNoteName] = useState("");
   const [docNewNoteCreating, setDocNewNoteCreating] = useState(false);
+
+  const fileDocEntries = useMemo(
+    () => Object.entries(projectDocs).filter(([, entry]) => !isHttpDocPath(entry.path) && !isManagedDocNotePath(entry.path)),
+    [projectDocs],
+  );
+  const linkDocEntries = useMemo(
+    () => Object.entries(projectDocs).filter(([, entry]) => isHttpDocPath(entry.path)),
+    [projectDocs],
+  );
+  const noteDocEntries = useMemo(
+    () => Object.entries(projectDocs).filter(([, entry]) => isManagedDocNotePath(entry.path)),
+    [projectDocs],
+  );
 
   // Local skill editing state
   const [localSkillEditing, setLocalSkillEditing] = useState<string | null>(null); // skill name being edited
@@ -3213,6 +3252,25 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     const key = (label.trim() || url.trim().replace(/https?:\/\//, "").split("/")[0]) ?? "link";
     const safeKey = docs[key] ? `${key}_${Date.now()}` : key;
     await saveDocsToContext({ ...docs, [safeKey]: { path: url.trim(), summary: label.trim() } });
+  };
+
+  const handleBrowseDocPath = async (): Promise<void> => {
+    const picked: string | null = await invoke("open_directory_dialog");
+    if (picked) setDocNewPath(picked);
+  };
+
+  const handleAddDocPath = async (): Promise<void> => {
+    if (!docNewPath.trim()) return;
+    await addDocPath(docNewPath, docNewPathSummary);
+    setDocNewPath("");
+    setDocNewPathSummary("");
+  };
+
+  const handleAddDocLink = async (): Promise<void> => {
+    if (!docNewLinkUrl.trim()) return;
+    await addDocLink(docNewLinkUrl, docNewLinkLabel);
+    setDocNewLinkUrl("");
+    setDocNewLinkLabel("");
   };
 
   /** Remove a doc entry by key. Also deletes the note file if it's a note entry. */
@@ -7565,98 +7623,156 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
 
                 {/* ── Documentation: Files & Dirs tab ─────────────── */}
                  {projectTab === "docs_files" && (
-                  <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-                    {!project?.directory ? (
-                      <div className="flex-1 flex items-center justify-center">
-                        <p className="text-[13px] text-text-muted italic">
-                          Set a project directory to use documentation.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="p-6 space-y-5">
-                        <div>
-                          <h3 className="text-[13px] font-semibold text-text-base mb-1">Files &amp; Directories</h3>
-                          <p className="text-[12px] text-text-muted mb-4">
-                            Add local files or directories to include as project documentation. These are recorded in <code className="font-mono text-[11px]">.automatic/docs.json</code> and surfaced to agents via MCP.
-                          </p>
+                   <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+                     {!project?.directory ? (
+                       <div className="flex-1 flex items-center justify-center">
+                         <p className="text-[13px] text-text-muted italic">
+                           Set a project directory to use documentation.
+                         </p>
+                       </div>
+                     ) : (
+                       <div className="space-y-4">
+                         <div className="flex items-start justify-between gap-4">
+                           <div className="min-w-0">
+                             <h3 className="text-[13px] font-semibold text-text-base">Files &amp; Directories</h3>
+                             <p className="mt-1 text-[12px] text-text-muted max-w-[820px]">
+                               Add local folders, specs, or standalone files to include as project documentation. These are stored in <code className="font-mono text-[11px]">.automatic/docs.json</code> and surfaced to agents via MCP.
+                             </p>
+                           </div>
+                           <button
+                             onClick={() => {
+                               const input = document.getElementById("docs-path-input") as HTMLInputElement | null;
+                               input?.focus();
+                             }}
+                             className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded-md shadow-sm transition-colors"
+                           >
+                             <Plus size={12} /> Add
+                           </button>
+                         </div>
 
-                          {/* Existing file/dir entries */}
-                          {(() => {
-                            const docs = parsedDocs();
-                            const fileEntries = Object.entries(docs).filter(
-                              ([, v]) => !v.path.startsWith("http://") && !v.path.startsWith("https://") && !v.path.startsWith(".automatic/docs/")
-                            );
-                            return fileEntries.length > 0 ? (
-                              <div className="mb-4 bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
-                                {fileEntries.map(([key, entry]) => (
-                                  <div key={key} className="flex items-center gap-3 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
-                                    <FolderOpen size={13} className="flex-shrink-0 text-text-muted" />
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-[12px] font-mono text-text-base truncate">{entry.path}</p>
-                                      {entry.summary && (
-                                        <p className="text-[11px] text-text-muted truncate">{entry.summary}</p>
-                                      )}
-                                    </div>
-                                    <button
-                                      onClick={() => removeDocEntry(key, false)}
-                                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-error hover:bg-error/10 transition-all"
-                                      title="Remove"
-                                    >
-                                      <Trash2 size={12} />
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="text-[12px] text-text-muted italic mb-4">No files or directories added yet.</p>
-                            );
-                          })()}
+                         <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+                           <div className="px-3 py-3 border-b border-border-strong/30 space-y-3">
+                             <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+                               <span className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5">{fileDocEntries.length} added</span>
+                               <span className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5">Project root: <span className="font-mono text-text-base">{project.directory}</span></span>
+                               <span className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5">{noteDocEntries.length} notes in this doc set</span>
+                             </div>
 
-                          {/* Add new path form */}
-                          <div className="flex flex-col gap-2">
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                value={docNewPath}
-                                onChange={(e) => setDocNewPath(e.target.value)}
-                                placeholder="Path to file or directory…"
-                                className="flex-1 px-3 py-1.5 text-[12px] bg-bg-input border border-border-strong/40 rounded text-text-base placeholder-text-muted focus:outline-none focus:border-brand/60"
-                              />
-                              <button
-                                onClick={async () => {
-                                  const picked: string | null = await invoke("open_directory_dialog");
-                                  if (picked) setDocNewPath(picked);
-                                }}
-                                className="px-2.5 py-1.5 bg-bg-input hover:bg-surface-hover border border-border-strong/40 rounded text-[12px] text-text-muted hover:text-text-base transition-colors flex items-center gap-1.5"
-                                title="Pick directory"
-                              >
-                                <FolderOpen size={12} /> Browse
-                              </button>
-                            </div>
-                            <input
-                              type="text"
-                              value={docNewPathSummary}
-                              onChange={(e) => setDocNewPathSummary(e.target.value)}
-                              placeholder="Description (optional)"
-                              className="px-3 py-1.5 text-[12px] bg-bg-input border border-border-strong/40 rounded text-text-base placeholder-text-muted focus:outline-none focus:border-brand/60"
-                            />
-                            <button
-                              onClick={async () => {
-                                if (!docNewPath.trim()) return;
-                                await addDocPath(docNewPath, docNewPathSummary);
-                                setDocNewPath("");
-                                setDocNewPathSummary("");
-                              }}
-                              disabled={!docNewPath.trim()}
-                              className="self-start px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <Plus size={12} /> Add Path
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                             <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px]">
+                               <div className="space-y-3 min-w-0">
+                                 <div>
+                                   <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-text-muted">Path</label>
+                                   <input
+                                     id="docs-path-input"
+                                     type="text"
+                                     value={docNewPath}
+                                     onChange={(e) => setDocNewPath(e.target.value)}
+                                     onKeyDown={(e) => {
+                                       if (e.key === "Enter") {
+                                         e.preventDefault();
+                                         void handleAddDocPath();
+                                       }
+                                     }}
+                                     placeholder="/path/to/specs or ./docs/architecture.md"
+                                     className="w-full rounded-md border border-border-strong/40 bg-bg-sidebar px-3 py-2 text-[12px] text-text-base placeholder-text-muted outline-none transition-colors focus:border-brand/60"
+                                   />
+                                 </div>
+                                 <div>
+                                   <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-text-muted">Description</label>
+                                   <input
+                                     type="text"
+                                     value={docNewPathSummary}
+                                     onChange={(e) => setDocNewPathSummary(e.target.value)}
+                                     onKeyDown={(e) => {
+                                       if (e.key === "Enter") {
+                                         e.preventDefault();
+                                         void handleAddDocPath();
+                                       }
+                                     }}
+                                     placeholder="What should agents use this for?"
+                                     className="w-full rounded-md border border-border-strong/40 bg-bg-sidebar px-3 py-2 text-[12px] text-text-base placeholder-text-muted outline-none transition-colors focus:border-brand/60"
+                                   />
+                                 </div>
+                               </div>
+                               <div className="flex flex-col gap-2 justify-end">
+                                 <button
+                                   onClick={handleBrowseDocPath}
+                                   className="w-full rounded-md border border-border-strong/40 bg-bg-sidebar px-3 py-2 text-[12px] font-medium text-text-muted transition-colors hover:bg-surface-hover hover:text-text-base flex items-center justify-center gap-1.5"
+                                   title="Pick a directory"
+                                 >
+                                   <FolderOpen size={12} /> Browse
+                                 </button>
+                                 <button
+                                   onClick={handleAddDocPath}
+                                   disabled={!docNewPath.trim()}
+                                   className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-brand px-3 py-2 text-[12px] font-medium text-white shadow-sm transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
+                                 >
+                                   <Plus size={12} /> Add path
+                                 </button>
+                               </div>
+                             </div>
+                           </div>
+
+                           {fileDocEntries.length === 0 ? (
+                             <div className="px-4 py-10 text-center">
+                               <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full border border-dashed border-border-strong/50 bg-bg-sidebar/50">
+                                 <FolderPlus size={16} className="text-text-muted" />
+                               </div>
+                               <h5 className="text-[13px] font-medium text-text-base">No documentation paths yet</h5>
+                               <p className="mx-auto mt-1 max-w-[420px] text-[12px] leading-relaxed text-text-muted">
+                                 Add architecture docs, spec folders, generated references, or any local files agents should read alongside the project.
+                               </p>
+                             </div>
+                           ) : (
+                             <div>
+                               <div className="flex items-center justify-between gap-3 px-3 py-3 border-b border-border-strong/20">
+                                 <div>
+                                   <h4 className="text-[13px] font-semibold text-text-base">Included paths</h4>
+                                   <p className="mt-0.5 text-[11px] text-text-muted">Keep the highest-signal folders and docs here so agents can find them quickly.</p>
+                                 </div>
+                                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-text-muted">
+                                   {fileDocEntries.length}
+                                 </span>
+                               </div>
+                               <div className="divide-y divide-border-strong/20">
+                                 {fileDocEntries.map(([key, entry]) => {
+                                   const relativePath = getProjectRelativeDocPath(project.directory, entry.path);
+                                   return (
+                                     <div key={key} className="flex items-start gap-3 px-3 py-3 transition-colors hover:bg-surface-hover/70">
+                                       <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-border-strong/30 bg-bg-sidebar/60">
+                                         <FolderOpen size={14} className="text-text-muted" />
+                                       </div>
+                                       <div className="min-w-0 flex-1">
+                                         <div className="flex flex-wrap items-center gap-2">
+                                           <p className="text-[12px] font-medium text-text-base">{entry.summary || key}</p>
+                                           <span className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5 text-[10px] font-medium text-text-muted">
+                                             {relativePath ? "In project" : "Absolute path"}
+                                           </span>
+                                         </div>
+                                         <p className="mt-1 break-all font-mono text-[11px] text-text-muted">
+                                           {relativePath ? relativePath === "." ? project.directory : `./${relativePath}` : entry.path}
+                                         </p>
+                                         {relativePath && entry.summary && entry.summary !== key && (
+                                           <p className="mt-1 text-[11px] leading-relaxed text-text-muted">{entry.path}</p>
+                                         )}
+                                       </div>
+                                       <button
+                                         onClick={() => removeDocEntry(key, false)}
+                                         className="mt-0.5 rounded-md border border-transparent p-2 text-text-muted transition-colors hover:border-error/20 hover:bg-error/10 hover:text-error"
+                                         title="Remove path"
+                                       >
+                                         <Trash2 size={13} />
+                                       </button>
+                                     </div>
+                                   );
+                                 })}
+                               </div>
+                             </div>
+                           )}
+                         </div>
+                       </div>
+                     )}
+                   </div>
                 )}
 
                 {/* ── Documentation: Links tab ─────────────────────── */}
@@ -7669,83 +7785,136 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                         </p>
                       </div>
                     ) : (
-                      <div className="p-6 space-y-5">
-                        <div>
-                          <h3 className="text-[13px] font-semibold text-text-base mb-1">Links</h3>
-                          <p className="text-[12px] text-text-muted mb-4">
-                            Add URLs to external documentation, design specs, or reference material.
-                          </p>
+                      <div className="space-y-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <h3 className="text-[13px] font-semibold text-text-base">Links</h3>
+                            <p className="mt-1 text-[12px] text-text-muted max-w-[820px]">
+                              Add URLs to external documentation, design specs, or reference material so this project keeps its key web resources in one place.
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => {
+                              const input = document.getElementById("docs-link-input") as HTMLInputElement | null;
+                              input?.focus();
+                            }}
+                            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded-md shadow-sm transition-colors"
+                          >
+                            <Plus size={12} /> Add
+                          </button>
+                        </div>
 
-                          {/* Existing link entries */}
-                          {(() => {
-                            const docs = parsedDocs();
-                            const linkEntries = Object.entries(docs).filter(
-                              ([, v]) => v.path.startsWith("http://") || v.path.startsWith("https://")
-                            );
-                            return linkEntries.length > 0 ? (
-                              <div className="mb-4 bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
-                                {linkEntries.map(([key, entry]) => (
-                                  <div key={key} className="flex items-center gap-3 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
-                                    <LinkIcon size={13} className="flex-shrink-0 text-text-muted" />
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-[12px] font-medium text-text-base truncate">
-                                        {entry.summary || key}
-                                      </p>
-                                      <p className="text-[11px] text-text-muted font-mono truncate">{entry.path}</p>
+                        <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+                          <div className="px-3 py-3 border-b border-border-strong/30 space-y-3">
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+                              <span className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5">{linkDocEntries.length} saved</span>
+                              <span className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5">Stored with the project</span>
+                              <span className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5">{noteDocEntries.length} notes in this doc set</span>
+                            </div>
+
+                            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_140px]">
+                              <div>
+                                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-text-muted">URL</label>
+                                <input
+                                  id="docs-link-input"
+                                  type="url"
+                                  value={docNewLinkUrl}
+                                  onChange={(e) => setDocNewLinkUrl(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      void handleAddDocLink();
+                                    }
+                                  }}
+                                  placeholder="https://docs.example.com/reference"
+                                  className="w-full rounded-md border border-border-strong/40 bg-bg-sidebar px-3 py-2 text-[12px] text-text-base placeholder-text-muted outline-none transition-colors focus:border-brand/60"
+                                />
+                              </div>
+                              <div>
+                                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-text-muted">Label</label>
+                                <input
+                                  type="text"
+                                  value={docNewLinkLabel}
+                                  onChange={(e) => setDocNewLinkLabel(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      void handleAddDocLink();
+                                    }
+                                  }}
+                                  placeholder="What is this link useful for?"
+                                  className="w-full rounded-md border border-border-strong/40 bg-bg-sidebar px-3 py-2 text-[12px] text-text-base placeholder-text-muted outline-none transition-colors focus:border-brand/60"
+                                />
+                              </div>
+                              <div className="flex items-end">
+                                <button
+                                  onClick={handleAddDocLink}
+                                  disabled={!docNewLinkUrl.trim()}
+                                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-brand px-3 py-2 text-[12px] font-medium text-white shadow-sm transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <Plus size={12} /> Add link
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {linkDocEntries.length === 0 ? (
+                            <div className="px-4 py-10 text-center">
+                              <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full border border-dashed border-border-strong/50 bg-bg-sidebar/50">
+                                <LinkIcon size={16} className="text-text-muted" />
+                              </div>
+                              <h5 className="text-[13px] font-medium text-text-base">No external references yet</h5>
+                              <p className="mx-auto mt-1 max-w-[420px] text-[12px] leading-relaxed text-text-muted">
+                                Add product docs, API references, Figma files, tickets, or other URLs that help explain how this project works.
+                              </p>
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="flex items-center justify-between gap-3 px-3 py-3 border-b border-border-strong/20">
+                                <div>
+                                  <h4 className="text-[13px] font-semibold text-text-base">Saved links</h4>
+                                  <p className="mt-0.5 text-[11px] text-text-muted">Use labels so teammates and agents know which reference to open first.</p>
+                                </div>
+                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-text-muted">
+                                  {linkDocEntries.length}
+                                </span>
+                              </div>
+                              <div className="divide-y divide-border-strong/20">
+                                {linkDocEntries.map(([key, entry]) => (
+                                  <div key={key} className="flex items-start gap-3 px-3 py-3 transition-colors hover:bg-surface-hover/70">
+                                    <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-border-strong/30 bg-bg-sidebar/60">
+                                      <Globe size={14} className="text-text-muted" />
                                     </div>
-                                    <a
-                                      href={entry.path}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-brand hover:bg-brand/10 transition-all"
-                                      title="Open link"
-                                    >
-                                      <ExternalLink size={12} />
-                                    </a>
-                                    <button
-                                      onClick={() => removeDocEntry(key, false)}
-                                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-error hover:bg-error/10 transition-all"
-                                      title="Remove"
-                                    >
-                                      <Trash2 size={12} />
-                                    </button>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <p className="text-[12px] font-medium text-text-base">{entry.summary || key}</p>
+                                        <span className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5 text-[10px] font-medium text-text-muted">external</span>
+                                      </div>
+                                      <p className="mt-1 break-all font-mono text-[11px] text-text-muted">{entry.path}</p>
+                                    </div>
+                                    <div className="mt-0.5 flex items-center gap-1">
+                                      <a
+                                        href={entry.path}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="rounded-md border border-border-strong/30 p-2 text-text-muted transition-colors hover:border-brand/30 hover:bg-brand/10 hover:text-brand"
+                                        title="Open link"
+                                      >
+                                        <ExternalLink size={13} />
+                                      </a>
+                                      <button
+                                        onClick={() => removeDocEntry(key, false)}
+                                        className="rounded-md border border-transparent p-2 text-text-muted transition-colors hover:border-error/20 hover:bg-error/10 hover:text-error"
+                                        title="Remove link"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
                                   </div>
                                 ))}
                               </div>
-                            ) : (
-                              <p className="text-[12px] text-text-muted italic mb-4">No links added yet.</p>
-                            );
-                          })()}
-
-                          {/* Add new link form */}
-                          <div className="flex flex-col gap-2">
-                            <input
-                              type="url"
-                              value={docNewLinkUrl}
-                              onChange={(e) => setDocNewLinkUrl(e.target.value)}
-                              placeholder="https://…"
-                              className="px-3 py-1.5 text-[12px] bg-bg-input border border-border-strong/40 rounded text-text-base placeholder-text-muted focus:outline-none focus:border-brand/60"
-                            />
-                            <input
-                              type="text"
-                              value={docNewLinkLabel}
-                              onChange={(e) => setDocNewLinkLabel(e.target.value)}
-                              placeholder="Label / description (optional)"
-                              className="px-3 py-1.5 text-[12px] bg-bg-input border border-border-strong/40 rounded text-text-base placeholder-text-muted focus:outline-none focus:border-brand/60"
-                            />
-                            <button
-                              onClick={async () => {
-                                if (!docNewLinkUrl.trim()) return;
-                                await addDocLink(docNewLinkUrl, docNewLinkLabel);
-                                setDocNewLinkUrl("");
-                                setDocNewLinkLabel("");
-                              }}
-                              disabled={!docNewLinkUrl.trim()}
-                              className="self-start px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <Plus size={12} /> Add Link
-                            </button>
-                          </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
