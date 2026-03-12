@@ -62,6 +62,8 @@ import {
   Lightbulb,
   Pin,
   PinOff,
+  Link as LinkIcon,
+  ExternalLink,
 } from "lucide-react";
 
 interface CustomRule {
@@ -2134,8 +2136,8 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "rules" | "context" | "memory" | "features" | "activity" | "recommendations";
-  type ProjectGroup = "summary" | "configuration" | "instructions" | "runtime" | "planning" | "insights";
+  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "features" | "activity" | "recommendations";
+  type ProjectGroup = "summary" | "configuration" | "instructions" | "documentation" | "runtime" | "planning" | "insights";
 
   const PROJECT_GROUPS: {
     id: ProjectGroup;
@@ -2154,11 +2156,20 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     },
     {
       id: "instructions",
-      label: "Instructions",
+      label: "Context",
       tabs: [
         { id: "project_file", label: "Project Instructions" },
         { id: "rules", label: "Rules" },
         { id: "context", label: "Context" },
+      ],
+    },
+    {
+      id: "documentation",
+      label: "Documentation",
+      tabs: [
+        { id: "docs_files", label: "Files & Dirs" },
+        { id: "docs_links", label: "Links" },
+        { id: "docs_notes", label: "Notes" },
       ],
     },
     {
@@ -2265,6 +2276,22 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
   const [contextGenerating, setContextGenerating] = useState(false);
   const [contextJsonError, setContextJsonError] = useState<string | null>(null);
   const [contextFileExists, setContextFileExists] = useState(false);
+
+  // Documentation tab state
+  // Inline form state for adding a new file/dir path entry
+  const [docNewPath, setDocNewPath] = useState("");
+  const [docNewPathSummary, setDocNewPathSummary] = useState("");
+  // Inline form state for adding a new link entry
+  const [docNewLinkUrl, setDocNewLinkUrl] = useState("");
+  const [docNewLinkLabel, setDocNewLinkLabel] = useState("");
+  // Note editor state
+  const [docNoteSelected, setDocNoteSelected] = useState<string | null>(null);
+  const [docNoteContent, setDocNoteContent] = useState("");
+  const [docNoteDirty, setDocNoteDirty] = useState(false);
+  const [docNoteSaving, setDocNoteSaving] = useState(false);
+  const [docNoteLoading, setDocNoteLoading] = useState(false);
+  const [docNewNoteName, setDocNewNoteName] = useState("");
+  const [docNewNoteCreating, setDocNewNoteCreating] = useState(false);
 
   // Local skill editing state
   const [localSkillEditing, setLocalSkillEditing] = useState<string | null>(null); // skill name being edited
@@ -3046,6 +3073,151 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       setContextGenerating(false);
     }
   };
+
+  // ── Documentation tab helpers ─────────────────────────────────────────────
+
+  /**
+   * Parse the docs map from the current contextRaw string.
+   * Returns an empty object if contextRaw is not valid JSON or has no docs field.
+   */
+  const parsedDocs = (): Record<string, { path: string; summary: string }> => {
+    try {
+      const obj = JSON.parse(contextRaw);
+      return (obj.docs as Record<string, { path: string; summary: string }>) ?? {};
+    } catch {
+      return {};
+    }
+  };
+
+  /**
+   * Merge an updated docs map back into contextRaw and persist to disk.
+   * No-op if there is no selected project or contextRaw is not initialised.
+   */
+  const saveDocsToContext = async (
+    newDocs: Record<string, { path: string; summary: string }>
+  ): Promise<void> => {
+    if (!selectedName) return;
+    let obj: Record<string, unknown> = {};
+    try {
+      obj = JSON.parse(contextRaw);
+    } catch {
+      // contextRaw not initialised yet — start with an empty context skeleton
+      obj = { commands: {}, entry_points: {}, concepts: {}, conventions: {}, gotchas: {}, docs: {} };
+    }
+    obj.docs = newDocs;
+    const updated = JSON.stringify(obj, null, 2);
+    await invoke("save_project_context_raw", { name: selectedName, content: updated });
+    setContextRaw(updated);
+    setContextFileExists(true);
+    const parsed: string = await invoke("get_project_context", { name: selectedName });
+    setProjectContext(JSON.parse(parsed));
+  };
+
+  /** Add or update a file/dir entry in the docs map. */
+  const addDocPath = async (path: string, summary: string): Promise<void> => {
+    if (!path.trim()) return;
+    const docs = parsedDocs();
+    // Use the basename as the key (de-duplicating with a suffix if needed)
+    const base = path.split("/").pop() ?? path;
+    const key = docs[base] ? `${base}_${Date.now()}` : base;
+    await saveDocsToContext({ ...docs, [key]: { path: path.trim(), summary: summary.trim() } });
+  };
+
+  /** Add or update a link entry in the docs map. */
+  const addDocLink = async (url: string, label: string): Promise<void> => {
+    if (!url.trim()) return;
+    const docs = parsedDocs();
+    const key = (label.trim() || url.trim().replace(/https?:\/\//, "").split("/")[0]) ?? "link";
+    const safeKey = docs[key] ? `${key}_${Date.now()}` : key;
+    await saveDocsToContext({ ...docs, [safeKey]: { path: url.trim(), summary: label.trim() } });
+  };
+
+  /** Remove a doc entry by key. Also deletes the note file if it's a note entry. */
+  const removeDocEntry = async (key: string, isNote: boolean): Promise<void> => {
+    if (!selectedName) return;
+    const docs = parsedDocs();
+    const { [key]: _removed, ...rest } = docs;
+    await saveDocsToContext(rest);
+    if (isNote) {
+      try {
+        await invoke("delete_doc_note", { name: selectedName, noteName: key + ".md" });
+      } catch {
+        // best-effort — file may not exist yet
+      }
+      if (docNoteSelected === key) {
+        setDocNoteSelected(null);
+        setDocNoteContent("");
+        setDocNoteDirty(false);
+      }
+    }
+  };
+
+  /** Load the content of a note file into the editor. */
+  const loadDocNote = async (key: string): Promise<void> => {
+    if (!selectedName) return;
+    setDocNoteLoading(true);
+    setDocNoteSelected(key);
+    setDocNoteDirty(false);
+    try {
+      const content: string = await invoke("read_doc_note", {
+        name: selectedName,
+        noteName: key + ".md",
+      });
+      setDocNoteContent(content);
+    } catch (err) {
+      console.error("Failed to load doc note:", err);
+      setDocNoteContent("");
+    } finally {
+      setDocNoteLoading(false);
+    }
+  };
+
+  /** Save the current note editor content to disk. */
+  const saveDocNote = async (): Promise<void> => {
+    if (!selectedName || !docNoteSelected) return;
+    setDocNoteSaving(true);
+    try {
+      await invoke("save_doc_note", {
+        name: selectedName,
+        noteName: docNoteSelected + ".md",
+        content: docNoteContent,
+      });
+      setDocNoteDirty(false);
+    } catch (err) {
+      console.error("Failed to save doc note:", err);
+    } finally {
+      setDocNoteSaving(false);
+    }
+  };
+
+  /** Create a new note: adds index entry to context.json, then opens the editor. */
+  const createDocNote = async (noteName: string): Promise<void> => {
+    if (!noteName.trim() || !selectedName) return;
+    // Sanitise: lowercase, spaces → hyphens, strip non-alphanumeric except hyphens
+    const slug = noteName
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "");
+    if (!slug) return;
+    const docs = parsedDocs();
+    if (docs[slug]) {
+      // Already exists — just select it
+      await loadDocNote(slug);
+      return;
+    }
+    await saveDocsToContext({
+      ...docs,
+      [slug]: { path: `.automatic/docs/${slug}.md`, summary: noteName.trim() },
+    });
+    setDocNoteContent("");
+    setDocNoteDirty(false);
+    setDocNoteSelected(slug);
+    setDocNewNoteName("");
+    setDocNewNoteCreating(false);
+  };
+
+  // ── End documentation tab helpers ────────────────────────────────────────
 
   // Remove a recommendation from all local state arrays and notify the global
   // Recommendations view to re-fetch. Call this after any dismiss or action so
@@ -7237,6 +7409,346 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                   </section>
                   );
                 })()}
+
+                {/* ── Documentation: Files & Dirs tab ─────────────── */}
+                {projectTab === "docs_files" && (
+                  <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+                    {!project?.directory ? (
+                      <div className="flex-1 flex items-center justify-center">
+                        <p className="text-[13px] text-text-muted italic">
+                          Set a project directory to use documentation.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="p-6 space-y-5">
+                        <div>
+                          <h3 className="text-[13px] font-semibold text-text-base mb-1">Files &amp; Directories</h3>
+                          <p className="text-[12px] text-text-muted mb-4">
+                            Add local files or directories to include as project documentation. These are recorded in <code className="font-mono text-[11px]">.automatic/context.json</code> and surfaced to agents via MCP.
+                          </p>
+
+                          {/* Existing file/dir entries */}
+                          {(() => {
+                            const docs = parsedDocs();
+                            const fileEntries = Object.entries(docs).filter(
+                              ([, v]) => !v.path.startsWith("http://") && !v.path.startsWith("https://") && !v.path.startsWith(".automatic/docs/")
+                            );
+                            return fileEntries.length > 0 ? (
+                              <div className="mb-4 bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                                {fileEntries.map(([key, entry]) => (
+                                  <div key={key} className="flex items-center gap-3 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
+                                    <FolderOpen size={13} className="flex-shrink-0 text-text-muted" />
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-[12px] font-mono text-text-base truncate">{entry.path}</p>
+                                      {entry.summary && (
+                                        <p className="text-[11px] text-text-muted truncate">{entry.summary}</p>
+                                      )}
+                                    </div>
+                                    <button
+                                      onClick={() => removeDocEntry(key, false)}
+                                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-error hover:bg-error/10 transition-all"
+                                      title="Remove"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[12px] text-text-muted italic mb-4">No files or directories added yet.</p>
+                            );
+                          })()}
+
+                          {/* Add new path form */}
+                          <div className="flex flex-col gap-2">
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={docNewPath}
+                                onChange={(e) => setDocNewPath(e.target.value)}
+                                placeholder="Path to file or directory…"
+                                className="flex-1 px-3 py-1.5 text-[12px] bg-bg-input border border-border-strong/40 rounded text-text-base placeholder-text-muted focus:outline-none focus:border-brand/60"
+                              />
+                              <button
+                                onClick={async () => {
+                                  const picked: string | null = await invoke("open_directory_dialog");
+                                  if (picked) setDocNewPath(picked);
+                                }}
+                                className="px-2.5 py-1.5 bg-bg-input hover:bg-surface-hover border border-border-strong/40 rounded text-[12px] text-text-muted hover:text-text-base transition-colors flex items-center gap-1.5"
+                                title="Pick directory"
+                              >
+                                <FolderOpen size={12} /> Browse
+                              </button>
+                            </div>
+                            <input
+                              type="text"
+                              value={docNewPathSummary}
+                              onChange={(e) => setDocNewPathSummary(e.target.value)}
+                              placeholder="Description (optional)"
+                              className="px-3 py-1.5 text-[12px] bg-bg-input border border-border-strong/40 rounded text-text-base placeholder-text-muted focus:outline-none focus:border-brand/60"
+                            />
+                            <button
+                              onClick={async () => {
+                                if (!docNewPath.trim()) return;
+                                await addDocPath(docNewPath, docNewPathSummary);
+                                setDocNewPath("");
+                                setDocNewPathSummary("");
+                              }}
+                              disabled={!docNewPath.trim()}
+                              className="self-start px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <Plus size={12} /> Add Path
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Documentation: Links tab ─────────────────────── */}
+                {projectTab === "docs_links" && (
+                  <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+                    {!project?.directory ? (
+                      <div className="flex-1 flex items-center justify-center">
+                        <p className="text-[13px] text-text-muted italic">
+                          Set a project directory to use documentation.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="p-6 space-y-5">
+                        <div>
+                          <h3 className="text-[13px] font-semibold text-text-base mb-1">Links</h3>
+                          <p className="text-[12px] text-text-muted mb-4">
+                            Add URLs to external documentation, design specs, or reference material.
+                          </p>
+
+                          {/* Existing link entries */}
+                          {(() => {
+                            const docs = parsedDocs();
+                            const linkEntries = Object.entries(docs).filter(
+                              ([, v]) => v.path.startsWith("http://") || v.path.startsWith("https://")
+                            );
+                            return linkEntries.length > 0 ? (
+                              <div className="mb-4 bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                                {linkEntries.map(([key, entry]) => (
+                                  <div key={key} className="flex items-center gap-3 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
+                                    <LinkIcon size={13} className="flex-shrink-0 text-text-muted" />
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-[12px] font-medium text-text-base truncate">
+                                        {entry.summary || key}
+                                      </p>
+                                      <p className="text-[11px] text-text-muted font-mono truncate">{entry.path}</p>
+                                    </div>
+                                    <a
+                                      href={entry.path}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-brand hover:bg-brand/10 transition-all"
+                                      title="Open link"
+                                    >
+                                      <ExternalLink size={12} />
+                                    </a>
+                                    <button
+                                      onClick={() => removeDocEntry(key, false)}
+                                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-error hover:bg-error/10 transition-all"
+                                      title="Remove"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[12px] text-text-muted italic mb-4">No links added yet.</p>
+                            );
+                          })()}
+
+                          {/* Add new link form */}
+                          <div className="flex flex-col gap-2">
+                            <input
+                              type="url"
+                              value={docNewLinkUrl}
+                              onChange={(e) => setDocNewLinkUrl(e.target.value)}
+                              placeholder="https://…"
+                              className="px-3 py-1.5 text-[12px] bg-bg-input border border-border-strong/40 rounded text-text-base placeholder-text-muted focus:outline-none focus:border-brand/60"
+                            />
+                            <input
+                              type="text"
+                              value={docNewLinkLabel}
+                              onChange={(e) => setDocNewLinkLabel(e.target.value)}
+                              placeholder="Label / description (optional)"
+                              className="px-3 py-1.5 text-[12px] bg-bg-input border border-border-strong/40 rounded text-text-base placeholder-text-muted focus:outline-none focus:border-brand/60"
+                            />
+                            <button
+                              onClick={async () => {
+                                if (!docNewLinkUrl.trim()) return;
+                                await addDocLink(docNewLinkUrl, docNewLinkLabel);
+                                setDocNewLinkUrl("");
+                                setDocNewLinkLabel("");
+                              }}
+                              disabled={!docNewLinkUrl.trim()}
+                              className="self-start px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <Plus size={12} /> Add Link
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Documentation: Notes tab ─────────────────────── */}
+                {projectTab === "docs_notes" && (
+                  <div className="flex-1 flex min-h-0">
+                    {!project?.directory ? (
+                      <div className="flex-1 flex items-center justify-center">
+                        <p className="text-[13px] text-text-muted italic">
+                          Set a project directory to use documentation.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Left panel: note list */}
+                        <div className="w-52 flex-shrink-0 border-r border-border-strong/40 flex flex-col min-h-0">
+                          <div className="px-3 py-2.5 border-b border-border-strong/40 flex items-center justify-between flex-shrink-0">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wide">Notes</span>
+                            <button
+                              onClick={() => setDocNewNoteCreating(true)}
+                              className="p-0.5 rounded text-text-muted hover:text-brand hover:bg-brand/10 transition-colors"
+                              title="New note"
+                            >
+                              <Plus size={13} />
+                            </button>
+                          </div>
+
+                          {/* New note name input */}
+                          {docNewNoteCreating && (
+                            <div className="px-2 py-2 border-b border-border-strong/20 flex items-center gap-1">
+                              <input
+                                autoFocus
+                                type="text"
+                                value={docNewNoteName}
+                                onChange={(e) => setDocNewNoteName(e.target.value)}
+                                onKeyDown={async (e) => {
+                                  if (e.key === "Enter") await createDocNote(docNewNoteName);
+                                  if (e.key === "Escape") {
+                                    setDocNewNoteCreating(false);
+                                    setDocNewNoteName("");
+                                  }
+                                }}
+                                placeholder="Note name…"
+                                className="flex-1 px-2 py-1 text-[11px] bg-bg-input border border-brand/60 rounded text-text-base placeholder-text-muted focus:outline-none"
+                              />
+                              <button
+                                onClick={() => createDocNote(docNewNoteName)}
+                                disabled={!docNewNoteName.trim()}
+                                className="p-1 rounded text-brand hover:bg-brand/10 transition-colors disabled:opacity-40"
+                              >
+                                <Check size={11} />
+                              </button>
+                              <button
+                                onClick={() => { setDocNewNoteCreating(false); setDocNewNoteName(""); }}
+                                className="p-1 rounded text-text-muted hover:text-error hover:bg-error/10 transition-colors"
+                              >
+                                <X size={11} />
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Note list */}
+                          <div className="flex-1 overflow-y-auto">
+                            {(() => {
+                              const docs = parsedDocs();
+                              const noteEntries = Object.entries(docs).filter(
+                                ([, v]) => v.path.startsWith(".automatic/docs/")
+                              );
+                              if (noteEntries.length === 0) {
+                                return (
+                                  <p className="px-3 py-4 text-[11px] text-text-muted italic">
+                                    No notes yet. Click + to create one.
+                                  </p>
+                                );
+                              }
+                              return noteEntries.map(([key, entry]) => (
+                                <div
+                                  key={key}
+                                  className={`group flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors ${
+                                    docNoteSelected === key
+                                      ? "bg-brand/10 text-text-base"
+                                      : "hover:bg-surface-hover text-text-muted hover:text-text-base"
+                                  }`}
+                                  onClick={() => {
+                                    if (docNoteSelected !== key) loadDocNote(key);
+                                  }}
+                                >
+                                  <FileText size={12} className="flex-shrink-0" />
+                                  <span className="flex-1 text-[12px] truncate">{entry.summary || key}</span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      removeDocEntry(key, true);
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-text-muted hover:text-error hover:bg-error/10 transition-all"
+                                    title="Delete note"
+                                  >
+                                    <Trash2 size={10} />
+                                  </button>
+                                </div>
+                              ));
+                            })()}
+                          </div>
+                        </div>
+
+                        {/* Right panel: editor */}
+                        <div className="flex-1 flex flex-col min-h-0">
+                          {docNoteSelected === null ? (
+                            <div className="flex-1 flex items-center justify-center text-center p-8">
+                              <div>
+                                <FileText size={28} className="mx-auto mb-3 text-text-muted opacity-40" strokeWidth={1.5} />
+                                <p className="text-[13px] text-text-muted">Select a note to edit, or create a new one.</p>
+                              </div>
+                            </div>
+                          ) : docNoteLoading ? (
+                            <div className="flex-1 flex items-center justify-center text-text-muted">
+                              <RefreshCw size={14} className="animate-spin mr-2" />
+                              <span className="text-[13px]">Loading…</span>
+                            </div>
+                          ) : (
+                            <>
+                              {/* Note toolbar */}
+                              <div className="flex items-center justify-between px-4 h-9 bg-bg-input border-b border-border-strong/40 flex-shrink-0">
+                                <span className="text-[11px] text-text-muted font-mono">
+                                  .automatic/docs/{docNoteSelected}.md
+                                  {docNoteDirty ? " (unsaved)" : ""}
+                                </span>
+                                <button
+                                  onClick={saveDocNote}
+                                  disabled={!docNoteDirty || docNoteSaving}
+                                  className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  <Check size={10} /> {docNoteSaving ? "Saving…" : "Save"}
+                                </button>
+                              </div>
+                              {/* Markdown textarea */}
+                              <textarea
+                                value={docNoteContent}
+                                onChange={(e) => {
+                                  setDocNoteContent(e.target.value);
+                                  setDocNoteDirty(true);
+                                }}
+                                spellCheck={false}
+                                className="flex-1 p-4 text-[13px] font-mono text-text-base bg-bg-base resize-none focus:outline-none leading-relaxed"
+                                placeholder="Write Markdown here…"
+                              />
+                            </>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {/* ── Memory tab ──────────────────────────────────── */}
                 {projectTab === "memory" && selectedName && (
