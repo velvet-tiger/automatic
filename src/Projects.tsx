@@ -2254,6 +2254,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     if (group === "tools") {
       // Switch to tools group: reset to overview (no tool sub-tab selected).
       setToolTab(null);
+      setProjectTab("summary");
       loadToolEntries();
       return;
     }
@@ -6299,7 +6300,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
             )}
 
             {/* Features tab — full-height, no padding (handles its own layout) */}
-            {projectTab === "features" && selectedName && (
+            {projectTab === "features" && projectGroup === "planning" && selectedName && (
               <div className="flex-1 overflow-hidden">
                 <Features projectName={selectedName} />
               </div>
