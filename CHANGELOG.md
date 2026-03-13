@@ -2,6 +2,25 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.10.1] — 2026-03-14
+
+### Features
+
+- **Settings**: Reinstall Defaults button added to restore bundled rules, templates, skills, and MCP server configurations
+
+### Fixes
+
+- **Features**: Create feature submission restored after being temporarily broken
+- **Projects**: Delete actions for attached items now remain visible
+- **Projects**: Features view no longer persists when navigating to Tools
+- **Projects**: Project creation wizard stub reference is properly cleared after successful creation
+
+### Documentation
+
+- **Project Templates**: Terraform template instructions updated with improved guidance
+
+---
+
 ## [0.10.0] — 2026-03-12
 
 ### Features
