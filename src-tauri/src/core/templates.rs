@@ -294,9 +294,12 @@ const DEFAULT_TEMPLATES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Write any missing default templates to `~/.automatic/templates/`.
-/// Existing files are left untouched, so user edits are always preserved.
-pub fn install_default_templates() -> Result<(), String> {
+/// Write default templates to `~/.automatic/templates/`.
+///
+/// When `force` is `false`, existing files are left untouched so user edits
+/// are preserved.  When `force` is `true`, every bundled template is
+/// overwritten unconditionally — used by the "Reinstall Defaults" reset path.
+pub fn install_default_templates_inner(force: bool) -> Result<(), String> {
     let dir = get_templates_dir()?;
     if !dir.exists() {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -304,10 +307,16 @@ pub fn install_default_templates() -> Result<(), String> {
 
     for (name, content) in DEFAULT_TEMPLATES {
         let path = dir.join(format!("{}.md", name));
-        if !path.exists() {
+        if force || !path.exists() {
             fs::write(&path, content).map_err(|e| e.to_string())?;
         }
     }
 
     Ok(())
+}
+
+/// Write any missing default templates to `~/.automatic/templates/`.
+/// Existing files are left untouched, so user edits are always preserved.
+pub fn install_default_templates() -> Result<(), String> {
+    install_default_templates_inner(false)
 }

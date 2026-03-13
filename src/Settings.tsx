@@ -6,6 +6,7 @@ import { THEMES, applyTheme, Theme } from "./theme";
 import { getVersion } from "@tauri-apps/api/app";
 import { setAnalyticsEnabled, trackSettingChanged } from "./analytics";
 import { useUpdate } from "./UpdateContext";
+import { useTaskLog } from "./TaskLogContext";
 import { AgentSelector, type AgentInfo } from "./AgentSelector";
 import SettingsPlugins from "./plugins/SettingsPlugins";
 import { Code2, Bot, AppWindow, Puzzle, X } from "lucide-react";
@@ -89,6 +90,7 @@ export default function Settings() {
   // Update state — sourced from the shared UpdateContext
   const [appVersion, setAppVersion] = useState<string>("");
   const { status: updateStatus, updateInfo, errorMessage: updateError, checkAndDownload, restartApp } = useUpdate();
+  const { log, update } = useTaskLog();
 
   useEffect(() => {
     async function loadSettings() {
@@ -192,6 +194,25 @@ export default function Settings() {
       applyTheme("system");
     } catch (e) {
       console.error("Failed to reset settings", e);
+    }
+  }
+
+  async function reinstallDefaults() {
+    const confirmed = await ask(
+      "Reinstall all bundled defaults? This will overwrite your Rules, Templates, Skills, and the Automatic MCP server with the versions shipped in this release. Projects and other data are not affected.",
+      { title: "Reinstall Defaults", kind: "warning" }
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const entryId = log("Reinstalling defaults…", "running");
+    try {
+      await invoke("reinstall_defaults");
+      update(entryId, "Defaults reinstalled — Rules, Templates, Skills, and MCP server restored.", "success");
+    } catch (e) {
+      update(entryId, `Failed to reinstall defaults: ${e}`, "error");
     }
   }
 
@@ -579,6 +600,18 @@ export default function Settings() {
                 >
                   Reset to Factory Settings
                 </button>
+
+                <div className="mt-4">
+                  <p className="text-[13px] text-text-muted mb-3 leading-relaxed">
+                    Overwrite bundled Rules, Templates, Skills, and the Automatic MCP server with the versions shipped in this release. Projects and other data are not affected.
+                  </p>
+                  <button
+                    onClick={reinstallDefaults}
+                    className="px-4 py-2 rounded-lg border border-danger/60 bg-danger/10 text-[13px] text-danger hover:bg-danger/20 transition-all"
+                  >
+                    Reinstall Defaults
+                  </button>
+                </div>
 
                 <div className="mt-4">
                   <p className="text-[12px] text-text-muted mb-3 leading-relaxed">

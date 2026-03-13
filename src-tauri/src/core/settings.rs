@@ -115,6 +115,20 @@ pub fn reset_settings() -> Result<(), String> {
     write_settings(&Settings::default())
 }
 
+/// Reinstall all bundled defaults (rules, templates, skills, MCP server)
+/// without touching projects, memories, or app settings.
+///
+/// Every bundled file is force-overwritten so the on-disk copies match the
+/// current binary — equivalent to what happens on a version upgrade but
+/// scoped only to the factory-supplied content.
+pub fn reinstall_defaults() -> Result<(), String> {
+    super::install_default_rules_inner(true)?;
+    super::install_default_templates_inner(true)?;
+    super::install_default_skills_inner(true)?;
+    super::ensure_automatic_in_global_mcp()?;
+    Ok(())
+}
+
 pub fn erase_app_data() -> Result<(), String> {
     let automatic_dir = get_automatic_dir()?;
     if automatic_dir.exists() {

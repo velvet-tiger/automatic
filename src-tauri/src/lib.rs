@@ -86,6 +86,7 @@ pub fn run() {
             read_settings,
             write_settings,
             reset_settings,
+            reinstall_defaults,
             erase_app_data,
             dismiss_welcome,
             save_api_key,

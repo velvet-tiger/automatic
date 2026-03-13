@@ -18,6 +18,11 @@ pub fn reset_settings() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn reinstall_defaults() -> Result<(), String> {
+    core::reinstall_defaults()
+}
+
+#[tauri::command]
 pub fn erase_app_data() -> Result<(), String> {
     core::erase_app_data()
 }

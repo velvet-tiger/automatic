@@ -177,9 +177,12 @@ const DEFAULT_RULES: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Write any missing default rules to `~/.automatic/rules/`.
-/// Existing files are left untouched, so user edits are always preserved.
-pub fn install_default_rules() -> Result<(), String> {
+/// Write default rules to `~/.automatic/rules/`.
+///
+/// When `force` is `false`, existing files are left untouched so user edits
+/// are preserved.  When `force` is `true`, every bundled rule is overwritten
+/// unconditionally — used by the "Reinstall Defaults" reset path.
+pub fn install_default_rules_inner(force: bool) -> Result<(), String> {
     let dir = get_rules_dir()?;
     if !dir.exists() {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -187,7 +190,7 @@ pub fn install_default_rules() -> Result<(), String> {
 
     for (machine_name, display_name, content) in DEFAULT_RULES {
         let path = dir.join(format!("{}.json", machine_name));
-        if !path.exists() {
+        if force || !path.exists() {
             let rule = Rule {
                 name: display_name.to_string(),
                 content: content.to_string(),
@@ -226,6 +229,12 @@ pub fn install_default_rules() -> Result<(), String> {
     migrate_checklist_to_process(&dir)?;
 
     Ok(())
+}
+
+/// Write any missing default rules to `~/.automatic/rules/`.
+/// Existing files are left untouched, so user edits are always preserved.
+pub fn install_default_rules() -> Result<(), String> {
+    install_default_rules_inner(false)
 }
 
 /// Migrate the `automatic-checklist` rule to `automatic-process` across all
