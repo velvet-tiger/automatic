@@ -22,6 +22,8 @@ interface SkillSelectorProps {
   onNavigateToSkill?: (skill: string) => void;
   /** Fork a global skill into this project's local skills. Called with skill name + its raw content. */
   onForkSkill?: (skill: string, content: string) => Promise<void>;
+  /** Keep remove buttons visible instead of only showing them on hover. */
+  showRemoveButtonAlways?: boolean;
 }
 
 /**
@@ -42,6 +44,7 @@ export function SkillSelector({
   onReadSkill,
   onNavigateToSkill,
   onForkSkill,
+  showRemoveButtonAlways = false,
 }: SkillSelectorProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -212,7 +215,7 @@ export function SkillSelector({
                 {skill !== "automatic" && (
                 <button
                   onClick={() => onRemove(idx)}
-                  className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded"
+                  className={`text-text-muted hover:text-danger transition-all p-1 hover:bg-surface rounded ${showRemoveButtonAlways ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                 >
                   <Trash2 size={12} />
                 </button>

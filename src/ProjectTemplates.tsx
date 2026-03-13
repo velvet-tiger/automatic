@@ -935,6 +935,7 @@ export default function ProjectTemplates({
                   availableSkills={availableSkills}
                   onAdd={(s) => addItem("skills", s)}
                   onRemove={(idx) => removeItem("skills", idx)}
+                  showRemoveButtonAlways
                 />
 
                 {/* MCP Servers */}
@@ -943,6 +944,7 @@ export default function ProjectTemplates({
                   availableServers={availableMcpServers}
                   onAdd={(s) => addItem("mcp_servers", s)}
                   onRemove={(idx) => removeItem("mcp_servers", idx)}
+                  showRemoveButtonAlways
                 />
 
                 {/* Applied to */}

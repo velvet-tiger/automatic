@@ -51,6 +51,8 @@ interface McpSelectorProps {
    * When provided, the inline card shows a "View full configuration" link.
    */
   onNavigateToMcpServer?: (serverName: string) => void;
+  /** Keep remove buttons visible instead of only showing them on hover. */
+  showRemoveButtonAlways?: boolean;
 }
 
 // ── Inline read-only config card ───────────────────────────────────────────
@@ -235,6 +237,7 @@ export function McpSelector({
   label = "MCP Servers",
   emptyMessage = "No MCP servers configured.",
   onNavigateToMcpServer,
+  showRemoveButtonAlways = false,
 }: McpSelectorProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -315,7 +318,7 @@ export function McpSelector({
                 {srv !== "automatic" && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onRemove(idx); }}
-                  className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded"
+                  className={`text-text-muted hover:text-danger transition-all p-1 hover:bg-surface rounded ${showRemoveButtonAlways ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
                 >
                   <Trash2 size={12} />
                 </button>

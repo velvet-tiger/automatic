@@ -6605,7 +6605,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                                     <TokenPill text={globalRuleContentCache[ruleId] ?? ""} />
                                     <button
                                       onClick={() => handleToggleProjectRule(ruleId)}
-                                      className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded"
+                                      className="text-text-muted hover:text-danger opacity-100 transition-all p-1 hover:bg-surface rounded"
                                       title="Remove"
                                     >
                                       <Trash2 size={12} />
@@ -6997,6 +6997,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                           availableSkills={availableSkills}
                           onAdd={(s) => addItem("skills", s)}
                           onRemove={(i) => removeItem("skills", i)}
+                          showRemoveButtonAlways
                           emptyMessage="No skills attached."
                           onReadSkill={async (skillName) => {
                             const content: string = await invoke("read_skill", { name: skillName });
@@ -7526,6 +7527,7 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
                       availableServers={availableMcpServers}
                       onAdd={(s) => addItem("mcp_servers", s)}
                       onRemove={(i) => removeItem("mcp_servers", i)}
+                      showRemoveButtonAlways
                       disableAdd={warpOnly}
                       emptyMessage={warpOnly ? "Add other agent tools to enable MCP server syncing." : "No MCP servers attached."}
                       onNavigateToMcpServer={onNavigateToMcpServer}
