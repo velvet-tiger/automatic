@@ -3832,6 +3832,9 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
       localStorage.setItem(LAST_PROJECT_KEY, name);
       if (isCreating) {
         trackProjectCreated(name);
+        // Clear the stub reference so the unmount cleanup does not delete the
+        // project we just successfully saved.
+        wizardStubName.current = null;
         setIsCreating(false);
         await loadProjects();
       } else {
