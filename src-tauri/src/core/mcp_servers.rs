@@ -134,6 +134,13 @@ pub const AUTOMATIC_SKILL_NAME: &str = "automatic";
 /// **Project assignment** — adds `"automatic"` to every registered project's
 /// `mcp_servers` list if not already present, then persists the project.
 ///
+/// **Returns** the names of all projects that have a configured directory and
+/// at least one agent.  The caller is responsible for re-syncing these
+/// projects in the background so that:
+/// - The `automatic` MCP server entry in each agent config file reflects the
+///   current binary path (which changes between dev builds and release).
+/// - Any newly added `automatic` skill files are written to disk.
+///
 /// The MCP server is exposed to agents via per-project config files written
 /// during agent sync (e.g. `.mcp.json` for Claude Code).  We intentionally
 /// do NOT write to the global `~/.mcp.json` or the plugin `.mcp.json` —
@@ -142,13 +149,27 @@ pub const AUTOMATIC_SKILL_NAME: &str = "automatic";
 ///
 /// The binary path is resolved from the current executable so it always
 /// reflects the installed release binary rather than a hard-coded path.
-pub fn ensure_automatic_in_global_mcp() -> Result<(), String> {
+pub fn ensure_automatic_in_global_mcp() -> Result<Vec<String>, String> {
     let binary = std::env::current_exe()
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
         .unwrap_or_else(|| "automatic".to_string());
 
-    // ── 1. Registry entry ────────────────────────────────────────────────
+    // ── 1. Read old registry entry to detect binary path change ──────────
+    //
+    // If the binary path has changed (e.g. dev→release or after an update),
+    // every project that writes the automatic server entry needs a re-sync.
+    let binary_changed = read_mcp_server_config(AUTOMATIC_SERVER_NAME)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| {
+            v.get("command")
+                .and_then(|c| c.as_str())
+                .map(|c| c != binary)
+        })
+        .unwrap_or(true); // no existing entry → treat as changed
+
+    // ── 2. Registry entry ────────────────────────────────────────────────
     let registry_config = serde_json::json!({
         "type": "stdio",
         "command": binary,
@@ -159,7 +180,9 @@ pub fn ensure_automatic_in_global_mcp() -> Result<(), String> {
     // save_mcp_server_config handles directory creation and env encryption.
     save_mcp_server_config(AUTOMATIC_SERVER_NAME, &registry_str)?;
 
-    // ── 2. Assign MCP server + skill to all projects ───────────────────
+    // ── 3. Assign MCP server + skill to all projects, collect sync candidates
+    let mut projects_to_sync: Vec<String> = Vec::new();
+
     if let Ok(project_names) = super::list_projects() {
         for name in project_names {
             if let Ok(raw) = super::read_project(&name) {
@@ -185,12 +208,24 @@ pub fn ensure_automatic_in_global_mcp() -> Result<(), String> {
                             let _ = super::save_project(&name, &updated);
                         }
                     }
+
+                    // Queue for re-sync if:
+                    // - We just added automatic server/skill (changed = true), OR
+                    // - The binary path changed and this project has agents that
+                    //   would write agent config files containing the path.
+                    let has_syncable_config = !project.directory.is_empty()
+                        && !project.agents.is_empty()
+                        && std::path::Path::new(&project.directory).exists();
+
+                    if has_syncable_config && (changed || binary_changed) {
+                        projects_to_sync.push(name);
+                    }
                 }
             }
         }
     }
 
-    Ok(())
+    Ok(projects_to_sync)
 }
 
 /// Returns `true` if the given MCP server name is a built-in server that

@@ -67,8 +67,38 @@ pub fn run() {
                     Ok(msg) => eprintln!("[automatic] plugin startup: {}", msg),
                     Err(e) => eprintln!("[automatic] plugin startup error: {}", e),
                 }
-                if let Err(e) = core::ensure_automatic_in_global_mcp() {
-                    eprintln!("[automatic] global MCP install error: {}", e);
+                match core::ensure_automatic_in_global_mcp() {
+                    Ok(projects_to_sync) => {
+                        // Re-sync any project whose automatic entry was added or whose
+                        // binary path changed (dev→release or after an app update).
+                        // This keeps MCP config files and skill directories in sync
+                        // without requiring the user to press "Sync now".
+                        for project_name in projects_to_sync {
+                            match core::read_project(&project_name) {
+                                Ok(raw) => {
+                                    match serde_json::from_str::<core::Project>(&raw) {
+                                        Ok(mut project) => {
+                                            if let Err(e) = sync::sync_project_without_autodetect(&mut project) {
+                                                eprintln!(
+                                                    "[automatic] startup re-sync failed for '{}': {}",
+                                                    project_name, e
+                                                );
+                                            }
+                                        }
+                                        Err(e) => eprintln!(
+                                            "[automatic] failed to parse project '{}' for re-sync: {}",
+                                            project_name, e
+                                        ),
+                                    }
+                                }
+                                Err(e) => eprintln!(
+                                    "[automatic] failed to read project '{}' for re-sync: {}",
+                                    project_name, e
+                                ),
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("[automatic] global MCP install error: {}", e),
                 }
                 // Reconcile tool registry with current plugin enabled states.
                 core::reconcile_plugin_tools_on_startup();

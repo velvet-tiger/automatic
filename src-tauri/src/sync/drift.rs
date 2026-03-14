@@ -491,3 +491,179 @@ fn collect_skills_drift(
         }
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::{Agent, ClaudeCode};
+    use serde_json::Map;
+    use std::fs;
+    use tempfile::tempdir;
+
+    /// After `sync_skills` writes skills into a temp project dir, `collect_skills_drift`
+    /// must report no drift for the same agent and the same skill list.
+    ///
+    /// Regression test for the "SKILL.md missing after sync" bug where drift
+    /// detection reported files as missing immediately after a successful sync.
+    #[test]
+    fn no_drift_after_sync_skills() {
+        let project_dir = tempdir().unwrap();
+        let skill_contents: Vec<(String, String)> = vec![(
+            "automatic".to_string(),
+            "# Automatic skill content\n".to_string(),
+        )];
+        let selected_names = vec!["automatic".to_string()];
+        let local_names: Vec<String> = vec![];
+
+        // Sync skills to the project dir (same path as engine.rs Step 2 for Claude Code)
+        ClaudeCode
+            .sync_skills(
+                project_dir.path(),
+                &skill_contents,
+                &selected_names,
+                &local_names,
+            )
+            .expect("sync_skills should succeed");
+
+        // Drift check: must report zero drifted files
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_skills_drift(
+            &ClaudeCode,
+            &project_dir.path().to_path_buf(),
+            &skill_contents,
+            &selected_names,
+            &local_names,
+            &mut files,
+        );
+
+        assert!(
+            files.is_empty(),
+            "Expected no drift after sync, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// After `write_mcp_config` writes the MCP config, `collect_mcp_drift` must
+    /// report no drift for the same servers map.
+    #[test]
+    fn no_drift_after_write_mcp_config() {
+        let project_dir = tempdir().unwrap();
+        let mut servers = Map::new();
+        servers.insert(
+            "automatic".to_string(),
+            serde_json::json!({
+                "command": "/usr/local/bin/automatic",
+                "args": ["mcp-serve"],
+                "env": { "AUTOMATIC_PROJECT": "test-project" }
+            }),
+        );
+
+        ClaudeCode
+            .write_mcp_config(project_dir.path(), &servers)
+            .expect("write_mcp_config should succeed");
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_mcp_drift(
+            &ClaudeCode,
+            &project_dir.path().to_path_buf(),
+            &servers,
+            &mut files,
+        );
+
+        assert!(
+            files.is_empty(),
+            "Expected no MCP drift after write, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A changed binary path must produce a "modified" drift entry for `.mcp.json`.
+    ///
+    /// Regression test for the "MCP drift after binary path changes" bug where
+    /// switching from a dev build to the release app caused `.mcp.json` to drift.
+    #[test]
+    fn mcp_drift_detected_when_binary_path_changes() {
+        let project_dir = tempdir().unwrap();
+
+        // Write .mcp.json with the OLD binary path
+        let mut old_servers = Map::new();
+        old_servers.insert(
+            "automatic".to_string(),
+            serde_json::json!({
+                "command": "/old/path/to/automatic",
+                "args": ["mcp-serve"],
+                "env": { "AUTOMATIC_PROJECT": "test-project" }
+            }),
+        );
+        ClaudeCode
+            .write_mcp_config(project_dir.path(), &old_servers)
+            .expect("write with old path");
+
+        // Check drift against the NEW binary path (simulating a post-restart check)
+        let mut new_servers = Map::new();
+        new_servers.insert(
+            "automatic".to_string(),
+            serde_json::json!({
+                "command": "/new/path/to/automatic",
+                "args": ["mcp-serve"],
+                "env": { "AUTOMATIC_PROJECT": "test-project" }
+            }),
+        );
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_mcp_drift(
+            &ClaudeCode,
+            &project_dir.path().to_path_buf(),
+            &new_servers,
+            &mut files,
+        );
+
+        assert_eq!(files.len(), 1, "Expected exactly one drifted file");
+        assert_eq!(files[0].reason, "modified");
+        assert_eq!(files[0].path, ".mcp.json");
+    }
+
+    /// Drift check is a read-only operation — it must not write any files to disk.
+    #[test]
+    fn drift_check_is_read_only() {
+        use crate::core::Project;
+
+        let project_dir = tempdir().unwrap();
+        let project = Project {
+            name: "test".to_string(),
+            directory: project_dir.path().display().to_string(),
+            agents: vec!["claude".to_string()],
+            skills: vec![],
+            mcp_servers: vec![],
+            ..Default::default()
+        };
+
+        let before: Vec<_> = fs::read_dir(project_dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+
+        let _ = check_project_drift(&project);
+
+        let after: Vec<_> = fs::read_dir(project_dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+
+        assert_eq!(
+            before.len(),
+            after.len(),
+            "Drift check must not write any files to disk"
+        );
+    }
+}
