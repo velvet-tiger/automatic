@@ -1301,7 +1301,7 @@ function KanbanCard({ feature, isSelected, isDragging, onSelect, onGripDown }: K
       <div className="flex items-start gap-2 mb-1.5">
         <div className="flex-1 min-w-0">
           <div className="font-mono text-[10px] text-text-muted mb-0.5">{ticketId(feature)}</div>
-          <span className="text-[13px] font-medium text-text-base leading-snug">
+          <span className="text-[13px] font-medium text-text-base leading-tight">
             {feature.title}
           </span>
         </div>
@@ -1426,7 +1426,7 @@ function KanbanView({
             <div
               key={s.id}
               ref={(el: HTMLDivElement | null) => { colRefs.current[s.id] = el; }}
-              className="flex flex-col shrink-0 w-[220px]"
+              className="flex flex-col flex-1 min-w-[220px]"
             >
               {/* Column header */}
               <div
