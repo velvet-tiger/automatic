@@ -10,6 +10,8 @@ All notable changes to Automatic are documented here.
 
 ### Fixes
 
+- **Sync**: Projects are now automatically re-synced on startup when the app binary path changes (e.g. switching from a dev build to the release app, or after an update), eliminating false "modified" drift on `.mcp.json` and `opencode.json`
+- **Sync**: `automatic` skill files (`SKILL.md`) are now written to disk on the first launch after a project is created, fixing "missing" drift that appeared immediately after a clean sync
 - **Features**: Create feature submission restored after being temporarily broken
 - **Projects**: Delete actions for attached items now remain visible
 - **Projects**: Features view no longer persists when navigating to Tools
