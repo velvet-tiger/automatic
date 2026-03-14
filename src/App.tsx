@@ -99,6 +99,7 @@ function App() {
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
   const [pendingSkill, setPendingSkill] = useState<string | null>(null);
   const [pendingCreateWithTemplate, setPendingCreateWithTemplate] = useState<string | null>(null);
+  const [projectsResetKey, setProjectsResetKey] = useState(0);
   const [skillStoreResetKey, setSkillStoreResetKey] = useState(0);
   const [templateMarketplaceResetKey, setTemplateMarketplaceResetKey] = useState(0);
   const [mcpMarketplaceResetKey, setMcpMarketplaceResetKey] = useState(0);
@@ -233,6 +234,7 @@ function App() {
   };
 
   const MARKETPLACE_TABS: Record<string, () => void> = {
+    "projects": () => setProjectsResetKey((k) => k + 1),
     "skill-store": () => setSkillStoreResetKey((k) => k + 1),
     "template-marketplace": () => setTemplateMarketplaceResetKey((k) => k + 1),
     "mcp-marketplace": () => setMcpMarketplaceResetKey((k) => k + 1),
@@ -485,6 +487,7 @@ function App() {
           {activeTab === "projects" && (
             <div className="flex-1 h-full">
               <Projects
+                resetKey={projectsResetKey}
                 initialProject={pendingProject}
                 onInitialProjectConsumed={() => setPendingProject(null)}
                 initialProjectTab={pendingProjectTab}

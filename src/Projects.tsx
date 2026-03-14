@@ -379,6 +379,8 @@ function emptyProject(name: string): Project {
 }
 
 interface ProjectsProps {
+  /** Increment to navigate back to the projects list (deselects any open project). */
+  resetKey?: number;
   initialProject?: string | null;
   onInitialProjectConsumed?: () => void;
   /** When set, switch to this project tab immediately after selecting the project. */
@@ -1957,7 +1959,7 @@ function getProjectRelativeDocPath(projectDirectory: string | undefined, path: s
   return normalizedPath.slice(prefix.length);
 }
 
-export default function Projects({ initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToMcpMarketplace, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
+export default function Projects({ resetKey, initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToMcpMarketplace, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const { log, update } = useTaskLog();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
@@ -2520,6 +2522,13 @@ export default function Projects({ initialProject = null, onInitialProjectConsum
     }
     onInitialProjectTabConsumed?.();
   }, [initialProjectTab]);
+
+  // When the parent nav item is clicked while already on the Projects page, reset to the list view.
+  useEffect(() => {
+    if (resetKey === undefined || resetKey === 0) return;
+    setSelectedName(null);
+    setIsCreating(false);
+  }, [resetKey]);
 
   // Open the new-project wizard with a template pre-applied.
   // (triggered from the "New project from template" action in ProjectTemplates)
