@@ -2,6 +2,25 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.11.0] — 2026-03-16
+
+### Features
+
+- **Marketplace**: Aikido Security MCP server added to the marketplace with a companion skill that installs automatically
+- **OpenCode**: Cache and snapshot cleanup actions added to the Providers > OpenCode settings panel
+- **Projects**: Clicking the active nav item now returns to the projects list, making navigation more predictable
+
+### Fixes
+
+- **MCP Servers**: Arguments section is now always shown for local stdio servers, preventing hidden configuration state
+- **Sync**: Claude project files are cleaned up correctly when an agent is removed from a project
+
+### Changed
+
+- **Features**: Kanban columns now expand to fill the full width; card title line height tightened for density
+
+---
+
 ## [0.10.1] — 2026-03-14
 
 ### Features
