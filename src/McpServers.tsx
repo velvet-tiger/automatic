@@ -720,11 +720,11 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       />
                     </section>
 
-                    {(config.args || []).length > 0 && (
                     <section>
                       <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
                         Arguments
                       </label>
+                      {(config.args || []).length > 0 && (
                       <ul className="space-y-1 mb-2">
                         {(config.args || []).map((arg, i) => (
                           <li
@@ -743,6 +743,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                           </li>
                         ))}
                       </ul>
+                      )}
                       {!isManaged && (
                       <div className="flex gap-2">
                         <input
@@ -764,7 +765,6 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       </div>
                       )}
                     </section>
-                    )}
 
                     {(!isManaged || config.cwd) && (
                     <section>

@@ -2337,7 +2337,8 @@
       "package": "@aikidosec/mcp",
       "version": null,
       "transport": "stdio",
-      "command": "npx -y @aikidosec/mcp"
+      "command": "npx",
+      "args": ["-y", "@aikidosec/mcp"]
     },
     "auth": {
       "method": "api_key",
