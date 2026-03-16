@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   Loader2,
   BookOpen,
+  Sparkles,
 } from "lucide-react";
 import serversData from "./featured-mcp-servers.json";
 
@@ -31,6 +32,23 @@ interface EnvVar {
   name: string;
   description: string;
   secret: boolean;
+}
+
+interface CompanionSkill {
+  /** Skill name used as the key when saving, e.g. "aikido-security" */
+  name: string;
+  /** Human-readable display name */
+  title: string;
+  /** One-line description shown in the callout */
+  description: string;
+  /** Raw URL to download the skill content from */
+  url: string;
+  /**
+   * GitHub owner or owner/repo used to record skill origin, e.g. "aikidosec".
+   * Stored as the `source` in skills.json so the Skills view can resolve the
+   * provider's GitHub profile instead of falling back to "local".
+   */
+  github_source: string;
 }
 
 interface McpServer {
@@ -54,6 +72,8 @@ interface McpServer {
     command: string;
   } | null;
   auth: { method: string; env_vars: EnvVar[] };
+  /** Optional skill that should be installed alongside this server */
+  companion_skill?: CompanionSkill | null;
 }
 
 const servers: McpServer[] = serversData as McpServer[];
@@ -239,6 +259,9 @@ export default function McpMarketplace({
   const [installedServers, setInstalledServers] = useState<Set<string>>(new Set());
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [installedSkills, setInstalledSkills] = useState<Set<string>>(new Set());
+  const [installingSkill, setInstallingSkill] = useState(false);
+  const [skillInstallError, setSkillInstallError] = useState<string | null>(null);
 
   // Load installed MCP servers
   const loadInstalled = useCallback(async () => {
@@ -250,7 +273,42 @@ export default function McpMarketplace({
     }
   }, []);
 
-  useEffect(() => { loadInstalled(); }, [loadInstalled]);
+  // Load installed skills
+  const loadInstalledSkills = useCallback(async () => {
+    try {
+      const result: string[] = await invoke("list_skills");
+      setInstalledSkills(new Set(result));
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  useEffect(() => { loadInstalled(); loadInstalledSkills(); }, [loadInstalled, loadInstalledSkills]);
+
+  // Install a companion skill from a raw URL, recording its remote origin so
+  // it shows as provider-managed rather than local in the Skills view.
+  const handleInstallSkill = useCallback(async (skill: CompanionSkill) => {
+    setInstallingSkill(true);
+    setSkillInstallError(null);
+    try {
+      const response = await fetch(skill.url);
+      if (!response.ok) throw new Error(`Failed to fetch skill: ${response.status}`);
+      const content = await response.text();
+      // Use import_remote_skill so the skill source is recorded (shows as
+      // managed by the provider rather than "local" in the Skills view).
+      await invoke("import_remote_skill", {
+        name: skill.name,
+        content,
+        source: skill.github_source,
+        id: `${skill.github_source}/${skill.name}`,
+      });
+      setInstalledSkills((prev) => new Set([...prev, skill.name]));
+    } catch (err: unknown) {
+      setSkillInstallError(`Failed to install skill: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setInstallingSkill(false);
+    }
+  }, []);
 
   // Reset when the nav item is re-clicked
   useEffect(() => {
@@ -260,6 +318,7 @@ export default function McpMarketplace({
       setClassification("all");
       setTransportFilter(null);
       setInstallError(null);
+      setSkillInstallError(null);
     }
   }, [resetKey]);
 
@@ -437,6 +496,59 @@ export default function McpMarketplace({
                   {installError && (
                     <p className="mt-2 text-[12px] text-red-400">{installError}</p>
                   )}
+                </div>
+              );
+            })()}
+
+            {/* Companion skill callout */}
+            {selected.companion_skill && (() => {
+              const skill = selected.companion_skill!;
+              const isSkillInstalled = installedSkills.has(skill.name);
+              return (
+                <div className="mb-6 p-4 rounded-xl border border-icon-mcp/25 bg-icon-mcp/6">
+                  <div className="flex items-start gap-3">
+                    <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-icon-mcp/15 border border-icon-mcp/20 flex items-center justify-center">
+                      <Sparkles size={14} style={{ color: ACCENT }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-medium text-text-base mb-0.5">
+                        {skill.title}
+                      </p>
+                      <p className="text-[12px] text-text-muted leading-relaxed mb-3">
+                        {skill.description}
+                      </p>
+                      {isSkillInstalled ? (
+                        <div className="flex items-center gap-1.5 text-[12px] text-success">
+                          <CheckCircle2 size={13} />
+                          Skill installed
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-1.5">
+                          <button
+                            onClick={() => handleInstallSkill(skill)}
+                            disabled={installingSkill}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-icon-mcp/15 hover:bg-icon-mcp/25 border border-icon-mcp/25 text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            style={{ color: ACCENT }}
+                          >
+                            {installingSkill ? (
+                              <>
+                                <Loader2 size={12} className="animate-spin" />
+                                Installing…
+                              </>
+                            ) : (
+                              <>
+                                <Download size={12} />
+                                Install Companion Skill
+                              </>
+                            )}
+                          </button>
+                          {skillInstallError && (
+                            <p className="text-[11px] text-red-400">{skillInstallError}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               );
             })()}

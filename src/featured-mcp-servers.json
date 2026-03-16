@@ -2330,7 +2330,7 @@
     "icon": "aikido.dev",
     "classification": "official",
     "repository_url": null,
-    "docs_url": "https://www.npmjs.com/package/@aikidosec/mcp",
+    "docs_url": "https://help.aikido.dev/mcp/opencode-mcp",
     "remote": null,
     "local": {
       "registry": "npm",
@@ -2348,6 +2348,13 @@
           "secret": true
         }
       ]
+    },
+    "companion_skill": {
+      "name": "aikido-security",
+      "title": "Aikido Security Skill",
+      "description": "Instructs your agent to automatically scan every file it writes or modifies and fix any findings before committing.",
+      "url": "https://gist.githubusercontent.com/kidk/1d2c1e754d5a5ddd05c9966d2507ae42/raw/ea8183c0ae1af5ec9bcb8b93275145adbe936c20/aikido-skill.txt",
+      "github_source": "aikidosec"
     }
   }
 ]
