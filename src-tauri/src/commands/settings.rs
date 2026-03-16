@@ -1,3 +1,4 @@
+use crate::agent;
 use crate::core;
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -30,4 +31,14 @@ pub fn erase_app_data() -> Result<(), String> {
 #[tauri::command]
 pub fn dismiss_welcome() -> Result<(), String> {
     core::dismiss_welcome()
+}
+
+#[tauri::command]
+pub fn clear_opencode_cache() -> Result<agent::ClearCacheResult, String> {
+    agent::clear_opencode_cache()
+}
+
+#[tauri::command]
+pub fn clean_opencode_snapshots() -> Result<agent::CleanSnapshotsResult, String> {
+    agent::clean_opencode_snapshots()
 }

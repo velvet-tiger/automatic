@@ -44,7 +44,10 @@ pub use goose::Goose;
 pub use junie::Junie;
 pub use kilo_code::KiloCode;
 pub use kiro::Kiro;
-pub use opencode::OpenCode;
+pub use opencode::{
+    clean_opencode_snapshots, clear_opencode_cache, CleanSnapshotsResult, ClearCacheResult,
+    OpenCode,
+};
 pub use warp::Warp;
 
 // ── Capabilities ─────────────────────────────────────────────────────────────

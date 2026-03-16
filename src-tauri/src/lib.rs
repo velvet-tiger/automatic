@@ -119,6 +119,8 @@ pub fn run() {
             reinstall_defaults,
             erase_app_data,
             dismiss_welcome,
+            clear_opencode_cache,
+            clean_opencode_snapshots,
             save_api_key,
             get_api_key,
             has_api_key,

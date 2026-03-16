@@ -77,6 +77,12 @@ interface CapabilityRowProps {
   supported: boolean;
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function CapabilityRow({ label, description, supported }: CapabilityRowProps) {
   return (
     <div className="flex items-center gap-3 px-3 py-2.5 bg-bg-input rounded-md border border-border-strong/40">
@@ -115,6 +121,14 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
   const [defaultOptions, setDefaultOptions] = useState<Record<string, AgentOptions>>({});
   /** API key state per provider (e.g. "anthropic", "openai") */
   const [apiKeyStates, setApiKeyStates] = useState<Record<string, ApiKeyState>>({});
+  /** OpenCode: clear archived sessions */
+  const [clearCacheStatus, setClearCacheStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [clearCacheResult, setClearCacheResult] = useState<{ sessions_deleted: number; storage_entries_removed: number; bytes_reclaimed: number } | null>(null);
+  const [clearCacheError, setClearCacheError] = useState("");
+  /** OpenCode: clean snapshot storage */
+  const [cleanSnapshotsStatus, setCleanSnapshotsStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [cleanSnapshotsResult, setCleanSnapshotsResult] = useState<{ repos_gced: number; orphans_removed: number; tmp_pack_files_removed: number; bytes_freed: number } | null>(null);
+  const [cleanSnapshotsError, setCleanSnapshotsError] = useState("");
 
   useEffect(() => {
     loadAgents();
@@ -242,6 +256,36 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
       setDefaultOptions(updated.default_agent_options);
     } catch (err: any) {
       setError(`Failed to save default: ${err}`);
+    }
+  };
+
+  const clearOpenCodeCache = async () => {
+    setClearCacheStatus("running");
+    setClearCacheResult(null);
+    setClearCacheError("");
+    try {
+      const result = await invoke<{ sessions_deleted: number; storage_entries_removed: number; bytes_reclaimed: number }>("clear_opencode_cache");
+      setClearCacheResult(result);
+      setClearCacheStatus("done");
+      setTimeout(() => setClearCacheStatus("idle"), 6000);
+    } catch (e) {
+      setClearCacheError(String(e));
+      setClearCacheStatus("error");
+    }
+  };
+
+  const cleanOpenCodeSnapshots = async () => {
+    setCleanSnapshotsStatus("running");
+    setCleanSnapshotsResult(null);
+    setCleanSnapshotsError("");
+    try {
+      const result = await invoke<{ repos_gced: number; orphans_removed: number; tmp_pack_files_removed: number; bytes_freed: number }>("clean_opencode_snapshots");
+      setCleanSnapshotsResult(result);
+      setCleanSnapshotsStatus("done");
+      setTimeout(() => setCleanSnapshotsStatus("idle"), 8000);
+    } catch (e) {
+      setCleanSnapshotsError(String(e));
+      setCleanSnapshotsStatus("error");
     }
   };
 
@@ -534,6 +578,77 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
                     </section>
                   );
                 })()}
+
+                {/* OpenCode maintenance */}
+                {selected.id === "opencode" && (
+                  <section>
+                    <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
+                      Maintenance
+                    </label>
+
+                    {/* Archived sessions */}
+                    <div className="mb-4">
+                      <div className="text-[13px] font-medium text-text-base mb-1">Archived Sessions</div>
+                      <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
+                        Delete archived sessions and their messages from the OpenCode database to reclaim disk space.
+                      </p>
+                      {clearCacheStatus === "done" && clearCacheResult && clearCacheResult.sessions_deleted > 0 && (
+                        <div className="mb-2 p-2.5 rounded-lg border border-success bg-success/10 text-[12px] text-success">
+                          Cleared {clearCacheResult.sessions_deleted} archived {clearCacheResult.sessions_deleted === 1 ? "session" : "sessions"}
+                          {clearCacheResult.storage_entries_removed > 0 && `, ${clearCacheResult.storage_entries_removed} storage ${clearCacheResult.storage_entries_removed === 1 ? "entry" : "entries"} removed`}
+                          {clearCacheResult.bytes_reclaimed > 0 && ` — ${formatBytes(clearCacheResult.bytes_reclaimed)} reclaimed`}.
+                        </div>
+                      )}
+                      {clearCacheStatus === "done" && clearCacheResult?.sessions_deleted === 0 && (
+                        <div className="mb-2 p-2.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[12px] text-text-muted">
+                          No archived sessions found.
+                        </div>
+                      )}
+                      {clearCacheStatus === "error" && clearCacheError && (
+                        <div className="mb-2 p-2.5 rounded-lg border border-danger bg-danger/10 text-[12px] text-danger">
+                          {clearCacheError}
+                        </div>
+                      )}
+                      <button
+                        onClick={clearOpenCodeCache}
+                        disabled={clearCacheStatus === "running"}
+                        className="px-3 py-1.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[12px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {clearCacheStatus === "running" ? "Clearing…" : "Clear Archived Sessions"}
+                      </button>
+                    </div>
+
+                    {/* Snapshot storage */}
+                    <div>
+                      <div className="text-[13px] font-medium text-text-base mb-1">Snapshot Storage</div>
+                      <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
+                        Run <span className="font-mono">git gc</span> on each project snapshot repo, remove orphaned repos for deleted projects, and delete stale <span className="font-mono">tmp_pack_*</span> files.
+                      </p>
+                      {cleanSnapshotsStatus === "done" && cleanSnapshotsResult && (
+                        <div className="mb-2 p-2.5 rounded-lg border border-success bg-success/10 text-[12px] text-success">
+                          {cleanSnapshotsResult.repos_gced > 0
+                            ? `Compacted ${cleanSnapshotsResult.repos_gced} snapshot ${cleanSnapshotsResult.repos_gced === 1 ? "repo" : "repos"}`
+                            : "No snapshot repos to compact"}
+                          {cleanSnapshotsResult.orphans_removed > 0 && `, removed ${cleanSnapshotsResult.orphans_removed} orphaned ${cleanSnapshotsResult.orphans_removed === 1 ? "repo" : "repos"}`}
+                          {cleanSnapshotsResult.tmp_pack_files_removed > 0 && `, deleted ${cleanSnapshotsResult.tmp_pack_files_removed} tmp_pack ${cleanSnapshotsResult.tmp_pack_files_removed === 1 ? "file" : "files"}`}
+                          {cleanSnapshotsResult.bytes_freed > 0 && ` — ${formatBytes(cleanSnapshotsResult.bytes_freed)} freed`}.
+                        </div>
+                      )}
+                      {cleanSnapshotsStatus === "error" && cleanSnapshotsError && (
+                        <div className="mb-2 p-2.5 rounded-lg border border-danger bg-danger/10 text-[12px] text-danger">
+                          {cleanSnapshotsError}
+                        </div>
+                      )}
+                      <button
+                        onClick={cleanOpenCodeSnapshots}
+                        disabled={cleanSnapshotsStatus === "running"}
+                        className="px-3 py-1.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[12px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {cleanSnapshotsStatus === "running" ? "Cleaning…" : "Clean Snapshot Storage"}
+                      </button>
+                    </div>
+                  </section>
+                )}
 
                 {/* Projects */}
                  <section>
