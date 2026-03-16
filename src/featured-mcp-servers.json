@@ -2320,5 +2320,34 @@
       "method": "oauth",
       "env_vars": []
     }
+  },
+  {
+    "slug": "aikido-security",
+    "name": "com.aikidosec/mcp",
+    "title": "Aikido Security",
+    "description": "Scan code and secrets for vulnerabilities using Aikido's security analysis engine. Returns machine-readable findings for triage or automated fixing.",
+    "provider": "Aikido Security",
+    "icon": "aikido.dev",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://www.npmjs.com/package/@aikidosec/mcp",
+    "remote": null,
+    "local": {
+      "registry": "npm",
+      "package": "@aikidosec/mcp",
+      "version": null,
+      "transport": "stdio",
+      "command": "npx -y @aikidosec/mcp"
+    },
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "AIKIDO_API_KEY",
+          "description": "Your Aikido API key. Get one from https://app.aikido.dev",
+          "secret": true
+        }
+      ]
+    }
   }
 ]
