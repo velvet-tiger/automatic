@@ -2357,5 +2357,31 @@
       "url": "https://gist.githubusercontent.com/kidk/1d2c1e754d5a5ddd05c9966d2507ae42/raw/ea8183c0ae1af5ec9bcb8b93275145adbe936c20/aikido-skill.txt",
       "github_source": "aikidosec"
     }
+  },
+  {
+    "slug": "upsun",
+    "name": "com.upsun/mcp",
+    "title": "Upsun",
+    "description": "Manage Upsun projects and environments with natural language — create, modify, and monitor infrastructure without using the terminal or console.",
+    "provider": "Upsun",
+    "icon": "upsun.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://developer.upsun.com/docs/get-started/ai/using-the-mcp",
+    "remote": {
+      "transport": "streamable-http",
+      "url": "https://mcp.upsun.com/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "api_key",
+      "env_vars": [
+        {
+          "name": "UPSUN_API_TOKEN",
+          "description": "Your Upsun API token. Generate one in the Upsun Console under account settings.",
+          "secret": true
+        }
+      ]
+    }
   }
 ]
