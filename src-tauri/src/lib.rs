@@ -175,6 +175,7 @@ pub fn run() {
             overwrite_instruction_file,
             get_instruction_file_conflicts,
             ai_generate_instruction,
+            ai_update_instruction,
             read_doc_note,
             save_doc_note,
             delete_doc_note,

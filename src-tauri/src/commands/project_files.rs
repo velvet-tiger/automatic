@@ -294,6 +294,116 @@ pub async fn ai_generate_instruction(name: &str, filename: &str) -> Result<Strin
     .await
 }
 
+/// Use AI to update an **existing** agent instruction file in-place.
+///
+/// Unlike `ai_generate_instruction` — which produces a fresh document from
+/// scratch and may discard nuance the user has added — this command takes the
+/// current content and asks the model to refine it while preserving every
+/// deliberate decision the user has already made.
+///
+/// The prompt explicitly instructs the model to:
+/// 1. Keep all sections that are already correct.
+/// 2. Update stale facts (e.g. commands, paths, version references) based on
+///    the latest project snapshot.
+/// 3. Fill in obvious gaps discovered from the snapshot but not yet documented.
+/// 4. Maintain the existing structure, tone, and level of detail.
+///
+/// `filename` and `current_content` must both be supplied by the caller.
+/// `current_content` is the raw user-authored Markdown currently in the editor
+/// (excluding any Automatic-managed skill/rules blocks).
+#[tauri::command]
+pub async fn ai_update_instruction(
+    name: &str,
+    filename: &str,
+    current_content: &str,
+) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    if current_content.trim().is_empty() {
+        return Err(
+            "No existing content to update — use Generate to create the file from scratch".into(),
+        );
+    }
+
+    let snapshot = crate::context::build_project_snapshot(&project.directory)?;
+
+    let context_snippet = {
+        let ctx_path = std::path::PathBuf::from(&project.directory)
+            .join(".automatic")
+            .join("context.json");
+        if ctx_path.exists() {
+            match std::fs::read_to_string(&ctx_path) {
+                Ok(s) => format!("\n\n<context_json>\n{}\n</context_json>", s),
+                Err(_) => String::new(),
+            }
+        } else {
+            String::new()
+        }
+    };
+
+    let agent_context = if filename == "_unified" {
+        let labels: Vec<String> = project
+            .agents
+            .iter()
+            .filter_map(|id| crate::agent::from_id(id).map(|a| a.label().to_string()))
+            .collect();
+        if labels.is_empty() {
+            "all configured AI coding agents".to_string()
+        } else {
+            format!("all configured AI coding agents ({})", labels.join(", "))
+        }
+    } else {
+        project
+            .agents
+            .iter()
+            .filter_map(|id| crate::agent::from_id(id))
+            .find(|a| a.project_file_name() == filename)
+            .map(|a| a.label().to_string())
+            .unwrap_or_else(|| filename.to_string())
+    };
+
+    let system = "You are a senior software engineer updating an existing AI coding agent \
+        instruction file for a real software project. \
+        Your output is the raw Markdown content of the updated file — \
+        no preamble, no code fences, no meta-commentary. \
+        Rules you must follow: \
+        (1) Preserve every section heading and deliberate decision the user has already authored. \
+        (2) Correct any facts that have become stale (commands, file paths, version numbers, \
+            module names) based on the project snapshot provided. \
+        (3) Add concise new content only where genuine gaps exist — do not pad or repeat. \
+        (4) Do not remove or rewrite sections simply to show changes; stability is valuable. \
+        (5) Maintain the existing tone and level of detail. \
+        Use only information evidenced by the snapshot; do not invent facts.";
+
+    let user_msg = format!(
+        "Update the existing project instruction file for **{}**.\n\
+         This file is read by {}.\n\
+         Project name: \"{}\"\n\n\
+         <current_content>\n{}\n</current_content>\n\n\
+         Project snapshot (latest state of the repository):\n{}{}\n\n\
+         Return the complete updated Markdown content of the instruction file.",
+        filename, agent_context, name, current_content, snapshot, context_snippet
+    );
+
+    crate::core::ai::chat(
+        vec![crate::core::ai::AiMessage {
+            role: "user".into(),
+            content: user_msg,
+        }],
+        None,
+        None,
+        Some(system.to_string()),
+        Some(4096),
+    )
+    .await
+}
+
 // ── Doc Notes ────────────────────────────────────────────────────────────────
 
 /// Read the contents of a Markdown note stored in `{project_dir}/.automatic/docs/<name>.md`.

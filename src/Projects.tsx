@@ -2161,6 +2161,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [projectFileDirty, setProjectFileDirty] = useState(false);
   const [projectFileSaving, setProjectFileSaving] = useState(false);
   const [projectFileGenerating, setProjectFileGenerating] = useState(false);
+  const [projectFileUpdating, setProjectFileUpdating] = useState(false);
   // Whether an Anthropic API key is resolvable (env var or keychain).
   // Controls whether AI Generate buttons are enabled.
   const [hasAnthropicKey, setHasAnthropicKey] = useState(false);
@@ -3605,6 +3606,33 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       update(entryId, `Instruction generation failed: ${err}`, "error");
     } finally {
       setProjectFileGenerating(false);
+    }
+  };
+
+  const handleUpdateInstruction = async () => {
+    if (!selectedName || !activeProjectFile) return;
+    if (!projectFileContent.trim()) return;
+    setProjectFileUpdating(true);
+    const fileInfo = projectFiles.find((f) => f.filename === activeProjectFile);
+    const displayLabel =
+      activeProjectFile === "_unified"
+        ? (fileInfo?.agents?.join(" & ") ?? "shared instruction file")
+        : activeProjectFile;
+    const entryId = log(`Updating instruction file for ${displayLabel}…`, "running");
+    try {
+      const updated: string = await invoke("ai_update_instruction", {
+        name: selectedName,
+        filename: activeProjectFile,
+        currentContent: projectFileContent,
+      });
+      setProjectFileContent(updated);
+      setProjectFileEditing(true);
+      setProjectFileDirty(true);
+      update(entryId, `Instruction file for ${displayLabel} updated — review and save`, "success");
+    } catch (err: any) {
+      update(entryId, `Instruction update failed: ${err}`, "error");
+    } finally {
+      setProjectFileUpdating(false);
     }
   };
 
@@ -5938,24 +5966,42 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                  </span>
                                  <TokenPill text={projectFileContent} />
                                </div>
-                               <div className="flex items-center gap-1.5">
-                                  {/* Generate with AI — always visible */}
-                                   <span className="relative group/keytip">
-                                     <button
-                                       onClick={handleGenerateInstruction}
-                                       disabled={projectFileGenerating || projectFileSaving || !hasAnthropicKey}
-                                       className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                     >
-                                       <Sparkles size={10} className={projectFileGenerating ? "animate-pulse text-brand" : ""} />
-                                       {projectFileGenerating ? "Generating…" : "Generate"}
-                                     </button>
-                                     {!hasAnthropicKey && (
-                                       <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
-                                         Add your Anthropic API key to access
-                                       </span>
-                                     )}
-                                   </span>
-                                 <span className="w-px h-3 bg-border-strong/40" />
+                                <div className="flex items-center gap-1.5">
+                                   {/* Update with AI — only when content already exists */}
+                                   {(fileExists || projectFileContent.trim().length > 0) && (
+                                    <span className="relative group/keytip">
+                                      <button
+                                        onClick={handleUpdateInstruction}
+                                        disabled={projectFileUpdating || projectFileGenerating || projectFileSaving || !hasAnthropicKey || !projectFileContent.trim()}
+                                        className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        <RefreshCw size={10} className={projectFileUpdating ? "animate-spin text-brand" : ""} />
+                                        {projectFileUpdating ? "Updating…" : "Update"}
+                                      </button>
+                                      {!hasAnthropicKey && (
+                                        <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                                          Add your Anthropic API key to access
+                                        </span>
+                                      )}
+                                    </span>
+                                   )}
+                                   {/* Generate with AI — always visible */}
+                                    <span className="relative group/keytip">
+                                      <button
+                                        onClick={handleGenerateInstruction}
+                                        disabled={projectFileGenerating || projectFileSaving || !hasAnthropicKey}
+                                        className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        <Sparkles size={10} className={projectFileGenerating ? "animate-pulse text-brand" : ""} />
+                                        {projectFileGenerating ? "Generating…" : "Generate"}
+                                      </button>
+                                      {!hasAnthropicKey && (
+                                        <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                                          Add your Anthropic API key to access
+                                        </span>
+                                      )}
+                                    </span>
+                                  <span className="w-px h-3 bg-border-strong/40" />
                                  {!projectFileEditing ? (
                                     <button
                                       onClick={() => setProjectFileEditing(true)}
@@ -7507,33 +7553,42 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
                 {/* ── MCP Servers tab ──────────────────────────────────── */}
                 {projectTab === "mcp_servers" && (() => {
-                  const hasWarp = project.agents.includes("warp");
-                  const warpOnly = hasWarp && project.agents.length === 1;
-                  const warpNote = availableAgents.find((a) => a.id === "warp")?.mcp_note ?? null;
+                  // Agents that cannot have MCP config written by Automatic (e.g. Warp, Goose).
+                  const noMcpAgents = availableAgents.filter(
+                    (a) => project.agents.includes(a.id) && a.mcp_note
+                  );
+                  const allNoMcp = noMcpAgents.length > 0 && noMcpAgents.length === project.agents.length;
+                  const someNoMcp = noMcpAgents.length > 0 && !allNoMcp;
+
                    return (
                   <section>
-                    {/* Warp-only: MCP config not available */}
-                    {warpOnly && warpNote && (
+                    {/* All agents require manual MCP setup */}
+                    {allNoMcp && (
                       <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-bg-input border border-border-strong rounded-lg">
                         <AlertCircle size={15} className="text-text-muted flex-shrink-0 mt-0.5" />
                         <div>
                           <p className="text-[13px] font-medium text-text-base mb-0.5">MCP not configurable via Automatic</p>
-                          <p className="text-[12px] text-text-muted leading-relaxed">{warpNote}</p>
+                          {noMcpAgents.map((a) => (
+                            <p key={a.id} className="text-[12px] text-text-muted leading-relaxed">{a.mcp_note}</p>
+                          ))}
                         </div>
                       </div>
                     )}
 
-                    {/* Warp + other agents: partial warning */}
-                    {hasWarp && !warpOnly && warpNote && (
+                    {/* Some agents require manual MCP setup */}
+                    {someNoMcp && (
                       <div className="mb-4 flex items-start gap-3 px-4 py-3 bg-warning/8 border border-warning/30 rounded-lg">
                         <AlertCircle size={15} className="text-warning flex-shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-[13px] font-medium text-warning mb-0.5">Warp requires manual MCP setup</p>
-                          <p className="text-[12px] text-warning/80 leading-relaxed">{warpNote}</p>
+                          <p className="text-[13px] font-medium text-warning mb-0.5">Some agents require manual MCP setup</p>
+                          {noMcpAgents.map((a) => (
+                            <p key={a.id} className="text-[12px] text-warning/80 leading-relaxed">
+                              <span className="font-medium">{a.label}:</span> {a.mcp_note}
+                            </p>
+                          ))}
                         </div>
                       </div>
                     )}
-
 
                     <McpSelector
                       servers={project.mcp_servers}
@@ -7541,13 +7596,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                       onAdd={(s) => addItem("mcp_servers", s)}
                       onRemove={(i) => removeItem("mcp_servers", i)}
                       showRemoveButtonAlways
-                      disableAdd={warpOnly}
-                      emptyMessage={warpOnly ? "Add other agent tools to enable MCP server syncing." : "No MCP servers attached."}
+                      disableAdd={allNoMcp}
+                      emptyMessage={allNoMcp ? "Add other agent tools to enable MCP server syncing." : "No MCP servers attached."}
                       onNavigateToMcpServer={onNavigateToMcpServer}
                     />
 
                     {/* ── AI MCP suggestions ─────────────────────────────── */}
-                    {!warpOnly && (
+                    {!allNoMcp && (
                       <div className="mt-4 space-y-2">
                         <div className="flex items-center gap-2">
                           <Sparkles size={12} className="text-text-muted" />
