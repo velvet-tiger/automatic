@@ -24,8 +24,6 @@ import {
   BookOpen,
   Sparkles,
 } from "lucide-react";
-import serversData from "./featured-mcp-servers.json";
-
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface EnvVar {
@@ -76,7 +74,7 @@ interface McpServer {
   companion_skill?: CompanionSkill | null;
 }
 
-const servers: McpServer[] = serversData as McpServer[];
+// servers is loaded asynchronously in the component via invoke("search_mcp_marketplace")
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -249,6 +247,8 @@ export default function McpMarketplace({
   initialQuery?: string | null;
   onInitialQueryConsumed?: () => void;
 }) {
+  const [servers, setServers] = useState<McpServer[]>([]);
+  const [serversLoading, setServersLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [classification, setClassification] = useState<string>("all");
   const [transportFilter, setTransportFilter] = useState<TransportFilter | null>(null);
@@ -262,6 +262,19 @@ export default function McpMarketplace({
   const [installedSkills, setInstalledSkills] = useState<Set<string>>(new Set());
   const [installingSkill, setInstallingSkill] = useState(false);
   const [skillInstallError, setSkillInstallError] = useState<string | null>(null);
+
+  // Load marketplace catalogue from ~/.automatic/marketplace/mcp-servers.json
+  const loadServers = useCallback(async () => {
+    setServersLoading(true);
+    try {
+      const json: string = await invoke("search_mcp_marketplace", { query: "" });
+      setServers(JSON.parse(json) as McpServer[]);
+    } catch {
+      // non-fatal: leave servers empty
+    } finally {
+      setServersLoading(false);
+    }
+  }, []);
 
   // Load installed MCP servers
   const loadInstalled = useCallback(async () => {
@@ -283,7 +296,7 @@ export default function McpMarketplace({
     }
   }, []);
 
-  useEffect(() => { loadInstalled(); loadInstalledSkills(); }, [loadInstalled, loadInstalledSkills]);
+  useEffect(() => { loadServers(); loadInstalled(); loadInstalledSkills(); }, [loadServers, loadInstalled, loadInstalledSkills]);
 
   // Install a companion skill from a raw URL, recording its remote origin so
   // it shows as provider-managed rather than local in the Skills view.
@@ -349,7 +362,7 @@ export default function McpMarketplace({
         s.provider.toLowerCase().includes(q) ||
         s.slug.toLowerCase().includes(q)
     );
-  }, [query]);
+  }, [query, servers]);
 
   // Classification badge counts: how many match each classification given the
   // active transport filter (+ query), so clicking a badge shows a truthful count.
@@ -405,13 +418,12 @@ export default function McpMarketplace({
   }, []);
 
   // ── Auto-select from deep-link ───────────────────────────────────────────
-  // servers array is synchronously available from the imported JSON.
   useEffect(() => {
     if (!initialSlug) return;
     const server = servers.find((s) => s.slug === initialSlug);
     if (server) handleSelect(server);
     onInitialSlugConsumed?.();
-  }, [initialSlug, handleSelect, onInitialSlugConsumed]);
+  }, [initialSlug, servers, handleSelect, onInitialSlugConsumed]);
 
   // ── Pre-populate search from deep-link query ─────────────────────────────
   useEffect(() => {
@@ -1076,7 +1088,11 @@ export default function McpMarketplace({
         </div>
 
         {/* Server grid — full width */}
-        {filtered.length === 0 ? (
+        {serversLoading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 size={24} className="animate-spin text-text-muted" />
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="text-center py-12">
             <Server
               size={32}

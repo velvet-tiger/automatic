@@ -35,3 +35,19 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     prune_mcp_server_from_projects(name);
     Ok(())
 }
+
+// ── MCP Marketplace ──────────────────────────────────────────────────────────
+
+/// Return all MCP server marketplace entries matching `query` as a JSON array.
+/// When `query` is blank, all entries are returned.
+#[tauri::command]
+pub fn search_mcp_marketplace(query: &str) -> Result<String, String> {
+    core::search_mcp_marketplace(query)
+}
+
+/// Return all collections matching `query` as a JSON array.
+/// When `query` is blank, all entries are returned.
+#[tauri::command]
+pub fn search_collections(query: &str) -> Result<String, String> {
+    core::search_collections(query)
+}

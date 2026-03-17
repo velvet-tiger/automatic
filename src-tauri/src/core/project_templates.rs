@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use super::marketplace_data::read_templates_json;
 use super::*;
 
 // ── Project Templates ─────────────────────────────────────────────────────────
@@ -195,55 +196,59 @@ pub struct BundledProjectTemplate {
 }
 
 /// All bundled marketplace templates, compiled in at build time.
-const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
+/// `pub(super)` so `marketplace_data` can reference the raw strings for seeding.
+pub(super) const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
     (
         "software-defaults",
-        include_str!("../../project-templates/software-defaults.json"),
+        include_str!("../../assets/marketplace/project-templates/software-defaults.json"),
     ),
     (
         "nextjs-saas-starter",
-        include_str!("../../project-templates/nextjs-saas-starter.json"),
+        include_str!("../../assets/marketplace/project-templates/nextjs-saas-starter.json"),
     ),
     (
         "laravel-api-backend",
-        include_str!("../../project-templates/laravel-api-backend.json"),
+        include_str!("../../assets/marketplace/project-templates/laravel-api-backend.json"),
     ),
     (
         "python-data-pipeline",
-        include_str!("../../project-templates/python-data-pipeline.json"),
+        include_str!("../../assets/marketplace/project-templates/python-data-pipeline.json"),
     ),
     (
         "tauri-desktop-app",
-        include_str!("../../project-templates/tauri-desktop-app.json"),
+        include_str!("../../assets/marketplace/project-templates/tauri-desktop-app.json"),
     ),
     (
         "terraform-aws-infrastructure",
-        include_str!("../../project-templates/terraform-aws-infrastructure.json"),
+        include_str!(
+            "../../assets/marketplace/project-templates/terraform-aws-infrastructure.json"
+        ),
     ),
     (
         "react-component-library",
-        include_str!("../../project-templates/react-component-library.json"),
+        include_str!("../../assets/marketplace/project-templates/react-component-library.json"),
     ),
 ];
 
 /// Return all bundled marketplace templates as JSON array.
+/// Reads from `~/.automatic/marketplace/templates.json` (disk is sole source of truth).
 pub fn list_bundled_project_templates() -> Result<String, String> {
-    let templates: Result<Vec<BundledProjectTemplate>, _> = BUNDLED_TEMPLATES
-        .iter()
-        .map(|(_, raw)| serde_json::from_str::<BundledProjectTemplate>(raw))
-        .collect();
-
-    let templates = templates.map_err(|e| format!("Failed to parse bundled template: {}", e))?;
-    serde_json::to_string(&templates).map_err(|e| e.to_string())
+    read_templates_json()
 }
 
 /// Return a single bundled marketplace template by name as JSON.
+/// Reads from `~/.automatic/marketplace/templates.json`.
 pub fn read_bundled_project_template(name: &str) -> Result<String, String> {
-    for (slug, raw) in BUNDLED_TEMPLATES {
-        if *slug == name {
-            return Ok(raw.to_string());
+    let json = read_templates_json()?;
+    let templates: Vec<serde_json::Value> =
+        serde_json::from_str(&json).map_err(|e| format!("Failed to parse templates: {}", e))?;
+
+    for tmpl in &templates {
+        if tmpl.get("name").and_then(|v| v.as_str()) == Some(name) {
+            return serde_json::to_string(tmpl).map_err(|e| e.to_string());
         }
     }
+
     Err(format!("Bundled template '{}' not found", name))
 }
 
@@ -279,18 +284,15 @@ pub fn import_bundled_project_template(name: &str) -> Result<(), String> {
 }
 
 /// Search bundled templates by query (matches name, display_name, description, tags, category).
+/// Reads from `~/.automatic/marketplace/templates.json`.
 pub fn search_bundled_project_templates(query: &str) -> Result<String, String> {
-    let q = query.to_lowercase();
-    let templates: Result<Vec<BundledProjectTemplate>, _> = BUNDLED_TEMPLATES
-        .iter()
-        .map(|(_, raw)| serde_json::from_str::<BundledProjectTemplate>(raw))
-        .collect();
+    let json = read_templates_json()?;
+    let templates: Vec<BundledProjectTemplate> =
+        serde_json::from_str(&json).map_err(|e| format!("Failed to parse templates: {}", e))?;
 
-    let templates = templates.map_err(|e| format!("Failed to parse bundled template: {}", e))?;
-
-    if q.trim().is_empty() {
-        let json = serde_json::to_string(&templates).map_err(|e| e.to_string())?;
-        return Ok(json);
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return serde_json::to_string(&templates).map_err(|e| e.to_string());
     }
 
     let filtered: Vec<&BundledProjectTemplate> = templates

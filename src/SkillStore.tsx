@@ -13,7 +13,7 @@ import {
   ArrowRight,
   ArrowLeft,
 } from "lucide-react";
-import featuredSkillsData from "./featured-skills.json";
+import featuredSkillsData from "../src-tauri/assets/marketplace/featured-skills.json";
 import { SkillAvatar } from "./SkillAvatar";
 
 interface RemoteSkillResult {

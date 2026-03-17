@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 
+use super::marketplace_data::{read_collections_json, read_mcp_servers_json};
+
 // ── MCP Server Marketplace ────────────────────────────────────────────────────
 
-/// A featured MCP server entry from the bundled marketplace catalogue.
+/// A featured MCP server entry from the marketplace catalogue.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FeaturedMcpServer {
     pub slug: String,
@@ -27,17 +29,15 @@ pub struct FeaturedMcpServer {
     pub auth: Option<serde_json::Value>,
 }
 
-const FEATURED_MCP_SERVERS_JSON: &str = include_str!("../../featured-mcp-servers.json");
-
 fn load_featured_mcp_servers() -> Result<Vec<FeaturedMcpServer>, String> {
-    serde_json::from_str(FEATURED_MCP_SERVERS_JSON)
-        .map_err(|e| format!("Failed to parse featured MCP servers: {}", e))
+    let json = read_mcp_servers_json()?;
+    serde_json::from_str(&json).map_err(|e| format!("Failed to parse featured MCP servers: {}", e))
 }
 
-/// List all featured MCP servers from the bundled catalogue.
+/// List all featured MCP servers from the marketplace catalogue.
 /// When `query` is blank, returns all entries.
-/// Otherwise, case-insensitive substring match across title, description, provider,
-/// classification, and slug.
+/// Otherwise, case-insensitive substring match across title, description,
+/// provider, classification, and slug.
 pub fn search_mcp_marketplace(query: &str) -> Result<String, String> {
     let servers = load_featured_mcp_servers()?;
     let q = query.trim().to_lowercase();
@@ -107,7 +107,7 @@ pub struct CollectionAuthor {
     pub repository_url: String,
 }
 
-/// A collection from the bundled marketplace catalogue.
+/// A collection from the marketplace catalogue.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Collection {
     pub id: String,
@@ -129,14 +129,12 @@ pub struct Collection {
     pub templates: Vec<CollectionTemplate>,
 }
 
-const COLLECTIONS_JSON: &str = include_str!("../../collections.json");
-
 fn load_collections() -> Result<Vec<Collection>, String> {
-    serde_json::from_str(COLLECTIONS_JSON)
-        .map_err(|e| format!("Failed to parse collections: {}", e))
+    let json = read_collections_json()?;
+    serde_json::from_str(&json).map_err(|e| format!("Failed to parse collections: {}", e))
 }
 
-/// List all collections from the bundled catalogue.
+/// List all collections from the marketplace catalogue.
 /// When `query` is blank, returns all entries.
 /// Otherwise, case-insensitive substring match across name, description, slug,
 /// tags, and the display names of contained skills.

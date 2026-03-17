@@ -42,6 +42,14 @@ pub fn run() {
                     Err(_) => true, // can't read settings → safe to overwrite
                 };
 
+                // Seed (or refresh) the marketplace catalogue files in
+                // ~/.automatic/marketplace/.  `force_reinstall` mirrors the
+                // bundled-skills version gate so the files are overwritten
+                // whenever the app ships a new release.
+                if let Err(e) = core::init_marketplace_files(force_reinstall) {
+                    eprintln!("[automatic] marketplace init error: {}", e);
+                }
+
                 if let Err(e) = core::install_default_skills_inner(force_reinstall) {
                     eprintln!("[automatic] skill install error: {}", e);
                 } else if force_reinstall {
@@ -175,6 +183,8 @@ pub fn run() {
             read_mcp_server_config,
             save_mcp_server_config,
             delete_mcp_server_config,
+            search_mcp_marketplace,
+            search_collections,
             get_projects,
             read_project,
             autodetect_project_dependencies,

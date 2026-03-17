@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { SpecKittyPanel } from "./plugins/spec-kitty/SpecKittyPanel";
-import mcpServersData from "./featured-mcp-servers.json";
+import mcpServersData from "../src-tauri/assets/marketplace/featured-mcp-servers.json";
 import { SkillSelector } from "./SkillSelector";
 import { AgentSelector } from "./AgentSelector";
 import type { AgentOptions } from "./AgentSelector";

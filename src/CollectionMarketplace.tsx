@@ -17,8 +17,6 @@ import {
   Layers,
   X,
 } from "lucide-react";
-import collectionsData from "./collections.json";
-
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface CollectionSkill {
@@ -56,7 +54,7 @@ interface Collection {
   templates: CollectionTemplate[];
 }
 
-const collections: Collection[] = collectionsData as Collection[];
+// collections is loaded asynchronously in the component via invoke("search_collections")
 
 // ── Accent theme for Collections ──────────────────────────────────────────
 
@@ -696,6 +694,8 @@ export default function CollectionMarketplace({
 }: {
   resetKey?: number;
 }) {
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [collectionsLoading, setCollectionsLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Collection | null>(null);
   // registry: skill name → SkillSource, loaded from ~/.automatic/skills.json
@@ -709,6 +709,19 @@ export default function CollectionMarketplace({
       setQuery("");
     }
   }, [resetKey]);
+
+  // Load collections catalogue from ~/.automatic/marketplace/collections.json
+  const loadCollections = useCallback(async () => {
+    setCollectionsLoading(true);
+    try {
+      const json: string = await invoke("search_collections", { query: "" });
+      setCollections(JSON.parse(json) as Collection[]);
+    } catch {
+      // non-fatal: leave collections empty
+    } finally {
+      setCollectionsLoading(false);
+    }
+  }, []);
 
   // Load skill registry
   const loadRegistry = useCallback(async () => {
@@ -731,9 +744,10 @@ export default function CollectionMarketplace({
   }, []);
 
   useEffect(() => {
+    loadCollections();
     loadRegistry();
     loadInstalledMcp();
-  }, [loadRegistry, loadInstalledMcp]);
+  }, [loadCollections, loadRegistry, loadInstalledMcp]);
 
   // Update registry after a skill is installed
   const handleRegistryUpdate = useCallback(
@@ -767,7 +781,7 @@ export default function CollectionMarketplace({
             s.description.toLowerCase().includes(q)
         )
     );
-  }, [query]);
+  }, [query, collections]);
 
   // ── Detail view ──────────────────────────────────────────────────────────
 
@@ -842,7 +856,11 @@ export default function CollectionMarketplace({
           </div>
 
           {/* Grid */}
-          {filtered.length === 0 ? (
+          {collectionsLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 size={24} className="animate-spin text-text-muted" />
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="text-center py-16">
               <div
                 className={`w-12 h-12 rounded-full border-2 border-dashed border-border-strong/40 flex items-center justify-center mx-auto mb-4`}

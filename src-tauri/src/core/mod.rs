@@ -9,6 +9,7 @@ pub const KEYCHAIN_SERVICE: &str = "automatic_desktop";
 pub mod ai;
 mod app_plugins;
 mod marketplace;
+mod marketplace_data;
 mod author;
 mod credentials;
 mod env_crypto;
@@ -34,6 +35,7 @@ mod types;
 
 pub use app_plugins::*;
 pub use marketplace::*;
+pub use marketplace_data::init_marketplace_files;
 pub use author::*;
 pub use credentials::*;
 pub use flags::*;
