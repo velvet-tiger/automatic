@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use super::{discover_mcp_servers_from_json, sync_individual_skills, Agent};
 
 /// Kiro agent (AWS) — writes `.kiro/settings/mcp.json` and stores skills
-/// under `<project>/.agents/skills/<name>/SKILL.md`.
+/// under `<project>/.kiro/skills/<name>/SKILL.md`.
 pub struct Kiro;
 
 impl Agent for Kiro {
@@ -34,7 +34,7 @@ impl Agent for Kiro {
     }
 
     fn skill_dirs(&self, dir: &Path) -> Vec<PathBuf> {
-        vec![dir.join(".agents").join("skills")]
+        vec![dir.join(".kiro").join("skills")]
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ impl Agent for Kiro {
         local_skill_names: &[String],
     ) -> Result<Vec<String>, String> {
         let mut written = Vec::new();
-        let skills_dir = dir.join(".agents").join("skills");
+        let skills_dir = dir.join(".kiro").join("skills");
         sync_individual_skills(
             &skills_dir,
             skill_contents,
@@ -245,6 +245,37 @@ mod tests {
         assert_eq!(
             parsed["mcpServers"]["remote-api"]["type"].as_str().unwrap(),
             "http"
+        );
+    }
+
+    #[test]
+    fn test_skill_dirs_uses_kiro_skills() {
+        let dir = tempdir().unwrap();
+        let dirs = Kiro.skill_dirs(dir.path());
+        assert_eq!(dirs, vec![dir.path().join(".kiro").join("skills")]);
+    }
+
+    #[test]
+    fn test_sync_skills_writes_to_kiro_skills() {
+        let dir = tempdir().unwrap();
+        let skills = vec![("my-skill".to_string(), "# My Skill\n".to_string())];
+        let written = Kiro
+            .sync_skills(dir.path(), &skills, &["my-skill".to_string()], &[])
+            .unwrap();
+
+        let skill_path = dir.path().join(".kiro/skills/my-skill/SKILL.md");
+        assert!(
+            skill_path.exists(),
+            ".kiro/skills/my-skill/SKILL.md should exist"
+        );
+        assert_eq!(fs::read_to_string(&skill_path).unwrap(), "# My Skill\n");
+        assert_eq!(
+            written,
+            vec![dir
+                .path()
+                .join(".kiro/skills/my-skill")
+                .display()
+                .to_string()]
         );
     }
 }
