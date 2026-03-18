@@ -229,7 +229,11 @@ function buildConfig(server: McpServer): Record<string, unknown> {
   }
   if (server.remote) {
     const type = server.remote.transport === "sse" ? "sse" : "http";
-    return { type, url: server.remote.url, _author };
+    const env: Record<string, string> = {};
+    server.auth.env_vars.forEach((v) => { env[v.name] = ""; });
+    const cfg: Record<string, unknown> = { type, url: server.remote.url, _author };
+    if (Object.keys(env).length > 0) cfg.env = env;
+    return cfg;
   }
   return { type: "stdio", command: "", _author };
 }

@@ -2,6 +2,15 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.11.2] — 2026-03-18
+
+### Fixes
+
+- **MCP Servers**: Remote servers with API key auth (e.g. Upsun) now correctly show an environment variable editor instead of the OAuth flow after installation
+- **MCP Marketplace**: Installing a remote server that requires an API key now seeds the env var fields in the saved config so the token can be entered immediately
+
+---
+
 ## [0.11.1] — 2026-03-18
 
 ### Features

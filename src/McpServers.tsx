@@ -782,29 +782,33 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     </section>
                     )}
 
-                    <section>
-                       <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
-                         <span className="flex items-center gap-1.5">
-                           <Variable size={12} /> Environment Variables
-                         </span>
-                       </label>
-                       <KvEditor
-                         entries={config.env || {}}
-                         onChange={(updated) => updateConfig({ env: updated })}
-                         keyPlaceholder="KEY"
-                         valuePlaceholder="value"
-                         colorKey
-                         maskValue
-                       />
-                       <p className="mt-2 text-[11px] text-text-muted leading-relaxed">
-                         Values are encrypted at rest but{" "}
-                         <strong className="font-semibold text-text-base">written as plaintext to your project</strong>.
-                         {" "}Leave a value empty to write{" "}
-                         <code className="font-mono">{"${KEY}"}</code>
-                         {" "}instead, inheriting from your shell at runtime.
-                       </p>
-                     </section>
                   </>
+                )}
+
+                {/* ── Environment Variables — stdio always; remote when env keys exist ── */}
+                {(isStdio || Object.keys(config.env || {}).length > 0) && (
+                  <section>
+                    <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
+                      <span className="flex items-center gap-1.5">
+                        <Variable size={12} /> Environment Variables
+                      </span>
+                    </label>
+                    <KvEditor
+                      entries={config.env || {}}
+                      onChange={(updated) => updateConfig({ env: updated })}
+                      keyPlaceholder="KEY"
+                      valuePlaceholder="value"
+                      colorKey
+                      maskValue
+                    />
+                    <p className="mt-2 text-[11px] text-text-muted leading-relaxed">
+                      Values are encrypted at rest but{" "}
+                      <strong className="font-semibold text-text-base">written as plaintext to your project</strong>.
+                      {" "}Leave a value empty to write{" "}
+                      <code className="font-mono">{"${KEY}"}</code>
+                      {" "}instead, inheriting from your shell at runtime.
+                    </p>
+                  </section>
                 )}
 
                 {/* ── http/sse fields ─────────────────────────────────────── */}
@@ -846,8 +850,10 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     </section>
                     )}
 
-                    {/* OAuth Authentication */}
-                    <OAuthSection key={selectedName || ""} serverName={selectedName || ""} url={config.url || ""} />
+                    {/* OAuth Authentication — only for servers with no env-var-based auth */}
+                    {Object.keys(config.env || {}).length === 0 && (
+                      <OAuthSection key={selectedName || ""} serverName={selectedName || ""} url={config.url || ""} />
+                    )}
                   </>
                 )}
 
