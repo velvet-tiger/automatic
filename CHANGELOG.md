@@ -2,6 +2,30 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.11.1] — 2026-03-18
+
+### Features
+
+- **Marketplace**: MCP servers, templates, and collections can now be loaded from `~/.automatic/marketplace`, enabling local marketplace customisation
+- **Marketplace**: Upsun MCP server added to the marketplace directory
+- **Projects**: AI update instruction command added to projects for easier agent onboarding
+
+### Fixes
+
+- **Agents**: Description now displays correctly when MCP capability is disabled
+- **Kiro**: Skills are written to `.kiro/skills/` per the agent skills specification
+- **Warp**: `project_file_name` corrected to `AGENTS.md`
+- **Cline**: `project_file_name` corrected to `.clinerules`
+- **Antigravity**: `project_file_name` corrected to `GEMINI.md` and MCP write disabled
+- **Goose**: Architecture corrected and YAML parser bugs fixed
+
+### Internal
+
+- Agent reference documentation added for all researched agents
+- AGENTS.md problem-solving process and making changes guide updated
+
+---
+
 ## [0.11.0] — 2026-03-16
 
 ### Features
