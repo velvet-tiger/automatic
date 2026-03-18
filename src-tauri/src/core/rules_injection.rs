@@ -438,6 +438,7 @@ pub fn build_groups_section(
 
     // Single "## Related Projects" heading wraps all groups.
     let mut inner = String::from("## Related Projects\n");
+    inner.push_str("The following projects are related to this one. They are provided for context — explore or reference them when relevant to the current task.\n\n");
     inner.push_str(&parts.join("\n"));
 
     format!("{}\n{}\n{}", GROUPS_START_MARKER, inner, GROUPS_END_MARKER)
