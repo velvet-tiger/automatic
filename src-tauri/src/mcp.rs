@@ -106,6 +106,12 @@ pub struct GetProjectContextParams {
     pub project: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct GetRelatedProjectsParams {
+    /// The project name as registered in Automatic
+    pub project: String,
+}
+
 // ── Feature Tool Parameter Types ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -353,6 +359,95 @@ impl AutomaticMcpServer {
                 params.0.name, e
             ))])),
         }
+    }
+
+    #[tool(
+        name = "automatic_get_related_projects",
+        description = "Return all projects related to the given project via Project Groups, \
+                       including each peer's name, description, directory, and relative path \
+                       from this project's directory. Use this to discover sibling projects \
+                       you can explore or reference."
+    )]
+    async fn get_related_projects(
+        &self,
+        params: Parameters<GetRelatedProjectsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+
+        // Load the requesting project to get its directory for relative-path computation.
+        let this_dir = match crate::core::read_project(&params.0.project) {
+            Ok(raw) => serde_json::from_str::<crate::core::Project>(&raw)
+                .map(|p| p.directory)
+                .unwrap_or_default(),
+            Err(_) => String::new(),
+        };
+
+        // Find every group this project belongs to.
+        let groups = crate::core::groups_for_project(&params.0.project);
+
+        if groups.is_empty() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                "This project does not belong to any groups and has no related projects.",
+            )]));
+        }
+
+        // Collect unique peer project names across all groups, avoiding duplicates.
+        let mut seen = std::collections::HashSet::new();
+        let mut output = String::new();
+
+        output.push_str("## Related Projects\n");
+        output.push_str("The following projects are related to this one. They are provided for context — explore or reference them when relevant to the current task.\n\n");
+
+        for group in &groups {
+            output.push_str(&format!("### {}\n", group.name));
+            if !group.description.trim().is_empty() {
+                output.push_str(group.description.trim());
+                output.push('\n');
+            }
+
+            let peers: Vec<&String> = group
+                .projects
+                .iter()
+                .filter(|p| p.as_str() != params.0.project)
+                .collect();
+
+            if peers.is_empty() {
+                output.push_str("No other projects in this group yet.\n");
+            } else {
+                for peer_name in peers {
+                    if !seen.insert(peer_name.clone()) {
+                        continue; // already included from another group
+                    }
+                    let peer_project = crate::core::read_project(peer_name)
+                        .ok()
+                        .and_then(|raw| serde_json::from_str::<crate::core::Project>(&raw).ok());
+
+                    let (peer_desc, peer_dir) = peer_project
+                        .map(|p| (p.description, p.directory))
+                        .unwrap_or_default();
+
+                    let rel_path = crate::core::compute_relative_path(&this_dir, &peer_dir);
+
+                    let mut entry = format!("**{}**", peer_name);
+                    if !peer_desc.trim().is_empty() {
+                        entry.push_str(&format!(": {}", peer_desc.trim()));
+                    }
+                    if !rel_path.is_empty() {
+                        entry.push_str(&format!("\nLocation: `{}`", rel_path));
+                    }
+                    if !peer_dir.is_empty() {
+                        entry.push_str(&format!("\nAbsolute path: `{}`", peer_dir));
+                    }
+                    output.push_str(&entry);
+                    output.push('\n');
+                }
+            }
+            output.push('\n');
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 
     #[tool(

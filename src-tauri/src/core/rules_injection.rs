@@ -448,7 +448,7 @@ pub fn build_groups_section(
 ///
 /// Returns the `to_dir` path as-is if either argument is empty or the paths
 /// share no common prefix (e.g. on different drives on Windows).
-fn compute_relative_path(from_dir: &str, to_dir: &str) -> String {
+pub fn compute_relative_path(from_dir: &str, to_dir: &str) -> String {
     if from_dir.is_empty() || to_dir.is_empty() {
         return to_dir.to_string();
     }
