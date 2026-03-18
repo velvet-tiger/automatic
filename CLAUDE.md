@@ -1,7 +1,5 @@
 # Automatic - Agent Context
 
-Read `.ai/constitution.md` before making any changes. It contains the full architecture, conventions, design system, and command reference.
-
 ## Core Concept
 
 Automatic is a **hub, not an executor**. It does not run agents. External applications (Claude Code, Cursor, custom agents) connect to Automatic to:
@@ -59,12 +57,9 @@ The React frontend:
 3. Register it in `generate_handler![]` in `lib.rs`
 4. Call it from the frontend: `await invoke("name", { params })`
 
-### Exposing a new MCP tool
+### Adding to marketplaces
 
-1. Define a params struct with `#[derive(Deserialize, Serialize, JsonSchema)]` in `mcp.rs`
-2. Add a `#[tool]` method in the `NexusMcpServer` impl block (under `#[tool_router]`)
-3. Use `Parameters<T>` wrapper for the tool's input parameter
-4. The tool router picks it up automatically -- no manual registration needed
+When adding to one of the marketplaces, follow the dev-automatic-marketplace-authoring skill.
 
 ### Adding a frontend view
 
