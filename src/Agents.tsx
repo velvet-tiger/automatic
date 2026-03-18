@@ -74,6 +74,7 @@ interface AgentWithProjects {
 interface CapabilityRowProps {
   label: string;
   description: string;
+  unsupportedDescription?: string;
   supported: boolean;
 }
 
@@ -83,7 +84,8 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function CapabilityRow({ label, description, supported }: CapabilityRowProps) {
+function CapabilityRow({ label, description, unsupportedDescription, supported }: CapabilityRowProps) {
+  const shownDescription = !supported && unsupportedDescription ? unsupportedDescription : description;
   return (
     <div className="flex items-center gap-3 px-3 py-2.5 bg-bg-input rounded-md border border-border-strong/40">
       {supported ? (
@@ -93,7 +95,7 @@ function CapabilityRow({ label, description, supported }: CapabilityRowProps) {
       )}
       <div className="flex-1 min-w-0">
         <span className="text-[13px] text-text-base">{label}</span>
-        <span className="text-[11px] text-text-muted ml-2">{description}</span>
+        <span className="text-[11px] text-text-muted ml-2">{shownDescription}</span>
       </div>
     </div>
   );
@@ -405,6 +407,7 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
                     <CapabilityRow
                       label="MCP Servers"
                       description="Automatic can write MCP server configuration"
+                      unsupportedDescription="Automatic cannot write MCP server configuration"
                       supported={selected.capabilities.mcp_servers}
                     />
                   </div>
