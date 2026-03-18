@@ -873,13 +873,38 @@ pub fn get_feature_updates(project: &str, feature_id: &str) -> Result<Vec<Featur
 // ── MCP-formatted output helpers ──────────────────────────────────────────────
 
 /// Format a list of features as human-readable markdown for MCP responses.
-pub fn format_features_markdown(features: &[Feature], project: &str) -> String {
+///
+/// `archived_view` should be `true` when the list was fetched with
+/// `include_archived = true` so the output header is labelled accordingly
+/// and agents do not mistake archived features for active ones.
+pub fn format_features_markdown(
+    features: &[Feature],
+    project: &str,
+    archived_view: bool,
+) -> String {
     if features.is_empty() {
-        return format!("No features found for project '{}'.\n", project);
+        return if archived_view {
+            format!("No archived features found for project '{}'.\n", project)
+        } else {
+            format!("No active features found for project '{}'.\n", project)
+        };
     }
 
-    let mut out = format!("# Features for '{}'\n\n", project);
-    out.push_str(&format!("{} feature(s) total\n\n", features.len()));
+    let heading = if archived_view {
+        format!("# Archived Features for '{}'\n\n", project)
+    } else {
+        format!("# Features for '{}'\n\n", project)
+    };
+    let mut out = heading;
+
+    if archived_view {
+        out.push_str(
+            "> These features are archived. They are hidden from the Kanban board. \
+             Use `automatic_unarchive_feature` to restore one.\n\n",
+        );
+    }
+
+    out.push_str(&format!("{} feature(s)\n\n", features.len()));
 
     let states = [
         "backlog",
@@ -926,8 +951,17 @@ pub fn format_features_markdown(features: &[Feature], project: &str) -> String {
 pub fn format_feature_detail_markdown(fw: &FeatureWithUpdates) -> String {
     let f = &fw.feature;
     let mut out = format!("# {}\n\n", f.title);
+
+    if f.archived {
+        out.push_str(
+            "> **Archived** — This feature is hidden from the Kanban board. \
+             Use `automatic_unarchive_feature` to restore it.\n\n",
+        );
+    }
+
     out.push_str(&format!("**ID:** `{}`\n", f.id));
     out.push_str(&format!("**Project:** {}\n", f.project));
+    out.push_str(&format!("**Archived:** {}\n", f.archived));
     out.push_str(&format!("**State:** {}\n", f.state));
     out.push_str(&format!("**Priority:** {}\n", f.priority));
     out.push_str(&format!(

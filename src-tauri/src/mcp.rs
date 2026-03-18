@@ -833,7 +833,7 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_list_features",
-        description = "List all features for a project. Optionally filter by state: backlog, todo, in_progress, review, complete, or cancelled. Returns features grouped by state with id, title, priority, effort, and assignee."
+        description = "List all features for a project. By default returns only active (non-archived) features grouped by state with id, title, priority, effort, and assignee. Optionally filter by state: backlog, todo, in_progress, review, complete, or cancelled. Pass include_archived: true to list archived features instead of active ones."
     )]
     async fn list_features(
         &self,
@@ -842,13 +842,18 @@ impl AutomaticMcpServer {
         if let Err(e) = validate_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
+        let include_archived = params.0.include_archived.unwrap_or(false);
         match crate::features::list_features(
             &params.0.project,
             params.0.state.as_deref(),
-            params.0.include_archived.unwrap_or(false),
+            include_archived,
         ) {
             Ok(features) => {
-                let output = crate::features::format_features_markdown(&features, &params.0.project);
+                let output = crate::features::format_features_markdown(
+                    &features,
+                    &params.0.project,
+                    include_archived,
+                );
                 Ok(CallToolResult::success(vec![Content::text(output)]))
             }
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
