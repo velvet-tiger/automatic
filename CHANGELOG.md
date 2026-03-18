@@ -2,6 +2,21 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.12.0] — 2026-03-19
+
+### Features
+
+- **Project Groups**: Projects can now be organised into groups; group membership is injected into agent context as a Related Projects section
+- **Archive/Unarchive Features**: Features can now be archived and unarchived via the UI and MCP tools
+- **Resizable Columns**: Feature list columns are now resizable
+- **`automatic_get_related_projects` MCP tool**: Exposes related projects from a group to agents via the MCP interface
+
+### Changed
+
+- **Feature Docs**: Add forms in Files & Dirs and Links tabs are now collapsed by default to reduce visual noise
+
+---
+
 ## [0.11.2] — 2026-03-18
 
 ### Fixes
