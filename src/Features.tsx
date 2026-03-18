@@ -1129,7 +1129,39 @@ function CreateFeaturePanel({ projectName, allTags, onCreated, onCancel }: Creat
 
 // ── List View ─────────────────────────────────────────────────────────────────
 
+type ColumnKey = "title" | "state" | "priority" | "effort" | "assignee" | "updated";
+
+const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
+  title: 320,
+  state: 112,
+  priority: 80,
+  effort: 64,
+  assignee: 112,
+  updated: 96,
+};
+
+const MIN_COLUMN_WIDTH = 48;
+
+function readStoredColumnWidths(projectName: string): Record<ColumnKey, number> {
+  try {
+    const raw = localStorage.getItem(buildColumnWidthsStorageKey(projectName));
+    if (!raw) return { ...DEFAULT_COLUMN_WIDTHS };
+    const parsed = JSON.parse(raw) as Partial<Record<ColumnKey, number>>;
+    const keys: ColumnKey[] = ["title", "state", "priority", "effort", "assignee", "updated"];
+    const result = { ...DEFAULT_COLUMN_WIDTHS };
+    for (const k of keys) {
+      if (typeof parsed[k] === "number" && (parsed[k] === 0 || parsed[k]! >= MIN_COLUMN_WIDTH)) {
+        result[k] = parsed[k]!;
+      }
+    }
+    return result;
+  } catch {
+    return { ...DEFAULT_COLUMN_WIDTHS };
+  }
+}
+
 interface ListViewProps {
+  projectName: string;
   features: Feature[];
   selectedId: string | null;
   filterState: string | null;
@@ -1179,6 +1211,7 @@ function SortableHeader({ label, column, sort, onSort }: SortableHeaderProps) {
 }
 
 function ListView({
+  projectName,
   features,
   selectedId,
   filterState,
@@ -1194,6 +1227,79 @@ function ListView({
   onArchive,
   onUnarchive,
 }: ListViewProps) {
+  // ── Column resize ────────────────────────────────────────────────────────────
+  const [colWidths, setColWidths] = useState<Record<ColumnKey, number>>(
+    () => readStoredColumnWidths(projectName)
+  );
+  const resizingCol = useRef<ColumnKey | null>(null);
+  const resizeStartX = useRef(0);
+  const resizeStartWidth = useRef(0);
+
+  const persistColWidths = useCallback(
+    (widths: Record<ColumnKey, number>) => {
+      try {
+        localStorage.setItem(buildColumnWidthsStorageKey(projectName), JSON.stringify(widths));
+      } catch {
+        // localStorage unavailable — non-fatal
+      }
+    },
+    [projectName]
+  );
+
+  const startResize = useCallback(
+    (col: ColumnKey, e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      resizingCol.current = col;
+      resizeStartX.current = e.clientX;
+      resizeStartWidth.current = colWidths[col];
+
+      const onMove = (ev: MouseEvent) => {
+        if (!resizingCol.current) return;
+        const delta = ev.clientX - resizeStartX.current;
+        const newWidth = Math.max(MIN_COLUMN_WIDTH, resizeStartWidth.current + delta);
+        setColWidths((prev) => {
+          const next = { ...prev, [resizingCol.current!]: newWidth };
+          persistColWidths(next);
+          return next;
+        });
+      };
+
+      const onUp = () => {
+        resizingCol.current = null;
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [colWidths, persistColWidths]
+  );
+
+  const resetColWidth = useCallback(
+    (col: ColumnKey, e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setColWidths((prev) => {
+        const next = { ...prev, [col]: DEFAULT_COLUMN_WIDTHS[col] };
+        persistColWidths(next);
+        return next;
+      });
+    },
+    [persistColWidths]
+  );
+
+  const colStyle = (col: ColumnKey): React.CSSProperties => {
+    const w = colWidths[col];
+    return { width: w, minWidth: w, maxWidth: w };
+  };
+
+  // ── Filtering / sorting ──────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     const visible = features.filter((f) => {
       if (filterState && f.state !== filterState) return false;
@@ -1266,7 +1372,7 @@ function ListView({
       </div>
 
       {/* List */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
+      <div className="flex-1 overflow-auto custom-scrollbar">
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-text-muted py-12">
             {showArchived ? (
@@ -1288,30 +1394,97 @@ function ListView({
             )}
           </div>
         ) : (
-          <table className="w-full text-[13px]">
+          <table className="w-max min-w-full text-[13px] table-fixed">
             <thead className="sticky top-0 bg-bg-base z-10">
               <tr className="border-b border-border-strong/40">
-                <th className="text-left px-3 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                <th
+                  className="text-left px-3 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider relative overflow-hidden"
+                  style={colStyle("title")}
+                >
                   <SortableHeader label="Title" column="title" sort={sort} onSort={onSort} />
+                  <span
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize group/handle flex items-center justify-center hover:bg-border-strong/30"
+                    onMouseDown={(e) => startResize("title", e)}
+                    onDoubleClick={(e) => resetColWidth("title", e)}
+                    title="Drag to resize · Double-click to reset"
+                  >
+                    <span className="w-px h-4 bg-border-strong/40 group-hover/handle:bg-border-strong/80 transition-colors" />
+                  </span>
                 </th>
-                <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-28">
+                <th
+                  className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider relative overflow-hidden"
+                  style={colStyle("state")}
+                >
                   <SortableHeader label="State" column="state" sort={sort} onSort={onSort} />
+                  <span
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize group/handle flex items-center justify-center hover:bg-border-strong/30"
+                    onMouseDown={(e) => startResize("state", e)}
+                    onDoubleClick={(e) => resetColWidth("state", e)}
+                    title="Drag to resize · Double-click to reset"
+                  >
+                    <span className="w-px h-4 bg-border-strong/40 group-hover/handle:bg-border-strong/80 transition-colors" />
+                  </span>
                 </th>
-                <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-20">
+                <th
+                  className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider relative overflow-hidden"
+                  style={colStyle("priority")}
+                >
                   <SortableHeader label="Priority" column="priority" sort={sort} onSort={onSort} />
+                  <span
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize group/handle flex items-center justify-center hover:bg-border-strong/30"
+                    onMouseDown={(e) => startResize("priority", e)}
+                    onDoubleClick={(e) => resetColWidth("priority", e)}
+                    title="Drag to resize · Double-click to reset"
+                  >
+                    <span className="w-px h-4 bg-border-strong/40 group-hover/handle:bg-border-strong/80 transition-colors" />
+                  </span>
                 </th>
-                <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-16">
+                <th
+                  className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider relative overflow-hidden"
+                  style={colStyle("effort")}
+                >
                   <SortableHeader label="Effort" column="effort" sort={sort} onSort={onSort} />
+                  <span
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize group/handle flex items-center justify-center hover:bg-border-strong/30"
+                    onMouseDown={(e) => startResize("effort", e)}
+                    onDoubleClick={(e) => resetColWidth("effort", e)}
+                    title="Drag to resize · Double-click to reset"
+                  >
+                    <span className="w-px h-4 bg-border-strong/40 group-hover/handle:bg-border-strong/80 transition-colors" />
+                  </span>
                 </th>
-                <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-28">
+                <th
+                  className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider relative overflow-hidden"
+                  style={colStyle("assignee")}
+                >
                   <SortableHeader label="Assignee" column="assignee" sort={sort} onSort={onSort} />
+                  <span
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize group/handle flex items-center justify-center hover:bg-border-strong/30"
+                    onMouseDown={(e) => startResize("assignee", e)}
+                    onDoubleClick={(e) => resetColWidth("assignee", e)}
+                    title="Drag to resize · Double-click to reset"
+                  >
+                    <span className="w-px h-4 bg-border-strong/40 group-hover/handle:bg-border-strong/80 transition-colors" />
+                  </span>
                 </th>
-                 <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-24">
-                   <SortableHeader label="Updated" column="updated" sort={sort} onSort={onSort} />
-                 </th>
-                 <th className="px-2 py-2 w-20" />
-               </tr>
-             </thead>
+                <th
+                  className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider relative overflow-hidden"
+                  style={colStyle("updated")}
+                >
+                  <SortableHeader label="Updated" column="updated" sort={sort} onSort={onSort} />
+                  <span
+                    className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize group/handle flex items-center justify-center hover:bg-border-strong/30"
+                    onMouseDown={(e) => startResize("updated", e)}
+                    onDoubleClick={(e) => resetColWidth("updated", e)}
+                    title="Drag to resize · Double-click to reset"
+                  >
+                    <span className="w-px h-4 bg-border-strong/40 group-hover/handle:bg-border-strong/80 transition-colors" />
+                  </span>
+                </th>
+                {/* Actions — always fixed */}
+                <th className="px-2 py-2" style={{ width: 80, minWidth: 80 }} />
+              </tr>
+            </thead>
             <tbody>
               {filtered.map((f) => (
                 <tr
@@ -1323,7 +1496,7 @@ function ListView({
                       : "hover:bg-bg-sidebar/50"
                   }`}
                 >
-                   <td className="px-3 py-2 w-full min-w-0">
+                  <td className="px-3 py-2 overflow-hidden" style={colStyle("title")}>
                     <div className="flex items-center gap-2 min-w-0">
                       <PriorityDot priority={f.priority} />
                       <span className="font-mono text-[10px] text-text-muted shrink-0">
@@ -1340,22 +1513,22 @@ function ListView({
                       )}
                     </div>
                   </td>
-                  <td className="px-2 py-2">
+                  <td className="px-2 py-2 overflow-hidden" style={colStyle("state")}>
                     <StateBadge state={f.state} />
                   </td>
-                  <td className="px-2 py-2 text-text-muted capitalize">
+                  <td className="px-2 py-2 text-text-muted capitalize overflow-hidden" style={colStyle("priority")}>
                     {f.priority}
                   </td>
-                  <td className="px-2 py-2 text-text-muted uppercase text-[11px]">
+                  <td className="px-2 py-2 text-text-muted uppercase text-[11px] overflow-hidden" style={colStyle("effort")}>
                     {f.effort ?? "—"}
                   </td>
-                  <td className="px-2 py-2 text-text-muted truncate max-w-[110px]">
+                  <td className="px-2 py-2 text-text-muted truncate overflow-hidden" style={colStyle("assignee")}>
                     {f.assignee ?? "—"}
                   </td>
-                  <td className="px-2 py-2 text-text-muted">
+                  <td className="px-2 py-2 text-text-muted overflow-hidden" style={colStyle("updated")}>
                     {formatDate(f.updated_at)}
                   </td>
-                  <td className="px-2 py-2">
+                  <td className="px-2 py-2" style={{ width: 80, minWidth: 80 }}>
                     <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       {f.archived ? (
                         <button
@@ -1611,6 +1784,10 @@ function buildFilterStorageKey(projectName: string): string {
 
 function buildSortStorageKey(projectName: string): string {
   return `automatic.projects.${projectName}.build.sort`;
+}
+
+function buildColumnWidthsStorageKey(projectName: string): string {
+  return `automatic.projects.${projectName}.build.columnWidths`;
 }
 
 function readStoredFilters(projectName: string): { filterState: string | null; filterPriority: string | null } {
@@ -2011,6 +2188,7 @@ export default function Features({ projectName }: FeaturesProps) {
           </div>
         ) : view === "list" ? (
           <ListView
+            projectName={projectName}
             features={features}
             selectedId={selectedId}
             filterState={filterState}

@@ -1,8 +1,7 @@
-use serde_json::{json, Map, Value};
-use std::fs;
+use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
-use super::{discover_mcp_servers_from_json, sync_individual_skills, Agent};
+use super::{sync_individual_skills, Agent};
 
 /// Google Antigravity agent — stores skills under
 /// `<project>/.agents/skills/<name>/SKILL.md`.
@@ -163,6 +162,7 @@ impl Agent for Antigravity {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
