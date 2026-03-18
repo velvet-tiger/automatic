@@ -6,6 +6,25 @@ use super::{discover_mcp_servers_from_json, sync_individual_skills, Agent};
 
 /// Factory.ai Droid agent — writes `.factory/mcp.json` and stores skills
 /// under `<project>/.agents/skills/<name>/SKILL.md`.
+///
+/// ## Project instructions
+///
+/// Droid reads `AGENTS.md` at the repository root (and any parent directory
+/// up to the repo root) before planning any change.  A personal override at
+/// `~/.factory/AGENTS.md` is also supported.
+///
+/// ## MCP config
+///
+/// Project-level MCP servers are stored in `.factory/mcp.json` under the
+/// `mcpServers` key.  User-level servers live in `~/.factory/mcp.json`.
+/// Each entry explicitly includes `"type": "stdio"` or `"type": "http"` —
+/// unlike most other agents which omit `type` for stdio entries.
+///
+/// Format example:
+/// ```json
+/// { "mcpServers": { "linear": { "type": "http", "url": "..." },
+///                   "local":  { "type": "stdio", "command": "npx", "args": [...] } } }
+/// ```
 pub struct Droid;
 
 impl Agent for Droid {
