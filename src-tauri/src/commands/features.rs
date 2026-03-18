@@ -3,8 +3,12 @@ use crate::features::{Feature, FeaturePatch, FeatureUpdate, FeatureWithUpdates};
 // ── Features ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn list_features(project: &str, state: Option<&str>) -> Result<Vec<Feature>, String> {
-    crate::features::list_features(project, state)
+pub fn list_features(
+    project: &str,
+    state: Option<&str>,
+    include_archived: Option<bool>,
+) -> Result<Vec<Feature>, String> {
+    crate::features::list_features(project, state, include_archived.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -72,6 +76,16 @@ pub fn move_feature(
 #[tauri::command]
 pub fn delete_feature(project: &str, feature_id: &str) -> Result<(), String> {
     crate::features::delete_feature(project, feature_id)
+}
+
+#[tauri::command]
+pub fn archive_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
+    crate::features::archive_feature(project, feature_id)
+}
+
+#[tauri::command]
+pub fn unarchive_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
+    crate::features::unarchive_feature(project, feature_id)
 }
 
 #[tauri::command]

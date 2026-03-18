@@ -120,6 +120,24 @@ pub struct ListFeaturesParams {
     pub project: String,
     /// Optional state filter: backlog, todo, in_progress, review, complete, or cancelled
     pub state: Option<String>,
+    /// When true, returns only archived features. Defaults to false (active features only).
+    pub include_archived: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ArchiveFeatureParams {
+    /// The project name as registered in Automatic
+    pub project: String,
+    /// The feature UUID to archive
+    pub feature_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct UnarchiveFeatureParams {
+    /// The project name as registered in Automatic
+    pub project: String,
+    /// The feature UUID to unarchive
+    pub feature_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -824,7 +842,11 @@ impl AutomaticMcpServer {
         if let Err(e) = validate_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
-        match crate::features::list_features(&params.0.project, params.0.state.as_deref()) {
+        match crate::features::list_features(
+            &params.0.project,
+            params.0.state.as_deref(),
+            params.0.include_archived.unwrap_or(false),
+        ) {
             Ok(features) => {
                 let output = crate::features::format_features_markdown(&features, &params.0.project);
                 Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -919,6 +941,8 @@ impl AutomaticMcpServer {
             tags: p.tags,
             linked_files: p.linked_files,
             effort: p.effort.map(Some),
+            // Archiving is not exposed via this tool; use archive/unarchive tools instead.
+            archived: None,
         };
         match crate::features::update_feature(&p.project, &p.feature_id, patch) {
             Ok(feature) => {
@@ -983,6 +1007,52 @@ impl AutomaticMcpServer {
             ))])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to delete feature: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_archive_feature",
+        description = "Archive a feature, hiding it from the Kanban board and default list views. The feature's state is preserved so it can be restored to its original column when unarchived."
+    )]
+    async fn archive_feature(
+        &self,
+        params: Parameters<ArchiveFeatureParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        match crate::features::archive_feature(&params.0.project, &params.0.feature_id) {
+            Ok(feature) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Feature '{}' archived. State '{}' is preserved for later restoration.",
+                feature.title, feature.state
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to archive feature: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_unarchive_feature",
+        description = "Unarchive a feature, restoring it to its preserved state in the Kanban board and default list views."
+    )]
+    async fn unarchive_feature(
+        &self,
+        params: Parameters<UnarchiveFeatureParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if let Err(e) = validate_project(&params.0.project) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        match crate::features::unarchive_feature(&params.0.project, &params.0.feature_id) {
+            Ok(feature) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Feature '{}' unarchived and restored to state '{}'.",
+                feature.title, feature.state
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to unarchive feature: {}",
                 e
             ))])),
         }

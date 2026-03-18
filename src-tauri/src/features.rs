@@ -16,7 +16,8 @@
 //!     created_at   TEXT    NOT NULL,
 //!     updated_at   TEXT    NOT NULL,
 //!     created_by   TEXT,
-//!     position     INTEGER NOT NULL DEFAULT 0
+//!     position     INTEGER NOT NULL DEFAULT 0,
+//!     archived     INTEGER NOT NULL DEFAULT 0     -- boolean: 0 = active, 1 = archived
 //!   )
 //!
 //!   feature_updates (
@@ -162,6 +163,9 @@ pub struct Feature {
     pub updated_at: String,
     pub created_by: Option<String>,
     pub position: i64,
+    /// Whether this feature is archived. Archived features are hidden from the
+    /// Kanban board and from list/filter queries unless explicitly requested.
+    pub archived: bool,
 }
 
 /// A feature together with its full update history.
@@ -196,6 +200,8 @@ pub struct FeaturePatch {
     pub linked_files: Option<Vec<String>>,
     /// `Some(None)` explicitly clears the effort field.
     pub effort: Option<Option<String>>,
+    /// Archive or unarchive. `Some(true)` archives; `Some(false)` unarchives.
+    pub archived: Option<bool>,
 }
 
 // ── DB path ───────────────────────────────────────────────────────────────────
@@ -230,7 +236,8 @@ fn open_conn() -> Result<Connection, String> {
             created_at   TEXT    NOT NULL,
             updated_at   TEXT    NOT NULL,
             created_by   TEXT,
-            position     INTEGER NOT NULL DEFAULT 0
+            position     INTEGER NOT NULL DEFAULT 0,
+            archived     INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS feature_updates (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -246,6 +253,14 @@ fn open_conn() -> Result<Connection, String> {
             ON feature_updates (feature_id, timestamp DESC);",
     )
     .map_err(|e| format!("Failed to create features schema: {}", e))?;
+
+    // Additive migration: add `archived` column to existing databases that
+    // pre-date this schema version. SQLite ignores the statement if the column
+    // already exists when using the `IF NOT EXISTS` form via a guard check.
+    let _ =
+        conn.execute_batch("ALTER TABLE features ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;");
+    // Note: the above intentionally ignores the error — SQLite returns an error
+    // if the column already exists, which is the normal case after first run.
 
     Ok(conn)
 }
@@ -272,6 +287,7 @@ fn encode_json_array(items: &[String]) -> String {
 fn row_to_feature(row: &rusqlite::Row<'_>) -> rusqlite::Result<Feature> {
     let tags_raw: String = row.get(7)?;
     let files_raw: String = row.get(8)?;
+    let archived_int: i64 = row.get(14)?;
     Ok(Feature {
         id: row.get(0)?,
         project: row.get(1)?,
@@ -287,6 +303,7 @@ fn row_to_feature(row: &rusqlite::Row<'_>) -> rusqlite::Result<Feature> {
         updated_at: row.get(11)?,
         created_by: row.get(12)?,
         position: row.get(13)?,
+        archived: archived_int != 0,
     })
 }
 
@@ -305,26 +322,36 @@ fn next_position(conn: &Connection, project: &str, state: &str) -> Result<i64, S
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// List all features for a project, optionally filtered by state.
+///
+/// By default only active (non-archived) features are returned.  Pass
+/// `include_archived = true` to return **only** archived features instead.
 /// Ordered by state lifecycle order then position within each state.
-pub fn list_features(project: &str, state_filter: Option<&str>) -> Result<Vec<Feature>, String> {
+pub fn list_features(
+    project: &str,
+    state_filter: Option<&str>,
+    include_archived: bool,
+) -> Result<Vec<Feature>, String> {
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
     let conn = open_conn()?;
 
+    // archived filter: 0 for active features, 1 for archived features.
+    let archived_val: i64 = if include_archived { 1 } else { 0 };
+
     let features = if let Some(state) = state_filter {
         let mut stmt = conn
             .prepare(
                 "SELECT id, project, title, description, state, priority, assignee,
-                        tags, linked_files, effort, created_at, updated_at, created_by, position
+                        tags, linked_files, effort, created_at, updated_at, created_by, position, archived
                  FROM features
-                 WHERE project = ?1 AND state = ?2
+                 WHERE project = ?1 AND state = ?2 AND archived = ?3
                  ORDER BY position ASC",
             )
             .map_err(|e| format!("Failed to prepare list query: {}", e))?;
 
         let rows = stmt
-            .query_map(params![project, state], row_to_feature)
+            .query_map(params![project, state, archived_val], row_to_feature)
             .map_err(|e| format!("Failed to query features: {}", e))?;
 
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -333,9 +360,9 @@ pub fn list_features(project: &str, state_filter: Option<&str>) -> Result<Vec<Fe
         let mut stmt = conn
             .prepare(
                 "SELECT id, project, title, description, state, priority, assignee,
-                        tags, linked_files, effort, created_at, updated_at, created_by, position
+                        tags, linked_files, effort, created_at, updated_at, created_by, position, archived
                  FROM features
-                 WHERE project = ?1
+                 WHERE project = ?1 AND archived = ?2
                  ORDER BY
                    CASE state
                      WHEN 'backlog'     THEN 0
@@ -350,7 +377,7 @@ pub fn list_features(project: &str, state_filter: Option<&str>) -> Result<Vec<Fe
             .map_err(|e| format!("Failed to prepare list query: {}", e))?;
 
         let rows = stmt
-            .query_map(params![project], row_to_feature)
+            .query_map(params![project, archived_val], row_to_feature)
             .map_err(|e| format!("Failed to query features: {}", e))?;
 
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -371,10 +398,12 @@ pub fn get_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
     }
     let conn = open_conn()?;
 
-    // 1. Try exact match first (fast path).
+    // 1. Try exact match first (fast path). Searches both active and archived
+    //    so that detail panels can load archived features when the user has
+    //    the "view archived" toggle on.
     let exact = conn.query_row(
         "SELECT id, project, title, description, state, priority, assignee,
-                tags, linked_files, effort, created_at, updated_at, created_by, position
+                tags, linked_files, effort, created_at, updated_at, created_by, position, archived
          FROM features
          WHERE id = ?1 AND project = ?2",
         params![feature_id, project],
@@ -392,7 +421,7 @@ pub fn get_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, project, title, description, state, priority, assignee,
-                    tags, linked_files, effort, created_at, updated_at, created_by, position
+                    tags, linked_files, effort, created_at, updated_at, created_by, position, archived
              FROM features
              WHERE LOWER(id) LIKE ?1 AND project = ?2",
         )
@@ -460,8 +489,8 @@ pub fn create_feature(
     conn.execute(
         "INSERT INTO features
             (id, project, title, description, state, priority, assignee,
-             tags, linked_files, effort, created_at, updated_at, created_by, position)
-         VALUES (?1, ?2, ?3, ?4, 'backlog', ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?12)",
+             tags, linked_files, effort, created_at, updated_at, created_by, position, archived)
+         VALUES (?1, ?2, ?3, ?4, 'backlog', ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?12, 0)",
         params![
             id,
             project,
@@ -545,13 +574,17 @@ pub fn update_feature(
         None => existing.effort.clone(),
     };
 
+    let new_archived: bool = patch.archived.unwrap_or(existing.archived);
+    let archived_val: i64 = if new_archived { 1 } else { 0 };
+
     let tags_json = encode_json_array(new_tags);
     let files_json = encode_json_array(new_files);
 
     conn.execute(
         "UPDATE features
          SET title = ?1, description = ?2, state = ?3, priority = ?4,
-             assignee = ?5, tags = ?6, linked_files = ?7, effort = ?8, updated_at = ?9
+             assignee = ?5, tags = ?6, linked_files = ?7, effort = ?8, updated_at = ?9,
+             archived = ?12
          WHERE id = ?10 AND project = ?11",
         params![
             new_title.trim(),
@@ -565,6 +598,7 @@ pub fn update_feature(
             ts,
             feature_id,
             project,
+            archived_val,
         ],
     )
     .map_err(|e| format!("Failed to update feature: {}", e))?;
@@ -698,6 +732,70 @@ pub fn delete_feature(project: &str, feature_id: &str) -> Result<(), String> {
     );
 
     Ok(())
+}
+
+/// Archive a feature, hiding it from the Kanban board and default list views.
+///
+/// The feature's `state` is preserved unchanged so that it can be restored to
+/// its original column when unarchived.
+pub fn archive_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
+    if !crate::core::is_valid_name(project) {
+        return Err("Invalid project name".into());
+    }
+
+    let existing = get_feature(project, feature_id)?;
+    if existing.archived {
+        return Err(format!("Feature '{}' is already archived", feature_id));
+    }
+
+    let conn = open_conn()?;
+    let ts = now();
+
+    conn.execute(
+        "UPDATE features SET archived = 1, updated_at = ?1 WHERE id = ?2 AND project = ?3",
+        params![ts, feature_id, project],
+    )
+    .map_err(|e| format!("Failed to archive feature: {}", e))?;
+
+    crate::activity::log(
+        project,
+        crate::activity::ActivityEvent::FeatureUpdated,
+        &format!("Feature '{}' archived", existing.title),
+        feature_id,
+    );
+
+    get_feature(project, feature_id)
+}
+
+/// Unarchive a feature, restoring it to its preserved state in the Kanban board
+/// and default list views.
+pub fn unarchive_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
+    if !crate::core::is_valid_name(project) {
+        return Err("Invalid project name".into());
+    }
+
+    let existing = get_feature(project, feature_id)?;
+    if !existing.archived {
+        return Err(format!("Feature '{}' is not archived", feature_id));
+    }
+
+    let conn = open_conn()?;
+    let ts = now();
+
+    conn.execute(
+        "UPDATE features SET archived = 0, updated_at = ?1 WHERE id = ?2 AND project = ?3",
+        params![ts, feature_id, project],
+    )
+    .map_err(|e| format!("Failed to unarchive feature: {}", e))?;
+
+    crate::activity::log(
+        project,
+        crate::activity::ActivityEvent::FeatureUpdated,
+        &format!("Feature '{}' unarchived", existing.title),
+        feature_id,
+    );
+
+    get_feature(project, feature_id)
 }
 
 /// Append a progress update to a feature. Returns the new update record.

@@ -278,6 +278,8 @@ pub fn run() {
             set_feature_state,
             move_feature,
             delete_feature,
+            archive_feature,
+            unarchive_feature,
             add_feature_update,
             get_feature_updates,
             estimate_tokens,

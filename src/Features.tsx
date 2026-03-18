@@ -16,6 +16,8 @@ import {
   AlertCircle,
   ChevronDown,
   Clipboard,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -35,6 +37,7 @@ export interface Feature {
   updated_at: string;
   created_by: string | null;
   position: number;
+  archived: boolean;
 }
 
 export interface FeatureUpdate {
@@ -526,6 +529,8 @@ interface DetailPanelProps {
   onClose: () => void;
   onUpdated: (f: Feature) => void;
   onDeleted: (id: string) => void;
+  onArchived: (f: Feature) => void;
+  onUnarchived: (f: Feature) => void;
 }
 
 function DetailPanel({
@@ -535,6 +540,8 @@ function DetailPanel({
   onClose,
   onUpdated,
   onDeleted,
+  onArchived,
+  onUnarchived,
 }: DetailPanelProps) {
   const [feature, setFeature] = useState<FeatureWithUpdates | null>(null);
   const [loading, setLoading] = useState(true);
@@ -635,6 +642,36 @@ function DetailPanel({
     try {
       await invoke("delete_feature", { project: projectName, featureId });
       onDeleted(featureId);
+    } catch (err: any) {
+      setError(String(err));
+    }
+  };
+
+  const handleArchive = async () => {
+    if (!feature) return;
+    setError(null);
+    try {
+      const updated = await invoke<Feature>("archive_feature", {
+        project: projectName,
+        featureId,
+      });
+      setFeature((prev) => prev ? { ...prev, ...updated } : null);
+      onArchived(updated);
+    } catch (err: any) {
+      setError(String(err));
+    }
+  };
+
+  const handleUnarchive = async () => {
+    if (!feature) return;
+    setError(null);
+    try {
+      const updated = await invoke<Feature>("unarchive_feature", {
+        project: projectName,
+        featureId,
+      });
+      setFeature((prev) => prev ? { ...prev, ...updated } : null);
+      onUnarchived(updated);
     } catch (err: any) {
       setError(String(err));
     }
@@ -801,7 +838,26 @@ function DetailPanel({
         </div>
 
         {/* Actions */}
-        <div className="flex items-center justify-end">
+        <div className="flex items-center gap-2 justify-between">
+          {/* Archive / Unarchive */}
+          {feature.archived ? (
+            <button
+              onClick={handleUnarchive}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-amber-400 hover:bg-amber-400/10 text-[12px] font-medium transition-colors"
+            >
+              <ArchiveRestore size={12} />
+              Unarchive
+            </button>
+          ) : (
+            <button
+              onClick={handleArchive}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-text-muted hover:text-text-base hover:bg-bg-sidebar text-[12px] font-medium transition-colors"
+            >
+              <Archive size={12} />
+              Archive
+            </button>
+          )}
+
           <button
             onClick={handleDelete}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded text-danger hover:bg-danger/10 text-[12px] font-medium transition-colors"
@@ -1079,11 +1135,15 @@ interface ListViewProps {
   filterState: string | null;
   filterPriority: string | null;
   sort: ListSort | null;
+  showArchived: boolean;
   onSelect: (id: string) => void;
   onFilterState: (s: string | null) => void;
   onFilterPriority: (p: string | null) => void;
   onSort: (sort: ListSort) => void;
   onAddNew: () => void;
+  onToggleArchived: () => void;
+  onArchive: (id: string) => void;
+  onUnarchive: (id: string) => void;
 }
 
 interface SortableHeaderProps {
@@ -1124,11 +1184,15 @@ function ListView({
   filterState,
   filterPriority,
   sort,
+  showArchived,
   onSelect,
   onFilterState,
   onFilterPriority,
   onSort,
   onAddNew,
+  onToggleArchived,
+  onArchive,
+  onUnarchive,
 }: ListViewProps) {
   const filtered = useMemo(() => {
     const visible = features.filter((f) => {
@@ -1156,39 +1220,72 @@ function ListView({
     <div className="flex flex-col h-full">
       {/* Filter bar */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border-strong/40 shrink-0 flex-wrap">
-        <span className="text-[11px] text-text-muted">Filter:</span>
-        <Select
-          value={filterState ?? ""}
-          onChange={(v) => onFilterState(v || null)}
-          size="xs"
-          options={[
-            { value: "", label: "All states" },
-            ...STATES.map((s) => ({ value: s.id, label: s.label })),
-          ]}
-        />
-        <Select
-          value={filterPriority ?? ""}
-          onChange={(v) => onFilterPriority(v || null)}
-          size="xs"
-          options={[
-            { value: "", label: "All priorities" },
-            ...PRIORITIES.map((p) => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) })),
-          ]}
-        />
+        {!showArchived && (
+          <>
+            <span className="text-[11px] text-text-muted">Filter:</span>
+            <Select
+              value={filterState ?? ""}
+              onChange={(v) => onFilterState(v || null)}
+              size="xs"
+              options={[
+                { value: "", label: "All states" },
+                ...STATES.map((s) => ({ value: s.id, label: s.label })),
+              ]}
+            />
+            <Select
+              value={filterPriority ?? ""}
+              onChange={(v) => onFilterPriority(v || null)}
+              size="xs"
+              options={[
+                { value: "", label: "All priorities" },
+                ...PRIORITIES.map((p) => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) })),
+              ]}
+            />
+          </>
+        )}
+        {showArchived && (
+          <span className="text-[11px] text-amber-400 font-medium flex items-center gap-1">
+            <Archive size={11} />
+            Viewing archived features
+          </span>
+        )}
+        <div className="flex-1" />
+        {/* Archive toggle */}
+        <button
+          onClick={onToggleArchived}
+          className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] border transition-colors ${
+            showArchived
+              ? "border-amber-400/60 bg-amber-400/10 text-amber-400 hover:bg-amber-400/20"
+              : "border-border-strong/40 text-text-muted hover:text-text-base hover:border-border-strong/60"
+          }`}
+          title={showArchived ? "Hide archived features" : "View archived features"}
+        >
+          <Archive size={11} />
+          {showArchived ? "Hide Archived" : "View Archived"}
+        </button>
       </div>
 
       {/* List */}
       <div className="flex-1 overflow-y-auto custom-scrollbar">
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-text-muted py-12">
-            <Kanban size={22} />
-            <span className="text-[13px]">No features</span>
-            <button
-              onClick={onAddNew}
-              className="text-[12px] text-brand hover:text-brand-hover transition-colors"
-            >
-              Create the first one
-            </button>
+            {showArchived ? (
+              <>
+                <Archive size={22} />
+                <span className="text-[13px]">No archived features</span>
+              </>
+            ) : (
+              <>
+                <Kanban size={22} />
+                <span className="text-[13px]">No features</span>
+                <button
+                  onClick={onAddNew}
+                  className="text-[12px] text-brand hover:text-brand-hover transition-colors"
+                >
+                  Create the first one
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <table className="w-full text-[13px]">
@@ -1212,7 +1309,7 @@ function ListView({
                  <th className="text-left px-2 py-2 text-[11px] font-semibold text-text-muted uppercase tracking-wider w-24">
                    <SortableHeader label="Updated" column="updated" sort={sort} onSort={onSort} />
                  </th>
-                 <th className="px-2 py-2 w-16" />
+                 <th className="px-2 py-2 w-20" />
                </tr>
              </thead>
             <tbody>
@@ -1232,7 +1329,7 @@ function ListView({
                       <span className="font-mono text-[10px] text-text-muted shrink-0">
                         {ticketId(f)}
                       </span>
-                      <span className="font-medium text-text-base truncate min-w-0">
+                      <span className={`font-medium truncate min-w-0 ${f.archived ? "text-text-muted line-through" : "text-text-base"}`}>
                         {f.title}
                       </span>
                       {f.tags.length > 0 && (
@@ -1259,7 +1356,26 @@ function ListView({
                     {formatDate(f.updated_at)}
                   </td>
                   <td className="px-2 py-2">
-                    <PromptButton feature={f} />
+                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                      {f.archived ? (
+                        <button
+                          onClick={() => onUnarchive(f.id)}
+                          className="flex items-center gap-1 px-1.5 py-1 rounded text-[11px] text-amber-400 hover:bg-amber-400/10 transition-colors"
+                          title="Unarchive feature"
+                        >
+                          <ArchiveRestore size={12} />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => onArchive(f.id)}
+                          className="flex items-center gap-1 px-1.5 py-1 rounded text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors"
+                          title="Archive feature"
+                        >
+                          <Archive size={12} />
+                        </button>
+                      )}
+                      <PromptButton feature={f} />
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1557,6 +1673,9 @@ export default function Features({ projectName }: FeaturesProps) {
   const [filterState, setFilterState] = useState<string | null>(() => readStoredFilters(projectName).filterState);
   const [filterPriority, setFilterPriority] = useState<string | null>(() => readStoredFilters(projectName).filterPriority);
   const [sort, setSort] = useState<ListSort | null>(() => readStoredSort(projectName));
+  // When true, the list view shows archived features instead of active ones.
+  // Archived features are never shown in the Kanban board.
+  const [showArchived, setShowArchived] = useState(false);
 
   // All unique tags across all features — used for autocomplete suggestions
   const allTags = useMemo(
@@ -1577,6 +1696,7 @@ export default function Features({ projectName }: FeaturesProps) {
       const result = await invoke<Feature[]>("list_features", {
         project: projectName,
         state: null,
+        includeArchived: showArchived,
       });
       setFeatures(result);
     } catch (err: any) {
@@ -1584,7 +1704,7 @@ export default function Features({ projectName }: FeaturesProps) {
     } finally {
       setLoading(false);
     }
-  }, [projectName]);
+  }, [projectName, showArchived]);
 
   // Silent background refresh — does not touch loading/error state so the UI
   // does not flash. Used by the polling interval and post-move sync.
@@ -1595,6 +1715,7 @@ export default function Features({ projectName }: FeaturesProps) {
       const result = await invoke<Feature[]>("list_features", {
         project: projectName,
         state: null,
+        includeArchived: showArchived,
       });
       setFeatures((prev) => {
         if (prev.length !== result.length) return result;
@@ -1610,7 +1731,7 @@ export default function Features({ projectName }: FeaturesProps) {
     } catch {
       // Silently ignore transient poll failures.
     }
-  }, [projectName]);
+  }, [projectName, showArchived]);
 
   // Initial load
   useEffect(() => {
@@ -1629,6 +1750,7 @@ export default function Features({ projectName }: FeaturesProps) {
   useEffect(() => {
     setSelectedId(null);
     setIsCreating(false);
+    setShowArchived(false);
   }, [projectName]);
 
   useEffect(() => {
@@ -1731,6 +1853,59 @@ export default function Features({ projectName }: FeaturesProps) {
     setSelectedId(null);
   };
 
+  // Archive: remove from the current list (active features list) and close
+  // detail panel if it was open for the archived feature.
+  const handleArchived = (f: Feature) => {
+    if (!showArchived) {
+      setFeatures((prev) => prev.filter((x) => x.id !== f.id));
+      if (selectedId === f.id) setSelectedId(null);
+    } else {
+      setFeatures((prev) => prev.map((x) => (x.id === f.id ? f : x)));
+    }
+  };
+
+  // Unarchive: remove from the archived list and close the detail panel.
+  const handleUnarchived = (f: Feature) => {
+    if (showArchived) {
+      setFeatures((prev) => prev.filter((x) => x.id !== f.id));
+      if (selectedId === f.id) setSelectedId(null);
+    } else {
+      setFeatures((prev) => prev.map((x) => (x.id === f.id ? f : x)));
+    }
+  };
+
+  // Archive from list row (no detail panel interaction needed)
+  const handleArchiveById = async (id: string) => {
+    try {
+      const updated = await invoke<Feature>("archive_feature", {
+        project: projectName,
+        featureId: id,
+      });
+      handleArchived(updated);
+    } catch (err: any) {
+      setError(String(err));
+    }
+  };
+
+  const handleUnarchiveById = async (id: string) => {
+    try {
+      const updated = await invoke<Feature>("unarchive_feature", {
+        project: projectName,
+        featureId: id,
+      });
+      handleUnarchived(updated);
+    } catch (err: any) {
+      setError(String(err));
+    }
+  };
+
+  const handleToggleArchived = () => {
+    setShowArchived((prev) => !prev);
+    // Close any open detail panel / create panel when switching archive mode
+    setSelectedId(null);
+    setIsCreating(false);
+  };
+
   const handleMove = async (
     featureId: string,
     newState: string,
@@ -1787,7 +1962,16 @@ export default function Features({ projectName }: FeaturesProps) {
               <List size={11} /> List
             </button>
             <button
-              onClick={() => setView("kanban")}
+              onClick={() => {
+                // Switching to board: exit archived mode so the kanban data is
+                // always the active feature set.
+                if (showArchived) {
+                  setShowArchived(false);
+                  setSelectedId(null);
+                  setIsCreating(false);
+                }
+                setView("kanban");
+              }}
               className={`flex items-center gap-1 px-2 py-1 text-[11px] transition-colors ${
                 view === "kanban"
                   ? "bg-bg-sidebar text-text-base"
@@ -1802,7 +1986,7 @@ export default function Features({ projectName }: FeaturesProps) {
               setSelectedId(null);
               setIsCreating(true);
             }}
-            disabled={isCreating}
+            disabled={isCreating || showArchived}
             className="flex items-center gap-1 px-2.5 py-1 rounded bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-default text-white text-[11px] font-medium transition-colors"
           >
             <Plus size={11} /> New feature
@@ -1832,6 +2016,7 @@ export default function Features({ projectName }: FeaturesProps) {
             filterState={filterState}
             filterPriority={filterPriority}
             sort={sort}
+            showArchived={showArchived}
             onSelect={handleSelect}
             onFilterState={setFilterState}
             onFilterPriority={setFilterPriority}
@@ -1840,8 +2025,13 @@ export default function Features({ projectName }: FeaturesProps) {
               setSelectedId(null);
               setIsCreating(true);
             }}
+            onToggleArchived={handleToggleArchived}
+            onArchive={handleArchiveById}
+            onUnarchive={handleUnarchiveById}
           />
         ) : (
+          // KanbanView never shows archived features — they are excluded at the
+          // query level (showArchived is always false when in kanban mode).
           <KanbanView
             features={features}
             selectedId={selectedId}
@@ -1877,6 +2067,8 @@ export default function Features({ projectName }: FeaturesProps) {
                 onClose={() => setSelectedId(null)}
                 onUpdated={handleUpdated}
                 onDeleted={handleDeleted}
+                onArchived={handleArchived}
+                onUnarchived={handleUnarchived}
               />
             ) : null}
           </div>
