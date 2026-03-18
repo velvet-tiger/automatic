@@ -6,10 +6,16 @@ use super::{sync_individual_skills, Agent, AgentCapabilities};
 /// Warp agent — uses `AGENTS.md` as the project rules file and stores
 /// skills under `<project>/.agents/skills/<name>/SKILL.md`.
 ///
-/// **MCP note**: Warp manages MCP servers through its own GUI and SQLite
+/// Warp migrated from `WARP.md` to `AGENTS.md` as the canonical project rules
+/// filename (the old name is still supported for backwards compatibility, but
+/// new projects should use `AGENTS.md`).  Detection still matches `.warp/`
+/// directories and legacy `WARP.md` files so that existing projects continue to
+/// be recognised.
+///
+/// **MCP note**: Warp manages MCP servers through its own GUI and internal
 /// database — there is no project-level config file that Automatic can write.
 /// MCP servers must be configured manually inside the Warp app
-/// (Settings > MCP Servers).
+/// (Settings › MCP Servers or Warp Drive › MCP Servers).
 pub struct Warp;
 
 impl Agent for Warp {
@@ -28,14 +34,18 @@ impl Agent for Warp {
     }
 
     fn project_file_name(&self) -> &'static str {
-        "WARP.md"
+        // Warp's canonical project rules file is now AGENTS.md.
+        // WARP.md is still recognised for backwards compatibility.
+        "AGENTS.md"
     }
 
     // ── Detection ───────────────────────────────────────────────────────
 
     fn detect_in(&self, dir: &Path) -> bool {
-        // AGENTS.md is shared with Codex CLI — only count it as Warp when
-        // a Warp-specific marker is also present.
+        // Detect via the `.warp/` directory or legacy `WARP.md`.
+        // We do NOT match on AGENTS.md alone because that is shared with
+        // Codex CLI and many other agents — a Warp-specific marker must
+        // also be present to avoid false positives.
         dir.join("WARP.md").exists() || dir.join(".warp").is_dir()
     }
 
@@ -58,19 +68,20 @@ impl Agent for Warp {
 
     fn mcp_note(&self) -> Option<&'static str> {
         Some(
-            "Warp manages MCP servers through its own app (Settings \u{203a} MCP Servers). \
-             Automatic cannot write Warp's MCP config — add servers manually in Warp.",
+            "Warp manages MCP servers through its own app (Settings \u{203a} AI \u{203a} MCP Servers \
+             or Warp Drive \u{203a} MCP Servers). Automatic cannot write Warp\u{2019}s MCP config \
+             \u{2014} add servers manually in Warp.",
         )
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
-    /// `WARP.md` is the Automatic-managed project rules file for Warp.
-    /// Returning it here ensures it is deleted when Warp is removed from a
-    /// project, which also prevents `detect_in` from re-adding Warp on the
-    /// next autodetect pass.
+    /// Return both the current canonical file (`AGENTS.md`) and the legacy
+    /// file (`WARP.md`) so that either variant is cleaned up when Warp is
+    /// removed from a project.  Only paths that actually exist on disk are
+    /// acted on by the default `cleanup_mcp_config` implementation.
     fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
-        vec![dir.join("WARP.md")]
+        vec![dir.join("AGENTS.md"), dir.join("WARP.md")]
     }
 
     // ── Config writing ──────────────────────────────────────────────────
@@ -164,20 +175,36 @@ mod tests {
     }
 
     #[test]
-    fn test_owned_config_paths_includes_warp_md() {
+    fn test_owned_config_paths_includes_both_files() {
         let dir = tempdir().unwrap();
         let paths = Warp.owned_config_paths(dir.path());
-        assert_eq!(paths, vec![dir.path().join("WARP.md")]);
+        // Both the canonical AGENTS.md and legacy WARP.md are included.
+        assert!(paths.contains(&dir.path().join("AGENTS.md")));
+        assert!(paths.contains(&dir.path().join("WARP.md")));
     }
 
     #[test]
-    fn test_cleanup_removes_warp_md() {
+    fn test_cleanup_removes_agents_md() {
+        let dir = tempdir().unwrap();
+        let agents_md = dir.path().join("AGENTS.md");
+        fs::write(&agents_md, "# Warp context\n").unwrap();
+        assert!(agents_md.exists());
+
+        // cleanup_mcp_config uses the default impl which deletes owned_config_paths
+        // that exist on disk.  Only AGENTS.md exists here.
+        use super::super::Agent as _;
+        let removed = Warp.cleanup_mcp_config(dir.path());
+        assert_eq!(removed, vec![agents_md.display().to_string()]);
+        assert!(!agents_md.exists(), "AGENTS.md should have been deleted");
+    }
+
+    #[test]
+    fn test_cleanup_removes_warp_md_legacy() {
         let dir = tempdir().unwrap();
         let warp_md = dir.path().join("WARP.md");
         fs::write(&warp_md, "# Warp context\n").unwrap();
         assert!(warp_md.exists());
 
-        // cleanup_mcp_config uses the default impl which deletes owned_config_paths
         use super::super::Agent as _;
         let removed = Warp.cleanup_mcp_config(dir.path());
         assert_eq!(removed, vec![warp_md.display().to_string()]);
