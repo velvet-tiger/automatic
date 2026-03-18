@@ -4,11 +4,45 @@ use std::path::{Path, PathBuf};
 
 use super::{discover_mcp_servers_from_json, sync_individual_skills, Agent};
 
-/// Google Antigravity agent — writes `.antigravity/mcp.json` and stores
-/// skills under `<project>/.agents/skills/<name>/SKILL.md`.
+/// Google Antigravity agent — stores skills under
+/// `<project>/.agents/skills/<name>/SKILL.md`.
 ///
-/// Antigravity is Google's coding agent/IDE.  MCP config is stored in
-/// `.antigravity/mcp.json` using the standard `mcpServers` JSON format.
+/// ## Project instructions
+///
+/// Antigravity reads `GEMINI.md` at the project root — it does **not** treat
+/// `AGENTS.md` as special (confirmed via community testing).  Global
+/// instructions also live in `~/.gemini/GEMINI.md`, shared with Gemini CLI.
+///
+/// In addition, Antigravity has a rules system: individual Markdown files in
+/// `.agents/rules/` (workspace) activated manually, always-on, by model
+/// decision, or by glob pattern.  Rule syncing is not currently supported by
+/// Automatic.
+///
+/// Note: `.agent/rules/` is retained for backward compatibility.
+///
+/// ## Skills
+///
+/// Workspace skills: `<project>/.agents/skills/<name>/SKILL.md` ✓
+/// Global skills:    `~/.gemini/antigravity/skills/<name>/SKILL.md`
+///                   (not synced by Automatic — managed globally)
+///
+/// Note: `.agent/skills/` is retained for backward compatibility.
+///
+/// ## MCP config
+///
+/// Antigravity manages MCP servers globally through its own UI:
+/// Agent session → "…" → MCP Servers → Manage MCP Servers → View raw config.
+/// The config file is `mcp_config.json` in Antigravity's application data
+/// directory.  There is no project-scoped MCP config file.
+///
+/// Format uses `mcpServers` with standard stdio entries (no explicit `type`):
+/// ```json
+/// { "mcpServers": { "my-server": { "command": "npx", "args": ["-y", "..."] } } }
+/// ```
+///
+/// The exact filesystem path of `mcp_config.json` is pending documentation.
+/// Once confirmed, `write_mcp_config` and `discover_global_mcp_servers` should
+/// be updated to read/write that path directly.
 pub struct Antigravity;
 
 impl Agent for Antigravity {
@@ -23,17 +57,44 @@ impl Agent for Antigravity {
     }
 
     fn config_description(&self) -> &'static str {
-        ".antigravity/mcp.json"
+        "GEMINI.md (MCP configured via Antigravity UI)"
     }
 
     fn project_file_name(&self) -> &'static str {
-        "AGENTS.md"
+        // Antigravity reads GEMINI.md (confirmed via community testing —
+        // it does NOT treat AGENTS.md as special, despite the open standard).
+        // Global rules also live in ~/.gemini/GEMINI.md, shared with Gemini CLI.
+        "GEMINI.md"
+    }
+
+    // ── Capabilities ────────────────────────────────────────────────────
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            // MCP config is global, managed via the Antigravity UI.
+            mcp_servers: false,
+            ..Default::default()
+        }
+    }
+
+    // ── MCP note ────────────────────────────────────────────────────────
+
+    fn mcp_note(&self) -> Option<&'static str> {
+        Some(
+            "Antigravity manages MCP servers via its own UI: Agent session \u{2192} \u{22ef} \u{2192} \
+             MCP Servers \u{2192} Manage MCP Servers \u{2192} View raw config. \
+             Automatic cannot write Antigravity\u{2019}s mcp_config.json.",
+        )
     }
 
     // ── Detection ───────────────────────────────────────────────────────
 
     fn detect_in(&self, dir: &Path) -> bool {
-        dir.join(".antigravity").join("mcp.json").exists() || dir.join(".antigravity").exists()
+        // GEMINI.md is shared with Gemini CLI so we cannot use it as a sole
+        // marker — a Gemini-specific indicator must also be present.
+        // The .antigravity/ directory is created by the Antigravity app itself
+        // and is the most reliable project-level signal.
+        dir.join(".antigravity").is_dir()
     }
 
     fn skill_dirs(&self, dir: &Path) -> Vec<PathBuf> {
@@ -42,65 +103,20 @@ impl Agent for Antigravity {
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
-    /// `detect_in` matches the `.antigravity/` directory itself, so we must
-    /// remove the whole directory on cleanup — not just `mcp.json` inside it —
-    /// otherwise the empty dir re-triggers detection on the next autodetect.
-    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
-        let ag_dir = dir.join(".antigravity");
-        if ag_dir.exists() {
-            if fs::remove_dir_all(&ag_dir).is_ok() {
-                return vec![ag_dir.display().to_string()];
-            }
-        }
-        vec![]
-    }
-
-    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
-        let ag_dir = dir.join(".antigravity");
-        if ag_dir.exists() {
-            vec![ag_dir.display().to_string()]
-        } else {
-            vec![]
-        }
-    }
+    // No project-level MCP config files to clean up.
+    // owned_config_paths defaults to empty vec, which is correct here.
 
     // ── Config writing ──────────────────────────────────────────────────
 
-    fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
-        let mut ag_servers = Map::new();
-
-        for (name, config) in servers {
-            let transport = config
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("stdio");
-
-            let mut server = config.clone();
-            if let Some(obj) = server.as_object_mut() {
-                if transport == "stdio" {
-                    obj.remove("type");
-                    obj.remove("enabled");
-                    obj.remove("timeout");
-                }
-            }
-            ag_servers.insert(name.clone(), server);
-        }
-
-        let output = json!({ "mcpServers": Value::Object(ag_servers) });
-
-        let ag_dir = dir.join(".antigravity");
-        if !ag_dir.exists() {
-            fs::create_dir_all(&ag_dir)
-                .map_err(|e| format!("Failed to create .antigravity/: {}", e))?;
-        }
-
-        let path = ag_dir.join("mcp.json");
-        let content =
-            serde_json::to_string_pretty(&output).map_err(|e| format!("JSON error: {}", e))?;
-        fs::write(&path, content)
-            .map_err(|e| format!("Failed to write .antigravity/mcp.json: {}", e))?;
-
-        Ok(path.display().to_string())
+    /// Antigravity has no project-level MCP config file.
+    /// This is intentionally a no-op; servers must be added through the
+    /// Antigravity MCP Servers panel.
+    fn write_mcp_config(
+        &self,
+        _dir: &Path,
+        _servers: &Map<String, Value>,
+    ) -> Result<String, String> {
+        Ok(String::new())
     }
 
     fn sync_skills(
@@ -124,34 +140,21 @@ impl Agent for Antigravity {
 
     // ── Discovery ───────────────────────────────────────────────────────
 
-    fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value> {
-        let path = dir.join(".antigravity").join("mcp.json");
-        if !path.exists() {
-            return Map::new();
-        }
-        discover_mcp_servers_from_json(&path, "mcpServers", identity)
+    /// No project-level MCP config file to discover from.
+    fn discover_mcp_servers(&self, _dir: &Path) -> Map<String, Value> {
+        Map::new()
     }
 
     fn detect_global_install(&self) -> bool {
         std::path::Path::new("/Applications/Antigravity.app").exists()
-            || super::home_dir()
-                .map(|h| h.join(".antigravity").exists())
-                .unwrap_or(false)
     }
 
     fn discover_global_mcp_servers(&self) -> Map<String, Value> {
-        let Some(home) = super::home_dir() else {
-            return Map::new();
-        };
-        // ~/.antigravity/mcp.json — speculative global config path
-        let path = home.join(".antigravity").join("mcp.json");
-        discover_mcp_servers_from_json(&path, "mcpServers", identity)
+        // Antigravity stores its MCP config at a platform-specific app data
+        // path under the name mcp_config.json.  The exact path is not
+        // publicly documented; discovery is not implemented.
+        Map::new()
     }
-}
-
-/// Pass-through normaliser: Antigravity's format is already canonical.
-fn identity(v: Value) -> Value {
-    v
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -162,95 +165,62 @@ mod tests {
     use serde_json::json;
     use tempfile::tempdir;
 
-    fn stdio_servers() -> Map<String, Value> {
-        let mut s = Map::new();
-        s.insert(
-            "automatic".to_string(),
-            json!({"type":"stdio","command":"/usr/local/bin/automatic","args":["mcp-serve"]}),
-        );
-        s
-    }
-
-    fn http_servers() -> Map<String, Value> {
-        let mut s = Map::new();
-        s.insert(
-            "remote-api".to_string(),
-            json!({"type":"http","url":"https://api.example.com/mcp"}),
-        );
-        s
-    }
-
     #[test]
-    fn test_detect() {
+    fn test_detect_on_antigravity_dir() {
         let dir = tempdir().unwrap();
         assert!(!Antigravity.detect_in(dir.path()));
 
-        fs::create_dir_all(dir.path().join(".antigravity")).unwrap();
-        fs::write(dir.path().join(".antigravity/mcp.json"), "{}").unwrap();
-        assert!(Antigravity.detect_in(dir.path()));
-    }
-
-    #[test]
-    fn test_detect_dir_only() {
-        let dir = tempdir().unwrap();
+        // The .antigravity/ directory is created by the Antigravity app itself.
         fs::create_dir_all(dir.path().join(".antigravity")).unwrap();
         assert!(Antigravity.detect_in(dir.path()));
     }
 
     #[test]
-    fn test_cleanup_removes_antigravity_dir() {
-        let dir = tempdir().unwrap();
-        let ag_dir = dir.path().join(".antigravity");
-        fs::create_dir_all(&ag_dir).unwrap();
-        fs::write(ag_dir.join("mcp.json"), "{}").unwrap();
-        assert!(ag_dir.exists());
-
-        let removed = Antigravity.cleanup_mcp_config(dir.path());
-        assert_eq!(removed, vec![ag_dir.display().to_string()]);
-        assert!(!ag_dir.exists(), ".antigravity/ should be deleted");
+    fn test_mcp_capability_disabled() {
+        assert!(!Antigravity.capabilities().mcp_servers);
     }
 
     #[test]
-    fn test_cleanup_preview_antigravity_dir() {
-        let dir = tempdir().unwrap();
-        assert!(Antigravity.cleanup_mcp_preview(dir.path()).is_empty());
-
-        let ag_dir = dir.path().join(".antigravity");
-        fs::create_dir_all(&ag_dir).unwrap();
-        let preview = Antigravity.cleanup_mcp_preview(dir.path());
-        assert_eq!(preview, vec![ag_dir.display().to_string()]);
+    fn test_mcp_note_is_some() {
+        assert!(Antigravity.mcp_note().is_some());
     }
 
     #[test]
-    fn test_write_stdio() {
+    fn test_write_mcp_config_is_noop() {
         let dir = tempdir().unwrap();
-        Antigravity
-            .write_mcp_config(dir.path(), &stdio_servers())
-            .unwrap();
-
-        let content = fs::read_to_string(dir.path().join(".antigravity/mcp.json")).unwrap();
-        let parsed: Value = serde_json::from_str(&content).unwrap();
-
-        assert!(parsed["mcpServers"]["automatic"]["type"].is_null());
-        assert!(parsed["mcpServers"]["automatic"]["command"]
-            .as_str()
-            .unwrap()
-            .contains("automatic"));
-    }
-
-    #[test]
-    fn test_write_http() {
-        let dir = tempdir().unwrap();
-        Antigravity
-            .write_mcp_config(dir.path(), &http_servers())
-            .unwrap();
-
-        let content = fs::read_to_string(dir.path().join(".antigravity/mcp.json")).unwrap();
-        let parsed: Value = serde_json::from_str(&content).unwrap();
-
-        assert_eq!(
-            parsed["mcpServers"]["remote-api"]["type"].as_str().unwrap(),
-            "http"
+        let mut servers = Map::new();
+        servers.insert(
+            "sequential-thinking".to_string(),
+            json!({"command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]}),
         );
+
+        let result = Antigravity.write_mcp_config(dir.path(), &servers);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "");
+
+        let entries: Vec<_> = fs::read_dir(dir.path()).unwrap().collect();
+        assert!(entries.is_empty(), "no files should be written");
+    }
+
+    #[test]
+    fn test_discover_mcp_servers_always_empty() {
+        let dir = tempdir().unwrap();
+        assert!(Antigravity.discover_mcp_servers(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn test_skill_sync() {
+        let dir = tempdir().unwrap();
+        let skills = vec![("my-skill".to_string(), "# My Skill\n".to_string())];
+        let selected = vec!["my-skill".to_string()];
+
+        let written = Antigravity
+            .sync_skills(dir.path(), &skills, &selected, &[])
+            .unwrap();
+        assert_eq!(written.len(), 1);
+
+        let content =
+            fs::read_to_string(dir.path().join(".agents/skills/my-skill/SKILL.md")).unwrap();
+        assert_eq!(content, "# My Skill\n");
     }
 }
