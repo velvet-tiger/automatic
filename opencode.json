@@ -5,6 +5,14 @@
       "type": "remote",
       "url": "https://mcp.clerk.com/mcp"
     },
+    "Linear": {
+      "type": "remote",
+      "url": "https://mcp.linear.app/mcp"
+    },
+    "Sentry": {
+      "type": "remote",
+      "url": "https://mcp.sentry.dev/mcp"
+    },
     "amplitude-eu": {
       "command": [
         "/Users/xtfer/working/velvet-tiger/automatic/automatic-app/src-tauri/target/debug/automatic",
