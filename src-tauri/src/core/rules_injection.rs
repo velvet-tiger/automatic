@@ -385,15 +385,6 @@ pub fn build_groups_section(
     let mut parts: Vec<String> = Vec::new();
 
     for group in groups {
-        let mut lines: Vec<String> = Vec::new();
-
-        let group_header = if group.description.trim().is_empty() {
-            format!("## Group: {}", group.name)
-        } else {
-            format!("## Group: {}\n\n{}", group.name, group.description.trim())
-        };
-        lines.push(group_header);
-
         // List peer projects (all members except this project itself).
         let peers: Vec<&String> = group
             .projects
@@ -401,12 +392,20 @@ pub fn build_groups_section(
             .filter(|p| p.as_str() != this_project_name)
             .collect();
 
+        // "### GroupName" heading, with description directly beneath.
+        let mut block = String::new();
+        block.push_str(&format!("### {}\n", group.name));
+        if !group.description.trim().is_empty() {
+            block.push_str(group.description.trim());
+            block.push('\n');
+        }
+
+        // Peer project entries.
         if peers.is_empty() {
-            lines.push("No other projects in this group yet.".to_string());
+            block.push_str("No other projects in this group yet.");
+            block.push('\n');
         } else {
-            lines.push("\n### Related projects\n".to_string());
             for peer_name in peers {
-                // Look up the peer project to get its description and directory.
                 let (peer_desc, peer_rel_path) = match crate::core::read_project(peer_name) {
                     Ok(raw) => match serde_json::from_str::<crate::core::Project>(&raw) {
                         Ok(p) => {
@@ -425,18 +424,21 @@ pub fn build_groups_section(
                 if !peer_rel_path.is_empty() {
                     entry.push_str(&format!("\nLocation: `{}`", peer_rel_path));
                 }
-                lines.push(entry);
+                block.push_str(&entry);
+                block.push('\n');
             }
         }
 
-        parts.push(lines.join("\n\n"));
+        parts.push(block);
     }
 
     if parts.is_empty() {
         return String::new();
     }
 
-    let inner = parts.join("\n\n---\n\n");
+    // Single "## Related Projects" heading wraps all groups.
+    let mut inner = String::from("## Related Projects\n");
+    inner.push_str(&parts.join("\n"));
 
     format!("{}\n{}\n{}", GROUPS_START_MARKER, inner, GROUPS_END_MARKER)
 }

@@ -289,12 +289,13 @@ export default function ProjectGroups({ onNavigateToProject }: ProjectGroupsProp
               <div>
                 <label className="block text-[12px] font-medium text-text-muted mb-1">
                   Description
+                  <span className="ml-1.5 font-normal opacity-60">— injected into all member project instructions</span>
                 </label>
                 <input
                   type="text"
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
-                  placeholder="Short description injected into agent instructions"
+                  placeholder="e.g. Backend services sharing a common API contract"
                   className="w-full px-3 py-1.5 rounded-md bg-bg-input border border-border-strong/50 text-text-base text-[13px] placeholder:text-text-muted/50 focus:outline-none focus:border-brand/60"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleCreateGroup();
@@ -360,7 +361,7 @@ export default function ProjectGroups({ onNavigateToProject }: ProjectGroupsProp
                     type="text"
                     value={editDescription}
                     onChange={(e) => setEditDescription(e.target.value)}
-                    placeholder="Short description injected into agent instructions"
+                    placeholder="e.g. Backend services sharing a common API contract"
                     className="w-full px-3 py-1.5 rounded-md bg-bg-input border border-border-strong/50 text-text-base text-[13px] placeholder:text-text-muted/50 focus:outline-none focus:border-brand/60"
                     autoFocus
                     onKeyDown={(e) => {
@@ -394,7 +395,7 @@ export default function ProjectGroups({ onNavigateToProject }: ProjectGroupsProp
               ) : (
                 <p className="text-[13px] text-text-muted">
                   {group.description.trim() || (
-                    <span className="italic opacity-60">No description. Click the edit icon to add one.</span>
+                    <span className="italic opacity-60">No description. Add one — it will be injected into all member project instructions.</span>
                   )}
                 </p>
               )}
