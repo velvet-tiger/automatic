@@ -34,6 +34,10 @@ pub fn get_projects_dir() -> Result<PathBuf, String> {
     Ok(get_automatic_dir()?.join("projects"))
 }
 
+pub fn get_groups_dir() -> Result<PathBuf, String> {
+    Ok(get_automatic_dir()?.join("groups"))
+}
+
 pub fn is_valid_name(name: &str) -> bool {
     !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
 }

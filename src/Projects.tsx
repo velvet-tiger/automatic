@@ -72,6 +72,7 @@ import {
   MinusCircle,
   Globe,
   Puzzle,
+  Layers,
 } from "lucide-react";
 
 interface CustomRule {
@@ -2175,7 +2176,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "features" | "activity" | "recommendations";
+  type ProjectTab = "summary" | "agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "features" | "activity" | "recommendations";
   type ProjectGroup = "summary" | "configuration" | "instructions" | "documentation" | "runtime" | "planning" | "insights" | "tools";
 
   const PROJECT_GROUPS: {
@@ -2191,6 +2192,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         { id: "agents", label: "Providers" },
         { id: "skills", label: "Skills" },
         { id: "mcp_servers", label: "MCP Servers" },
+        { id: "groups", label: "Groups" },
       ],
     },
     {
@@ -2282,6 +2284,12 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   // Memory state
   const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
   const [loadingMemories, setLoadingMemories] = useState(false);
+
+  // Groups state — names of all groups this project belongs to, and the full
+  // list of all available groups (for the "add to group" picker).
+  const [projectGroupMemberships, setProjectGroupMemberships] = useState<string[]>([]);
+  const [allGroups, setAllGroups] = useState<string[]>([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
 
   // Recommendations state
   const [recommendations, setRecommendations] = useState<ProjectRecommendation[]>([]);
@@ -2516,7 +2524,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   // After a project is selected via initialProject, switch to the requested tab.
   useEffect(() => {
     if (!initialProjectTab) return;
-    const validTabs = ["summary", "agents", "skills", "mcp_servers", "project_file", "rules", "context", "memory", "activity", "recommendations"] as const;
+    const validTabs = ["summary", "agents", "skills", "mcp_servers", "groups", "project_file", "rules", "context", "memory", "activity", "recommendations"] as const;
     type ProjectTab = typeof validTabs[number];
     if (validTabs.includes(initialProjectTab as ProjectTab)) {
       selectTab(initialProjectTab as ProjectTab);
@@ -3150,6 +3158,61 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     }
   };
 
+  /** Load which groups this project belongs to, and all available groups. */
+  const loadGroups = async (projectName: string) => {
+    try {
+      setLoadingGroups(true);
+      // Clear stale data immediately so UI doesn't show previous project's groups.
+      setProjectGroupMemberships([]);
+      const [memberships, available] = await Promise.all([
+        invoke<string[]>("groups_for_project", { projectName }),
+        invoke<string[]>("list_groups"),
+      ]);
+      setProjectGroupMemberships(memberships);
+      setAllGroups(available.sort((a, b) => a.localeCompare(b)));
+    } catch (err: any) {
+      console.error("Failed to load groups:", err);
+      setError(`Failed to load groups: ${err}`);
+    } finally {
+      setLoadingGroups(false);
+    }
+  };
+
+  /** Add this project to a group, save the group, then re-sync the project so
+   *  the group context block is immediately written to its instruction files. */
+  const handleAddToGroup = async (groupName: string, projectName: string) => {
+    try {
+      const raw: string = await invoke("read_group", { name: groupName });
+      const g = JSON.parse(raw);
+      if (!g.projects.includes(projectName)) {
+        g.projects.push(projectName);
+        g.updated_at = new Date().toISOString();
+        await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
+        setProjectGroupMemberships((prev) => [...prev, groupName].sort((a, b) => a.localeCompare(b)));
+        // Re-sync so the group context block appears in instruction files immediately.
+        await invoke("sync_project", { name: projectName });
+      }
+    } catch (err: any) {
+      setError(`Failed to add to group: ${err}`);
+    }
+  };
+
+  /** Remove this project from a group, save, then re-sync to strip the context block. */
+  const handleRemoveFromGroup = async (groupName: string, projectName: string) => {
+    try {
+      const raw: string = await invoke("read_group", { name: groupName });
+      const g = JSON.parse(raw);
+      g.projects = g.projects.filter((p: string) => p !== projectName);
+      g.updated_at = new Date().toISOString();
+      await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
+      setProjectGroupMemberships((prev) => prev.filter((n) => n !== groupName));
+      // Re-sync so the group context block is removed from instruction files.
+      await invoke("sync_project", { name: projectName });
+    } catch (err: any) {
+      setError(`Failed to remove from group: ${err}`);
+    }
+  };
+
   const loadContext = async (projectName: string) => {
     try {
       setLoadingContext(true);
@@ -3719,6 +3782,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         setProjectFileDirty(false);
       }
       await loadMemories(name);
+      await loadGroups(name);
       await loadActivity(name);
       await loadRecommendations(name);
       await loadContext(name);
@@ -3776,6 +3840,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       await loadAvailableSkills();
       await loadAvailableMcpServers();
       await loadMemories(name);
+      await loadGroups(name);
       await loadActivity(name);
       await loadContext(name);
       notifyProjectUpdated();
@@ -8399,6 +8464,107 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                         ))}
                       </div>
                     ) : null}
+                  </section>
+                )}
+
+                {/* ── Groups tab ───────────────────────────────────── */}
+                {projectTab === "groups" && selectedName && (
+                  <section className="space-y-4">
+                    {/* Header */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Layers size={13} className="text-text-muted" />
+                        <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Project Groups</span>
+                        {projectGroupMemberships.length > 0 && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-bg-sidebar text-text-muted border border-border-strong/30 leading-none">
+                            {projectGroupMemberships.length}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => loadGroups(selectedName)}
+                        disabled={loadingGroups}
+                        className="text-[11px] text-text-muted hover:text-text-base transition-colors flex items-center gap-1 disabled:opacity-40"
+                        title="Refresh"
+                      >
+                        <RefreshCw size={11} className={loadingGroups ? "animate-spin" : ""} />
+                        Refresh
+                      </button>
+                    </div>
+
+                    {/* Current memberships */}
+                    {loadingGroups ? (
+                      <div className="bg-bg-input border border-border-strong/40 rounded-lg px-4 py-6 flex items-center gap-2 text-text-muted text-[12px]">
+                        <RefreshCw size={12} className="animate-spin" />
+                        Loading groups…
+                      </div>
+                    ) : projectGroupMemberships.length === 0 ? (
+                      <div className="bg-bg-input border border-border-strong/40 rounded-lg px-4 py-8 text-center">
+                        <Layers size={18} className="text-text-muted/40 mx-auto mb-2" />
+                        <p className="text-[13px] font-medium text-text-base mb-1">Not in any group</p>
+                        <p className="text-[12px] text-text-muted">
+                          Add this project to a group to link it with related projects.
+                          When synced, agents will see context about all projects in the group.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                        {projectGroupMemberships.map((groupName) => (
+                          <div key={groupName} className="flex items-center gap-3 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
+                            <Layers size={13} className="text-text-muted flex-shrink-0" />
+                            <span className="flex-1 text-[13px] text-text-base">{groupName}</span>
+                            <button
+                              onClick={() => handleRemoveFromGroup(groupName, selectedName)}
+                              className="flex-shrink-0 p-1 text-text-muted hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                              title={`Remove from "${groupName}"`}
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Add to a group picker */}
+                    {(() => {
+                      const available = allGroups.filter((g) => !projectGroupMemberships.includes(g));
+                      if (available.length === 0 && allGroups.length > 0 && !loadingGroups) return null;
+                      return (
+                        <div>
+                          <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
+                            {allGroups.length === 0 ? "No groups exist yet" : "Add to group"}
+                          </p>
+                          {allGroups.length === 0 ? (
+                            <p className="text-[12px] text-text-muted">
+                              Create groups from the <strong>Groups</strong> section in the sidebar to start linking related projects.
+                            </p>
+                          ) : available.length > 0 ? (
+                            <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
+                              {available.map((groupName) => (
+                                <button
+                                  key={groupName}
+                                  onClick={() => handleAddToGroup(groupName, selectedName)}
+                                  className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-surface-hover transition-colors"
+                                >
+                                  <Plus size={12} className="text-text-muted flex-shrink-0" />
+                                  <span className="flex-1 text-[13px] text-text-muted">{groupName}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Callout */}
+                    <div className="rounded-md bg-bg-input border border-border-strong/30 px-3 py-2.5 text-[12px] text-text-muted space-y-1">
+                      <p className="font-medium text-text-base">How groups work</p>
+                      <p>
+                        When this project is synced, Automatic injects a context block into its agent instruction
+                        files listing all related projects — with their descriptions and relative paths — so
+                        agents can recognise and navigate between them.
+                      </p>
+                    </div>
                   </section>
                 )}
 

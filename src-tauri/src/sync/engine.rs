@@ -106,6 +106,9 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         &mut written_files,
     )?;
 
+    // Look up all groups this project belongs to once, before the per-agent loop.
+    let project_groups = crate::core::groups_for_project(&project.name);
+
     // ── Step 2: Per-agent config (MCP, symlinks, project-file cleanup) ────
     let mut cleaned_project_files = HashSet::new();
     for agent_id in &project.agents {
@@ -142,6 +145,21 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                     if let Ok(path) = clean_project_file(&dir, pf) {
                         if let Some(p) = path {
                             written_files.push(p);
+                        }
+                    }
+
+                    // Inject (or update) the project-group context block.
+                    // This sits between the user content and the rules section
+                    // so agents can discover related projects.
+                    if let Ok(true) = crate::core::inject_groups_into_project_file(
+                        &project.directory,
+                        pf,
+                        &project.name,
+                        &project_groups,
+                    ) {
+                        let groups_path = dir.join(pf).display().to_string();
+                        if !written_files.contains(&groups_path) {
+                            written_files.push(groups_path);
                         }
                     }
 

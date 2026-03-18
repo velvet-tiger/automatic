@@ -10,6 +10,7 @@ import Dashboard from "./Dashboard";
 import Skills from "./Skills";
 import SkillStore from "./SkillStore";
 import Projects from "./Projects";
+import ProjectGroups from "./ProjectGroups";
 import ProjectTemplates from "./ProjectTemplates";
 import McpServers from "./McpServers";
 import Templates from "./Templates";
@@ -311,7 +312,8 @@ function App() {
             </div>
             <ul className="space-y-0.5">
               <NavItem id="projects" icon={FolderOpen} label="Projects" />
-              <NavItem id="project-templates" icon={Layers} label="Templates" />
+              <NavItem id="project-groups" icon={Layers} label="Groups" />
+              <NavItem id="project-templates" icon={LayoutTemplate} label="Templates" />
               <NavItem id="templates" icon={LayoutTemplate} label="Instructions" />
               <NavItem id="rules" icon={ScrollText} label="Rules" />
               <NavItem id="skills" icon={Code} label="Skills" />
@@ -499,6 +501,13 @@ function App() {
                 onNavigateToMcpMarketplace={navigateToMcpMarketplace}
                 initialCreateWithTemplate={pendingCreateWithTemplate}
                 onInitialCreateWithTemplateConsumed={() => setPendingCreateWithTemplate(null)}
+              />
+            </div>
+          )}
+          {activeTab === "project-groups" && (
+            <div className="flex-1 h-full">
+              <ProjectGroups
+                onNavigateToProject={navigateToProject}
               />
             </div>
           )}

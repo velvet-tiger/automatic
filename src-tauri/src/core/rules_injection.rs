@@ -306,15 +306,18 @@ pub fn inject_rules_into_project_file_with_custom(
     }
 
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let user_content = strip_rules_section(&strip_managed_section(&raw));
+    // Strip both managed sections so we start from pure user content.
+    let user_content = strip_groups_section(&strip_rules_section(&strip_managed_section(&raw)));
 
     let rules_section = build_rules_section_with_custom(rule_names, custom_contents)?;
 
-    let full_content = if rules_section.is_empty() {
-        user_content.clone()
-    } else {
-        format!("{}\n\n{}\n", user_content.trim_end(), rules_section)
-    };
+    // Re-read any existing groups section so it is preserved across rules-only
+    // updates.  The groups section sits between user content and rules; it is
+    // written by a dedicated `inject_groups_into_project_file` call in the sync
+    // engine, but we must not discard it here.
+    let groups_section = extract_groups_section(&raw);
+
+    let full_content = assemble_file(&user_content, &groups_section, &rules_section);
 
     // Only write if content actually changed
     if full_content != raw {
@@ -322,6 +325,237 @@ pub fn inject_rules_into_project_file_with_custom(
         Ok(true)
     } else {
         Ok(false)
+    }
+}
+
+// ── Project Group Context Injection ──────────────────────────────────────────
+
+const GROUPS_START_MARKER: &str = "<!-- automatic:groups:start -->";
+const GROUPS_END_MARKER: &str = "<!-- automatic:groups:end -->";
+
+/// Strip the `<!-- automatic:groups:start -->...<!-- automatic:groups:end -->` section.
+fn strip_groups_section(content: &str) -> String {
+    if let (Some(start), Some(end)) = (
+        content.find(GROUPS_START_MARKER),
+        content.find(GROUPS_END_MARKER),
+    ) {
+        let before = &content[..start];
+        let after = &content[end + GROUPS_END_MARKER.len()..];
+        let result = format!("{}{}", before.trim_end(), after.trim_start());
+        if result.trim().is_empty() {
+            String::new()
+        } else {
+            result
+        }
+    } else {
+        content.to_string()
+    }
+}
+
+/// Extract the raw `<!-- automatic:groups:start -->...<!-- automatic:groups:end -->` block
+/// (including markers) from a file, or return an empty string if absent.
+fn extract_groups_section(content: &str) -> String {
+    if let (Some(start), Some(end)) = (
+        content.find(GROUPS_START_MARKER),
+        content.find(GROUPS_END_MARKER),
+    ) {
+        content[start..end + GROUPS_END_MARKER.len()].to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Build the groups context section for injection into an instruction file.
+///
+/// `project_name` is used to compute relative paths between this project's
+/// directory and each peer project's directory.
+///
+/// The section lists every group the project belongs to.  For each group it
+/// shows the group name/description and then a short entry per peer project
+/// containing the project's description and relative path to its directory.
+pub fn build_groups_section(
+    this_project_name: &str,
+    this_project_dir: &str,
+    groups: &[crate::core::ProjectGroup],
+) -> String {
+    if groups.is_empty() {
+        return String::new();
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+
+    for group in groups {
+        let mut lines: Vec<String> = Vec::new();
+
+        let group_header = if group.description.trim().is_empty() {
+            format!("## Group: {}", group.name)
+        } else {
+            format!("## Group: {}\n\n{}", group.name, group.description.trim())
+        };
+        lines.push(group_header);
+
+        // List peer projects (all members except this project itself).
+        let peers: Vec<&String> = group
+            .projects
+            .iter()
+            .filter(|p| p.as_str() != this_project_name)
+            .collect();
+
+        if peers.is_empty() {
+            lines.push("No other projects in this group yet.".to_string());
+        } else {
+            lines.push("\n### Related projects\n".to_string());
+            for peer_name in peers {
+                // Look up the peer project to get its description and directory.
+                let (peer_desc, peer_rel_path) = match crate::core::read_project(peer_name) {
+                    Ok(raw) => match serde_json::from_str::<crate::core::Project>(&raw) {
+                        Ok(p) => {
+                            let rel = compute_relative_path(this_project_dir, &p.directory);
+                            (p.description.clone(), rel)
+                        }
+                        Err(_) => (String::new(), String::new()),
+                    },
+                    Err(_) => (String::new(), String::new()),
+                };
+
+                let mut entry = format!("**{}**", peer_name);
+                if !peer_desc.trim().is_empty() {
+                    entry.push_str(&format!(": {}", peer_desc.trim()));
+                }
+                if !peer_rel_path.is_empty() {
+                    entry.push_str(&format!("\nLocation: `{}`", peer_rel_path));
+                }
+                lines.push(entry);
+            }
+        }
+
+        parts.push(lines.join("\n\n"));
+    }
+
+    if parts.is_empty() {
+        return String::new();
+    }
+
+    let inner = parts.join("\n\n---\n\n");
+
+    format!("{}\n{}\n{}", GROUPS_START_MARKER, inner, GROUPS_END_MARKER)
+}
+
+/// Compute a relative path from `from_dir` to `to_dir`.
+///
+/// Returns the `to_dir` path as-is if either argument is empty or the paths
+/// share no common prefix (e.g. on different drives on Windows).
+fn compute_relative_path(from_dir: &str, to_dir: &str) -> String {
+    if from_dir.is_empty() || to_dir.is_empty() {
+        return to_dir.to_string();
+    }
+
+    let from = PathBuf::from(from_dir);
+    let to = PathBuf::from(to_dir);
+
+    // Collect path components.
+    let from_components: Vec<_> = from.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+
+    // Find the length of the common prefix.
+    let common_len = from_components
+        .iter()
+        .zip(to_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    // If nothing is shared (e.g. different drive letters on Windows), fall back.
+    if common_len == 0 {
+        return to_dir.to_string();
+    }
+
+    let up_count = from_components.len() - common_len;
+    let mut rel = PathBuf::new();
+
+    for _ in 0..up_count {
+        rel.push("..");
+    }
+    for comp in &to_components[common_len..] {
+        rel.push(comp);
+    }
+
+    if rel.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        rel.display().to_string()
+    }
+}
+
+/// Assemble the full file content from user content, groups section, and rules
+/// section.  Any combination of empty sections is handled gracefully.
+fn assemble_file(user_content: &str, groups_section: &str, rules_section: &str) -> String {
+    let mut parts: Vec<&str> = vec![user_content.trim_end()];
+
+    if !groups_section.is_empty() {
+        parts.push(groups_section.trim());
+    }
+    if !rules_section.is_empty() {
+        parts.push(rules_section.trim());
+    }
+
+    if parts.len() == 1 && parts[0].is_empty() {
+        return String::new();
+    }
+
+    format!("{}\n", parts.join("\n\n"))
+}
+
+/// Inject or update the groups context section in a project instruction file.
+///
+/// This is called by the sync engine after `clean_project_file` and before
+/// rules injection.  It reads the on-disk file, strips any existing groups
+/// section, rebuilds it from the provided `groups` slice, and writes back only
+/// if the content actually changed.
+///
+/// Returns `true` if the file was written, `false` if it was already current
+/// or the file does not exist.
+pub fn inject_groups_into_project_file(
+    directory: &str,
+    filename: &str,
+    this_project_name: &str,
+    groups: &[crate::core::ProjectGroup],
+) -> Result<bool, String> {
+    if directory.is_empty() {
+        return Ok(false);
+    }
+
+    let path = PathBuf::from(directory).join(filename);
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+
+    // Decompose the current file into its three layers.
+    let user_content = strip_groups_section(&strip_rules_section(&strip_managed_section(&raw)));
+    let rules_section = extract_rules_section(&raw);
+    let new_groups_section = build_groups_section(this_project_name, directory, groups);
+
+    let full_content = assemble_file(&user_content, &new_groups_section, &rules_section);
+
+    if full_content != raw {
+        fs::write(&path, full_content).map_err(|e| e.to_string())?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Extract the raw `<!-- automatic:rules:start -->...<!-- automatic:rules:end -->` block
+/// (including markers) from a file, or return an empty string if absent.
+fn extract_rules_section(content: &str) -> String {
+    if let (Some(start), Some(end)) = (
+        content.find(RULES_START_MARKER),
+        content.find(RULES_END_MARKER),
+    ) {
+        content[start..end + RULES_END_MARKER.len()].to_string()
+    } else {
+        String::new()
     }
 }
 

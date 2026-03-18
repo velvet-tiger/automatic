@@ -261,6 +261,29 @@ pub struct CustomRule {
     pub content: String,
 }
 
+/// A named group that relates two or more projects to each other.
+///
+/// When a project is synced, Automatic looks up all groups that contain it
+/// and injects a short context block into each agent instruction file (after
+/// the user content but before the rules section) so that the agent knows
+/// about related projects and their locations.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ProjectGroup {
+    /// Unique identifier and display name for the group.
+    pub name: String,
+    /// Optional one-line summary shown in the UI and injected into
+    /// instruction files as the group description.
+    #[serde(default)]
+    pub description: String,
+    /// Ordered list of project names belonging to this group.
+    #[serde(default)]
+    pub projects: Vec<String>,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
 fn default_instruction_mode() -> String {
     "per-agent".to_string()
 }
