@@ -6,6 +6,10 @@ use super::{discover_mcp_servers_from_json, sync_individual_skills, Agent};
 
 /// Cline agent — writes `.cline/mcp.json` and stores skills under
 /// `<project>/.cline/skills/<name>/SKILL.md`.
+///
+/// Cline's project-level instructions live in `.clinerules` (a file or
+/// directory at the project root).  Global rules live in
+/// `~/Documents/Cline/Rules/`.  Automatic syncs skills to `.cline/skills/`.
 pub struct Cline;
 
 impl Agent for Cline {
@@ -24,7 +28,9 @@ impl Agent for Cline {
     }
 
     fn project_file_name(&self) -> &'static str {
-        "AGENTS.md"
+        // Cline's canonical project rules file — a plain file or directory
+        // at the project root.  Global rules live in ~/Documents/Cline/Rules/.
+        ".clinerules"
     }
 
     // ── Detection ───────────────────────────────────────────────────────
