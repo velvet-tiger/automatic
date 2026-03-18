@@ -37,3 +37,6 @@ src-tauri/tauri.dev.conf.json
 /.mcp.json
 /.automatic/
 /tmp
+
+# OpenCode local config
+/opencode.json
