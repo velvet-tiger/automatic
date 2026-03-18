@@ -36,3 +36,4 @@ src-tauri/tauri.dev.conf.json
 /.codex/
 /.mcp.json
 /.automatic/
+/tmp
