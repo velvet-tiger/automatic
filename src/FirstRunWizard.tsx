@@ -257,7 +257,10 @@ function Toggle({
 }) {
   return (
     <button
-      onClick={onToggle}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
       className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors focus:outline-none ${
         enabled ? "bg-brand" : "bg-surface-active"
       }`}
