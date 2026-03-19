@@ -2,6 +2,15 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.12.1] — 2026-03-19
+
+### Fixes
+
+- **Version**: The 0.12.0 release was tagged before version files were bumped, so distributed binaries identified themselves as 0.11.2. This release corrects that.
+- **Onboarding**: Prevent event propagation in the analytics toggle to avoid unintended interactions
+
+---
+
 ## [0.12.0] — 2026-03-19
 
 ### Features
