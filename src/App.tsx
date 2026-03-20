@@ -112,6 +112,7 @@ function App() {
   const [pendingMcpQuery, setPendingMcpQuery] = useState<string | null>(null);
   const [pendingMarketplaceTemplate, setPendingMarketplaceTemplate] = useState<string | null>(null);
   const [pendingMcpServer, setPendingMcpServer] = useState<string | null>(null);
+  const [pendingGroup, setPendingGroup] = useState<string | null>(null);
 
 
 
@@ -201,6 +202,11 @@ function App() {
   const navigateToMcpServer = (serverName: string) => {
     setPendingMcpServer(serverName);
     setActiveTab("mcp");
+  };
+
+  const navigateToGroup = (groupName: string) => {
+    setPendingGroup(groupName);
+    setActiveTab("project-groups");
   };
 
   const navigateToSkillStore = (skillId: string) => {
@@ -486,7 +492,7 @@ function App() {
               />
             </div>
           )}
-          {activeTab === "projects" && (
+{activeTab === "projects" && (
             <div className="flex-1 h-full">
               <Projects
                 resetKey={projectsResetKey}
@@ -499,6 +505,7 @@ function App() {
                 onNavigateToSkillStore={navigateToSkillStore}
                 onNavigateToSkillStoreWithResult={navigateToSkillStoreWithResult}
                 onNavigateToMcpMarketplace={navigateToMcpMarketplace}
+                onNavigateToGroup={navigateToGroup}
                 initialCreateWithTemplate={pendingCreateWithTemplate}
                 onInitialCreateWithTemplateConsumed={() => setPendingCreateWithTemplate(null)}
               />
@@ -508,6 +515,8 @@ function App() {
             <div className="flex-1 h-full">
               <ProjectGroups
                 onNavigateToProject={navigateToProject}
+                initialGroup={pendingGroup}
+                onInitialGroupConsumed={() => setPendingGroup(null)}
               />
             </div>
           )}

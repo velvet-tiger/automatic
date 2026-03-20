@@ -398,6 +398,8 @@ interface ProjectsProps {
   onNavigateToSkillStoreWithResult?: (result: { id: string; name: string; source: string; installs: number }) => void;
   /** Called when the user clicks "View" on an AI-suggested MCP server — navigates to the MCP Marketplace. */
   onNavigateToMcpMarketplace?: (slug: string) => void;
+  /** Called when the user clicks on a project group name — navigates to the Project Groups page. */
+  onNavigateToGroup?: (groupName: string) => void;
   /** When set, opens the new project wizard at step 3 with this template pre-selected. */
   initialCreateWithTemplate?: string | null;
   onInitialCreateWithTemplateConsumed?: () => void;
@@ -1960,7 +1962,7 @@ function getProjectRelativeDocPath(projectDirectory: string | undefined, path: s
   return normalizedPath.slice(prefix.length);
 }
 
-export default function Projects({ resetKey, initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToMcpMarketplace, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
+export default function Projects({ resetKey, initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToMcpMarketplace, onNavigateToGroup, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const { log, update } = useTaskLog();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
@@ -3209,6 +3211,28 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     } catch (err: any) {
       setError(`Failed to remove from group: ${err}`);
     }
+  };
+
+  const handleRemoveFromAllGroups = async (projectName: string) => {
+    const confirmed = await ask(
+      `Remove "${projectName}" from all ${projectGroupMemberships.length} group${projectGroupMemberships.length === 1 ? "" : "s"}?`,
+      { title: "Remove from All Groups", kind: "warning" }
+    );
+    if (!confirmed) return;
+
+    for (const groupName of projectGroupMemberships) {
+      try {
+        const raw: string = await invoke("read_group", { name: groupName });
+        const g = JSON.parse(raw);
+        g.projects = g.projects.filter((p: string) => p !== projectName);
+        g.updated_at = new Date().toISOString();
+        await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
+      } catch (err: any) {
+        console.error(`Failed to remove from group ${groupName}:`, err);
+      }
+    }
+    setProjectGroupMemberships([]);
+    await invoke("sync_project", { name: projectName });
   };
 
   const loadContext = async (projectName: string) => {
@@ -8532,12 +8556,23 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                     ) : (
                       <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden divide-y divide-border-strong/20">
                         {projectGroupMemberships.map((groupName) => (
-                          <div key={groupName} className="flex items-center gap-3 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
+                          <div
+                            key={groupName}
+                            className="flex items-center gap-3 px-4 py-2.5 hover:bg-surface-hover transition-colors"
+                          >
                             <Layers size={13} className="text-text-muted flex-shrink-0" />
                             <span className="flex-1 text-[13px] text-text-base">{groupName}</span>
                             <button
+                              onClick={() => onNavigateToGroup?.(groupName)}
+                              className="flex-shrink-0 px-2 py-0.5 text-[11px] font-medium text-brand hover:text-brand-hover hover:bg-brand/10 rounded transition-colors flex items-center gap-1"
+                              title={`View ${groupName} group`}
+                            >
+                              View
+                              <ExternalLink size={10} />
+                            </button>
+                            <button
                               onClick={() => handleRemoveFromGroup(groupName, selectedName)}
-                              className="flex-shrink-0 p-1 text-text-muted hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                              className="flex-shrink-0 p-1 text-text-muted hover:text-red-400 transition-colors"
                               title={`Remove from "${groupName}"`}
                             >
                               <X size={12} />
@@ -8545,6 +8580,17 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           </div>
                         ))}
                       </div>
+                    )}
+
+                    {/* Remove from all groups button */}
+                    {projectGroupMemberships.length > 1 && (
+                      <button
+                        onClick={() => handleRemoveFromAllGroups(selectedName)}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2 text-[12px] text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+                      >
+                        <Trash2 size={12} />
+                        Remove from all groups
+                      </button>
                     )}
 
                     {/* Add to a group picker */}

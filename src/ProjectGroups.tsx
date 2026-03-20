@@ -15,11 +15,13 @@ interface ProjectGroup {
 
 interface ProjectGroupsProps {
   onNavigateToProject?: (projectName: string) => void;
+  initialGroup?: string | null;
+  onInitialGroupConsumed?: () => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ProjectGroups({ onNavigateToProject }: ProjectGroupsProps) {
+export default function ProjectGroups({ onNavigateToProject, initialGroup, onInitialGroupConsumed }: ProjectGroupsProps) {
   const [groups, setGroups] = useState<string[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [group, setGroup] = useState<ProjectGroup | null>(null);
@@ -42,6 +44,14 @@ export default function ProjectGroups({ onNavigateToProject }: ProjectGroupsProp
     loadGroups();
     loadAllProjects();
   }, []);
+
+  // Select initial group when provided
+  useEffect(() => {
+    if (initialGroup && groups.includes(initialGroup) && selectedName !== initialGroup) {
+      loadGroup(initialGroup);
+      if (onInitialGroupConsumed) onInitialGroupConsumed();
+    }
+  }, [initialGroup, groups]);
 
   const loadGroups = async () => {
     try {
