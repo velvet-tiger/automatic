@@ -297,10 +297,11 @@ pub(crate) fn cleanup_custom_agents(agents_dir: &std::path::Path, ext: &str) -> 
 /// 1. Read the agent content from the global registry
 /// 2. Convert to the target format if needed (e.g., TOML for Codex)
 /// 3. Write to `agents_dir/{machine_name}.{ext}`
-/// 4. Remove stale agent files not in the selected list
+/// 4. Remove stale agent files not in the selected list (but NOT custom agents)
 pub(crate) fn sync_user_agents(
     agents_dir: &std::path::Path,
     user_agent_names: &[String],
+    custom_agent_names: &[String],
     agent: &dyn crate::agent::Agent,
 ) -> Result<Vec<String>, String> {
     if !agents_dir.exists() {
@@ -328,7 +329,12 @@ pub(crate) fn sync_user_agents(
         }
     }
 
-    // Remove stale agent files (agents not in the selected list)
+    // Also add custom agent names to expected set so they're not removed as stale
+    for name in custom_agent_names {
+        expected_names.insert(name.clone());
+    }
+
+    // Remove stale agent files (agents not in user_agents OR custom_agents)
     if agents_dir.exists() {
         if let Ok(entries) = fs::read_dir(agents_dir) {
             for entry in entries.flatten() {

@@ -3916,6 +3916,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         custom_rules: parsed.custom_rules || [],
         custom_agents: parsed.custom_agents || [],
         user_agents: parsed.user_agents || [],
+        tools: parsed.tools || [],
       };
       setSelectedName(name);
       setIsCreating(false);

@@ -8,7 +8,8 @@ use crate::core::Project;
 use super::autodetect::autodetect_inner;
 use super::helpers::{
     build_selected_servers, clean_project_file, clean_project_file_rules_section,
-    load_mcp_server_configs, load_skill_contents, sync_custom_agents, sync_user_agents,
+    extract_agent_machine_name, load_mcp_server_configs, load_skill_contents, sync_custom_agents,
+    sync_user_agents,
 };
 
 /// Discover MCP server configurations from specific agents' existing on-disk
@@ -145,9 +146,22 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                         sync_custom_agents(&agents_dir, custom_agents, agent_instance)?;
                     written_files.extend(agent_files);
 
+                    // Collect custom agent machine names for stale file check
+                    let custom_agent_names: Vec<String> = custom_agents
+                        .iter()
+                        .map(|a| {
+                            extract_agent_machine_name(&a.content)
+                                .unwrap_or_else(|| a.name.to_lowercase().replace(' ', "-"))
+                        })
+                        .collect();
+
                     // Sync workspace user_agents (from ~/.automatic/agents/)
-                    let user_agent_files =
-                        sync_user_agents(&agents_dir, &project.user_agents, agent_instance)?;
+                    let user_agent_files = sync_user_agents(
+                        &agents_dir,
+                        &project.user_agents,
+                        &custom_agent_names,
+                        agent_instance,
+                    )?;
                     written_files.extend(user_agent_files);
                 }
 
