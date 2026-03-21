@@ -35,6 +35,10 @@ interface SpecKittyFeatureStatus {
   work_packages: SpecKittyWorkPackage[];
 }
 
+interface SpecKittyStatusError {
+  error: string;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const LANE_ORDER = ["planned", "doing", "for_review", "done"] as const;
@@ -137,7 +141,7 @@ export function SpecKittyPanel({ projectDir, sidebar }: SpecKittyPanelProps) {
   const [featuresError, setFeaturesError] = useState<string | null>(null);
 
   const [statusMap, setStatusMap] = useState<
-    Record<string, SpecKittyFeatureStatus | "loading" | "error">
+    Record<string, SpecKittyFeatureStatus | SpecKittyStatusError | "loading">
   >({});
   const [expandedSlug, setExpandedSlug] = useState<string | null>(null);
 
@@ -169,13 +173,18 @@ export function SpecKittyPanel({ projectDir, sidebar }: SpecKittyPanelProps) {
     setExpandedSlug(slug);
     if (!statusMap[slug]) {
       setStatusMap((prev) => ({ ...prev, [slug]: "loading" }));
-      invoke<SpecKittyFeatureStatus>("invoke_tool_command", {
+        invoke<SpecKittyFeatureStatus>("invoke_tool_command", {
           tool: "spec-kitty",
           command: "get_status",
           payload: { projectDir, featureSlug: slug },
         })
         .then((data) => setStatusMap((prev) => ({ ...prev, [slug]: data })))
-        .catch(() => setStatusMap((prev) => ({ ...prev, [slug]: "error" })));
+        .catch((err) =>
+          setStatusMap((prev) => ({
+            ...prev,
+            [slug]: { error: String(err) },
+          }))
+        );
     }
   }
 
@@ -243,13 +252,13 @@ export function SpecKittyPanel({ projectDir, sidebar }: SpecKittyPanelProps) {
               const isExpanded = expandedSlug === f.slug;
 
               const pct =
-                status && status !== "loading" && status !== "error"
+                status && status !== "loading" && !("error" in status)
                   ? status.progress_percentage
                   : null;
               const totalWps =
-                status && status !== "loading" && status !== "error" ? status.total_wps : null;
+                status && status !== "loading" && !("error" in status) ? status.total_wps : null;
               const doneWps =
-                status && status !== "loading" && status !== "error"
+                status && status !== "loading" && !("error" in status)
                   ? status.work_packages.filter((w) => w.lane === "done").length
                   : null;
 
@@ -312,12 +321,13 @@ export function SpecKittyPanel({ projectDir, sidebar }: SpecKittyPanelProps) {
                           <RefreshCw size={12} className="animate-spin" /> Loading work packages…
                         </div>
                       )}
-                      {status === "error" && (
+                      {status && status !== "loading" && "error" in status && (
                         <div className="text-[12px] text-danger flex items-center gap-2 py-2">
-                          <AlertCircle size={12} /> Failed to load status. Is spec-kitty installed?
+                          <AlertCircle size={12} />
+                          <span className="break-words">{status.error}</span>
                         </div>
                       )}
-                      {status && status !== "loading" && status !== "error" && (
+                      {status && status !== "loading" && !("error" in status) && (
                         <SpecKittyKanban status={status} />
                       )}
                     </div>
