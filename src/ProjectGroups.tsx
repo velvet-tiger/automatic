@@ -187,7 +187,10 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
       projects: [...group.projects, projectName],
       updated_at: new Date().toISOString(),
     };
-    await persistGroup(updated, [projectName]);
+    // Sync ALL projects in the group, not just the newly added one.
+    // Each project's group block lists peer projects, so adding a project
+    // means all existing projects need their peer list updated.
+    await persistGroup(updated, updated.projects);
   };
 
   const handleRemoveProject = async (projectName: string) => {
@@ -197,7 +200,10 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
       projects: group.projects.filter((p) => p !== projectName),
       updated_at: new Date().toISOString(),
     };
-    await persistGroup(updated, [projectName]);
+    // Sync all remaining projects (peer lists change) and the removed project
+    // (to remove the group block from its instruction files).
+    const toSync = [...updated.projects, projectName];
+    await persistGroup(updated, toSync);
   };
 
   /** Save the group then re-sync each affected project so instruction files

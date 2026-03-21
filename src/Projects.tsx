@@ -3178,8 +3178,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     }
   };
 
-  /** Add this project to a group, save the group, then re-sync the project so
-   *  the group context block is immediately written to its instruction files. */
+  /** Add this project to a group, save the group, then re-sync ALL projects
+   *  in the group so every project's peer list is updated. */
   const handleAddToGroup = async (groupName: string, projectName: string) => {
     try {
       const raw: string = await invoke("read_group", { name: groupName });
@@ -3189,15 +3189,20 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         g.updated_at = new Date().toISOString();
         await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
         setProjectGroupMemberships((prev) => [...prev, groupName].sort((a, b) => a.localeCompare(b)));
-        // Re-sync so the group context block appears in instruction files immediately.
-        await invoke("sync_project", { name: projectName });
+        // Sync ALL projects in the group - each one's peer list changes.
+        for (const name of g.projects) {
+          invoke("sync_project", { name }).catch((e: unknown) => {
+            console.warn(`Group sync: could not sync project '${name}':`, e);
+          });
+        }
       }
     } catch (err: any) {
       setError(`Failed to add to group: ${err}`);
     }
   };
 
-  /** Remove this project from a group, save, then re-sync to strip the context block. */
+  /** Remove this project from a group, save, then re-sync ALL remaining projects
+   *  (peer lists change) and the removed project (to strip its group block). */
   const handleRemoveFromGroup = async (groupName: string, projectName: string) => {
     try {
       const raw: string = await invoke("read_group", { name: groupName });
@@ -3206,8 +3211,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       g.updated_at = new Date().toISOString();
       await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
       setProjectGroupMemberships((prev) => prev.filter((n) => n !== groupName));
-      // Re-sync so the group context block is removed from instruction files.
-      await invoke("sync_project", { name: projectName });
+      // Sync remaining projects (peer lists change) and the removed project.
+      const toSync = [...g.projects, projectName];
+      for (const name of toSync) {
+        invoke("sync_project", { name }).catch((e: unknown) => {
+          console.warn(`Group sync: could not sync project '${name}':`, e);
+        });
+      }
     } catch (err: any) {
       setError(`Failed to remove from group: ${err}`);
     }
@@ -3220,6 +3230,9 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     );
     if (!confirmed) return;
 
+    // Collect all projects that need to be synced (peers in each group + the removed project)
+    const toSync = new Set<string>([projectName]);
+    
     for (const groupName of projectGroupMemberships) {
       try {
         const raw: string = await invoke("read_group", { name: groupName });
@@ -3227,12 +3240,21 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         g.projects = g.projects.filter((p: string) => p !== projectName);
         g.updated_at = new Date().toISOString();
         await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
+        // Add remaining projects in this group - their peer lists need updating
+        for (const peer of g.projects) {
+          toSync.add(peer);
+        }
       } catch (err: any) {
         console.error(`Failed to remove from group ${groupName}:`, err);
       }
     }
     setProjectGroupMemberships([]);
-    await invoke("sync_project", { name: projectName });
+    // Sync all affected projects
+    for (const name of toSync) {
+      invoke("sync_project", { name }).catch((e: unknown) => {
+        console.warn(`Group sync: could not sync project '${name}':`, e);
+      });
+    }
   };
 
   const loadContext = async (projectName: string) => {
