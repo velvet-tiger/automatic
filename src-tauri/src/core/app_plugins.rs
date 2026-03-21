@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 
 use super::paths::get_automatic_dir;
-use super::tools::{delete_tool, save_tool, ToolDefinition, ToolKind};
+use super::tools::{delete_tool, read_tool_definition, save_tool, ToolDefinition, ToolKind};
 
 // ── Plugin types ─────────────────────────────────────────────────────────────
 
@@ -66,7 +66,7 @@ impl PluginToolDeclaration {
     /// Convert this declaration into the `ToolDefinition` that is written to
     /// `~/.automatic/tools/<name>.json`.
     pub fn to_tool_definition(&self, plugin_id: &str) -> ToolDefinition {
-        ToolDefinition {
+        let mut definition = ToolDefinition {
             name: self.name.clone(),
             display_name: self.display_name.clone(),
             description: self.description.clone(),
@@ -74,10 +74,19 @@ impl PluginToolDeclaration {
             github_repo: self.github_repo.clone(),
             kind: self.kind.clone(),
             detect_binary: self.detect_binary.clone(),
+            binary_path: None,
             detect_dir: self.detect_dir.clone(),
             plugin_id: Some(plugin_id.to_string()),
             created_at: chrono::Utc::now().to_rfc3339(),
+        };
+
+        if let Ok(existing) = read_tool_definition(&self.name) {
+            if existing.plugin_id.as_deref() == Some(plugin_id) {
+                definition.binary_path = existing.binary_path;
+            }
         }
+
+        definition
     }
 }
 

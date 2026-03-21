@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::paths::{get_automatic_dir, is_valid_name};
 
@@ -72,6 +72,11 @@ pub struct ToolDefinition {
     /// Example: `"aegis"` for a CLI installed as `aegis`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detect_binary: Option<String>,
+
+    /// Optional absolute path override for the executable. When set, callers
+    /// should prefer this path over resolving `detect_binary` on `$PATH`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binary_path: Option<String>,
 
     /// Optional relative directory path that signals this tool has been
     /// initialised inside a project.  When `<project_dir>/<detect_dir>`
@@ -149,6 +154,12 @@ pub fn read_tool(name: &str) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+/// Read and parse a single `ToolDefinition` by name.
+pub fn read_tool_definition(name: &str) -> Result<ToolDefinition, String> {
+    let raw = read_tool(name)?;
+    serde_json::from_str(&raw).map_err(|e| format!("Corrupt tool file '{}': {}", name, e))
+}
+
 /// Persist a `ToolDefinition`. `data` is the raw JSON string from the frontend.
 pub fn save_tool(name: &str, data: &str) -> Result<(), String> {
     if !is_valid_name(name) {
@@ -196,10 +207,7 @@ pub fn list_tools_with_detection() -> Result<Vec<ToolEntry>, String> {
         let definition: ToolDefinition = serde_json::from_str(&raw)
             .map_err(|e| format!("Corrupt tool file '{}': {}", name, e))?;
 
-        let detected = definition
-            .detect_binary
-            .as_deref()
-            .map(|bin| which_binary(bin));
+        let detected = detect_tool_binary(&definition);
 
         entries.push(ToolEntry {
             definition,
@@ -210,15 +218,39 @@ pub fn list_tools_with_detection() -> Result<Vec<ToolEntry>, String> {
     Ok(entries)
 }
 
-/// Check whether `binary` exists somewhere on `$PATH`.
-pub(crate) fn which_binary(binary: &str) -> bool {
-    // Use `which` on Unix, `where` on Windows.
+fn parse_command_lookup_output(output: &[u8]) -> Option<PathBuf> {
+    let stdout = String::from_utf8_lossy(output);
+    stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Resolve the first executable path for `binary` found on `$PATH`.
+pub(crate) fn find_binary_on_path(binary: &str) -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     let result = std::process::Command::new("where").arg(binary).output();
     #[cfg(not(target_os = "windows"))]
     let result = std::process::Command::new("which").arg(binary).output();
 
-    result.map(|o| o.status.success()).unwrap_or(false)
+    result
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| parse_command_lookup_output(&o.stdout))
+}
+
+/// Check whether `binary` exists somewhere on `$PATH`.
+pub(crate) fn which_binary(binary: &str) -> bool {
+    find_binary_on_path(binary).is_some()
+}
+
+pub(crate) fn detect_tool_binary(definition: &ToolDefinition) -> Option<bool> {
+    if let Some(path) = definition.binary_path.as_deref() {
+        return Some(Path::new(path).exists());
+    }
+
+    definition.detect_binary.as_deref().map(which_binary)
 }
 
 /// Given a project directory, detect which registered tools are present.
@@ -287,6 +319,7 @@ mod tests {
             "github_repo": "example/test-tool",
             "kind": "cli",
             "detect_binary": "test-tool",
+            "binary_path": "/tmp/test-tool",
             "created_at": "2026-01-01T00:00:00Z"
         })
         .to_string()
@@ -381,6 +414,29 @@ mod tests {
     fn which_binary_nonexistent_returns_false() {
         // An extremely unlikely-to-exist binary name.
         assert!(!which_binary("zzz-nonexistent-binary-xyz-123"));
+    }
+
+    #[test]
+    fn detect_tool_binary_prefers_override_path() {
+        let tmp = tmp();
+        let binary = tmp.path().join("spec-kitty");
+        fs::write(&binary, "#!/bin/sh\nexit 0\n").unwrap();
+
+        let def = ToolDefinition {
+            name: "spec-kitty".into(),
+            display_name: "Spec Kitty".into(),
+            description: "desc".into(),
+            url: "https://example.com".into(),
+            github_repo: None,
+            kind: ToolKind::Cli,
+            detect_binary: Some("zzz-nonexistent-binary-xyz-123".into()),
+            binary_path: Some(binary.to_string_lossy().into_owned()),
+            detect_dir: None,
+            plugin_id: Some("spec-kitty".into()),
+            created_at: "2026-01-01T00:00:00Z".into(),
+        };
+
+        assert_eq!(detect_tool_binary(&def), Some(true));
     }
 
     // ── autodetect_tools_for_project tests ───────────────────────────────────

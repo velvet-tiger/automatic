@@ -1,6 +1,61 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+fn configured_spec_kitty_binary() -> Result<Option<PathBuf>, String> {
+    let definition = match crate::core::tools::read_tool_definition("spec-kitty") {
+        Ok(definition) => definition,
+        Err(_) => return Ok(None),
+    };
+
+    if let Some(path) = definition.binary_path {
+        let binary = PathBuf::from(&path);
+        if binary.exists() {
+            return Ok(Some(binary));
+        }
+        return Err(format!(
+            "Configured Spec Kitty binary does not exist: {}",
+            path
+        ));
+    }
+
+    Ok(None)
+}
+
+fn find_spec_kitty_binary() -> Result<PathBuf, String> {
+    if let Some(binary) = configured_spec_kitty_binary()? {
+        return Ok(binary);
+    }
+
+    if let Some(binary) = crate::core::tools::find_binary_on_path("spec-kitty") {
+        return Ok(binary);
+    }
+
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates: &[&str] = &[
+        "~/.local/bin/spec-kitty",
+        "~/.pyenv/shims/spec-kitty",
+        "/usr/local/bin/spec-kitty",
+        "/opt/homebrew/bin/spec-kitty",
+    ];
+
+    for candidate in candidates {
+        let path = if candidate.starts_with('~') {
+            PathBuf::from(candidate.replacen('~', &home, 1))
+        } else {
+            PathBuf::from(candidate)
+        };
+
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    Err(
+        "Spec Kitty binary not found. Set a binary path override in Tools or install `spec-kitty` in a standard location."
+            .to_string(),
+    )
+}
 
 // ── Plugin dispatch ───────────────────────────────────────────────────────────
 
@@ -122,7 +177,8 @@ pub fn get_spec_kitty_status(
     project_dir: String,
     feature_slug: String,
 ) -> Result<SpecKittyFeatureStatus, String> {
-    let output = std::process::Command::new("spec-kitty")
+    let binary = find_spec_kitty_binary()?;
+    let output = std::process::Command::new(&binary)
         .args([
             "agent",
             "tasks",
@@ -133,7 +189,7 @@ pub fn get_spec_kitty_status(
         ])
         .current_dir(&project_dir)
         .output()
-        .map_err(|e| format!("Failed to run spec-kitty: {}", e))?;
+        .map_err(|e| format!("Failed to run Spec Kitty at {}: {}", binary.display(), e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

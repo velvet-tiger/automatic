@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   Wrench,
   ExternalLink,
@@ -10,6 +11,9 @@ import {
   MinusCircle,
   Globe,
   Puzzle,
+  FolderOpen,
+  Save,
+  X,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -24,6 +28,8 @@ interface ToolDefinition {
   github_repo?: string;
   kind: ToolKind;
   detect_binary?: string;
+  detect_dir?: string;
+  binary_path?: string;
   plugin_id?: string;
   created_at: string;
 }
@@ -212,7 +218,7 @@ export default function Tools() {
       {/* ── Right pane: detail ── */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {selectedEntry ? (
-          <ToolDetail entry={selectedEntry} />
+          <ToolDetail entry={selectedEntry} onReload={load} />
         ) : (
           <EmptyState />
         )}
@@ -223,7 +229,52 @@ export default function Tools() {
 
 // ── Detail pane ───────────────────────────────────────────────────────────────
 
-function ToolDetail({ entry }: { entry: ToolEntry }) {
+function ToolDetail({ entry, onReload }: { entry: ToolEntry; onReload: () => Promise<void> }) {
+  const [binaryPath, setBinaryPath] = useState(entry.binary_path ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    setBinaryPath(entry.binary_path ?? "");
+    setSaveStatus(null);
+  }, [entry.binary_path, entry.name]);
+
+  const hasBinaryOverrideChanges = (binaryPath.trim() || "") !== (entry.binary_path ?? "");
+
+  async function persistBinaryPath(nextBinaryPath: string | null) {
+    setSaving(true);
+    setSaveStatus(null);
+    try {
+      const { detected, ...definition } = entry;
+      await invoke("save_tool", {
+        name: entry.name,
+        data: JSON.stringify({
+          ...definition,
+          binary_path: nextBinaryPath && nextBinaryPath.trim() ? nextBinaryPath.trim() : null,
+        }),
+      });
+      setBinaryPath(nextBinaryPath ?? "");
+      setSaveStatus("Saved.");
+      await onReload();
+    } catch (err) {
+      setSaveStatus(`Failed to save: ${String(err)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleBrowseBinaryPath() {
+    try {
+      const selected = await open({ multiple: false, directory: false });
+      if (selected && typeof selected === "string") {
+        setBinaryPath(selected);
+        setSaveStatus(null);
+      }
+    } catch (err) {
+      setSaveStatus(`Failed to open picker: ${String(err)}`);
+    }
+  }
+
   return (
     <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
       {/* Header */}
@@ -297,6 +348,55 @@ function ToolDetail({ entry }: { entry: ToolEntry }) {
                 which {entry.detect_binary}
               </code>
               <DetectionBadge detected={entry.detected} />
+            </div>
+          </MetaRow>
+        )}
+
+        {entry.detect_binary && (
+          <MetaRow
+            label="Binary Path"
+            icon={<Terminal size={13} className="text-text-muted flex-shrink-0" />}
+          >
+            <div className="space-y-2">
+              <p className="text-[12px] text-text-muted leading-relaxed">
+                Override the executable used for this tool. Useful for release builds that cannot see your shell PATH.
+              </p>
+              <input
+                value={binaryPath}
+                onChange={(e) => setBinaryPath(e.target.value)}
+                placeholder="Use detected PATH by default"
+                className="w-full px-3 py-2 rounded-md bg-bg-sidebar border border-border-strong/40 text-[12px] text-text-base placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-brand/60"
+              />
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={handleBrowseBinaryPath}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-md border border-border-strong/40 text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors"
+                >
+                  <FolderOpen size={12} /> Browse
+                </button>
+                <button
+                  onClick={() => persistBinaryPath(binaryPath.trim() || null)}
+                  disabled={saving || !hasBinaryOverrideChanges}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-md border border-brand/40 text-brand hover:bg-brand/10 transition-colors disabled:opacity-40"
+                >
+                  <Save size={12} /> {saving ? "Saving…" : "Save"}
+                </button>
+                <button
+                  onClick={() => persistBinaryPath(null)}
+                  disabled={saving || !entry.binary_path}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-md border border-border-strong/40 text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors disabled:opacity-40"
+                >
+                  <X size={12} /> Clear
+                </button>
+              </div>
+              {entry.binary_path && (
+                <code className="block text-[11px] text-text-muted break-all">
+                  Saved override: {entry.binary_path}
+                </code>
+              )}
+              {saveStatus && (
+                <p className="text-[12px] text-text-muted">{saveStatus}</p>
+              )}
             </div>
           </MetaRow>
         )}
