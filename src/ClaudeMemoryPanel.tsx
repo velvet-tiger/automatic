@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Plus,
 } from "lucide-react";
+import { handleExternalLinkClick } from "./lib/externalLinks";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -346,6 +347,7 @@ export function ClaudeMemoryPanel({
               href="https://code.claude.com/docs/en/memory#auto-memory"
               target="_blank"
               rel="noopener noreferrer"
+              onClick={handleExternalLinkClick("https://code.claude.com/docs/en/memory#auto-memory")}
               className="flex items-center gap-1 text-[11px] text-text-muted hover:text-brand transition-colors"
             >
               About Claude auto-memory <ArrowUpRight size={11} />

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ExternalLink, HardDrive, User } from "lucide-react";
+import { handleExternalLinkClick } from "./lib/externalLinks";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -253,7 +254,7 @@ export function AuthorPanel({ descriptor }: AuthorPanelProps) {
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-brand transition-colors flex items-center gap-1 min-w-0"
-              onClick={(e) => e.stopPropagation()}
+              onClick={handleExternalLinkClick(profile.url, true)}
             >
               {nameEl}
               <ExternalLink

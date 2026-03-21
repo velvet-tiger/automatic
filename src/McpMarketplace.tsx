@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AuthorSection } from "./AuthorPanel";
+import { handleExternalLinkClick } from "./lib/externalLinks";
 import {
   Search,
   Server,
@@ -589,6 +590,7 @@ export default function McpMarketplace({
                   href={selected.repository_url}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={handleExternalLinkClick(selected.repository_url)}
                   className="flex items-center gap-1.5 text-[12px] hover:text-text-base transition-colors"
                   style={{ color: ACCENT }}
                 >
@@ -602,6 +604,7 @@ export default function McpMarketplace({
                   href={selected.docs_url}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={handleExternalLinkClick(selected.docs_url)}
                   className="flex items-center gap-1.5 text-[12px] hover:text-text-base transition-colors"
                   style={{ color: ACCENT }}
                 >
@@ -712,6 +715,7 @@ export default function McpMarketplace({
                             href={selected.docs_url}
                             target="_blank"
                             rel="noopener noreferrer"
+                            onClick={handleExternalLinkClick(selected.docs_url)}
                             className="inline-flex items-center gap-1 text-[11px] text-brand hover:text-brand/80 transition-colors"
                           >
                             <BookOpen size={11} />

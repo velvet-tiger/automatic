@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { trackSkillInstalled, trackSkillUpdated } from "./analytics";
 import { AuthorSection } from "./AuthorPanel";
+import { handleExternalLinkClick } from "./lib/externalLinks";
 import {
   Search,
   Download,
@@ -559,6 +560,7 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
                   href="https://skills.sh"
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={handleExternalLinkClick("https://skills.sh")}
                   className="text-icon-skill hover:text-icon-skill-light transition-colors"
                 >
                   skills.sh
@@ -854,6 +856,7 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
                       href={`https://skills.sh/${selected.id}`}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={handleExternalLinkClick(`https://skills.sh/${selected.id}`)}
                       className="inline-flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base bg-surface hover:bg-surface-active rounded-md px-3 py-1.5 transition-colors"
                     >
                       <ExternalLink size={11} />
@@ -863,6 +866,7 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
                       href={`https://github.com/${selected.source}`}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={handleExternalLinkClick(`https://github.com/${selected.source}`)}
                       className="inline-flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base bg-surface hover:bg-surface-active rounded-md px-3 py-1.5 transition-colors"
                     >
                       <Github size={11} />
@@ -889,6 +893,7 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
                       href="https://skills.sh"
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={handleExternalLinkClick("https://skills.sh")}
                       className="hover:text-text-base transition-colors"
                     >
                       skills
@@ -898,6 +903,7 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
                       href={`https://github.com/${selected.source}`}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={handleExternalLinkClick(`https://github.com/${selected.source}`)}
                       className="hover:text-text-base transition-colors"
                     >
                       {selected.source}
@@ -990,6 +996,7 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
                       href={`https://github.com/${selected.source}`}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={handleExternalLinkClick(`https://github.com/${selected.source}`)}
                       className="flex items-center gap-1.5 text-[12px] text-icon-skill hover:text-icon-skill-light transition-colors"
                     >
                       <Github size={12} className="flex-shrink-0" />
@@ -1006,6 +1013,7 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
                       href={`https://skills.sh/${selected.id}`}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={handleExternalLinkClick(`https://skills.sh/${selected.id}`)}
                       className="flex items-center gap-1.5 text-[12px] text-icon-skill hover:text-icon-skill-light transition-colors"
                     >
                       <ExternalLink size={12} className="flex-shrink-0" />

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
+import { handleExternalLinkClick } from "./lib/externalLinks";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
@@ -859,6 +860,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                         href={`https://github.com/${selectedEntry.source.source}`}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={handleExternalLinkClick(`https://github.com/${selectedEntry.source.source}`)}
                         className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-base transition-colors truncate"
                       >
                         <Github size={11} />

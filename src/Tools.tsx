@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { handleExternalLinkClick } from "./lib/externalLinks";
 import {
   Wrench,
   ExternalLink,
@@ -314,6 +315,7 @@ function ToolDetail({ entry, onReload }: { entry: ToolEntry; onReload: () => Pro
             href={entry.url}
             target="_blank"
             rel="noreferrer"
+            onClick={handleExternalLinkClick(entry.url)}
             className="flex items-center gap-1 text-[13px] text-brand hover:underline truncate max-w-xs"
           >
             {entry.url}
@@ -330,6 +332,7 @@ function ToolDetail({ entry, onReload }: { entry: ToolEntry; onReload: () => Pro
               href={`https://github.com/${entry.github_repo}`}
               target="_blank"
               rel="noreferrer"
+              onClick={handleExternalLinkClick(`https://github.com/${entry.github_repo}`)}
               className="flex items-center gap-1 text-[13px] text-brand hover:underline"
             >
               {entry.github_repo}

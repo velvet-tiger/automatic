@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { handleExternalLinkClick } from "./lib/externalLinks";
 import { 
   FolderOpen, 
   Code, 
@@ -821,6 +822,7 @@ export default function Dashboard({ onNavigate, onNavigateToSkillStore, onNaviga
                         href="https://github.com/velvet-tiger/automatic"
                         target="_blank"
                         rel="noreferrer"
+                        onClick={handleExternalLinkClick("https://github.com/velvet-tiger/automatic")}
                         className="text-text-base hover:text-text-base underline decoration-text-muted/40 hover:decoration-text-base/60 font-medium transition-colors"
                       >
                         give us a star on GitHub

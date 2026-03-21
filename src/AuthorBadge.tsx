@@ -1,4 +1,5 @@
 import { HardDrive, Globe } from "lucide-react";
+import { handleExternalLinkClick } from "./lib/externalLinks";
 
 /**
  * Flexible author descriptor for skills, MCP servers, and templates.
@@ -43,7 +44,7 @@ export function AuthorBadge({ author, variant = "full" }: AuthorBadgeProps) {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        onClick={(e) => e.stopPropagation()}
+        onClick={handleExternalLinkClick(href, true)}
         className="inline-flex items-center gap-1 text-[11px] text-success hover:text-success/80 transition-colors"
         title={author.repo}
       >
@@ -73,7 +74,7 @@ export function AuthorBadge({ author, variant = "full" }: AuthorBadgeProps) {
         href={author.url}
         target="_blank"
         rel="noopener noreferrer"
-        onClick={(e) => e.stopPropagation()}
+        onClick={handleExternalLinkClick(author.url, true)}
         title={label}
       >
         {inner}
