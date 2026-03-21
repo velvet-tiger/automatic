@@ -6,6 +6,7 @@ export interface AgentCapabilities {
   skills: boolean;
   instructions: boolean;
   mcp_servers: boolean;
+  agents: boolean;
 }
 
 export interface AgentInfo {

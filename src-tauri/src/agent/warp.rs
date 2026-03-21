@@ -60,6 +60,7 @@ impl Agent for Warp {
     fn capabilities(&self) -> AgentCapabilities {
         AgentCapabilities {
             mcp_servers: false,
+            agents: false,
             ..Default::default()
         }
     }

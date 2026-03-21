@@ -42,6 +42,15 @@ impl Agent for GitHubCopilot {
         vec![dir.join(".agents").join("skills")]
     }
 
+    // ── Capabilities ────────────────────────────────────────────────────
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            agents: false,
+            ..Default::default()
+        }
+    }
+
     // ── Config writing ──────────────────────────────────────────────────
 
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {

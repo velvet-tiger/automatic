@@ -410,6 +410,12 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
                       unsupportedDescription="Automatic cannot write MCP server configuration"
                       supported={selected.capabilities.mcp_servers}
                     />
+                    <CapabilityRow
+                      label="Sub-Agents"
+                      description="Automatic can sync sub-agents to this agent"
+                      unsupportedDescription="This agent does not support sub-agents"
+                      supported={selected.capabilities.agents}
+                    />
                   </div>
                   {selected.mcp_note && (
                     <div className="flex items-start gap-3 px-3 py-3 bg-bg-input rounded-md border border-border-strong mt-3">

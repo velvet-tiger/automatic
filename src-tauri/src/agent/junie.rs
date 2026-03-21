@@ -41,6 +41,15 @@ impl Agent for Junie {
         ]
     }
 
+    // ── Capabilities ────────────────────────────────────────────────────
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            agents: false,
+            ..Default::default()
+        }
+    }
+
     // ── Cleanup ─────────────────────────────────────────────────────────
 
     /// Junie owns the entire `.junie/` directory — remove it all on removal.

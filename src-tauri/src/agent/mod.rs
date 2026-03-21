@@ -70,6 +70,9 @@ pub struct AgentCapabilities {
     pub instructions: bool,
     /// Automatic can write MCP server config for this agent.
     pub mcp_servers: bool,
+    /// Automatic can sync sub-agents to this agent's agents directory.
+    /// Agents that don't have a sub-agent discovery location set this to false.
+    pub agents: bool,
 }
 
 impl Default for AgentCapabilities {
@@ -79,6 +82,7 @@ impl Default for AgentCapabilities {
             skills: true,
             instructions: true,
             mcp_servers: true,
+            agents: true,
         }
     }
 }

@@ -50,9 +50,10 @@ impl Agent for Goose {
 
     fn capabilities(&self) -> AgentCapabilities {
         // Goose has no project-level MCP config file.  Extensions are managed
-        // globally via ~/.config/goose/config.yaml through the goose CLI/Desktop.
+        // globally via ~/.config/goose/config.yaml through the Goose CLI/Desktop.
         AgentCapabilities {
             mcp_servers: false,
+            agents: false,
             ..Default::default()
         }
     }

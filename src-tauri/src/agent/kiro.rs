@@ -37,6 +37,15 @@ impl Agent for Kiro {
         vec![dir.join(".kiro").join("skills")]
     }
 
+    // ── Capabilities ────────────────────────────────────────────────────
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            agents: false,
+            ..Default::default()
+        }
+    }
+
     // ── Cleanup ─────────────────────────────────────────────────────────
 
     /// `detect_in` matches the `.kiro/` directory itself, so we must remove

@@ -45,6 +45,15 @@ impl Agent for Cline {
         vec![dir.join(".cline").join("skills")]
     }
 
+    // ── Capabilities ────────────────────────────────────────────────────
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            agents: false,
+            ..Default::default()
+        }
+    }
+
     // ── Cleanup ─────────────────────────────────────────────────────────
 
     fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {

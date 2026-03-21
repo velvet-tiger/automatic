@@ -72,6 +72,7 @@ impl Agent for Antigravity {
         super::AgentCapabilities {
             // MCP config is global, managed via the Antigravity UI.
             mcp_servers: false,
+            agents: false,
             ..Default::default()
         }
     }

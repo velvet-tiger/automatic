@@ -41,6 +41,15 @@ impl Agent for KiloCode {
         vec![dir.join(".agents").join("skills")]
     }
 
+    // ── Capabilities ────────────────────────────────────────────────────
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            agents: false,
+            ..Default::default()
+        }
+    }
+
     // ── Cleanup ─────────────────────────────────────────────────────────
 
     fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
