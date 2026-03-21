@@ -23,7 +23,9 @@ pub fn read_project_file(directory: &str, filename: &str) -> Result<String, Stri
     }
 
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    Ok(strip_rules_section(&strip_managed_section(&content)))
+    Ok(strip_groups_section(&strip_rules_section(
+        &strip_managed_section(&content),
+    )))
 }
 
 /// Write a project file to the project's directory.  Writes exactly what the

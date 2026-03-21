@@ -334,7 +334,7 @@ const GROUPS_START_MARKER: &str = "<!-- automatic:groups:start -->";
 const GROUPS_END_MARKER: &str = "<!-- automatic:groups:end -->";
 
 /// Strip the `<!-- automatic:groups:start -->...<!-- automatic:groups:end -->` section.
-fn strip_groups_section(content: &str) -> String {
+pub fn strip_groups_section(content: &str) -> String {
     if let (Some(start), Some(end)) = (
         content.find(GROUPS_START_MARKER),
         content.find(GROUPS_END_MARKER),
