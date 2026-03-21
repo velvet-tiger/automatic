@@ -542,7 +542,6 @@ function App() {
             <div className="flex-1 h-full">
               <Recommendations
                 onNavigateToProject={navigateToProject}
-                onNavigateToSkillStore={navigateToSkillStore}
                 onNavigateToSkillStoreWithResult={navigateToSkillStoreWithResult}
                 onNavigateToMcpMarketplace={navigateToMcpMarketplace}
                 onNavigateToTemplateMarketplace={navigateToTemplateMarketplace}

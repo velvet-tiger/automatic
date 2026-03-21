@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
+import { handleExternalLinkClick } from "./lib/externalLinks";
 import { SkillAvatar } from "./SkillAvatar";
 import {
   Search,
@@ -551,6 +552,7 @@ function CollectionDetail({
                     href={`https://github.com/${(collection.author as any).repo}`}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={handleExternalLinkClick(`https://github.com/${(collection.author as any).repo}`)}
                     className="flex items-center gap-1.5 text-[12px] text-icon-skill hover:text-icon-skill-light transition-colors"
                   >
                     <Github size={12} className="flex-shrink-0" />
@@ -691,8 +693,12 @@ function CollectionCard({
 
 export default function CollectionMarketplace({
   resetKey,
+  initialQuery,
+  onInitialQueryConsumed,
 }: {
   resetKey?: number;
+  initialQuery?: string | null;
+  onInitialQueryConsumed?: () => void;
 }) {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [collectionsLoading, setCollectionsLoading] = useState(true);
@@ -709,6 +715,13 @@ export default function CollectionMarketplace({
       setQuery("");
     }
   }, [resetKey]);
+
+  useEffect(() => {
+    if (!initialQuery) return;
+    setSelected(null);
+    setQuery(initialQuery);
+    onInitialQueryConsumed?.();
+  }, [initialQuery, onInitialQueryConsumed]);
 
   // Load collections catalogue from ~/.automatic/marketplace/collections.json
   const loadCollections = useCallback(async () => {

@@ -260,14 +260,17 @@ pub async fn chat_structured(
 // ── Tool-use (agentic loop) ───────────────────────────────────────────────────
 
 /// Maximum agentic turns before we abort to prevent runaway loops.
-const MAX_TOOL_TURNS: usize = 10;
+// Some recommendation research prompts require additional marketplace tool calls
+// before the model can produce a final answer. A 10-turn cap is too tight and
+// can terminate otherwise valid runs.
+const MAX_TOOL_TURNS: usize = 20;
 
 /// Allowed content-types for the `read_file` tool (binary-safe check).
 const BINARY_EXTENSIONS: &[&str] = &[
-    "zip", "tar", "gz", "exe", "dll", "so", "class", "jar", "war", "7z", "doc",
-    "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "bin", "dat",
-    "obj", "o", "a", "lib", "wasm", "pyc", "pyo", "png", "jpg", "jpeg", "gif",
-    "bmp", "ico", "webp", "mp3", "mp4", "mov", "avi", "mkv", "pdf",
+    "zip", "tar", "gz", "exe", "dll", "so", "class", "jar", "war", "7z", "doc", "docx", "xls",
+    "xlsx", "ppt", "pptx", "odt", "ods", "odp", "bin", "dat", "obj", "o", "a", "lib", "wasm",
+    "pyc", "pyo", "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "mp3", "mp4", "mov", "avi",
+    "mkv", "pdf",
 ];
 
 /// The `read_file` tool definition sent to Anthropic.
@@ -615,8 +618,8 @@ const SECRET_FILENAMES: &[&str] = &[
     // .env — exact name plus common suffixes handled by .starts_with(".env") below
     ".env",
     // AWS
-    "credentials",  // ~/.aws/credentials
-    "config",       // ~/.aws/config  (also matches .claude/settings.json parent dir check)
+    "credentials", // ~/.aws/credentials
+    "config",      // ~/.aws/config  (also matches .claude/settings.json parent dir check)
     // macOS / generic credential stores
     ".netrc",
     // Generic token files
@@ -627,12 +630,7 @@ const SECRET_FILENAMES: &[&str] = &[
 /// Filename *prefixes* (case-insensitive) — any filename that starts with one
 /// of these is blocked regardless of suffix (e.g. id_rsa, id_rsa.pub,
 /// id_rsa_backup, id_ed25519_work, …).
-const SECRET_FILENAME_PREFIXES: &[&str] = &[
-    "id_rsa",
-    "id_dsa",
-    "id_ecdsa",
-    "id_ed25519",
-];
+const SECRET_FILENAME_PREFIXES: &[&str] = &["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"];
 
 /// Parent directory names (case-insensitive, matched against *any* ancestor
 /// component of the resolved path) — every file inside these directories is
@@ -640,18 +638,11 @@ const SECRET_FILENAME_PREFIXES: &[&str] = &[
 ///
 /// For example `.ssh/known_hosts`, `.ssh/authorized_keys`, `.aws/config`,
 /// and `.claude/settings.json` are all covered by their parent dir.
-const SECRET_PARENT_DIRS: &[&str] = &[
-    ".ssh",
-    ".aws",
-    ".claude",
-    ".gnupg",
-];
+const SECRET_PARENT_DIRS: &[&str] = &[".ssh", ".aws", ".claude", ".gnupg"];
 
 /// File extensions that are always blocked because they commonly hold private
 /// keys, certificates, or credentials.
-const SECRET_EXTENSIONS: &[&str] = &[
-    "pem", "key", "p12", "pfx", "cer", "crt", "der", "ppk",
-];
+const SECRET_EXTENSIONS: &[&str] = &["pem", "key", "p12", "pfx", "cer", "crt", "der", "ppk"];
 
 /// Resolve and validate a file path requested by the AI.
 ///
@@ -741,10 +732,7 @@ pub(crate) fn resolve_tool_path(path: &str, working_dir: &Path) -> Result<PathBu
     // 3c. Extension denylist.
     if let Some(ext) = canonical.extension().and_then(|e| e.to_str()) {
         if SECRET_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
-            return Err(format!(
-                "Access denied: '.{}' files are protected.",
-                ext
-            ));
+            return Err(format!("Access denied: '.{}' files are protected.", ext));
         }
     }
 
@@ -903,9 +891,12 @@ pub(crate) fn validate_working_dir(working_dir: &str) -> Result<PathBuf, String>
         );
     }
 
-    let work_path = PathBuf::from(trimmed)
-        .canonicalize()
-        .map_err(|_| format!("working_dir '{}' does not exist or is not accessible.", trimmed))?;
+    let work_path = PathBuf::from(trimmed).canonicalize().map_err(|_| {
+        format!(
+            "working_dir '{}' does not exist or is not accessible.",
+            trimmed
+        )
+    })?;
 
     // Compare the canonicalised path against the dangerous-dir list.
     // We canonicalize each dangerous entry (if it exists on this platform) so
@@ -949,7 +940,16 @@ pub async fn chat_with_tools(
     max_tokens: Option<u32>,
     working_dir: String,
 ) -> Result<String, String> {
-    let (text, _) = chat_with_tools_inner(messages, api_key, model, system, max_tokens, working_dir, None).await?;
+    let (text, _) = chat_with_tools_inner(
+        messages,
+        api_key,
+        model,
+        system,
+        max_tokens,
+        working_dir,
+        None,
+    )
+    .await?;
     Ok(text)
 }
 
@@ -964,9 +964,17 @@ pub async fn chat_with_tools_returning_history(
     max_tokens: Option<u32>,
     working_dir: String,
 ) -> Result<(String, Vec<Value>), String> {
-    chat_with_tools_inner(messages, api_key, model, system, max_tokens, working_dir, None).await
+    chat_with_tools_inner(
+        messages,
+        api_key,
+        model,
+        system,
+        max_tokens,
+        working_dir,
+        None,
+    )
+    .await
 }
-
 
 async fn chat_with_tools_inner(
     messages: Vec<AiMessage>,
@@ -1090,20 +1098,20 @@ async fn chat_with_tools_inner(
             let tool_input = block.get("input").cloned().unwrap_or(json!({}));
 
             let result = match tool_name.as_str() {
-                "read_file"                  => execute_read_file(&tool_input, &work_path),
-                "list_skills"                => execute_list_skills(),
-                "read_skill"                 => execute_read_skill(&tool_input),
-                "list_rules"                 => execute_list_rules(),
-                "read_rule"                  => execute_read_rule(&tool_input),
-                "list_templates"             => execute_list_templates(),
-                "read_template"              => execute_read_template(&tool_input),
-                "list_mcp_servers"           => execute_list_mcp_servers(),
-                "read_mcp_server"            => execute_read_mcp_server(&tool_input),
-                "search_skills_marketplace"  => execute_search_skills_marketplace(&tool_input).await,
-                "search_mcp_marketplace"     => execute_search_mcp_marketplace(&tool_input),
-                "search_collections"         => execute_search_collections(&tool_input),
+                "read_file" => execute_read_file(&tool_input, &work_path),
+                "list_skills" => execute_list_skills(),
+                "read_skill" => execute_read_skill(&tool_input),
+                "list_rules" => execute_list_rules(),
+                "read_rule" => execute_read_rule(&tool_input),
+                "list_templates" => execute_list_templates(),
+                "read_template" => execute_read_template(&tool_input),
+                "list_mcp_servers" => execute_list_mcp_servers(),
+                "read_mcp_server" => execute_read_mcp_server(&tool_input),
+                "search_skills_marketplace" => execute_search_skills_marketplace(&tool_input).await,
+                "search_mcp_marketplace" => execute_search_mcp_marketplace(&tool_input),
+                "search_collections" => execute_search_collections(&tool_input),
                 "search_templates_marketplace" => execute_search_templates_marketplace(&tool_input),
-                other                        => format!("Error: unknown tool '{}'.", other),
+                other => format!("Error: unknown tool '{}'.", other),
             };
 
             tool_results.push(json!({
@@ -1162,7 +1170,11 @@ mod tests {
         let result = validate_working_dir("/");
         assert!(result.is_err(), "/ must be rejected");
         let msg = result.unwrap_err();
-        assert!(msg.contains("too broad"), "expected 'too broad', got: {}", msg);
+        assert!(
+            msg.contains("too broad"),
+            "expected 'too broad', got: {}",
+            msg
+        );
     }
 
     #[test]
@@ -1173,14 +1185,22 @@ mod tests {
         let result = validate_working_dir("/etc");
         assert!(result.is_err());
         let msg = result.unwrap_err();
-        assert!(msg.contains("too broad"), "expected 'too broad', got: {}", msg);
+        assert!(
+            msg.contains("too broad"),
+            "expected 'too broad', got: {}",
+            msg
+        );
     }
 
     #[test]
     fn working_dir_valid_project_directory_is_accepted() {
         let dir = TempDir::new().expect("tempdir");
         let result = validate_working_dir(dir.path().to_str().unwrap());
-        assert!(result.is_ok(), "valid project dir should be accepted: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "valid project dir should be accepted: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1205,7 +1225,11 @@ mod tests {
     fn resolve_allows_file_inside_working_dir() {
         let (dir, file) = setup_project();
         let result = resolve_tool_path(file.to_str().unwrap(), dir.path());
-        assert!(result.is_ok(), "file inside working dir should resolve: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "file inside working dir should resolve: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1213,7 +1237,11 @@ mod tests {
         let (dir, _) = setup_project();
         // hello.txt was created by setup_project
         let result = resolve_tool_path("hello.txt", dir.path());
-        assert!(result.is_ok(), "relative path inside working dir should resolve: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "relative path inside working dir should resolve: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1276,7 +1304,12 @@ mod tests {
     #[test]
     fn resolve_rejects_dotenv_variants() {
         let dir = TempDir::new().expect("tempdir");
-        for name in &[".env.local", ".env.production", ".env.staging", ".env.override"] {
+        for name in &[
+            ".env.local",
+            ".env.production",
+            ".env.staging",
+            ".env.override",
+        ] {
             let f = dir.path().join(name);
             fs::write(&f, "SECRET=x").expect("write");
             let result = resolve_tool_path(f.to_str().unwrap(), dir.path());
@@ -1320,7 +1353,11 @@ mod tests {
         let result = resolve_tool_path(f.to_str().unwrap(), dir.path());
         assert!(result.is_err());
         let msg = result.unwrap_err();
-        assert!(msg.contains("protected"), "expected .pem to be blocked, got: {}", msg);
+        assert!(
+            msg.contains("protected"),
+            "expected .pem to be blocked, got: {}",
+            msg
+        );
     }
 
     #[test]
@@ -1376,7 +1413,11 @@ mod tests {
         symlink(&target, &link).expect("symlink");
 
         let result = resolve_tool_path(link.to_str().unwrap(), dir.path());
-        assert!(result.is_ok(), "symlink within working dir should be allowed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "symlink within working dir should be allowed: {:?}",
+            result
+        );
     }
 
     // ── execute_read_file ─────────────────────────────────────────────────────
@@ -1410,8 +1451,14 @@ mod tests {
         let output = execute_read_file(&input, dir.path());
 
         assert!(output.contains("1: line one"), "should have line 1");
-        assert!(!output.contains("2: line two"), "line 2 should be cut by limit");
-        assert!(output.contains("Showing lines"), "should show truncation notice");
+        assert!(
+            !output.contains("2: line two"),
+            "line 2 should be cut by limit"
+        );
+        assert!(
+            output.contains("Showing lines"),
+            "should show truncation notice"
+        );
     }
 
     #[test]
@@ -1426,8 +1473,14 @@ mod tests {
         let output = execute_read_file(&input, dir.path());
 
         // Line 501 should not appear
-        assert!(!output.contains("501: line 501"), "limit should be capped at 500");
-        assert!(output.contains("500: line 500"), "line 500 should be present");
+        assert!(
+            !output.contains("501: line 501"),
+            "limit should be capped at 500"
+        );
+        assert!(
+            output.contains("500: line 500"),
+            "line 500 should be present"
+        );
     }
 
     #[test]
@@ -1440,10 +1493,16 @@ mod tests {
         let input = json!({ "path": dir.path().to_str().unwrap() });
         let output = execute_read_file(&input, dir.path());
 
-        assert!(output.contains("<type>directory</type>"), "should be directory type");
+        assert!(
+            output.contains("<type>directory</type>"),
+            "should be directory type"
+        );
         assert!(output.contains("alpha.txt"), "should list alpha.txt");
         assert!(output.contains("beta.txt"), "should list beta.txt");
-        assert!(output.contains("subdir/"), "subdirectory should have trailing slash");
+        assert!(
+            output.contains("subdir/"),
+            "subdirectory should have trailing slash"
+        );
     }
 
     #[test]
@@ -1460,7 +1519,11 @@ mod tests {
             "binary file should be rejected, got: {}",
             output
         );
-        assert!(output.contains("binary"), "should mention binary, got: {}", output);
+        assert!(
+            output.contains("binary"),
+            "should mention binary, got: {}",
+            output
+        );
     }
 
     #[test]
@@ -1474,7 +1537,11 @@ mod tests {
             "missing path param should error, got: {}",
             output
         );
-        assert!(output.contains("path"), "should mention missing 'path', got: {}", output);
+        assert!(
+            output.contains("path"),
+            "should mention missing 'path', got: {}",
+            output
+        );
     }
 
     #[test]
@@ -1555,7 +1622,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join(".env");
         fs::write(&f, "SECRET=x").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".env must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".env must be blocked"
+        );
     }
 
     #[test]
@@ -1564,7 +1634,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join(".env.local");
         fs::write(&f, "SECRET=x").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".env.local must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".env.local must be blocked"
+        );
     }
 
     #[test]
@@ -1573,7 +1646,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join(".env.production");
         fs::write(&f, "SECRET=x").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".env.production must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".env.production must be blocked"
+        );
     }
 
     #[test]
@@ -1584,7 +1660,10 @@ mod tests {
         fs::create_dir(&sub).unwrap();
         let f = sub.join(".env");
         fs::write(&f, "SECRET=x").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "nested .env must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "nested .env must be blocked"
+        );
     }
 
     #[test]
@@ -1595,7 +1674,10 @@ mod tests {
         fs::create_dir_all(&sub).unwrap();
         let f = sub.join(".env.staging");
         fs::write(&f, "SECRET=x").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "nested .env.staging must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "nested .env.staging must be blocked"
+        );
     }
 
     // Category: SSH private keys
@@ -1606,7 +1688,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_rsa");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_rsa must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_rsa must be blocked"
+        );
     }
 
     #[test]
@@ -1615,7 +1700,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_rsa.pub");
         fs::write(&f, "ssh-rsa AAAA...").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_rsa.pub must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_rsa.pub must be blocked"
+        );
     }
 
     #[test]
@@ -1624,7 +1712,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_rsa_backup");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_rsa_backup must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_rsa_backup must be blocked"
+        );
     }
 
     #[test]
@@ -1632,7 +1723,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_ed25519");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_ed25519 must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_ed25519 must be blocked"
+        );
     }
 
     #[test]
@@ -1640,7 +1734,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_ed25519.pub");
         fs::write(&f, "ssh-ed25519 AAAA...").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_ed25519.pub must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_ed25519.pub must be blocked"
+        );
     }
 
     #[test]
@@ -1648,7 +1745,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_ecdsa");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_ecdsa must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_ecdsa must be blocked"
+        );
     }
 
     #[test]
@@ -1656,7 +1756,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_dsa");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_dsa must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_dsa must be blocked"
+        );
     }
 
     #[test]
@@ -1667,7 +1770,10 @@ mod tests {
         fs::create_dir(&sub).unwrap();
         let f = sub.join("id_rsa");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "nested id_rsa must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "nested id_rsa must be blocked"
+        );
     }
 
     // Category: .ssh/ directory contents
@@ -1680,7 +1786,10 @@ mod tests {
         fs::create_dir(&ssh).unwrap();
         let f = ssh.join("known_hosts");
         fs::write(&f, "github.com ssh-rsa AAAA").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".ssh/known_hosts must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".ssh/known_hosts must be blocked"
+        );
     }
 
     #[test]
@@ -1690,7 +1799,10 @@ mod tests {
         fs::create_dir(&ssh).unwrap();
         let f = ssh.join("authorized_keys");
         fs::write(&f, "ssh-rsa AAAA").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".ssh/authorized_keys must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".ssh/authorized_keys must be blocked"
+        );
     }
 
     #[test]
@@ -1701,7 +1813,10 @@ mod tests {
         fs::create_dir(&ssh).unwrap();
         let f = ssh.join("config");
         fs::write(&f, "Host *").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".ssh/config must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".ssh/config must be blocked"
+        );
     }
 
     // Category: AWS credentials
@@ -1714,7 +1829,10 @@ mod tests {
         fs::create_dir(&aws).unwrap();
         let f = aws.join("credentials");
         fs::write(&f, "[default]\naws_access_key_id = AKIA...").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".aws/credentials must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".aws/credentials must be blocked"
+        );
     }
 
     #[test]
@@ -1725,7 +1843,10 @@ mod tests {
         fs::create_dir(&aws).unwrap();
         let f = aws.join("config");
         fs::write(&f, "[default]\nregion = us-east-1").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".aws/config must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".aws/config must be blocked"
+        );
     }
 
     // Category: Claude settings
@@ -1740,7 +1861,10 @@ mod tests {
         fs::create_dir(&claude).unwrap();
         let f = claude.join("settings.json");
         fs::write(&f, r#"{"apiKey":"sk-..."}"#).unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".claude/settings.json must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".claude/settings.json must be blocked"
+        );
     }
 
     #[test]
@@ -1751,7 +1875,10 @@ mod tests {
         fs::create_dir(&claude).unwrap();
         let f = claude.join("custom_instructions.md");
         fs::write(&f, "some instructions").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".claude/* must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".claude/* must be blocked"
+        );
     }
 
     // Category: GnuPG keys
@@ -1763,7 +1890,10 @@ mod tests {
         fs::create_dir(&gnupg).unwrap();
         let f = gnupg.join("secring.gpg");
         fs::write(&f, "GPG secret ring").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".gnupg/* must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".gnupg/* must be blocked"
+        );
     }
 
     // Negative tests: ensure legitimate files are NOT blocked
@@ -1774,7 +1904,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("envelope.txt");
         fs::write(&f, "not a secret").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(), "envelope.txt must NOT be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(),
+            "envelope.txt must NOT be blocked"
+        );
     }
 
     #[test]
@@ -1783,7 +1916,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("identity.txt");
         fs::write(&f, "user info").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(), "identity.txt must NOT be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(),
+            "identity.txt must NOT be blocked"
+        );
     }
 
     #[test]
@@ -1796,7 +1932,10 @@ mod tests {
         // "config" is on the exact-filename denylist because ~/.aws/config is covered that way.
         // A project could name things config.json or myconfig.toml and be fine.
         let result = resolve_tool_path(f.to_str().unwrap(), dir.path());
-        assert!(result.is_err(), "bare 'config' filename is blocked (documents the intentional trade-off)");
+        assert!(
+            result.is_err(),
+            "bare 'config' filename is blocked (documents the intentional trade-off)"
+        );
     }
 
     #[test]
@@ -1806,7 +1945,11 @@ mod tests {
         let f = dir.path().join("config.json");
         fs::write(&f, r#"{"port":3000}"#).unwrap();
         let result = resolve_tool_path(f.to_str().unwrap(), dir.path());
-        assert!(result.is_ok(), "config.json in project root must be readable, got: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "config.json in project root must be readable, got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1814,6 +1957,9 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("README.md");
         fs::write(&f, "# Project").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(), "README.md must be readable");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(),
+            "README.md must be readable"
+        );
     }
 }

@@ -15,6 +15,7 @@ import { ClaudeMemoryPanel } from "./ClaudeMemoryPanel";
 import Features from "./Features";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { handleExternalLinkClick } from "./lib/externalLinks";
 import {
   trackProjectCreated,
   trackProjectUpdated,
@@ -1766,7 +1767,7 @@ function SkillAddButton({
 }: {
   rec: ProjectRecommendation;
   alreadyAdded: boolean;
-  onAdd: (skillName: string) => void;
+  onAdd: (skillName: string) => Promise<boolean> | boolean;
 }) {
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -1820,7 +1821,12 @@ function SkillAddButton({
 
     // 4. Everything succeeded — add to project and dismiss the card.
     setState("idle");
-    onAdd(meta.name);
+    const added = await Promise.resolve(onAdd(meta.name));
+    if (!added) {
+      setState("error");
+      setErrorMsg("Installed skill, but failed to add it to this project.");
+      return;
+    }
   };
 
   if (errorMsg) {
@@ -1863,7 +1869,7 @@ function McpAddButton({
 }: {
   rec: ProjectRecommendation;
   alreadyAdded: boolean;
-  onAdd: (serverName: string) => void;
+  onAdd: (serverName: string) => Promise<boolean> | boolean;
 }) {
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -1924,7 +1930,12 @@ function McpAddButton({
     }
 
     setState("idle");
-    onAdd(configKey);
+    const added = await Promise.resolve(onAdd(configKey));
+    if (!added) {
+      setState("error");
+      setErrorMsg("Server was saved, but failed to add it to this project.");
+      return;
+    }
   };
 
   if (errorMsg) {
@@ -4252,36 +4263,39 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   // Persist a project snapshot directly — used by addItem/removeItem so they
   // can pass the already-computed new value without waiting for a React state flush.
-  const saveProjectSnapshot = async (snapshot: Project) => {
+  const saveProjectSnapshot = async (snapshot: Project): Promise<boolean> => {
     const folderFallback = snapshot.directory?.split("/").filter(Boolean).pop() ?? "";
     const name = isCreating ? (newName.trim() || folderFallback) : selectedName;
-    if (!name) return;
+    if (!name) return false;
     try {
       const toSave = { ...snapshot, name, updated_at: new Date().toISOString() };
       await invoke("save_project", { name, data: JSON.stringify(toSave, null, 2) });
       setSyncStatus(toSave.directory && toSave.agents.length > 0 ? "Saved & synced" : "Saved");
       setProjectDetailsMap((prev) => new Map(prev).set(name, toSave));
       setDirty(false);
+      return true;
     } catch (err: any) {
       console.error("Autosave failed:", err);
       setSyncStatus(`Save failed: ${err}`);
+      return false;
     }
   };
 
-  const addItem = (key: ListField, item: string) => {
-    if (!project || !item.trim()) return;
-    if (project[key].includes(item.trim())) return;
+  const addItem = async (key: ListField, item: string): Promise<boolean> => {
+    if (!project || !item.trim()) return false;
+    if (project[key].includes(item.trim())) return true;
     const newList = [...project[key], item.trim()];
     updateField(key, newList);
     const pName = isCreating ? newName.trim() : (selectedName ?? "");
     if (key === "agents") trackProjectAgentAdded(pName, item.trim());
     else if (key === "skills") {
       trackProjectSkillAdded(pName, item.trim());
-      saveProjectSnapshot({ ...project, skills: newList as string[] });
+      return await saveProjectSnapshot({ ...project, skills: newList as string[] });
     } else if (key === "mcp_servers") {
       trackProjectMcpServerAdded(pName, item.trim());
-      saveProjectSnapshot({ ...project, mcp_servers: newList as string[] });
+      return await saveProjectSnapshot({ ...project, mcp_servers: newList as string[] });
     }
+    return true;
   };
 
   const removeItem = (key: ListField, idx: number) => {
@@ -7671,10 +7685,16 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                      <SkillAddButton
                                       rec={rec}
                                       alreadyAdded={project.skills.includes(rec.title)}
-                                      onAdd={(skillName) => {
-                                        addItem("skills", skillName);
-                                        invoke("action_recommendation", { id: rec.id });
-                                        removeRecommendation(rec.id);
+                                      onAdd={async (skillName) => {
+                                        const added = await addItem("skills", skillName);
+                                        if (!added) return false;
+                                        try {
+                                          await invoke("action_recommendation", { id: rec.id });
+                                          removeRecommendation(rec.id);
+                                        } catch (err) {
+                                          console.error("Failed to mark recommendation as actioned:", err);
+                                        }
+                                        return true;
                                       }}
                                     />
                                  </div>
@@ -8129,12 +8149,18 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                       <McpAddButton
                                        rec={rec}
                                        alreadyAdded={project.mcp_servers.includes(rec.title)}
-                                       onAdd={(serverName) => {
-                                         addItem("mcp_servers", serverName);
-                                         invoke("action_recommendation", { id: rec.id });
-                                         removeRecommendation(rec.id);
-                                       }}
-                                     />
+                                       onAdd={async (serverName) => {
+                                          const added = await addItem("mcp_servers", serverName);
+                                          if (!added) return false;
+                                          try {
+                                            await invoke("action_recommendation", { id: rec.id });
+                                            removeRecommendation(rec.id);
+                                          } catch (err) {
+                                            console.error("Failed to mark recommendation as actioned:", err);
+                                          }
+                                          return true;
+                                        }}
+                                      />
                                   </div>
                                 </div>
                                  <button
@@ -8453,13 +8479,14 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                      </p>
                                    </div>
                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                     <a
-                                       href={entry.path}
-                                       target="_blank"
-                                       rel="noopener noreferrer"
-                                       className="rounded-md border border-border-strong/30 p-1.5 text-text-muted transition-colors hover:border-brand/30 hover:bg-brand/10 hover:text-brand"
-                                       title="Open link"
-                                     >
+                                      <a
+                                        href={entry.path}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={handleExternalLinkClick(entry.path, true)}
+                                        className="rounded-md border border-border-strong/30 p-1.5 text-text-muted transition-colors hover:border-brand/30 hover:bg-brand/10 hover:text-brand"
+                                        title="Open link"
+                                      >
                                        <ExternalLink size={13} />
                                      </a>
                                      <button
@@ -8860,6 +8887,87 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                 )}
                               </div>
                               <p className="text-[12px] text-text-muted leading-relaxed">{rec.body}</p>
+                              {(rec.kind === "skill" || rec.kind === "mcp_server") && (
+                                <div className="mt-2 flex items-center gap-2">
+                                  {rec.kind === "skill" && (onNavigateToSkillStoreWithResult || onNavigateToSkillStore) && (
+                                    <button
+                                      onClick={() => {
+                                        if (rec.metadata && onNavigateToSkillStoreWithResult) {
+                                          try {
+                                            const meta = JSON.parse(rec.metadata) as { id: string; name: string; source: string; installs: number };
+                                            if (meta.id && meta.name && meta.source) {
+                                              onNavigateToSkillStoreWithResult(meta);
+                                              return;
+                                            }
+                                          } catch {
+                                            // fall through to plain query
+                                          }
+                                        }
+                                        onNavigateToSkillStore?.(rec.title);
+                                      }}
+                                      className="text-[11px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded px-2 py-1 transition-colors flex items-center gap-1"
+                                    >
+                                      <Search size={10} /> View
+                                    </button>
+                                  )}
+                                  {rec.kind === "skill" && (
+                                    <SkillAddButton
+                                      rec={rec}
+                                      alreadyAdded={project.skills.includes(rec.title)}
+                                      onAdd={async (skillName) => {
+                                        const added = await addItem("skills", skillName);
+                                        if (!added) return false;
+                                        try {
+                                          await invoke("action_recommendation", { id: rec.id });
+                                          removeRecommendation(rec.id);
+                                        } catch (err) {
+                                          console.error("Failed to mark recommendation as actioned:", err);
+                                        }
+                                        return true;
+                                      }}
+                                    />
+                                  )}
+
+                                  {rec.kind === "mcp_server" && onNavigateToMcpMarketplace && (
+                                    <button
+                                      onClick={() => {
+                                        if (rec.metadata) {
+                                          try {
+                                            const meta = JSON.parse(rec.metadata) as { slug?: string };
+                                            if (meta.slug) {
+                                              onNavigateToMcpMarketplace(meta.slug);
+                                              return;
+                                            }
+                                          } catch {
+                                            // fall through to title
+                                          }
+                                        }
+                                        onNavigateToMcpMarketplace(rec.title);
+                                      }}
+                                      className="text-[11px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded px-2 py-1 transition-colors flex items-center gap-1"
+                                    >
+                                      <Search size={10} /> View
+                                    </button>
+                                  )}
+                                  {rec.kind === "mcp_server" && (
+                                    <McpAddButton
+                                      rec={rec}
+                                      alreadyAdded={project.mcp_servers.includes(rec.title)}
+                                      onAdd={async (serverName) => {
+                                        const added = await addItem("mcp_servers", serverName);
+                                        if (!added) return false;
+                                        try {
+                                          await invoke("action_recommendation", { id: rec.id });
+                                          removeRecommendation(rec.id);
+                                        } catch (err) {
+                                          console.error("Failed to mark recommendation as actioned:", err);
+                                        }
+                                        return true;
+                                      }}
+                                    />
+                                  )}
+                                </div>
+                              )}
                               {rec.kind === "rule" && (
                                 <button
                                   onClick={() => selectTab("project_file")}
@@ -9379,6 +9487,7 @@ function ToolInfoSidebar({ entry, active, onAdd, onRemove }: ToolInfoSidebarProp
             href={entry.url}
             target="_blank"
             rel="noreferrer"
+            onClick={handleExternalLinkClick(entry.url)}
             className="flex items-center gap-1 text-brand hover:underline truncate"
           >
             <Globe size={10} className="flex-shrink-0" />
@@ -9391,6 +9500,7 @@ function ToolInfoSidebar({ entry, active, onAdd, onRemove }: ToolInfoSidebarProp
             href={`https://github.com/${entry.github_repo}`}
             target="_blank"
             rel="noreferrer"
+            onClick={handleExternalLinkClick(`https://github.com/${entry.github_repo}`)}
             className="flex items-center gap-1 text-brand hover:underline truncate"
           >
             <Globe size={10} className="flex-shrink-0" />
@@ -9473,6 +9583,7 @@ function ProjectToolRow({ entry, active, onAdd, onRemove }: ProjectToolRowProps)
               href={entry.url}
               target="_blank"
               rel="noreferrer"
+              onClick={handleExternalLinkClick(entry.url)}
               className="flex items-center gap-1 text-[11px] text-brand hover:underline"
             >
               <ExternalLink size={10} />

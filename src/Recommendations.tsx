@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertCircle, ArrowRight, ChevronDown, ChevronRight, Code, FolderOpen, Lightbulb, RefreshCw, Server, Sparkles, X } from "lucide-react";
+import { AlertCircle, ArrowRight, ChevronDown, ChevronRight, Code, FileText, FolderOpen, Layers, Lightbulb, RefreshCw, Server, Sparkles, X } from "lucide-react";
 
 interface RecRowProps {
   icon: React.ReactNode;
@@ -9,10 +9,12 @@ interface RecRowProps {
   body: string;
   linkLabel: React.ReactNode;
   onLinkClick: () => void;
+  secondaryLinkLabel?: React.ReactNode;
+  onSecondaryLinkClick?: () => void;
   onDismiss?: () => void;
 }
 
-function RecRow({ icon, title, badge, body, linkLabel, onLinkClick, onDismiss }: RecRowProps) {
+function RecRow({ icon, title, badge, body, linkLabel, onLinkClick, secondaryLinkLabel, onSecondaryLinkClick, onDismiss }: RecRowProps) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="group/row hover:bg-surface-hover transition-colors">
@@ -34,6 +36,14 @@ function RecRow({ icon, title, badge, body, linkLabel, onLinkClick, onDismiss }:
         >
           {linkLabel}
         </button>
+        {secondaryLinkLabel && onSecondaryLinkClick && (
+          <button
+            onClick={onSecondaryLinkClick}
+            className="flex-shrink-0 text-[11px] text-text-muted hover:text-text-base transition-colors font-medium flex items-center gap-1"
+          >
+            {secondaryLinkLabel}
+          </button>
+        )}
         {onDismiss && (
           <button
             onClick={onDismiss}
@@ -60,18 +70,29 @@ interface Recommendation {
   priority: "low" | "normal" | "high";
   status: "pending" | "dismissed" | "actioned";
   source: string;
+  metadata: string;
   created_at: string;
   updated_at: string;
 }
 
 interface RecommendationsProps {
   onNavigateToProject: (name: string, tab?: string) => void;
+  onNavigateToSkillStoreWithResult?: (result: { id: string; name: string; source: string; installs: number }) => void;
+  onNavigateToMcpMarketplace?: (slug: string) => void;
+  onNavigateToTemplateMarketplace?: (templateName: string) => void;
+  onNavigateToCollectionMarketplace?: (query: string) => void;
 }
 
 /** Sources whose individual records are replaced by a single rollup card. */
 const AI_SUGGESTION_SOURCES = new Set(["automatic-ai-skills", "automatic-ai-mcp"]);
 
-export default function Recommendations({ onNavigateToProject }: RecommendationsProps) {
+export default function Recommendations({
+  onNavigateToProject,
+  onNavigateToSkillStoreWithResult,
+  onNavigateToMcpMarketplace,
+  onNavigateToTemplateMarketplace,
+  onNavigateToCollectionMarketplace,
+}: RecommendationsProps) {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -109,6 +130,61 @@ export default function Recommendations({ onNavigateToProject }: Recommendations
   const handleProjectClick = (name: string, tab?: string) => {
     localStorage.setItem("automatic.projects.selected", name);
     onNavigateToProject(name, tab);
+  };
+
+  const getMarketplaceLink = (rec: Recommendation): { label: React.ReactNode; onClick: () => void } | null => {
+    let parsedMeta: Record<string, unknown> | null = null;
+    if (rec.metadata) {
+      try {
+        parsedMeta = JSON.parse(rec.metadata) as Record<string, unknown>;
+      } catch {
+        parsedMeta = null;
+      }
+    }
+
+    if (rec.kind === "skill" && onNavigateToSkillStoreWithResult && parsedMeta) {
+      const id = typeof parsedMeta.id === "string" ? parsedMeta.id : "";
+      const name = typeof parsedMeta.name === "string" ? parsedMeta.name : "";
+      const source = typeof parsedMeta.source === "string" ? parsedMeta.source : "";
+      const installs = typeof parsedMeta.installs === "number" ? parsedMeta.installs : 0;
+      if (!id || !name || !source) return null;
+
+      return {
+        label: <><Code size={10} /> View skill</>,
+        onClick: () => onNavigateToSkillStoreWithResult({ id, name, source, installs }),
+      };
+    }
+
+    if (rec.kind === "mcp_server" && onNavigateToMcpMarketplace && parsedMeta) {
+      const slug = typeof parsedMeta.slug === "string" ? parsedMeta.slug : "";
+      if (!slug) return null;
+      return {
+        label: <><Server size={10} /> View MCP</>,
+        onClick: () => onNavigateToMcpMarketplace(slug),
+      };
+    }
+
+    if (rec.kind === "template" && onNavigateToTemplateMarketplace && parsedMeta) {
+      const name = typeof parsedMeta.name === "string" ? parsedMeta.name : "";
+      if (!name) return null;
+      return {
+        label: <><FileText size={10} /> View template</>,
+        onClick: () => onNavigateToTemplateMarketplace(name),
+      };
+    }
+
+    if (rec.kind === "collection" && onNavigateToCollectionMarketplace && parsedMeta) {
+      const slug = typeof parsedMeta.slug === "string" ? parsedMeta.slug : "";
+      const name = typeof parsedMeta.name === "string" ? parsedMeta.name : "";
+      const query = slug || name;
+      if (!query) return null;
+      return {
+        label: <><Layers size={10} /> View collection</>,
+        onClick: () => onNavigateToCollectionMarketplace(query),
+      };
+    }
+
+    return null;
   };
 
   // Separate normal recs from AI suggestion rollup sources, grouped by project.
@@ -225,20 +301,25 @@ export default function Recommendations({ onNavigateToProject }: Recommendations
                     )}
 
                     {/* Normal recommendation cards */}
-                    {normalRecs.map((rec) => (
-                      <RecRow
-                        key={rec.id}
-                        icon={<AlertCircle size={13} className={rec.priority === "high" ? "text-warning" : "text-text-muted"} />}
-                        title={rec.title}
-                        badge={rec.priority === "high" ? (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/20 leading-none shrink-0">Important</span>
-                        ) : undefined}
-                        body={rec.body}
-                        linkLabel={<>Open project <ArrowRight size={10} /></>}
-                        onLinkClick={() => handleProjectClick(projectName, "recommendations")}
-                        onDismiss={() => handleDismiss(rec.id)}
-                      />
-                    ))}
+                    {normalRecs.map((rec) => {
+                      const marketplaceLink = getMarketplaceLink(rec);
+                      return (
+                        <RecRow
+                          key={rec.id}
+                          icon={<AlertCircle size={13} className={rec.priority === "high" ? "text-warning" : "text-text-muted"} />}
+                          title={rec.title}
+                          badge={rec.priority === "high" ? (
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/20 leading-none shrink-0">Important</span>
+                          ) : undefined}
+                          body={rec.body}
+                          linkLabel={<>Open project <ArrowRight size={10} /></>}
+                          onLinkClick={() => handleProjectClick(projectName, "recommendations")}
+                          secondaryLinkLabel={marketplaceLink?.label}
+                          onSecondaryLinkClick={marketplaceLink?.onClick}
+                          onDismiss={() => handleDismiss(rec.id)}
+                        />
+                      );
+                    })}
                   </div>
                 </section>
               );

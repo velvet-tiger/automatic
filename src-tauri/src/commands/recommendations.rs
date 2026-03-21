@@ -3,6 +3,7 @@ use crate::recommendations::{
     RecommendationPriority, RecommendationStatus,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 // ── Recommendations ───────────────────────────────────────────────────────────
 
@@ -196,12 +197,12 @@ pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendat
         } else {
             let already_dismissed = crate::recommendations::list_recommendations(
                 project,
-            crate::recommendations::ListRecommendationsFilter {
-                status: Some(RecommendationStatus::Dismissed),
-                kind: Some("project_file".to_string()),
-                source: None,
-                limit: None,
-            },
+                crate::recommendations::ListRecommendationsFilter {
+                    status: Some(RecommendationStatus::Dismissed),
+                    kind: Some("project_file".to_string()),
+                    source: None,
+                    limit: None,
+                },
             )?
             .into_iter()
             .any(|r| r.source == "automatic-system");
@@ -238,10 +239,7 @@ pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendat
             .join("context.json");
 
         if context_path.exists() {
-            crate::recommendations::clear_system_recommendations_by_kind(
-                project,
-                "context_file",
-            )?;
+            crate::recommendations::clear_system_recommendations_by_kind(project, "context_file")?;
         } else {
             let already_dismissed = crate::recommendations::list_recommendations(
                 project,
@@ -307,6 +305,218 @@ struct AiRecommendationsOutput {
     recommendations: Vec<AiRecommendation>,
 }
 
+/// Canonicalised marketplace metadata for a validated recommendation.
+///
+/// `title` is the canonical display name we store on the recommendation row.
+/// `metadata` is a compact JSON blob used by the UI for precise deep-links.
+struct VerifiedMarketplaceItem {
+    title: String,
+    metadata: String,
+}
+
+fn eq_ignore_case(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+fn normalize_slugish(s: &str) -> String {
+    s.trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+async fn verify_marketplace_recommendation(
+    kind: &str,
+    title: &str,
+) -> Result<Option<VerifiedMarketplaceItem>, String> {
+    match kind {
+        "skill" => {
+            let results = crate::core::search_remote_skills(title).await?;
+            let wanted = normalize_slugish(title);
+            let selected = results.iter().find(|r| {
+                eq_ignore_case(&r.name, title)
+                    || eq_ignore_case(&r.id, title)
+                    || normalize_slugish(&r.name) == wanted
+                    || normalize_slugish(&r.id) == wanted
+            });
+
+            let Some(skill) = selected else {
+                return Ok(None);
+            };
+
+            // Do a real fetchability check so "View skill" and install actions
+            // never point to stale/unreachable skills.sh index entries.
+            if crate::core::fetch_remote_skill_content(&skill.source, &skill.name)
+                .await
+                .is_err()
+            {
+                return Ok(None);
+            }
+
+            let metadata = json!({
+                "id": skill.id,
+                "name": skill.name,
+                "source": skill.source,
+                "installs": skill.installs,
+            });
+
+            Ok(Some(VerifiedMarketplaceItem {
+                title: skill.name.clone(),
+                metadata: serde_json::to_string(&metadata).unwrap_or_default(),
+            }))
+        }
+        "mcp_server" => {
+            let raw = crate::core::search_mcp_marketplace(title)?;
+            let items: Vec<Value> = serde_json::from_str(&raw)
+                .map_err(|e| format!("Failed to parse MCP marketplace results: {}", e))?;
+
+            let selected = items.iter().find(|item| {
+                let slug = item.get("slug").and_then(|v| v.as_str()).unwrap_or("");
+                let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let item_title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                eq_ignore_case(slug, title)
+                    || eq_ignore_case(name, title)
+                    || eq_ignore_case(item_title, title)
+            });
+
+            let Some(server) = selected else {
+                return Ok(None);
+            };
+
+            let slug = server
+                .get("slug")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if slug.is_empty() {
+                return Ok(None);
+            }
+            let canonical_title = server
+                .get("title")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(&slug)
+                .to_string();
+
+            let metadata = json!({
+                "slug": slug,
+                "title": server.get("title").and_then(|v| v.as_str()).unwrap_or_default(),
+                "name": server.get("name").and_then(|v| v.as_str()).unwrap_or_default(),
+                "provider": server.get("provider").and_then(|v| v.as_str()).unwrap_or_default(),
+            });
+
+            Ok(Some(VerifiedMarketplaceItem {
+                title: canonical_title,
+                metadata: serde_json::to_string(&metadata).unwrap_or_default(),
+            }))
+        }
+        "template" => {
+            let raw = crate::core::search_bundled_project_templates(title)?;
+            let items: Vec<Value> = serde_json::from_str(&raw)
+                .map_err(|e| format!("Failed to parse template marketplace results: {}", e))?;
+
+            let selected = items.iter().find(|item| {
+                let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let display_name = item
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                eq_ignore_case(name, title) || eq_ignore_case(display_name, title)
+            });
+
+            let Some(template) = selected else {
+                return Ok(None);
+            };
+
+            let name = template
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if name.is_empty() {
+                return Ok(None);
+            }
+
+            let display_name = template
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(&name)
+                .to_string();
+
+            let metadata = json!({
+                "name": name,
+                "display_name": template
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default(),
+                "category": template
+                    .get("category")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default(),
+            });
+
+            Ok(Some(VerifiedMarketplaceItem {
+                title: display_name,
+                metadata: serde_json::to_string(&metadata).unwrap_or_default(),
+            }))
+        }
+        "collection" => {
+            let raw = crate::core::search_collections(title)?;
+            let items: Vec<Value> = serde_json::from_str(&raw)
+                .map_err(|e| format!("Failed to parse collections results: {}", e))?;
+
+            let selected = items.iter().find(|item| {
+                let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let slug = item.get("slug").and_then(|v| v.as_str()).unwrap_or("");
+                eq_ignore_case(name, title) || eq_ignore_case(slug, title)
+            });
+
+            let Some(collection) = selected else {
+                return Ok(None);
+            };
+
+            let slug = collection
+                .get("slug")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let name = collection
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if slug.is_empty() && name.is_empty() {
+                return Ok(None);
+            }
+
+            let metadata = json!({
+                "id": collection.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
+                "name": name,
+                "slug": slug,
+            });
+
+            Ok(Some(VerifiedMarketplaceItem {
+                title: collection
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(title)
+                    .to_string(),
+                metadata: serde_json::to_string(&metadata).unwrap_or_default(),
+            }))
+        }
+        _ => Ok(Some(VerifiedMarketplaceItem {
+            title: title.to_string(),
+            metadata: String::new(),
+        })),
+    }
+}
+
 /// Result returned to the frontend after an AI recommendations run.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AiRecommendationsResult {
@@ -353,8 +563,8 @@ pub async fn ai_generate_project_recommendations(
                 limit: None,
             },
         )?;
-        let last_run_at = crate::recommendations::get_ai_recommendations_timestamp(project)?
-            .unwrap_or_default();
+        let last_run_at =
+            crate::recommendations::get_ai_recommendations_timestamp(project)?.unwrap_or_default();
         return Ok(AiRecommendationsResult {
             recommendations: recs,
             last_run_at,
@@ -454,13 +664,41 @@ NOT already installed/configured. For each recommendation explain concisely why
 it would help this specific project. Be specific and practical — focus on what 
 will have the highest impact given the project's evident tech stack and workflow."#,
         name = project,
-        description = if description.is_empty() { "(none provided)".to_string() } else { description },
-        agents = if agents.is_empty() { "(none)".to_string() } else { agents.join(", ") },
-        skills = if installed_skills.is_empty() { "(none)".to_string() } else { installed_skills.join(", ") },
-        mcp = if installed_mcp.is_empty() { "(none)".to_string() } else { installed_mcp.join(", ") },
-        rules = if rules.is_empty() { "(none)".to_string() } else { rules.join(", ") },
-        context = if context_summary.is_empty() { "(not generated)".to_string() } else { context_summary },
-        instructions = if instruction_content.is_empty() { "(no instruction file found)".to_string() } else { instruction_content },
+        description = if description.is_empty() {
+            "(none provided)".to_string()
+        } else {
+            description
+        },
+        agents = if agents.is_empty() {
+            "(none)".to_string()
+        } else {
+            agents.join(", ")
+        },
+        skills = if installed_skills.is_empty() {
+            "(none)".to_string()
+        } else {
+            installed_skills.join(", ")
+        },
+        mcp = if installed_mcp.is_empty() {
+            "(none)".to_string()
+        } else {
+            installed_mcp.join(", ")
+        },
+        rules = if rules.is_empty() {
+            "(none)".to_string()
+        } else {
+            rules.join(", ")
+        },
+        context = if context_summary.is_empty() {
+            "(not generated)".to_string()
+        } else {
+            context_summary
+        },
+        instructions = if instruction_content.is_empty() {
+            "(no instruction file found)".to_string()
+        } else {
+            instruction_content
+        },
     );
 
     // We need a valid directory for the tool sandbox but we do not grant any file
@@ -546,7 +784,8 @@ will have the highest impact given the project's evident tech stack and workflow
 
     structured_messages.push(crate::core::ai::AiMessage {
         role: "user".into(),
-        content: "Based on your research above, produce the structured recommendations JSON.".into(),
+        content: "Based on your research above, produce the structured recommendations JSON."
+            .into(),
     });
 
     let structured_system = "You are an expert AI-development advisor. \
@@ -564,8 +803,12 @@ will have the highest impact given the project's evident tech stack and workflow
     )
     .await?;
 
-    let parsed: AiRecommendationsOutput = serde_json::from_str(&json_text)
-        .map_err(|e| format!("Failed to parse AI recommendations JSON: {} — raw: {}", e, json_text))?;
+    let parsed: AiRecommendationsOutput = serde_json::from_str(&json_text).map_err(|e| {
+        format!(
+            "Failed to parse AI recommendations JSON: {} — raw: {}",
+            e, json_text
+        )
+    })?;
 
     // ── Persist the AI recommendations ──────────────────────────────────────
     // Clear previous AI-generated pending recommendations before inserting fresh ones
@@ -575,8 +818,7 @@ will have the highest impact given the project's evident tech stack and workflow
         let db_path = crate::core::get_automatic_dir()
             .map_err(|e| format!("Cannot locate data dir: {}", e))?
             .join("activity.db");
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open DB: {}", e))?;
+        let conn = Connection::open(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
         conn.execute(
             "DELETE FROM recommendations WHERE project = ?1 AND source = 'automatic-ai' AND status = 'pending'",
             params![project],
@@ -586,21 +828,28 @@ will have the highest impact given the project's evident tech stack and workflow
 
     for rec in &parsed.recommendations {
         let priority = RecommendationPriority::from_str(&rec.priority);
+
+        // For marketplace-backed kinds, only persist verified catalog items so
+        // UI links always resolve to a real entry.
+        let Some(verified) = verify_marketplace_recommendation(&rec.kind, &rec.title).await? else {
+            continue;
+        };
+
         crate::recommendations::add_recommendation(AddRecommendationParams {
             project: project.to_string(),
             kind: rec.kind.clone(),
-            title: rec.title.clone(),
+            title: verified.title,
             body: rec.body.clone(),
             priority,
             source: "automatic-ai".to_string(),
-            metadata: String::new(),
+            metadata: verified.metadata,
         })?;
     }
 
     // Record the timestamp of this run.
     crate::recommendations::set_ai_recommendations_timestamp(project)?;
-    let last_run_at = crate::recommendations::get_ai_recommendations_timestamp(project)?
-        .unwrap_or_default();
+    let last_run_at =
+        crate::recommendations::get_ai_recommendations_timestamp(project)?.unwrap_or_default();
 
     // Also run the rule-based evaluator so structural checks are always current.
     evaluate_project_recommendations(project)?;
@@ -683,7 +932,11 @@ fn build_project_state(proj: &crate::core::Project) -> String {
                 crate::agent::from_id(agent_id).and_then(|a| {
                     let p = dir.join(a.project_file_name());
                     std::fs::read_to_string(&p).ok().map(|s| {
-                        if s.len() > 1500 { s[..1500].to_string() } else { s }
+                        if s.len() > 1500 {
+                            s[..1500].to_string()
+                        } else {
+                            s
+                        }
                     })
                 })
             })
@@ -807,8 +1060,7 @@ fn persist_targeted_suggestions(
         let db_path = crate::core::get_automatic_dir()
             .map_err(|e| format!("Cannot locate data dir: {}", e))?
             .join("activity.db");
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open DB: {}", e))?;
+        let conn = Connection::open(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
         conn.execute(
             "DELETE FROM recommendations WHERE project = ?1 AND source = ?2 AND status = 'pending'",
             params![project, source],
@@ -960,7 +1212,12 @@ source, installs count, and a brief reason why each fits this project."#,
     let structured_response =
         run_structured_phase(&research, format_instruction, format_system, schema).await?;
 
-    persist_targeted_suggestions(project, "skill", "automatic-ai-skills", &structured_response)
+    persist_targeted_suggestions(
+        project,
+        "skill",
+        "automatic-ai-skills",
+        &structured_response,
+    )
 }
 
 /// Ask the AI to suggest specific **MCP servers** for this project.
@@ -1053,5 +1310,10 @@ reason why it fits this project."#,
     let structured_response =
         run_structured_phase(&research, format_instruction, format_system, schema).await?;
 
-    persist_targeted_suggestions(project, "mcp_server", "automatic-ai-mcp", &structured_response)
+    persist_targeted_suggestions(
+        project,
+        "mcp_server",
+        "automatic-ai-mcp",
+        &structured_response,
+    )
 }
