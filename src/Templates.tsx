@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { Plus, X, Edit2, FileText, Check, LayoutTemplate } from "lucide-react";
+import { Plus, X, Edit2, FileText, Check, ClipboardList } from "lucide-react";
 import { ICONS } from "./icons";
 import { AuthorSection } from "./AuthorPanel";
 import { TokenPill } from "./TokenPill";
@@ -62,7 +62,7 @@ export default function Templates() {
 
   const handleDelete = async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const confirmed = await ask(`Delete template "${name}"?`, { title: "Delete Template", kind: "warning" });
+    const confirmed = await ask(`Delete instruction "${name}"?`, { title: "Delete Instruction", kind: "warning" });
     if (!confirmed) return;
     try {
       await invoke("delete_template", { name });
@@ -91,11 +91,11 @@ export default function Templates() {
       {/* Left Sidebar - Template List */}
       <div className="w-64 flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50">
         <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center bg-bg-base/30">
-          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Templates</span>
+          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Instructions</span>
           <button
             onClick={startCreateNew}
             className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-            title="Create New Template"
+            title="Create New Instruction"
           >
             <Plus size={14} />
           </button>
@@ -103,15 +103,15 @@ export default function Templates() {
 
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
           {templates.length === 0 && !isCreating ? (
-            <div className="px-4 py-3 text-[13px] text-text-muted text-center">No templates yet.</div>
+            <div className="px-4 py-3 text-[13px] text-text-muted text-center">No instructions yet.</div>
           ) : (
             <ul className="space-y-1 px-2">
               {isCreating && (
                 <li className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-bg-sidebar">
                   <div className={ICONS.fileTemplate.iconBox}>
-                    <LayoutTemplate size={15} className={ICONS.fileTemplate.iconColor} />
+                    <ClipboardList size={15} className={ICONS.fileTemplate.iconColor} />
                   </div>
-                  <span className="text-[13px] text-text-base italic">New Template...</span>
+                  <span className="text-[13px] text-text-base italic">New Instruction...</span>
                 </li>
               )}
               {templates.map(name => {
@@ -127,7 +127,7 @@ export default function Templates() {
                       }`}
                     >
                       <div className={ICONS.fileTemplate.iconBox}>
-                        <LayoutTemplate size={15} className={ICONS.fileTemplate.iconColor} />
+                        <ClipboardList size={15} className={ICONS.fileTemplate.iconColor} />
                       </div>
                       <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
                         {name}
@@ -136,7 +136,7 @@ export default function Templates() {
                     <button
                       onClick={(e) => handleDelete(name, e)}
                       className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                      title="Delete Template"
+                      title="Delete Instruction"
                     >
                       <X size={12} />
                     </button>
@@ -166,7 +166,7 @@ export default function Templates() {
                 {isCreating ? (
                   <input
                     type="text"
-                    placeholder="template-name (no spaces/slashes)"
+                    placeholder="instruction-name (no spaces/slashes)"
                     value={newTemplateName}
                     onChange={(e) => setNewTemplateName(e.target.value)}
                     autoFocus
@@ -218,7 +218,7 @@ export default function Templates() {
                   value={templateContent}
                   onChange={(e) => setTemplateContent(e.target.value)}
                   className="flex-1 w-full h-full p-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30"
-                  placeholder="Write your project file template here in Markdown..."
+                  placeholder="Write your instruction content here in Markdown..."
                   spellCheck={false}
                 />
               ) : (
@@ -228,7 +228,7 @@ export default function Templates() {
                     <AuthorSection descriptor={{ type: "local" }} />
                   </div>
                   <div className="flex-1 overflow-y-auto p-6 font-mono text-[13px] whitespace-pre-wrap text-text-base leading-relaxed custom-scrollbar">
-                    {templateContent || <span className="text-text-muted italic">This template is empty. Click edit to add content.</span>}
+                    {templateContent || <span className="text-text-muted italic">This instruction is empty. Click edit to add content.</span>}
                   </div>
                 </>
               )}
@@ -237,17 +237,17 @@ export default function Templates() {
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
             <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
-              <LayoutTemplate size={24} className={ICONS.fileTemplate.iconColor} strokeWidth={1.5} />
+              <ClipboardList size={24} className={ICONS.fileTemplate.iconColor} strokeWidth={1.5} />
             </div>
-            <h2 className="text-lg font-medium text-text-base mb-2">No Template Selected</h2>
+            <h2 className="text-lg font-medium text-text-base mb-2">No Instruction Selected</h2>
             <p className="text-[14px] text-text-muted mb-8 leading-relaxed max-w-sm">
-              Templates are reusable starting points for project files like CLAUDE.md or AGENTS.md. Create one to quickly initialize new projects.
+              Instructions are reusable project files, providing the base context for all actions taken in your project.
             </p>
             <button
               onClick={startCreateNew}
               className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
             >
-              Create Template
+              Create Instruction
             </button>
           </div>
         )}

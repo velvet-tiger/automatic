@@ -30,7 +30,7 @@ import { TaskLogProvider, useTaskLog } from "./TaskLogContext";
 import TaskLog from "./TaskLog";
 import { UpdateProvider } from "./UpdateContext";
 import UpdateToast from "./UpdateToast";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb, List, Wrench, Hash, MessagesSquare } from "lucide-react";
+import { ClipboardList, Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb, List, Wrench, Hash, MessagesSquare } from "lucide-react";
 import { flag } from "./flags";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
@@ -111,6 +111,7 @@ function App() {
   const [pendingSkillStoreResult, setPendingSkillStoreResult] = useState<{ id: string; name: string; source: string; installs: number } | null>(null);
   const [pendingMcpSlug, setPendingMcpSlug] = useState<string | null>(null);
   const [pendingMcpQuery, setPendingMcpQuery] = useState<string | null>(null);
+  const [pendingCollectionQuery, setPendingCollectionQuery] = useState<string | null>(null);
   const [pendingMarketplaceTemplate, setPendingMarketplaceTemplate] = useState<string | null>(null);
   const [pendingMcpServer, setPendingMcpServer] = useState<string | null>(null);
   const [pendingGroup, setPendingGroup] = useState<string | null>(null);
@@ -241,6 +242,11 @@ function App() {
     setActiveTab("template-marketplace");
   };
 
+  const navigateToCollectionMarketplace = (query: string) => {
+    setPendingCollectionQuery(query);
+    setActiveTab("collection-marketplace");
+  };
+
   const MARKETPLACE_TABS: Record<string, () => void> = {
     "projects": () => setProjectsResetKey((k) => k + 1),
     "skill-store": () => setSkillStoreResetKey((k) => k + 1),
@@ -321,7 +327,7 @@ function App() {
               <NavItem id="projects" icon={FolderOpen} label="Projects" />
               <NavItem id="project-groups" icon={Layers} label="Groups" />
               <NavItem id="project-templates" icon={LayoutTemplate} label="Templates" />
-              <NavItem id="templates" icon={LayoutTemplate} label="Instructions" />
+              <NavItem id="templates" icon={ClipboardList} label="Instructions" />
               <NavItem id="rules" icon={ScrollText} label="Rules" />
               <NavItem id="user-agents" icon={MessagesSquare} label="Sub-Agents" />
               <NavItem id="skills" icon={Code} label="Skills" />
@@ -534,7 +540,14 @@ function App() {
 
           {activeTab === "recommendations" && (
             <div className="flex-1 h-full">
-              <Recommendations onNavigateToProject={navigateToProject} />
+              <Recommendations
+                onNavigateToProject={navigateToProject}
+                onNavigateToSkillStore={navigateToSkillStore}
+                onNavigateToSkillStoreWithResult={navigateToSkillStoreWithResult}
+                onNavigateToMcpMarketplace={navigateToMcpMarketplace}
+                onNavigateToTemplateMarketplace={navigateToTemplateMarketplace}
+                onNavigateToCollectionMarketplace={navigateToCollectionMarketplace}
+              />
             </div>
           )}
           {activeTab === "agents" && (
@@ -593,7 +606,11 @@ function App() {
           )}
           {activeTab === "collection-marketplace" && (
             <div className="flex-1 h-full">
-              <CollectionMarketplace resetKey={collectionMarketplaceResetKey} />
+              <CollectionMarketplace
+                resetKey={collectionMarketplaceResetKey}
+                initialQuery={pendingCollectionQuery}
+                onInitialQueryConsumed={() => setPendingCollectionQuery(null)}
+              />
             </div>
           )}
           {activeTab === "templates" && (
