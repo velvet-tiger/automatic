@@ -105,6 +105,14 @@ interface AgentsProps {
   onNavigateToProject?: (projectName: string) => void;
 }
 
+type DetailTab = "details" | "management" | "projects";
+
+const DETAIL_TABS: { id: DetailTab; label: string }[] = [
+  { id: "details", label: "Details" },
+  { id: "management", label: "Management" },
+  { id: "projects", label: "Projects" },
+];
+
 export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
   const LAST_AGENT_KEY = "automatic.agents.selected";
   const [agents, setAgents] = useState<AgentWithProjects[]>([]);
@@ -118,6 +126,7 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
     }
     return localStorage.getItem(LAST_AGENT_KEY);
   });
+  const [detailTab, setDetailTab] = useState<DetailTab>("details");
   const [error, setError] = useState<string | null>(null);
   /** Default agent options loaded from settings — keyed by agent id */
   const [defaultOptions, setDefaultOptions] = useState<Record<string, AgentOptions>>({});
@@ -358,7 +367,7 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
           </div>
         )}
 
-        {selected ? (
+{selected ? (
           <div className="flex-1 flex flex-col h-full">
             {/* Header */}
             <div className="h-11 px-6 border-b border-border-strong/40 flex items-center gap-3">
@@ -368,334 +377,359 @@ export default function Agents({ onNavigateToProject }: AgentsProps = {}) {
               </h3>
             </div>
 
+            {/* Tab Bar */}
+            <div className="h-10 px-6 border-b border-border-strong/40 flex items-center gap-6">
+              {DETAIL_TABS.map((tab) => {
+                const isActive = detailTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setDetailTab(tab.id)}
+                    className={`text-[12px] font-medium transition-colors pb-2 -mb-[10px] border-b-2 ${
+                      isActive
+                        ? "text-brand border-brand"
+                        : "text-text-muted border-transparent hover:text-text-base"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
             {/* Body */}
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div className="max-w-2xl space-y-8">
-                {/* Agent Info */}
-                <section>
-                  <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
-                    Details
-                  </label>
-                  <div className="space-y-3">
-                    <div className="flex items-start gap-3 px-3 py-2.5 bg-bg-input rounded-md border border-border-strong/40">
-                      <span className="text-[11px] text-text-muted w-24 flex-shrink-0 pt-0.5">Config File</span>
-                      <span className="text-[13px] text-text-base font-mono">{selected.description}</span>
-                    </div>
-                    <div className="flex items-start gap-3 px-3 py-2.5 bg-bg-input rounded-md border border-border-strong/40">
-                      <span className="text-[11px] text-text-muted w-24 flex-shrink-0 pt-0.5">Project Instructions</span>
-                      <span className="text-[13px] text-text-base font-mono">{selected.project_file}</span>
-                    </div>
-                  </div>
-                </section>
-
-                {/* Capabilities */}
-                <section>
-                  <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
-                    Capabilities
-                  </label>
-                  <div className="space-y-2">
-                    <CapabilityRow
-                      label="Skills"
-                      description="Automatic can sync skills to this agent"
-                      supported={selected.capabilities.skills}
-                    />
-                    <CapabilityRow
-                      label="Instructions"
-                      description="Reads a project instructions file"
-                      supported={selected.capabilities.instructions}
-                    />
-                    <CapabilityRow
-                      label="MCP Servers"
-                      description="Automatic can write MCP server configuration"
-                      unsupportedDescription="Automatic cannot write MCP server configuration"
-                      supported={selected.capabilities.mcp_servers}
-                    />
-                    <CapabilityRow
-                      label="Sub-Agents"
-                      description="Automatic can sync sub-agents to this agent"
-                      unsupportedDescription="This agent does not support sub-agents"
-                      supported={selected.capabilities.agents}
-                    />
-                  </div>
-                  {selected.mcp_note && (
-                    <div className="flex items-start gap-3 px-3 py-3 bg-bg-input rounded-md border border-border-strong mt-3">
-                      <AlertCircle size={14} className="text-text-muted flex-shrink-0 mt-0.5" />
-                      <p className="text-[12px] text-text-muted leading-relaxed">{selected.mcp_note}</p>
-                    </div>
-                  )}
-                </section>
-
-                {/* Default options — settable here, applied to new projects */}
-                 {(AGENT_OPTION_DEFS[selected.id]?.length ?? 0) > 0 && (
-                   <section>
-                     <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3 flex items-center gap-1.5">
-                       <Settings2 size={12} className="text-text-muted" /> Default Options
-                     </label>
-                     <div className="divide-y divide-border-strong/20 border border-border-strong/40 rounded-lg overflow-hidden">
-                       {AGENT_OPTION_DEFS[selected.id]!.map((opt) => {
-                         const agentDefaults = defaultOptions[selected.id];
-                         const value: boolean = agentDefaults
-                           ? (agentDefaults[opt.key] as boolean)
-                           : opt.hardDefault;
-                         return (
-                           <label
-                             key={opt.key}
-                             className="flex items-start gap-3 px-3 py-3 bg-bg-input cursor-pointer hover:bg-bg-sidebar/40 transition-colors"
-                           >
-                             <div className="flex-1 min-w-0">
-                               <div className="text-[13px] text-text-base font-medium leading-snug">
-                                 {opt.label}
-                               </div>
-                               <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
-                                 {opt.description}
-                               </div>
-                             </div>
-                             <div className="flex-shrink-0 pt-0.5">
-                               <input
-                                 type="checkbox"
-                                 checked={value}
-                                 onChange={(e) =>
-                                   setDefaultOption(selected.id, opt.key, e.target.checked)
-                                 }
-                                 className="w-4 h-4 accent-brand cursor-pointer"
-                               />
-                             </div>
-                           </label>
-                         );
-                       })}
-                     </div>
-                     <p className="text-[11px] text-text-muted mt-2 leading-relaxed">
-                       These defaults apply when a new project is created. Each project can
-                        override them individually in its Providers tab.
-                     </p>
-                   </section>
-                 )}
-
-                {/* API Key — only for agents with a provider mapping */}
-                {AGENT_API_KEY_PROVIDER[selected.id] && (() => {
-                  const providerDef = AGENT_API_KEY_PROVIDER[selected.id]!;
-                  const state = apiKeyStates[providerDef.provider] ?? defaultApiKeyState();
-                  return (
+                {/* Details Tab */}
+                {detailTab === "details" && (
+                  <>
+                    {/* Agent Info */}
                     <section>
-                      <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3 flex items-center gap-1.5">
-                        <Key size={12} className="text-text-muted" /> API Key
+                      <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
+                        Details
                       </label>
-
-                      <div className="rounded-lg border border-border-strong/40 bg-bg-input overflow-hidden">
-                        {/* Provider header row */}
-                        <div className="flex items-center gap-3 px-3 py-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[13px] font-medium text-text-base">
-                              {providerDef.label}
-                            </div>
-                            <div className="text-[11px] text-text-muted mt-0.5">
-                              Provider: <span className="font-mono">{providerDef.provider}</span>
-                            </div>
-                          </div>
-
-                          {/* Status badge */}
-                          {state.stored && !state.editing && (
-                            <span className="flex items-center gap-1 text-[11px] text-success font-medium">
-                              <Check size={11} /> Stored
-                            </span>
-                          )}
-                          {!state.stored && !state.editing && (
-                            <span className="text-[11px] text-text-muted">Not configured</span>
-                          )}
-
-                          {/* Action buttons */}
-                          {!state.editing && (
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                onClick={() => updateApiKeyState(providerDef.provider, { editing: true, inputValue: "", revealed: false })}
-                                className="px-2.5 py-1 text-[11px] font-medium rounded border border-brand/50 text-brand hover:border-brand hover:bg-brand/15 transition-all"
-                              >
-                                {state.stored ? "Update" : "Add Key"}
-                              </button>
-                              {state.stored && (
-                                <button
-                                  onClick={() => deleteApiKey(providerDef.provider)}
-                                  className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-all"
-                                  title="Remove stored key"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              )}
-                            </div>
-                          )}
+                      <div className="space-y-3">
+                        <div className="flex items-start gap-3 px-3 py-2.5 bg-bg-input rounded-md border border-border-strong/40">
+                          <span className="text-[11px] text-text-muted w-24 flex-shrink-0 pt-0.5">Config File</span>
+                          <span className="text-[13px] text-text-base font-mono">{selected.description}</span>
                         </div>
-
-                        {/* Save feedback */}
-                        {state.saveStatus === "saved" && !state.editing && (
-                          <div className="px-3 pb-3">
-                            <span className="text-[11px] text-success">Key saved to keychain</span>
-                          </div>
-                        )}
-                        {state.saveStatus === "error" && !state.editing && (
-                          <div className="px-3 pb-3">
-                            <span className="text-[11px] text-danger">Failed to save key</span>
-                          </div>
-                        )}
-
-                        {/* Inline key input */}
-                        {state.editing && (
-                          <div className="border-t border-border-strong/30 px-3 py-3">
-                            <div className="flex items-center gap-2">
-                              <div className="flex-1 relative">
-                                <input
-                                  type={state.revealed ? "text" : "password"}
-                                  value={state.inputValue}
-                                  onChange={(e) => updateApiKeyState(providerDef.provider, { inputValue: e.target.value })}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter" && state.inputValue.trim()) saveApiKey(providerDef.provider);
-                                    if (e.key === "Escape") updateApiKeyState(providerDef.provider, { editing: false, inputValue: "", revealed: false });
-                                  }}
-                                  placeholder={providerDef.placeholder}
-                                  autoFocus
-                                  className="w-full text-[13px] text-text-base font-mono bg-bg-base border border-border-strong/40 rounded px-3 py-2 pr-9 focus:outline-none focus:border-brand transition-colors"
-                                />
-                                <button
-                                  onClick={() => updateApiKeyState(providerDef.provider, { revealed: !state.revealed })}
-                                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
-                                  title={state.revealed ? "Hide" : "Reveal"}
-                                  type="button"
-                                >
-                                  {state.revealed ? <EyeOff size={13} /> : <Eye size={13} />}
-                                </button>
-                              </div>
-                              <button
-                                onClick={() => saveApiKey(providerDef.provider)}
-                                disabled={!state.inputValue.trim() || state.saveStatus === "saving"}
-                                className="px-3 py-2 text-[12px] font-medium rounded bg-brand text-white hover:bg-brand-active disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                              >
-                                {state.saveStatus === "saving" ? "Saving..." : "Save"}
-                              </button>
-                              <button
-                                onClick={() => updateApiKeyState(providerDef.provider, { editing: false, inputValue: "", revealed: false })}
-                                className="px-2 py-2 text-[12px] text-text-muted hover:text-text-base transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                            <p className="text-[11px] text-text-muted mt-2 leading-relaxed">
-                              Your key is stored in the OS keychain and never written to disk. It is available to
-                              agents via the <span className="font-mono text-text-base">automatic_get_credential</span> MCP tool.
-                            </p>
-                          </div>
-                        )}
+                        <div className="flex items-start gap-3 px-3 py-2.5 bg-bg-input rounded-md border border-border-strong/40">
+                          <span className="text-[11px] text-text-muted w-24 flex-shrink-0 pt-0.5">Project Instructions</span>
+                          <span className="text-[13px] text-text-base font-mono">{selected.project_file}</span>
+                        </div>
                       </div>
                     </section>
-                  );
-                })()}
 
-                {/* OpenCode maintenance */}
-                {selected.id === "opencode" && (
-                  <section>
-                    <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
-                      Maintenance
-                    </label>
-
-                    {/* Archived sessions */}
-                    <div className="mb-4">
-                      <div className="text-[13px] font-medium text-text-base mb-1">Archived Sessions</div>
-                      <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
-                        Delete archived sessions and their messages from the OpenCode database to reclaim disk space.
-                      </p>
-                      {clearCacheStatus === "done" && clearCacheResult && clearCacheResult.sessions_deleted > 0 && (
-                        <div className="mb-2 p-2.5 rounded-lg border border-success bg-success/10 text-[12px] text-success">
-                          Cleared {clearCacheResult.sessions_deleted} archived {clearCacheResult.sessions_deleted === 1 ? "session" : "sessions"}
-                          {clearCacheResult.storage_entries_removed > 0 && `, ${clearCacheResult.storage_entries_removed} storage ${clearCacheResult.storage_entries_removed === 1 ? "entry" : "entries"} removed`}
-                          {clearCacheResult.bytes_reclaimed > 0 && ` — ${formatBytes(clearCacheResult.bytes_reclaimed)} reclaimed`}.
+                    {/* Capabilities */}
+                    <section>
+                      <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
+                        Capabilities
+                      </label>
+                      <div className="space-y-2">
+                        <CapabilityRow
+                          label="Skills"
+                          description="Automatic can sync skills to this agent"
+                          supported={selected.capabilities.skills}
+                        />
+                        <CapabilityRow
+                          label="Instructions"
+                          description="Reads a project instructions file"
+                          supported={selected.capabilities.instructions}
+                        />
+                        <CapabilityRow
+                          label="MCP Servers"
+                          description="Automatic can write MCP server configuration"
+                          unsupportedDescription="Automatic cannot write MCP server configuration"
+                          supported={selected.capabilities.mcp_servers}
+                        />
+                        <CapabilityRow
+                          label="Sub-Agents"
+                          description="Automatic can sync sub-agents to this agent"
+                          unsupportedDescription="This agent does not support sub-agents"
+                          supported={selected.capabilities.agents}
+                        />
+                      </div>
+                      {selected.mcp_note && (
+                        <div className="flex items-start gap-3 px-3 py-3 bg-bg-input rounded-md border border-border-strong mt-3">
+                          <AlertCircle size={14} className="text-text-muted flex-shrink-0 mt-0.5" />
+                          <p className="text-[12px] text-text-muted leading-relaxed">{selected.mcp_note}</p>
                         </div>
                       )}
-                      {clearCacheStatus === "done" && clearCacheResult?.sessions_deleted === 0 && (
-                        <div className="mb-2 p-2.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[12px] text-text-muted">
-                          No archived sessions found.
-                        </div>
-                      )}
-                      {clearCacheStatus === "error" && clearCacheError && (
-                        <div className="mb-2 p-2.5 rounded-lg border border-danger bg-danger/10 text-[12px] text-danger">
-                          {clearCacheError}
-                        </div>
-                      )}
-                      <button
-                        onClick={clearOpenCodeCache}
-                        disabled={clearCacheStatus === "running"}
-                        className="px-3 py-1.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[12px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {clearCacheStatus === "running" ? "Clearing…" : "Clear Archived Sessions"}
-                      </button>
-                    </div>
-
-                    {/* Snapshot storage */}
-                    <div>
-                      <div className="text-[13px] font-medium text-text-base mb-1">Snapshot Storage</div>
-                      <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
-                        Run <span className="font-mono">git gc</span> on each project snapshot repo, remove orphaned repos for deleted projects, and delete stale <span className="font-mono">tmp_pack_*</span> files.
-                      </p>
-                      {cleanSnapshotsStatus === "done" && cleanSnapshotsResult && (
-                        <div className="mb-2 p-2.5 rounded-lg border border-success bg-success/10 text-[12px] text-success">
-                          {cleanSnapshotsResult.repos_gced > 0
-                            ? `Compacted ${cleanSnapshotsResult.repos_gced} snapshot ${cleanSnapshotsResult.repos_gced === 1 ? "repo" : "repos"}`
-                            : "No snapshot repos to compact"}
-                          {cleanSnapshotsResult.orphans_removed > 0 && `, removed ${cleanSnapshotsResult.orphans_removed} orphaned ${cleanSnapshotsResult.orphans_removed === 1 ? "repo" : "repos"}`}
-                          {cleanSnapshotsResult.tmp_pack_files_removed > 0 && `, deleted ${cleanSnapshotsResult.tmp_pack_files_removed} tmp_pack ${cleanSnapshotsResult.tmp_pack_files_removed === 1 ? "file" : "files"}`}
-                          {cleanSnapshotsResult.bytes_freed > 0 && ` — ${formatBytes(cleanSnapshotsResult.bytes_freed)} freed`}.
-                        </div>
-                      )}
-                      {cleanSnapshotsStatus === "error" && cleanSnapshotsError && (
-                        <div className="mb-2 p-2.5 rounded-lg border border-danger bg-danger/10 text-[12px] text-danger">
-                          {cleanSnapshotsError}
-                        </div>
-                      )}
-                      <button
-                        onClick={cleanOpenCodeSnapshots}
-                        disabled={cleanSnapshotsStatus === "running"}
-                        className="px-3 py-1.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[12px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {cleanSnapshotsStatus === "running" ? "Cleaning…" : "Clean Snapshot Storage"}
-                      </button>
-                    </div>
-                  </section>
+                    </section>
+                  </>
                 )}
 
-                {/* Projects */}
-                 <section>
-                   <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase flex items-center gap-1.5 mb-3">
-                     <FolderOpen size={12} className={ICONS.project.iconColor} /> Projects Using This Agent
-                   </label>
-                  {selected.projects.length === 0 ? (
-                    <p className="text-[13px] text-text-muted italic">
-                      No projects are using {selected.label} yet. Add it to a project in the Projects tab.
-                    </p>
-                  ) : (
-                    <ul className="space-y-2">
-                      {selected.projects.map((p) => (
-                        <li key={p.name}>
-                          <button
-                            onClick={() => onNavigateToProject?.(p.name)}
-                            className={`w-full flex items-center gap-3 px-3 py-3 bg-bg-input rounded-lg border border-border-strong/40 text-left transition-colors ${onNavigateToProject ? "hover:bg-bg-sidebar hover:border-brand/40 group cursor-pointer" : "cursor-default"}`}
-                          >
-                            <div className={ICONS.project.iconBox}>
-                              <FolderOpen size={15} className={ICONS.project.iconColor} />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-[13px] font-medium text-text-base">{p.name}</div>
-                              {p.directory && (
-                                <div className="text-[11px] text-text-muted font-mono truncate mt-0.5">
-                                  {p.directory}
+                {/* Management Tab */}
+                {detailTab === "management" && (
+                  <>
+                    {/* Default options */}
+                    {(AGENT_OPTION_DEFS[selected.id]?.length ?? 0) > 0 && (
+                      <section>
+                        <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3 flex items-center gap-1.5">
+                          <Settings2 size={12} className="text-text-muted" /> Default Options
+                        </label>
+                        <div className="divide-y divide-border-strong/20 border border-border-strong/40 rounded-lg overflow-hidden">
+                          {AGENT_OPTION_DEFS[selected.id]!.map((opt) => {
+                            const agentDefaults = defaultOptions[selected.id];
+                            const value: boolean = agentDefaults
+                              ? (agentDefaults[opt.key] as boolean)
+                              : opt.hardDefault;
+                            return (
+                              <label
+                                key={opt.key}
+                                className="flex items-start gap-3 px-3 py-3 bg-bg-input cursor-pointer hover:bg-bg-sidebar/40 transition-colors"
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-[13px] text-text-base font-medium leading-snug">
+                                    {opt.label}
+                                  </div>
+                                  <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                                    {opt.description}
+                                  </div>
+                                </div>
+                                <div className="flex-shrink-0 pt-0.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={value}
+                                    onChange={(e) =>
+                                      setDefaultOption(selected.id, opt.key, e.target.checked)
+                                    }
+                                    className="w-4 h-4 accent-brand cursor-pointer"
+                                  />
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <p className="text-[11px] text-text-muted mt-2 leading-relaxed">
+                          These defaults apply when a new project is created. Each project can
+                          override them individually in its Providers tab.
+                        </p>
+                      </section>
+                    )}
+
+                    {/* API Key */}
+                    {AGENT_API_KEY_PROVIDER[selected.id] && (() => {
+                      const providerDef = AGENT_API_KEY_PROVIDER[selected.id]!;
+                      const state = apiKeyStates[providerDef.provider] ?? defaultApiKeyState();
+                      return (
+                        <section>
+                          <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3 flex items-center gap-1.5">
+                            <Key size={12} className="text-text-muted" /> API Key
+                          </label>
+
+                          <div className="rounded-lg border border-border-strong/40 bg-bg-input overflow-hidden">
+                            <div className="flex items-center gap-3 px-3 py-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[13px] font-medium text-text-base">
+                                  {providerDef.label}
+                                </div>
+                                <div className="text-[11px] text-text-muted mt-0.5">
+                                  Provider: <span className="font-mono">{providerDef.provider}</span>
+                                </div>
+                              </div>
+
+                              {state.stored && !state.editing && (
+                                <span className="flex items-center gap-1 text-[11px] text-success font-medium">
+                                  <Check size={11} /> Stored
+                                </span>
+                              )}
+                              {!state.stored && !state.editing && (
+                                <span className="text-[11px] text-text-muted">Not configured</span>
+                              )}
+
+                              {!state.editing && (
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    onClick={() => updateApiKeyState(providerDef.provider, { editing: true, inputValue: "", revealed: false })}
+                                    className="px-2.5 py-1 text-[11px] font-medium rounded border border-brand/50 text-brand hover:border-brand hover:bg-brand/15 transition-all"
+                                  >
+                                    {state.stored ? "Update" : "Add Key"}
+                                  </button>
+                                  {state.stored && (
+                                    <button
+                                      onClick={() => deleteApiKey(providerDef.provider)}
+                                      className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-all"
+                                      title="Remove stored key"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </div>
-                            {onNavigateToProject && (
-                              <ArrowRight size={13} className="text-text-muted opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity" />
+
+                            {state.saveStatus === "saved" && !state.editing && (
+                              <div className="px-3 pb-3">
+                                <span className="text-[11px] text-success">Key saved to keychain</span>
+                              </div>
                             )}
+                            {state.saveStatus === "error" && !state.editing && (
+                              <div className="px-3 pb-3">
+                                <span className="text-[11px] text-danger">Failed to save key</span>
+                              </div>
+                            )}
+
+                            {state.editing && (
+                              <div className="border-t border-border-strong/30 px-3 py-3">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 relative">
+                                    <input
+                                      type={state.revealed ? "text" : "password"}
+                                      value={state.inputValue}
+                                      onChange={(e) => updateApiKeyState(providerDef.provider, { inputValue: e.target.value })}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter" && state.inputValue.trim()) saveApiKey(providerDef.provider);
+                                        if (e.key === "Escape") updateApiKeyState(providerDef.provider, { editing: false, inputValue: "", revealed: false });
+                                      }}
+                                      placeholder={providerDef.placeholder}
+                                      autoFocus
+                                      className="w-full text-[13px] text-text-base font-mono bg-bg-base border border-border-strong/40 rounded px-3 py-2 pr-9 focus:outline-none focus:border-brand transition-colors"
+                                    />
+                                    <button
+                                      onClick={() => updateApiKeyState(providerDef.provider, { revealed: !state.revealed })}
+                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
+                                      title={state.revealed ? "Hide" : "Reveal"}
+                                      type="button"
+                                    >
+                                      {state.revealed ? <EyeOff size={13} /> : <Eye size={13} />}
+                                    </button>
+                                  </div>
+                                  <button
+                                    onClick={() => saveApiKey(providerDef.provider)}
+                                    disabled={!state.inputValue.trim() || state.saveStatus === "saving"}
+                                    className="px-3 py-2 text-[12px] font-medium rounded bg-brand text-white hover:bg-brand-active disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                  >
+                                    {state.saveStatus === "saving" ? "Saving..." : "Save"}
+                                  </button>
+                                  <button
+                                    onClick={() => updateApiKeyState(providerDef.provider, { editing: false, inputValue: "", revealed: false })}
+                                    className="px-2 py-2 text-[12px] text-text-muted hover:text-text-base transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                                <p className="text-[11px] text-text-muted mt-2 leading-relaxed">
+                                  Your key is stored in the OS keychain and never written to disk. It is available to
+                                  agents via the <span className="font-mono text-text-base">automatic_get_credential</span> MCP tool.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </section>
+                      );
+                    })()}
+
+                    {/* OpenCode maintenance */}
+                    {selected.id === "opencode" && (
+                      <section>
+                        <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
+                          Maintenance
+                        </label>
+
+                        <div className="mb-4">
+                          <div className="text-[13px] font-medium text-text-base mb-1">Archived Sessions</div>
+                          <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
+                            Delete archived sessions and their messages from the OpenCode database to reclaim disk space.
+                          </p>
+                          {clearCacheStatus === "done" && clearCacheResult && clearCacheResult.sessions_deleted > 0 && (
+                            <div className="mb-2 p-2.5 rounded-lg border border-success bg-success/10 text-[12px] text-success">
+                              Cleared {clearCacheResult.sessions_deleted} archived {clearCacheResult.sessions_deleted === 1 ? "session" : "sessions"}
+                              {clearCacheResult.storage_entries_removed > 0 && `, ${clearCacheResult.storage_entries_removed} storage ${clearCacheResult.storage_entries_removed === 1 ? "entry" : "entries"} removed`}
+                              {clearCacheResult.bytes_reclaimed > 0 && ` — ${formatBytes(clearCacheResult.bytes_reclaimed)} reclaimed`}.
+                            </div>
+                          )}
+                          {clearCacheStatus === "done" && clearCacheResult?.sessions_deleted === 0 && (
+                            <div className="mb-2 p-2.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[12px] text-text-muted">
+                              No archived sessions found.
+                            </div>
+                          )}
+                          {clearCacheStatus === "error" && clearCacheError && (
+                            <div className="mb-2 p-2.5 rounded-lg border border-danger bg-danger/10 text-[12px] text-danger">
+                              {clearCacheError}
+                            </div>
+                          )}
+                          <button
+                            onClick={clearOpenCodeCache}
+                            disabled={clearCacheStatus === "running"}
+                            className="px-3 py-1.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[12px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {clearCacheStatus === "running" ? "Clearing…" : "Clear Archived Sessions"}
                           </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
+                        </div>
+
+                        <div>
+                          <div className="text-[13px] font-medium text-text-base mb-1">Snapshot Storage</div>
+                          <p className="text-[12px] text-text-muted mb-3 leading-relaxed">
+                            Run <span className="font-mono">git gc</span> on each project snapshot repo, remove orphaned repos for deleted projects, and delete stale <span className="font-mono">tmp_pack_*</span> files.
+                          </p>
+                          {cleanSnapshotsStatus === "done" && cleanSnapshotsResult && (
+                            <div className="mb-2 p-2.5 rounded-lg border border-success bg-success/10 text-[12px] text-success">
+                              {cleanSnapshotsResult.repos_gced > 0
+                                ? `Compacted ${cleanSnapshotsResult.repos_gced} snapshot ${cleanSnapshotsResult.repos_gced === 1 ? "repo" : "repos"}`
+                                : "No snapshot repos to compact"}
+                              {cleanSnapshotsResult.orphans_removed > 0 && `, removed ${cleanSnapshotsResult.orphans_removed} orphaned ${cleanSnapshotsResult.orphans_removed === 1 ? "repo" : "repos"}`}
+                              {cleanSnapshotsResult.tmp_pack_files_removed > 0 && `, deleted ${cleanSnapshotsResult.tmp_pack_files_removed} tmp_pack ${cleanSnapshotsResult.tmp_pack_files_removed === 1 ? "file" : "files"}`}
+                              {cleanSnapshotsResult.bytes_freed > 0 && ` — ${formatBytes(cleanSnapshotsResult.bytes_freed)} freed`}.
+                            </div>
+                          )}
+                          {cleanSnapshotsStatus === "error" && cleanSnapshotsError && (
+                            <div className="mb-2 p-2.5 rounded-lg border border-danger bg-danger/10 text-[12px] text-danger">
+                              {cleanSnapshotsError}
+                            </div>
+                          )}
+                          <button
+                            onClick={cleanOpenCodeSnapshots}
+                            disabled={cleanSnapshotsStatus === "running"}
+                            className="px-3 py-1.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[12px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {cleanSnapshotsStatus === "running" ? "Cleaning…" : "Clean Snapshot Storage"}
+                          </button>
+                        </div>
+                      </section>
+                    )}
+                  </>
+                )}
+
+                {/* Projects Tab */}
+                {detailTab === "projects" && (
+                  <section>
+                    <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase flex items-center gap-1.5 mb-3">
+                      <FolderOpen size={12} className={ICONS.project.iconColor} /> Projects Using This Agent
+                    </label>
+                    {selected.projects.length === 0 ? (
+                      <p className="text-[13px] text-text-muted italic">
+                        No projects are using {selected.label} yet. Add it to a project in the Projects tab.
+                      </p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {selected.projects.map((p) => (
+                          <li key={p.name}>
+                            <button
+                              onClick={() => onNavigateToProject?.(p.name)}
+                              className={`w-full flex items-center gap-3 px-3 py-3 bg-bg-input rounded-lg border border-border-strong/40 text-left transition-colors ${onNavigateToProject ? "hover:bg-bg-sidebar hover:border-brand/40 group cursor-pointer" : "cursor-default"}`}
+                            >
+                              <div className={ICONS.project.iconBox}>
+                                <FolderOpen size={15} className={ICONS.project.iconColor} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[13px] font-medium text-text-base">{p.name}</div>
+                                {p.directory && (
+                                  <div className="text-[11px] text-text-muted font-mono truncate mt-0.5">
+                                    {p.directory}
+                                  </div>
+                                )}
+                              </div>
+                              {onNavigateToProject && (
+                                <ArrowRight size={13} className="text-text-muted opacity-0 group-hover:opacity-100 flex-shrink-0 transition-opacity" />
+                              )}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                )}
               </div>
             </div>
           </div>
