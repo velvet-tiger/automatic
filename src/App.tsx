@@ -309,7 +309,7 @@ function App() {
           {/* Top-level items */}
           <ul className="space-y-0.5 mb-6">
             <NavItem id="dashboard" icon={LayoutDashboard} label="Dashboard" />
-            <NavItem id="recommendations" icon={Lightbulb} label="Recommendations" />
+            <NavItem id="recommendations" icon={Lightbulb} label="Insights" />
           </ul>
 
           <div className="mb-6">

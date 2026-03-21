@@ -235,7 +235,7 @@ export default function Recommendations({ onNavigateToProject }: Recommendations
                         ) : undefined}
                         body={rec.body}
                         linkLabel={<>Open project <ArrowRight size={10} /></>}
-                        onLinkClick={() => handleProjectClick(projectName)}
+                        onLinkClick={() => handleProjectClick(projectName, "recommendations")}
                         onDismiss={() => handleDismiss(rec.id)}
                       />
                     ))}
