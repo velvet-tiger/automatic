@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use crate::agent;
 use crate::core::Project;
 
-use super::helpers::{build_selected_servers, load_mcp_server_configs, load_skill_contents};
+use super::helpers::{
+    build_selected_servers, extract_agent_machine_name, load_mcp_server_configs,
+    load_skill_contents,
+};
 
 // ── Drift types ───────────────────────────────────────────────────────────────
 
@@ -103,6 +106,13 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
                 &skill_contents,
                 &project.skills,
                 &project.local_skills,
+                &mut files,
+            );
+            collect_agents_drift(
+                agent_instance,
+                &dir,
+                project.custom_agents.as_deref().unwrap_or(&[]),
+                &project.user_agents,
                 &mut files,
             );
 
@@ -480,6 +490,135 @@ fn collect_skills_drift(
 
                             out.push(DriftedFile {
                                 path: format!("{}/{}", relative.display(), name),
+                                reason: "stale".into(),
+                                expected: None,
+                                actual,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Collect agent drift entries for one agent into `out`.
+/// Handles both custom_agents (inline, project-scoped) and user_agents
+/// (workspace-scoped from ~/.automatic/agents/).
+fn collect_agents_drift(
+    agent_instance: &dyn agent::Agent,
+    dir: &PathBuf,
+    custom_agents: &[crate::core::CustomAgent],
+    user_agent_names: &[String],
+    out: &mut Vec<DriftedFile>,
+) {
+    let agents_dir = match agent_instance.agents_dir(dir) {
+        Some(d) => d,
+        None => return,
+    };
+
+    let ext = agent_instance.agents_file_ext();
+
+    // Build combined set of expected agent machine names
+    let mut expected_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Add custom agent names
+    for agent in custom_agents {
+        if let Some(machine_name) = extract_agent_machine_name(&agent.content) {
+            expected_names.insert(machine_name);
+        } else {
+            expected_names.insert(agent.name.to_lowercase().replace(' ', "-"));
+        }
+    }
+
+    // Add user agent names (from workspace registry)
+    for name in user_agent_names {
+        if let Ok(content) = crate::core::read_user_agent(name) {
+            if let Ok(agent) = serde_json::from_str::<crate::core::UserAgent>(&content) {
+                if let Some(machine_name) = extract_agent_machine_name(&agent.content) {
+                    expected_names.insert(machine_name);
+                } else {
+                    expected_names.insert(name.to_lowercase().replace(' ', "-"));
+                }
+            }
+        }
+    }
+
+    // Check for missing/modified custom agent files
+    for agent in custom_agents {
+        let machine_name = extract_agent_machine_name(&agent.content)
+            .unwrap_or_else(|| agent.name.to_lowercase().replace(' ', "-"));
+        let converted_content = agent_instance.convert_agent_content(&agent.content, &machine_name);
+        let agent_path = agents_dir.join(format!("{}.{}", machine_name, ext));
+
+        if !agent_path.exists() {
+            let relative = agent_path.strip_prefix(dir).unwrap_or(&agent_path);
+            out.push(DriftedFile {
+                path: relative.display().to_string(),
+                reason: "missing".into(),
+                expected: Some(converted_content),
+                actual: None,
+            });
+        } else if let Ok(disk_content) = fs::read_to_string(&agent_path) {
+            if disk_content != converted_content {
+                let relative = agent_path.strip_prefix(dir).unwrap_or(&agent_path);
+                out.push(DriftedFile {
+                    path: relative.display().to_string(),
+                    reason: "modified".into(),
+                    expected: Some(converted_content),
+                    actual: Some(disk_content),
+                });
+            }
+        }
+    }
+
+    // Check for missing/modified user agent files
+    for name in user_agent_names {
+        if let Ok(content) = crate::core::read_user_agent(name) {
+            if let Ok(agent) = serde_json::from_str::<crate::core::UserAgent>(&content) {
+                let machine_name = extract_agent_machine_name(&agent.content)
+                    .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
+                let converted_content =
+                    agent_instance.convert_agent_content(&agent.content, &machine_name);
+                let agent_path = agents_dir.join(format!("{}.{}", machine_name, ext));
+
+                if !agent_path.exists() {
+                    let relative = agent_path.strip_prefix(dir).unwrap_or(&agent_path);
+                    out.push(DriftedFile {
+                        path: relative.display().to_string(),
+                        reason: "missing".into(),
+                        expected: Some(converted_content),
+                        actual: None,
+                    });
+                } else if let Ok(disk_content) = fs::read_to_string(&agent_path) {
+                    if disk_content != converted_content {
+                        let relative = agent_path.strip_prefix(dir).unwrap_or(&agent_path);
+                        out.push(DriftedFile {
+                            path: relative.display().to_string(),
+                            reason: "modified".into(),
+                            expected: Some(converted_content),
+                            actual: Some(disk_content),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Check for stale agent files (in agents_dir but not in expected set)
+    if agents_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&agents_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == ext) {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        if crate::core::is_valid_agent_machine_name(stem)
+                            && !expected_names.contains(stem)
+                        {
+                            let relative = path.strip_prefix(dir).unwrap_or(&path);
+                            let actual = fs::read_to_string(&path).ok();
+                            out.push(DriftedFile {
+                                path: relative.display().to_string(),
                                 reason: "stale".into(),
                                 expected: None,
                                 actual,

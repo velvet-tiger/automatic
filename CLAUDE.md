@@ -76,3 +76,15 @@ cargo check          # Rust compilation check (from src-tauri/)
 cargo test           # Run unit tests (from src-tauri/)
 npm run tauri dev    # Full app with hot reload
 ```
+
+<!-- automatic:groups:start -->
+## Related Projects
+The following projects are related to this one. They are provided for context — explore or reference them when relevant to the current task.
+
+### Automatic
+**automatic-webapp**
+Location: `../automatic-webapp`
+**deep-agents-rs**
+Location: `../deep-agents-rs`
+
+<!-- automatic:groups:end -->

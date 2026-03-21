@@ -10,6 +10,7 @@
 | Instructions | ✓ |
 | MCP Servers | ✓ |
 | Skills | ✓ |
+| Sub-agents | ✓ |
 
 ## Project instructions
 
@@ -39,6 +40,25 @@ Global: `~/.cursor/mcp.json` (same format).
 
 Project: `.agents/skills/<name>/SKILL.md`  
 Global: `~/.agents/skills/<name>/SKILL.md`
+
+## Sub-agents
+
+Project: `.cursor/agents/<name>.md`  
+Global: `~/.cursor/agents/<name>.md`
+
+Format: Markdown with YAML frontmatter. Fields: `name`, `description`, `model`, `readonly`, `is_background`.
+
+```markdown
+---
+name: security-auditor
+description: Reviews code changes for security vulnerabilities.
+model: inherit
+readonly: true
+is_background: false
+---
+
+You are a security auditor. Scan for OWASP Top 10 vulnerabilities.
+```
 
 ## Detection
 

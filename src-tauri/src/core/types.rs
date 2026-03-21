@@ -244,10 +244,21 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub instruction_file_hashes: HashMap<String, String>,
     /// Inline custom rules stored directly in the project (not in the global
-    /// rule registry).  These are injected into instruction files in the same
+    /// rule registry). These are injected into instruction files in the same
     /// way as global rules, but are scoped to this project only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_rules: Vec<CustomRule>,
+    /// Workspace agent names selected for this project. These are written
+    /// to the agent's sub-agent directory (e.g. `.claude/agents/`) on sync.
+    /// Agent machine names reference files in `~/.automatic/agents/`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_agents: Vec<String>,
+    /// Inline custom sub-agents stored directly in the project configuration.
+    /// These are written to each agent's sub-agent directory (e.g.
+    /// `.claude/agents/`) during sync. Unlike workspace user_agents, custom
+    /// agents are project-scoped and travel with the project JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_agents: Option<Vec<CustomAgent>>,
 }
 
 /// An inline rule stored directly inside a project configuration.
@@ -286,4 +297,23 @@ pub struct ProjectGroup {
 
 fn default_instruction_mode() -> String {
     "per-agent".to_string()
+}
+
+/// A user-defined sub-agent stored directly in a project configuration.
+/// Unlike global user agents (which live in `~/.automatic/agents/`),
+/// custom agents are project-scoped and travel with the project JSON.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomAgent {
+    /// Human-readable display name (from frontmatter `name` field).
+    pub name: String,
+    /// Full Markdown content including frontmatter.
+    pub content: String,
+}
+
+/// A lightweight reference to a project: name + directory.
+/// Used when listing projects that reference a rule or agent.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ProjectRef {
+    pub name: String,
+    pub directory: String,
 }

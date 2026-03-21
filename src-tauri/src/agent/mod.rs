@@ -205,6 +205,31 @@ pub trait Agent: Send + Sync {
         vec![]
     }
 
+    // ── Sub-agents ─────────────────────────────────────────────────────────
+
+    /// Return the directory where this agent looks for sub-agent definitions.
+    /// Returns `None` if this agent does not support sub-agents.
+    ///
+    /// The default implementation returns `None`. Agents that support discovering
+    /// sub-agents (like Claude Code with `.claude/agents/`) should override this.
+    fn agents_dir(&self, _dir: &Path) -> Option<PathBuf> {
+        None
+    }
+
+    /// Return the file extension for sub-agent files (without the dot).
+    /// Default: "md" (Markdown with YAML frontmatter).
+    /// Codex overrides this to return "toml".
+    fn agents_file_ext(&self) -> &'static str {
+        "md"
+    }
+
+    /// Convert agent content from the canonical format (Markdown + YAML frontmatter)
+    /// to this agent's native format. Default: pass through unchanged.
+    /// Codex overrides this to convert to TOML format.
+    fn convert_agent_content(&self, content: &str, _name: &str) -> String {
+        content.to_string()
+    }
+
     // ── Cleanup ─────────────────────────────────────────────────────────
 
     /// Paths of MCP config files that are exclusively owned by Automatic for

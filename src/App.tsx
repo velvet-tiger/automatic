@@ -15,6 +15,7 @@ import ProjectTemplates from "./ProjectTemplates";
 import McpServers from "./McpServers";
 import Templates from "./Templates";
 import Rules from "./Rules";
+import UserAgents from "./UserAgents";
 import Agents from "./Agents";
 import Tools from "./Tools";
 import Recommendations from "./Recommendations";
@@ -29,7 +30,7 @@ import { TaskLogProvider, useTaskLog } from "./TaskLogContext";
 import TaskLog from "./TaskLog";
 import { UpdateProvider } from "./UpdateContext";
 import UpdateToast from "./UpdateToast";
-import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb, List, Wrench, Hash } from "lucide-react";
+import { Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb, List, Wrench, Hash, MessagesSquare } from "lucide-react";
 import { flag } from "./flags";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
@@ -322,6 +323,7 @@ function App() {
               <NavItem id="project-templates" icon={LayoutTemplate} label="Templates" />
               <NavItem id="templates" icon={LayoutTemplate} label="Instructions" />
               <NavItem id="rules" icon={ScrollText} label="Rules" />
+              <NavItem id="user-agents" icon={MessagesSquare} label="Sub-Agents" />
               <NavItem id="skills" icon={Code} label="Skills" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
               <NavItem id="agents" icon={Bot} label="Providers" />
@@ -602,6 +604,11 @@ function App() {
           {activeTab === "rules" && (
             <div className="flex-1 h-full">
               <Rules />
+            </div>
+          )}
+          {activeTab === "user-agents" && (
+            <div className="flex-1 h-full">
+              <UserAgents />
             </div>
           )}
           {activeTab === "mcp" && (

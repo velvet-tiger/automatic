@@ -200,6 +200,10 @@ impl Agent for OpenCode {
 
         result
     }
+
+    fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".opencode").join("agents"))
+    }
 }
 
 /// Convert an OpenCode MCP server config to Automatic's canonical format.

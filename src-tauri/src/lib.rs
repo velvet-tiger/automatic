@@ -71,6 +71,9 @@ pub fn run() {
                 if let Err(e) = core::install_default_rules() {
                     eprintln!("[automatic] rule install error: {}", e);
                 }
+                if let Err(e) = core::install_default_user_agents() {
+                    eprintln!("[automatic] user agent install error: {}", e);
+                }
                 match core::install_plugin_marketplace() {
                     Ok(msg) => eprintln!("[automatic] plugin startup: {}", msg),
                     Err(e) => eprintln!("[automatic] plugin startup error: {}", e),
@@ -283,6 +286,11 @@ pub fn run() {
             add_feature_update,
             get_feature_updates,
             estimate_tokens,
+            get_user_agents,
+            read_user_agent,
+            save_user_agent,
+            delete_user_agent,
+            get_projects_referencing_user_agent,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

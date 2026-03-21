@@ -6,6 +6,7 @@ use crate::core::AgentOptions;
 use crate::core::Project;
 
 use super::engine::sync_project_without_autodetect;
+use super::helpers::cleanup_custom_agents;
 
 /// Remove an agent from a project and clean up all files it wrote.
 ///
@@ -48,6 +49,16 @@ pub fn remove_agent_from_project(
     } else {
         vec![]
     };
+
+    // Clean up custom agents directory for this agent
+    if let Some(agent_instance) = agent::from_id(agent_id) {
+        if let Some(agents_dir) = agent_instance.agents_dir(&dir) {
+            removed.extend(cleanup_custom_agents(
+                &agents_dir,
+                agent_instance.agents_file_ext(),
+            ));
+        }
+    }
 
     // Claude-specific cleanup: strip managed rules from CLAUDE.md and remove
     // any Automatic-managed .claude/rules/*.md files, then prune .claude/ if
@@ -103,6 +114,22 @@ pub fn get_agent_cleanup_preview(project: &Project, agent_id: &str) -> Result<Ve
     } else {
         vec![]
     };
+
+    // Include custom agents directory in the preview
+    if let Some(agent_instance) = agent::from_id(agent_id) {
+        if let Some(agents_dir) = agent_instance.agents_dir(&dir) {
+            if agents_dir.exists() {
+                if let Ok(entries) = fs::read_dir(&agents_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().is_some_and(|ext| ext == "md") {
+                            preview.push(path.display().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Include Claude-specific files in the preview
     if agent_id == "claude" {

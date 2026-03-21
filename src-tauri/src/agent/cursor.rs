@@ -132,6 +132,10 @@ impl Agent for Cursor {
         let path = home.join(".cursor").join("mcp.json");
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".cursor").join("agents"))
+    }
 }
 
 /// Pass-through normaliser: Cursor's format is already canonical.

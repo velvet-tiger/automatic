@@ -39,6 +39,10 @@ impl Agent for ClaudeCode {
         vec![dir.join(".claude").join("skills")]
     }
 
+    fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".claude").join("agents"))
+    }
+
     // ── Cleanup ─────────────────────────────────────────────────────────
 
     fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {

@@ -209,3 +209,145 @@ pub(crate) fn apply_env_inheritance(config: &mut Value) {
         }
     }
 }
+
+/// Extract the machine name (slug) from agent frontmatter content.
+/// Returns the `name` field converted to lowercase with spaces replaced by hyphens.
+pub(crate) fn extract_agent_machine_name(content: &str) -> Option<String> {
+    if !content.starts_with("---\n") {
+        return None;
+    }
+    let end = content[4..].find("\n---")?;
+    let yaml = &content[4..end + 4];
+    for line in yaml.lines() {
+        let line = line.trim();
+        if let Some(name_val) = line.strip_prefix("name:") {
+            let name = name_val.trim().trim_matches('"').trim_matches('\'');
+            if !name.is_empty() {
+                return Some(name.to_lowercase().replace(' ', "-"));
+            }
+        }
+    }
+    None
+}
+
+/// Sync project-local custom agents to a project's agents directory.
+///
+/// For each custom agent:
+/// 1. Extract the machine name from the agent's frontmatter
+/// 2. Write to `agents_dir/{machine_name}.md`
+///
+/// Returns the list of files written.
+pub(crate) fn sync_custom_agents(
+    agents_dir: &std::path::Path,
+    custom_agents: &[crate::core::CustomAgent],
+    agent: &dyn crate::agent::Agent,
+) -> Result<Vec<String>, String> {
+    if custom_agents.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if !agents_dir.exists() {
+        fs::create_dir_all(agents_dir).map_err(|e| e.to_string())?;
+    }
+
+    let mut written = Vec::new();
+    let ext = agent.agents_file_ext();
+
+    for custom_agent in custom_agents {
+        let machine_name = extract_agent_machine_name(&custom_agent.content)
+            .unwrap_or_else(|| custom_agent.name.to_lowercase().replace(' ', "-"));
+        let converted_content = agent.convert_agent_content(&custom_agent.content, &machine_name);
+        let path = agents_dir.join(format!("{}.{}", machine_name, ext));
+
+        fs::write(&path, &converted_content).map_err(|e| e.to_string())?;
+        written.push(path.display().to_string());
+    }
+
+    Ok(written)
+}
+
+/// Clean up all custom agent files from an agents directory.
+/// Used when removing an agent from a project.
+/// Returns the list of files removed.
+pub(crate) fn cleanup_custom_agents(agents_dir: &std::path::Path, ext: &str) -> Vec<String> {
+    let mut removed = Vec::new();
+
+    if agents_dir.exists() {
+        if let Ok(entries) = fs::read_dir(agents_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == ext) {
+                    if fs::remove_file(&path).is_ok() {
+                        removed.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+        // Remove the agents directory itself if now empty
+        let _ = fs::remove_dir(agents_dir);
+    }
+
+    removed
+}
+
+/// Sync workspace user agents (from `~/.automatic/agents/`) to a project's
+/// agents directory.
+///
+/// For each selected agent:
+/// 1. Read the agent content from the global registry
+/// 2. Convert to the target format if needed (e.g., TOML for Codex)
+/// 3. Write to `agents_dir/{machine_name}.{ext}`
+/// 4. Remove stale agent files not in the selected list
+pub(crate) fn sync_user_agents(
+    agents_dir: &std::path::Path,
+    user_agent_names: &[String],
+    agent: &dyn crate::agent::Agent,
+) -> Result<Vec<String>, String> {
+    if !agents_dir.exists() {
+        fs::create_dir_all(agents_dir).map_err(|e| e.to_string())?;
+    }
+
+    let mut written = Vec::new();
+    let mut expected_names: std::collections::HashSet<String> =
+        user_agent_names.iter().cloned().collect();
+    let ext = agent.agents_file_ext();
+
+    // Write each selected agent
+    for name in user_agent_names {
+        if let Ok(content) = crate::core::read_user_agent(name) {
+            let user_agent: crate::core::UserAgent =
+                serde_json::from_str(&content).map_err(|e| e.to_string())?;
+            let machine_name = extract_agent_machine_name(&user_agent.content)
+                .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
+            let converted_content = agent.convert_agent_content(&user_agent.content, &machine_name);
+            let path = agents_dir.join(format!("{}.{}", machine_name, ext));
+
+            fs::write(&path, &converted_content).map_err(|e| e.to_string())?;
+            written.push(path.display().to_string());
+            expected_names.insert(machine_name);
+        }
+    }
+
+    // Remove stale agent files (agents not in the selected list)
+    if agents_dir.exists() {
+        if let Ok(entries) = fs::read_dir(agents_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == ext) {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        // Only remove if it's a valid machine name and not expected
+                        if crate::core::is_valid_agent_machine_name(stem)
+                            && !expected_names.contains(stem)
+                        {
+                            if fs::remove_file(&path).is_ok() {
+                                written.push(path.display().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(written)
+}

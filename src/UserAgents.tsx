@@ -1,0 +1,428 @@
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { Plus, X, Edit2, Check, MessagesSquare, Copy, Lock, FolderGit2 } from "lucide-react";
+import { AuthorSection } from "./AuthorPanel";
+import { TokenPill } from "./TokenPill";
+
+interface UserAgentEntry {
+  id: string;
+  name: string;
+}
+
+interface UserAgent {
+  name: string;
+  content: string;
+}
+
+interface ProjectRef {
+  name: string;
+  directory: string;
+}
+
+/** Default bundled agents have machine names starting with "automatic-". */
+const isBundledAgent = (id: string) => id.startsWith("automatic-");
+
+const DEFAULT_AGENT_CONTENT = `---
+name: my-agent
+description: A specialized AI assistant.
+tools: Read, Grep, Glob, Bash
+model: inherit
+---
+
+You are a specialized AI assistant. Your purpose is to help with specific tasks.
+
+When invoked:
+1. Analyze the request carefully
+2. Use the appropriate tools
+3. Provide clear, actionable responses
+`;
+
+export default function UserAgents() {
+  const [agents, setAgents] = useState<UserAgentEntry[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState("");
+  const [agentContent, setAgentContent] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [newMachineName, setNewMachineName] = useState("");
+  const [newDisplayName, setNewDisplayName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [referencingProjects, setReferencingProjects] = useState<ProjectRef[]>([]);
+
+  useEffect(() => {
+    loadAgents();
+  }, []);
+
+  const loadAgents = async () => {
+    try {
+      const result: UserAgentEntry[] = await invoke("get_user_agents");
+      setAgents(result.sort((a, b) => a.name.localeCompare(b.name)));
+      setError(null);
+    } catch (err: any) {
+      setError(`Failed to load agents: ${err}`);
+    }
+  };
+
+  const loadReferencingProjects = async (id: string) => {
+    try {
+      const refs: ProjectRef[] = await invoke("get_projects_referencing_user_agent", { agentMachineName: id });
+      setReferencingProjects(refs.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch (err: any) {
+      console.error("Failed to load referencing projects:", err);
+      setReferencingProjects([]);
+    }
+  };
+
+  const loadAgent = async (id: string) => {
+    try {
+      const raw: string = await invoke("read_user_agent", { machineName: id });
+      const agent: UserAgent = JSON.parse(raw);
+      setSelectedId(id);
+      setDisplayName(agent.name);
+      setAgentContent(agent.content);
+      setIsEditing(false);
+      setIsCreating(false);
+      setError(null);
+      await loadReferencingProjects(id);
+    } catch (err: any) {
+      setError(`Failed to read agent: ${err}`);
+    }
+  };
+
+  const handleSave = async () => {
+    if (isCreating) {
+      const id = newMachineName.trim();
+      const name = newDisplayName.trim();
+      if (!id || !name) return;
+      try {
+        await invoke("save_user_agent", { machineName: id, name, content: agentContent });
+        const newEntry: UserAgentEntry = { id, name };
+        setAgents(prev => [...prev.filter(a => a.id !== id), newEntry].sort((a, b) => a.name.localeCompare(b.name)));
+        setIsCreating(false);
+        setIsEditing(false);
+        setSelectedId(id);
+        setDisplayName(name);
+        setReferencingProjects([]);
+        setError(null);
+      } catch (err: any) {
+        setError(`Failed to save agent: ${err}`);
+      }
+    } else if (selectedId) {
+      try {
+        await invoke("save_user_agent", { machineName: selectedId, name: displayName, content: agentContent });
+        setIsEditing(false);
+        setAgents(prev => prev.map(a => a.id === selectedId ? { ...a, name: displayName } : a).sort((a, b) => a.name.localeCompare(b.name)));
+        setError(null);
+      } catch (err: any) {
+        setError(`Failed to save agent: ${err}`);
+      }
+    }
+  };
+
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const confirmed = await ask(`Delete agent "${id}"?`, { title: "Delete Agent", kind: "warning" });
+    if (!confirmed) return;
+    try {
+      await invoke("delete_user_agent", { machineName: id });
+      if (selectedId === id) {
+        setSelectedId(null);
+        setDisplayName("");
+        setAgentContent("");
+        setIsEditing(false);
+        setReferencingProjects([]);
+      }
+      await loadAgents();
+      setError(null);
+    } catch (err: any) {
+      setError(`Failed to delete agent: ${err}`);
+    }
+  };
+
+  const startCreateNew = () => {
+    setSelectedId(null);
+    setDisplayName("");
+    setAgentContent(DEFAULT_AGENT_CONTENT);
+    setIsCreating(true);
+    setIsEditing(true);
+    setNewMachineName("");
+    setNewDisplayName("");
+    setReferencingProjects([]);
+  };
+
+  const handleDuplicate = async (id: string) => {
+    const strippedId = id.startsWith("automatic-") ? id.slice("automatic-".length) : id;
+    const base = `${strippedId}-copy`;
+    let candidate = base;
+    let suffix = 2;
+    while (agents.some(a => a.id === candidate)) {
+      candidate = `${base}-${suffix}`;
+      suffix++;
+    }
+    try {
+      const raw: string = await invoke("read_user_agent", { machineName: id });
+      const agent: UserAgent = JSON.parse(raw);
+      const dupName = agent.name;
+      await invoke("save_user_agent", { machineName: candidate, name: dupName, content: agent.content });
+      const newEntry: UserAgentEntry = { id: candidate, name: dupName };
+      setAgents(prev => [...prev, newEntry].sort((a, b) => a.name.localeCompare(b.name)));
+      await loadAgent(candidate);
+      setIsEditing(true);
+      setError(null);
+    } catch (err: any) {
+      setError(`Failed to duplicate agent: ${err}`);
+    }
+  };
+
+  const selectedEntry = agents.find(a => a.id === selectedId);
+
+  return (
+    <div className="flex h-full w-full bg-bg-base">
+      {/* Left Sidebar - Agent List */}
+      <div className="w-64 flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50">
+        <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center bg-bg-base/30">
+          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Sub-Agents</span>
+          <button
+            onClick={startCreateNew}
+            className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
+            title="Create New Agent"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
+          {agents.length === 0 && !isCreating ? (
+            <div className="px-4 py-3 text-[13px] text-text-muted text-center">No agents yet.</div>
+          ) : (
+            <ul className="space-y-1 px-2">
+              {isCreating && (
+                <li className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-bg-sidebar">
+                  <div className="w-8 h-8 rounded-md bg-icon-agent/15 flex items-center justify-center flex-shrink-0">
+                    <MessagesSquare size={15} className="text-icon-agent" />
+                  </div>
+                  <span className="text-[13px] text-text-base italic">New Agent...</span>
+                </li>
+              )}
+              {agents.map(entry => {
+                const isActive = selectedId === entry.id && !isCreating;
+                return (
+                  <li key={entry.id} className="group relative">
+                    <button
+                      onClick={() => loadAgent(entry.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                        isActive
+                          ? "bg-bg-sidebar text-text-base"
+                          : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
+                      }`}
+                    >
+                      <div className="w-8 h-8 rounded-md bg-icon-agent/15 flex items-center justify-center flex-shrink-0">
+                        <MessagesSquare size={15} className="text-icon-agent" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
+                          {entry.name}
+                        </div>
+                        <div className="text-[10px] text-text-muted truncate">{entry.id}</div>
+                      </div>
+                    </button>
+                    {!isBundledAgent(entry.id) && (
+                      <button
+                        onClick={(e) => handleDelete(entry.id, e)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
+                        title="Delete Agent"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {/* Right Area - Editor/Viewer */}
+      <div className="flex-1 flex flex-col min-w-0 bg-bg-base">
+        {error && (
+          <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between">
+            {error}
+            <button onClick={() => setError(null)}><X size={14} /></button>
+          </div>
+        )}
+
+        {(selectedId || isCreating) ? (
+          <div className="flex-1 flex flex-col h-full min-h-0">
+            {/* Header */}
+            <div className="min-h-[44px] px-6 border-b border-border-strong/40 flex justify-between items-center gap-4 py-2 flex-shrink-0">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <MessagesSquare size={14} className="text-icon-agent flex-shrink-0" />
+                {isCreating ? (
+                  <div className="flex flex-col gap-1.5 min-w-0">
+                    <input
+                      type="text"
+                      placeholder="Display Name"
+                      value={newDisplayName}
+                      onChange={(e) => setNewDisplayName(e.target.value)}
+                      autoFocus
+                      className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-72"
+                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="machine-name (lowercase, hyphens)"
+                        value={newMachineName}
+                        onChange={(e) => setNewMachineName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                        className="bg-transparent border-none outline-none text-[11px] text-text-muted placeholder-text-muted/40 font-mono w-72"
+                      />
+                    </div>
+                  </div>
+                ) : isEditing ? (
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <input
+                      type="text"
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-72"
+                      placeholder="Display Name"
+                    />
+                    <span className="text-[10px] text-text-muted font-mono">{selectedId}</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <h3 className="text-[14px] font-medium text-text-base truncate">{selectedEntry?.name || displayName}</h3>
+                    <span className="text-[10px] text-text-muted font-mono">{selectedId}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <TokenPill text={agentContent} />
+                {selectedId && isBundledAgent(selectedId) && !isEditing && (
+                  <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase px-2 py-1 rounded-full bg-brand/10 border border-brand/20">
+                    Built-in
+                  </span>
+                )}
+                {selectedId && isBundledAgent(selectedId) && !isEditing && (
+                  <span
+                    className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/40"
+                    title="Bundled agent provided by Automatic — editing is disabled. Duplicate to create a local copy."
+                  >
+                    <Lock size={10} />
+                    <span>Read-only</span>
+                  </span>
+                )}
+                {!isEditing && selectedId && (
+                  <button
+                    onClick={() => handleDuplicate(selectedId)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
+                    title="Duplicate as a local, editable copy"
+                  >
+                    <Copy size={12} /> Duplicate
+                  </button>
+                )}
+                {!isEditing && selectedId && !isBundledAgent(selectedId) && (
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
+                  >
+                    <Edit2 size={12} /> Edit
+                  </button>
+                )}
+                {isEditing && (
+                  <>
+                    {!isCreating && (
+                      <button
+                        onClick={() => {
+                          setIsEditing(false);
+                          if (selectedId) loadAgent(selectedId);
+                        }}
+                        className="px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    <button
+                      onClick={handleSave}
+                      disabled={isCreating ? (!newMachineName.trim() || !newDisplayName.trim()) : false}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    >
+                      <Check size={12} /> Save
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Editor Body */}
+            <div className="flex-1 min-h-0 flex flex-col">
+              {isEditing ? (
+                <textarea
+                  value={agentContent}
+                  onChange={(e) => setAgentContent(e.target.value)}
+                  className="flex-1 w-full p-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30"
+                  placeholder="Write your agent content here as Markdown with YAML frontmatter..."
+                  spellCheck={false}
+                />
+              ) : (
+                <>
+                  <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+                    <div className="px-6 pt-4 pb-3 border-b border-border-strong/40">
+                      <AuthorSection
+                        descriptor={
+                          selectedId && isBundledAgent(selectedId)
+                            ? { type: "provider", name: "Automatic", url: "https://automatic.computer" }
+                            : { type: "local" }
+                        }
+                      />
+                    </div>
+                    <div className="p-6 font-mono text-[13px] whitespace-pre-wrap text-text-base leading-relaxed">
+                      {agentContent || <span className="text-text-muted italic">This agent is empty. Click edit to add content.</span>}
+                    </div>
+                  </div>
+
+                  {/* Used by projects panel */}
+                  {!isCreating && referencingProjects.length > 0 && (
+                    <div className="flex-shrink-0 border-t border-border-strong/40 px-6 py-4 bg-bg-input/30">
+                      <div className="flex items-center gap-2 mb-3">
+                        <FolderGit2 size={13} className="text-text-muted" />
+                        <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
+                          Used in {referencingProjects.length} {referencingProjects.length === 1 ? "project" : "projects"}
+                        </span>
+                      </div>
+                      <ul className="space-y-1.5 max-h-[108px] overflow-y-auto custom-scrollbar">
+                        {referencingProjects.map(project => (
+                          <li key={project.name} className="flex items-center justify-between gap-3 py-1">
+                            <span className="text-[13px] text-text-base truncate">{project.name}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-icon-agent/12 border border-icon-agent/20 flex items-center justify-center">
+              <MessagesSquare size={24} className="text-icon-agent" strokeWidth={1.5} />
+            </div>
+            <h2 className="text-lg font-medium text-text-base mb-2">No Agent Selected</h2>
+            <p className="text-[14px] text-text-muted mb-8 leading-relaxed max-w-sm">
+              Sub-agents are specialized AI assistants that run in their own context window. Create agents for code review, debugging, planning tasks, and more.
+            </p>
+            <button
+              onClick={startCreateNew}
+              className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+            >
+              Create Agent
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

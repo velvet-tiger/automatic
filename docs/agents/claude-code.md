@@ -10,6 +10,7 @@
 | Instructions | ✓ |
 | MCP Servers | ✓ |
 | Skills | ✓ |
+| Sub-agents | ✓ |
 
 ## Project instructions
 
@@ -38,6 +39,24 @@ Global: `~/.claude/mcp.json` (same format).
 
 Project: `.claude/skills/<name>/SKILL.md`  
 Global: `~/.claude/skills/<name>/SKILL.md`
+
+## Sub-agents
+
+Project: `.claude/agents/<name>.md`  
+Global: `~/.claude/agents/<name>.md`
+
+Format: Markdown with YAML frontmatter. Fields: `name`, `description`, `tools`, `model`, `color`, `hooks`.
+
+```markdown
+---
+name: code-reviewer
+description: Reviews code for quality and best practices.
+tools: Read, Glob, Grep, Bash
+model: sonnet
+---
+
+You are a code reviewer. Analyze code and provide actionable feedback.
+```
 
 ## Detection
 

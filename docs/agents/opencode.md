@@ -11,6 +11,7 @@
 | Instructions | ✓ |
 | MCP Servers | ✓ |
 | Skills | ✓ |
+| Sub-agents | ✓ |
 
 ## Project instructions
 
@@ -41,6 +42,37 @@ Format: `mcp` key with named server objects. Each server has a `type` field: `"l
 
 Project: `.agents/skills/<name>/SKILL.md`  
 Global: `~/.agents/skills/<name>/SKILL.md`
+
+## Sub-agents
+
+Project: `.opencode/agents/<name>.md`  
+Global: `~/.config/opencode/agents/<name>.md`
+
+Format: Markdown with YAML frontmatter or JSON configuration.
+
+**Markdown:**
+```markdown
+---
+description: Code review specialist
+mode: subagent
+color: "#FF5733"
+---
+
+You are in code review mode. Focus on security and performance.
+```
+
+**JSON (in opencode.json):**
+```json
+{
+  "agents": {
+    "review": {
+      "description": "Code review specialist",
+      "mode": "subagent",
+      "model": "claude-sonnet-4"
+    }
+  }
+}
+```
 
 ## Detection
 

@@ -189,6 +189,10 @@ impl Agent for GeminiCli {
         let path = home.join(".gemini").join("settings.json");
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".gemini").join("agents"))
+    }
 }
 
 /// Pass-through normaliser: Gemini's format is already canonical.

@@ -10,6 +10,7 @@
 | Instructions | ✓ |
 | MCP Servers | ✓ |
 | Skills | ✓ |
+| Sub-agents | ✓ |
 
 ## Project instructions
 
@@ -35,6 +36,28 @@ url = "https://example.com/mcp"
 
 Project: `.agents/skills/<name>/SKILL.md`  
 Global: `~/.agents/skills/<name>/SKILL.md`
+
+## Sub-agents
+
+Project: `.codex/agents/<name>.toml`  
+Global: `~/.codex/agents/<name>.toml`
+
+Format: TOML configuration file.
+
+```toml
+name = "reviewer"
+description = "PR reviewer focused on correctness and security."
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Review code like an owner.
+Check for correctness, security risks, and missing test coverage.
+"""
+```
+
+**Note:** Automatic stores agents in canonical Markdown+YAML format (`~/.automatic/agents/*.md`) and converts to TOML when syncing to Codex projects.
 
 ## Detection
 

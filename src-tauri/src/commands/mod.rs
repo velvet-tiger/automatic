@@ -22,6 +22,7 @@ mod misc;
 mod oauth;
 mod tokens;
 mod tools;
+mod user_agents;
 
 pub use activity::*;
 pub use ai::*;
@@ -47,6 +48,7 @@ pub use misc::*;
 pub use oauth::*;
 pub use tokens::*;
 pub use tools::*;
+pub use user_agents::*;
 
 // ── Plugin dispatch ───────────────────────────────────────────────────────────
 // All plugin commands flow through the single `invoke_tool_command` dispatcher

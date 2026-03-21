@@ -201,6 +201,18 @@ impl Agent for CodexCli {
         let path = home.join(".codex").join("config.toml");
         discover_codex_global_config(&path)
     }
+
+    fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".codex").join("agents"))
+    }
+
+    fn agents_file_ext(&self) -> &'static str {
+        "toml"
+    }
+
+    fn convert_agent_content(&self, content: &str, name: &str) -> String {
+        convert_md_to_codex_toml(content, name)
+    }
 }
 
 // ── Global config discovery ──────────────────────────────────────────────────
@@ -338,6 +350,111 @@ pub fn merge_toml_mcp_section(existing: &str, mcp_section: &str) -> String {
     } else {
         format!("{}\n\n{}", trimmed, mcp_section)
     }
+}
+
+// ── Agent Content Conversion ────────────────────────────────────────────────
+
+/// Convert Markdown with YAML frontmatter to Codex TOML agent format.
+/// Input: Markdown content with YAML frontmatter (the Automatic canonical format).
+/// Output: TOML content for Codex agents.
+fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
+    let (frontmatter, body) = parse_frontmatter(content);
+
+    let mut toml = String::new();
+
+    let name = frontmatter
+        .get("name")
+        .map(|s| s.as_str())
+        .unwrap_or(fallback_name);
+    toml.push_str(&format!("name = \"{}\"\n", escape_toml_string(name)));
+
+    if let Some(desc) = frontmatter.get("description") {
+        toml.push_str(&format!("description = \"{}\"\n", escape_toml_string(desc)));
+    }
+
+    if let Some(model) = frontmatter.get("model") {
+        let codex_model = match model.as_str() {
+            "inherit" => "inherit",
+            "sonnet" => "gpt-5.4",
+            "haiku" => "gpt-5.4-mini",
+            "opus" => "gpt-5.4",
+            other => other,
+        };
+        toml.push_str(&format!("model = \"{}\"\n", codex_model));
+    }
+
+    if frontmatter.contains_key("tools") {
+        toml.push_str("sandbox_mode = \"read-only\"\n");
+    }
+
+    if let Some(max_turns) = frontmatter.get("maxTurns") {
+        toml.push_str(&format!("max_turns = {}\n", max_turns));
+    }
+
+    if let Some(reasoning) = frontmatter.get("modelReasoningEffort") {
+        toml.push_str(&format!("model_reasoning_effort = \"{}\"\n", reasoning));
+    }
+
+    let body_trimmed = body.trim();
+    if !body_trimmed.is_empty() {
+        toml.push_str(&format!(
+            "\ndeveloper_instructions = \"\"\"\n{}\n\"\"\"\n",
+            body_trimmed
+        ));
+    }
+
+    toml
+}
+
+/// Parse YAML frontmatter from Markdown content.
+/// Returns (frontmatter_map, body_content).
+fn parse_frontmatter(content: &str) -> (std::collections::HashMap<String, String>, &str) {
+    use std::collections::HashMap;
+    let mut frontmatter: HashMap<String, String> = HashMap::new();
+
+    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
+        return (frontmatter, content);
+    }
+
+    let after_first = &content[4..];
+    let end_marker_pos = after_first
+        .find("\n---")
+        .or_else(|| after_first.find("\r\n---"));
+
+    let end_marker_pos = match end_marker_pos {
+        Some(pos) => pos,
+        None => return (frontmatter, content),
+    };
+
+    let yaml_str = &after_first[..end_marker_pos];
+    let body_start = end_marker_pos + 4;
+    let body = if after_first[body_start..].starts_with('\n')
+        || after_first[body_start..].starts_with("\r\n")
+    {
+        body_start + 1
+    } else {
+        body_start
+    };
+    let body = &after_first[body..];
+
+    for line in yaml_str.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(colon_pos) = line.find(':') {
+            let key = line[..colon_pos].trim();
+            let mut value = line[colon_pos + 1..].trim();
+            if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+                value = &value[1..value.len() - 1];
+            } else if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
+                value = &value[1..value.len() - 1];
+            }
+            frontmatter.insert(key.to_string(), value.to_string());
+        }
+    }
+
+    (frontmatter, body)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

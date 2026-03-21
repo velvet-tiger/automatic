@@ -8,7 +8,7 @@ use crate::core::Project;
 use super::autodetect::autodetect_inner;
 use super::helpers::{
     build_selected_servers, clean_project_file, clean_project_file_rules_section,
-    load_mcp_server_configs, load_skill_contents,
+    load_mcp_server_configs, load_skill_contents, sync_custom_agents, sync_user_agents,
 };
 
 /// Discover MCP server configurations from specific agents' existing on-disk
@@ -136,6 +136,19 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                 // cannot have their MCP config managed by Automatic.
                 if !path.is_empty() {
                     written_files.push(path);
+                }
+
+                // Sync custom agents to this provider's agents directory
+                if let Some(agents_dir) = agent_instance.agents_dir(&dir) {
+                    let custom_agents = project.custom_agents.as_deref().unwrap_or(&[]);
+                    let agent_files =
+                        sync_custom_agents(&agents_dir, custom_agents, agent_instance)?;
+                    written_files.extend(agent_files);
+
+                    // Sync workspace user_agents (from ~/.automatic/agents/)
+                    let user_agent_files =
+                        sync_user_agents(&agents_dir, &project.user_agents, agent_instance)?;
+                    written_files.extend(user_agent_files);
                 }
 
                 // Strip legacy managed sections from project files (once per filename)

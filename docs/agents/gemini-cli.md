@@ -11,6 +11,7 @@
 | Instructions | ✓ |
 | MCP Servers | ✓ |
 | Skills | ✓ |
+| Sub-agents | ✓ |
 
 ## Project instructions
 
@@ -44,6 +45,35 @@ Global: `~/.gemini/settings.json` (same format, same merge behaviour).
 
 Project: `.agents/skills/<name>/SKILL.md`  
 Global: `~/.agents/skills/<name>/SKILL.md`
+
+## Sub-agents
+
+Project: `.gemini/agents/<name>.md`  
+Global: `~/.gemini/agents/<name>.md`
+
+Format: Markdown with YAML frontmatter. Fields: `name`, `description`, `tools`.
+
+```markdown
+---
+name: security-reviewer
+description: Reviews code for security vulnerabilities.
+tools:
+  - read_file
+  - run_shell_command
+  - google_web_search
+---
+
+You are a security review specialist. Scan for common vulnerabilities.
+```
+
+Enable sub-agents in settings:
+```json
+{
+  "experimental": {
+    "enableAgents": true
+  }
+}
+```
 
 ## Detection
 

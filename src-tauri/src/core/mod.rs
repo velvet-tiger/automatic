@@ -33,6 +33,7 @@ pub mod task_log;
 mod templates;
 pub mod tools;
 mod types;
+mod user_agents;
 
 pub use app_plugins::*;
 pub use marketplace::*;
@@ -58,3 +59,4 @@ pub use skills::*;
 pub use templates::*;
 pub use tools::*;
 pub use types::*;
+pub use user_agents::*;
