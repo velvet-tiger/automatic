@@ -511,11 +511,13 @@ will have the highest impact given the project's evident tech stack and workflow
 
     let schema = serde_json::json!({
         "type": "object",
+        "additionalProperties": false,
         "properties": {
             "recommendations": {
                 "type": "array",
                 "items": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "kind":     { "type": "string", "enum": ["skill", "mcp_server", "template", "collection"] },
                         "title":    { "type": "string" },
