@@ -523,6 +523,312 @@ pub fn sync_all_skills() -> Result<Vec<String>, String> {
     Ok(synced)
 }
 
+// ── Skill Import ─────────────────────────────────────────────────────────────────
+
+/// Result of importing a skill from a local path.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ImportedSkill {
+    pub name: String,
+    pub source_path: String,
+}
+
+/// Import a skill from a local file path or directory.
+///
+/// Accepts:
+/// 1. A direct path to a SKILL.md file → imports as a skill named after its parent directory
+/// 2. A directory with skill.json at root → imports all skills defined in the manifest
+/// 3. A directory with SKILL.md files up to 3 levels deep → imports each found skill
+///
+/// Returns the list of imported skill names.
+pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, String> {
+    let source_path = PathBuf::from(path);
+
+    if !source_path.exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+
+    let agents_dir = get_agents_skills_dir()?;
+    let mut imported = Vec::new();
+
+    // ── Case 1: Direct SKILL.md file ─────────────────────────────────────────
+    if source_path.is_file() {
+        if !source_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == "SKILL.md")
+            .unwrap_or(false)
+        {
+            return Err(format!("File must be named SKILL.md, got: {}", path));
+        }
+
+        let skill_name = source_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| "Could not determine skill name from path".to_string())?;
+
+        if !is_valid_name(skill_name) {
+            return Err(format!(
+                "Invalid skill name derived from path: {}",
+                skill_name
+            ));
+        }
+
+        let content =
+            fs::read_to_string(&source_path).map_err(|e| format!("Failed to read file: {}", e))?;
+
+        let skill_dir = agents_dir.join(skill_name);
+        fs::create_dir_all(&skill_dir)
+            .map_err(|e| format!("Failed to create skill directory: {}", e))?;
+
+        fs::write(skill_dir.join("SKILL.md"), &content)
+            .map_err(|e| format!("Failed to write SKILL.md: {}", e))?;
+
+        // Copy any companion files from the source directory
+        if let Some(parent_dir) = source_path.parent() {
+            copy_companion_files(parent_dir, &skill_dir)?;
+        }
+
+        imported.push(ImportedSkill {
+            name: skill_name.to_string(),
+            source_path: path.to_string(),
+        });
+
+        return Ok(imported);
+    }
+
+    // ── Case 2: Directory with skill.json at root ─────────────────────────────
+    let skill_json_path = source_path.join("skill.json");
+    if skill_json_path.exists() {
+        let raw = fs::read_to_string(&skill_json_path)
+            .map_err(|e| format!("Failed to read skill.json: {}", e))?;
+
+        let manifest: SkillsJson =
+            serde_json::from_str(&raw).map_err(|e| format!("Invalid skill.json format: {}", e))?;
+
+        for skill_entry in &manifest.skills {
+            if !is_valid_name(&skill_entry.name) {
+                continue;
+            }
+
+            let skill_base = if skill_entry.path == "." || skill_entry.path.is_empty() {
+                source_path.clone()
+            } else {
+                let p = skill_entry.path.trim_start_matches("./");
+                source_path.join(p)
+            };
+
+            let entrypoint = skill_entry.entrypoint_file();
+            let entry_path = skill_base.join(&entrypoint);
+
+            if !entry_path.exists() {
+                continue;
+            }
+
+            let content = fs::read_to_string(&entry_path)
+                .map_err(|e| format!("Failed to read {}: {}", entrypoint, e))?;
+
+            let skill_dir = agents_dir.join(&skill_entry.name);
+            fs::create_dir_all(&skill_dir)
+                .map_err(|e| format!("Failed to create skill directory: {}", e))?;
+
+            fs::write(skill_dir.join("SKILL.md"), &content)
+                .map_err(|e| format!("Failed to write SKILL.md: {}", e))?;
+
+            // Copy companion files
+            copy_companion_files(&skill_base, &skill_dir)?;
+
+            imported.push(ImportedSkill {
+                name: skill_entry.name.clone(),
+                source_path: entry_path.to_string_lossy().to_string(),
+            });
+        }
+
+        if !imported.is_empty() {
+            return Ok(imported);
+        }
+    }
+
+    // ── Case 3: Scan for SKILL.md files up to 3 levels deep ────────────────
+    fn scan_for_skill_mds(dir: &PathBuf, depth: u32, found: &mut Vec<PathBuf>) {
+        if depth > 3 {
+            return;
+        }
+
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+
+                if path.is_file() {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if name == "SKILL.md" {
+                            found.push(path);
+                        }
+                    }
+                } else if path.is_dir() {
+                    scan_for_skill_mds(&path, depth + 1, found);
+                }
+            }
+        }
+    }
+
+    let mut skill_files = Vec::new();
+    scan_for_skill_mds(&source_path, 1, &mut skill_files);
+
+    if skill_files.is_empty() {
+        return Err("No SKILL.md files found (searched up to 3 levels deep)".to_string());
+    }
+
+    for skill_file in skill_files {
+        let skill_name = skill_file
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| {
+                format!(
+                    "Could not determine skill name from: {}",
+                    skill_file.display()
+                )
+            })?;
+
+        if !is_valid_name(skill_name) {
+            continue;
+        }
+
+        let content = fs::read_to_string(&skill_file)
+            .map_err(|e| format!("Failed to read {}: {}", skill_file.display(), e))?;
+
+        let skill_dir = agents_dir.join(skill_name);
+        fs::create_dir_all(&skill_dir)
+            .map_err(|e| format!("Failed to create skill directory: {}", e))?;
+
+        fs::write(skill_dir.join("SKILL.md"), &content)
+            .map_err(|e| format!("Failed to write SKILL.md: {}", e))?;
+
+        // Copy companion files
+        if let Some(parent_dir) = skill_file.parent() {
+            copy_companion_files(parent_dir, &skill_dir)?;
+        }
+
+        imported.push(ImportedSkill {
+            name: skill_name.to_string(),
+            source_path: skill_file.to_string_lossy().to_string(),
+        });
+    }
+
+    Ok(imported)
+}
+
+/// Copy companion files (scripts/, references/, etc.) from a source skill directory
+/// to the destination skill directory.
+fn copy_companion_files(source: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+    let companion_dirs = [
+        "scripts",
+        "references",
+        "docs",
+        "assets",
+        "examples",
+        "templates",
+    ];
+
+    for dir_name in &companion_dirs {
+        let source_dir = source.join(dir_name);
+        if source_dir.is_dir() {
+            let dest_dir = dest.join(dir_name);
+            fs::create_dir_all(&dest_dir)
+                .map_err(|e| format!("Failed to create directory {}: {}", dir_name, e))?;
+
+            if let Ok(entries) = fs::read_dir(&source_dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let src_file = entry.path();
+                    let dest_file = dest_dir.join(entry.file_name());
+                    if src_file.is_file() {
+                        fs::copy(&src_file, &dest_file)
+                            .map_err(|e| format!("Failed to copy file: {}", e))?;
+                    }
+                }
+            }
+        }
+    }
+
+    // Also copy any root-level files (LICENSE, README, etc.)
+    let root_files = ["LICENSE", "LICENSE.md", "LICENSE.txt", "README.md"];
+    for file_name in &root_files {
+        let src_file = source.join(file_name);
+        if src_file.is_file() {
+            let dest_file = dest.join(file_name);
+            fs::copy(&src_file, &dest_file)
+                .map_err(|e| format!("Failed to copy {}: {}", file_name, e))?;
+        }
+    }
+
+    Ok(())
+}
+
+// ── Skill Package Import (.skill files) ───────────────────────────────────────
+
+/// Import a skill from a Claude .skill package (zip file with .skill extension).
+///
+/// The .skill package is a zip archive containing:
+/// - SKILL.md (required)
+/// - skill.json (optional manifest)
+/// - Companion directories (scripts/, references/, etc.)
+///
+/// Returns the imported skill name(s).
+pub fn import_skill_from_package(path: &str) -> Result<Vec<ImportedSkill>, String> {
+    let package_path = PathBuf::from(path);
+
+    if !package_path.exists() {
+        return Err(format!("Package file does not exist: {}", path));
+    }
+
+    // Accept .skill extension or any file (let zip library validate)
+    let file =
+        fs::File::open(&package_path).map_err(|e| format!("Failed to open package file: {}", e))?;
+
+    let reader = std::io::BufReader::new(file);
+    let archive =
+        zip::ZipArchive::new(reader).map_err(|e| format!("Failed to read zip archive: {}", e))?;
+
+    // Extract to a temporary directory
+    let temp_dir =
+        tempfile::TempDir::new().map_err(|e| format!("Failed to create temp directory: {}", e))?;
+    let temp_path = temp_dir.path();
+
+    // Extract all files from the archive
+    {
+        let mut zip = archive;
+        for i in 0..zip.len() {
+            let mut file = zip
+                .by_index(i)
+                .map_err(|e| format!("Failed to read zip entry {}: {}", i, e))?;
+            let name = file.name().to_string();
+
+            // Skip directories (they're created automatically)
+            if name.ends_with('/') {
+                continue;
+            }
+
+            let out_path = temp_path.join(&name);
+
+            // Create parent directories if needed
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create directory: {}", e))?;
+            }
+
+            let mut out_file = fs::File::create(&out_path)
+                .map_err(|e| format!("Failed to create file {}: {}", name, e))?;
+
+            std::io::copy(&mut file, &mut out_file)
+                .map_err(|e| format!("Failed to write file {}: {}", name, e))?;
+        }
+    }
+
+    // Now use the existing local import logic on the extracted directory
+    import_skill_from_local_path(&temp_path.to_string_lossy())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

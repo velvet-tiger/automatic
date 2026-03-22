@@ -24,10 +24,12 @@ import {
   LayoutTemplate,
   Copy,
   Lock,
+  Upload,
 } from "lucide-react";
 import { ICONS } from "./icons";
 import { SkillAvatar } from "./SkillAvatar";
 import { TokenPill } from "./TokenPill";
+import SkillImportDialog from "./SkillImportDialog";
 
 interface SkillSource {
   source: string; // "owner/repo"
@@ -337,6 +339,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const isDragging = useRef(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
 
   // Companion resources for the selected skill
   const [skillResources, setSkillResources] = useState<SkillResources | null>(null);
@@ -574,6 +577,13 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
               Skills
             </span>
             <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowImportDialog(true)}
+                className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
+                title="Import Skill"
+              >
+                <Upload size={14} />
+              </button>
 
               <button
                 onClick={startCreateNew}
@@ -1085,19 +1095,38 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
             </h2>
             <p className="text-[13px] text-text-muted leading-relaxed max-w-xs mb-6">
               {skills.length === 0
-                ? "Skills are reusable instruction sets that agents load on demand. Create your first skill to get started."
+                ? "Skills are reusable instruction sets that agents load on demand. Create your first skill or import one to get started."
                 : "Select a skill from the list to view its contents, or create a new one."}
             </p>
-            <button
-              onClick={startCreateNew}
-              className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors"
-            >
-              <Plus size={14} />
-              New Skill
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={startCreateNew}
+                className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors"
+              >
+                <Plus size={14} />
+                New Skill
+              </button>
+              <button
+                onClick={() => setShowImportDialog(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-bg-sidebar hover:bg-surface-hover border border-border-strong text-text-base rounded-lg text-[13px] font-medium transition-colors"
+              >
+                <Upload size={14} />
+                Import
+              </button>
+            </div>
           </div>
         )}
       </div>
+
+      <SkillImportDialog
+        isOpen={showImportDialog}
+        onClose={() => setShowImportDialog(false)}
+        onImport={async (skillName) => {
+          await loadSkills();
+          setShowImportDialog(false);
+          await loadSkillContent(skillName);
+        }}
+      />
     </div>
   );
 }

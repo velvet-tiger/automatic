@@ -47,4 +47,5 @@ aes-gcm = "0.10"
 hex = "0.4"
 rusqlite = { version = "0.32", features = ["bundled"] }
 tiktoken-rs = "0.9"
+zip = "2"
 

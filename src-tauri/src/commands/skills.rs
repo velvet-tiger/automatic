@@ -104,3 +104,48 @@ pub fn save_local_skill(name: &str, skill_name: &str, content: &str) -> Result<S
     let written = sync::save_local_skill(&project, skill_name, content)?;
     serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
 }
+
+// ── Skill Import ─────────────────────────────────────────────────────────────
+
+/// Import a skill from a local file path or directory.
+/// Accepts:
+/// - Path to a SKILL.md file
+/// - Path to a directory containing skill.json
+/// - Path to a directory to scan for SKILL.md files (up to 3 levels deep)
+///
+/// Returns the list of imported skills as JSON.
+#[tauri::command]
+pub fn import_skill_from_local_path(path: String) -> Result<String, String> {
+    let imported = core::import_skill_from_local_path(&path)?;
+    serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
+}
+
+/// Import a skill from a GitHub repository URL.
+/// Accepts URLs in formats:
+/// - https://github.com/owner/repo
+/// - github.com/owner/repo
+/// - owner/repo
+///
+/// Returns the imported skill info as JSON.
+#[tauri::command]
+pub async fn import_skill_from_repository(
+    repo_url: String,
+    skill_name: Option<String>,
+) -> Result<String, String> {
+    let imported = core::import_skill_from_repository(
+        &repo_url,
+        skill_name.as_deref(),
+    )
+    .await?;
+    serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
+}
+
+/// Import a skill from a Claude .skill package (zip file).
+/// Accepts a path to a .skill file and extracts it to the skills directory.
+///
+/// Returns the list of imported skills as JSON.
+#[tauri::command]
+pub fn import_skill_from_package(path: String) -> Result<String, String> {
+    let imported = core::import_skill_from_package(&path)?;
+    serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
+}
