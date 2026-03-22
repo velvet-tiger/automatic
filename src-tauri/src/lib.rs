@@ -300,6 +300,7 @@ get_templates,
             save_user_agent,
             delete_user_agent,
             get_projects_referencing_user_agent,
+            is_analytics_configured,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
