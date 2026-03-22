@@ -5,6 +5,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() > 1 && args[1] == "mcp-serve" {
+        // Ensure marketplace catalogue files exist on disk before serving.
+        // Uses force=false so an existing (app-written) file is never overwritten;
+        // this only seeds the files when they are absent (e.g. first run without
+        // the GUI, or the user deleted them).
+        if let Err(e) = automatic_lib::core::init_marketplace_files(false) {
+            eprintln!("[automatic] marketplace init error: {}", e);
+        }
+
         // Run as MCP server on stdio
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(async {
