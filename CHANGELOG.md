@@ -2,6 +2,55 @@
 
 All notable changes to Automatic are documented here.
 
+## [0.13.0] — 2026-03-22
+
+### Features
+
+#### Sub-agents
+
+- **Workspace agents**: Agents can now be configured at the workspace level in `~/.automatic/agents/`, making them available across all projects without per-project configuration
+- **Project-local agents**: Agents configured in a project's `.automatic/agents/` directory override or extend workspace-level agents, enabling project-specific tool configurations
+- **Agent capabilities**: New `AgentCapabilities` declaration allows agents to advertise supported features (skills, MCP servers, memory, etc.), enabling agents like Spec Kitty to expose specialized capabilities to the Automatic MCP interface
+- **Custom agent preservation**: The agent sync process now preserves manually-created agent configuration files, preventing accidental deletion when the sync runs
+
+#### Skills
+
+- **Local skill import**: Skills can now be imported from local directories via the Skills UI, enabling offline skill development and private skill libraries
+- **Repository skill import**: Skills can be imported directly from Git repositories by URL, automatically cloning and configuring the skill for use in projects
+
+#### Templates
+
+- **Bundled template import**: Community skills that ship with bundled project templates now automatically import those templates when the skill is installed, reducing setup time for common workflows
+
+#### Projects
+
+- **Group navigation**: Projects belonging to groups now show navigation controls in the Groups tab, allowing quick movement between related projects
+- **Group removal**: Remove projects from a group directly from the Groups tab without navigating to the project settings
+
+#### UI
+
+- **Providers tabs**: The Providers page now uses a tabbed interface to separate Installed agents from Available agents, improving navigation clarity
+- **Icon refresh**: The Instructions nav icon has been replaced with ClipboardList and terminology updated throughout the UI for consistency
+
+### Fixes
+
+- **MCP seeding**: Marketplace files are now correctly seeded on first launch, preventing missing MCP server entries in fresh installations
+- **External links**: Clicking external links now uses Tauri's opener API instead of the default browser, eliminating popup warnings on macOS
+- **Recommendations**: Marketplace links and project add flows validate correctly before navigation, preventing errors from malformed URLs
+- **Spec Kitty backend errors**: Backend status errors are now displayed in the UI when the Spec Kitty backend fails to start or encounters errors, replacing silent failures with actionable error messages
+- **Spec Kitty binary paths**: Explicit binary path overrides are now supported for agents, allowing custom binary locations outside PATH
+- **Project instructions**: The Groups section is no longer incorrectly included in generated project instruction files
+- **Recommendations navigation**: The recommendations sidebar item has been renamed for clarity; deep-linking to open specific projects now works reliably
+- **Group membership sync**: All projects referencing a group are now synced when group membership changes, ensuring agent context stays consistent
+- **AI schema**: Missing `additionalProperties: false` added to JSON schema definitions for stricter type safety in AI inference
+
+### Internal
+
+- **Git ignore**: Claude-flow runtime files added to `.gitignore` to prevent tracking daemon state
+- **Code style**: Backend Rust modules formatted for consistency
+
+---
+
 ## [0.12.1] — 2026-03-19
 
 ### Fixes
