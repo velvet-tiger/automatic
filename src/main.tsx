@@ -2,6 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { initPlugins } from "./plugins";
+
+initPlugins();
 
 // Surface unhandled JS errors and unhandled promise rejections so they are
 // visible in Tauri's webview inspector rather than causing a silent black screen.

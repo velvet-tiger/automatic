@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { SpecKittyPanel } from "../../plugins/spec-kitty/SpecKittyPanel";
+import { getToolPanel } from "../../plugins";
 import mcpServersData from "../../../src-tauri/assets/marketplace/featured-mcp-servers.json";
 import { SkillSelector } from "../../components/SkillSelector";
 import { AgentSelector } from "../../components/AgentSelector";
@@ -9633,17 +9633,17 @@ interface ProjectToolDetailPanelProps {
 }
 
 function ProjectToolDetailPanel({ entry, projectDir, active, onAdd, onRemove }: ProjectToolDetailPanelProps) {
-  // Tools with dedicated panels render their own view alongside the sidebar.
-  if (entry.name === "spec-kitty") {
+  const CustomPanel = getToolPanel(entry.name);
+  
+  if (CustomPanel) {
     return (
-      <SpecKittyPanel
+      <CustomPanel
         projectDir={projectDir}
         sidebar={<ToolInfoSidebar entry={entry} active={active} onAdd={onAdd} onRemove={onRemove} />}
       />
     );
   }
 
-  // Generic tool: empty main area + sidebar.
   return (
     <div className="flex gap-6 items-start">
       <section className="flex-1 min-w-0">
@@ -9656,3 +9656,5 @@ function ProjectToolDetailPanel({ entry, projectDir, active, onAdd, onRemove }: 
     </div>
   );
 }
+
+// ── End of File ────────────────────────────────────────────────────────────────
