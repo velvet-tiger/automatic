@@ -1,75 +1,194 @@
-```
-  ___         __                    __  _
- / _ |__ ___/ /____  __ _  ___ _  / /_(_)___
-/ __ / // / __/ _ \/  ' \/ _ `/ / __/ / __/
-\__/_\_,_/\__/\___/_/_/_/\_,_/  \__/_/\__/
+# Automatic
 
-  A hub for your AI agent configurations.
-```
+Manage and sync your skills, MCP servers, rules, and project instructions. Works with Claude, Codex, Cursor, and other MCP-compatible agent tools.
 
-Automatic is a desktop hub for managing your AI agent configurations. It gives you a central place to organise the skills, MCP servers, rules, and project settings that power tools like Claude Code, Cursor, and other MCP-compatible agents — so your agents always have the right context, wherever they run.
+<p>
+  <a href="https://tryautomatic.app">Website</a>
+  ·
+  <a href="https://github.com/velvet-tiger/automatic/releases/latest">Latest release</a>
+</p>
 
-## What it does
+<p>
+  <a href="https://github.com/velvet-tiger/automatic/releases/latest">
+    <img
+      alt="Download and install Automatic"
+      src="https://img.shields.io/badge/Download%20and%20Install-Automatic-0f172a?style=for-the-badge&logo=github&logoColor=white&labelColor=0f766e"
+    />
+  </a>
+</p>
 
-Automatic acts as a registry that your agents connect to at the start of each session to discover skills and load project configurations. You manage everything in one place; your agents stay in sync automatically.
+---
 
-## Features
+![Automatic screenshot](screenshot.png)
 
-### Dashboard
+Automatic is a desktop hub for managing AI agent configuration across projects. It gives you one place to organise the skills, MCP servers, rules, templates, and project settings that power your agents, then syncs that configuration into the tools you actually use.
 
-An at-a-glance overview of your workspace: how many projects you have, which agents are active, how many skills are in use, and how many MCP servers are connected. The dashboard also surfaces a **drift alert** if any project's agent configuration files have fallen out of sync, so you know immediately when something needs attention.
+The goal is simple: capture the patterns that work once, reuse them everywhere, and stop rebuilding agent context from scratch for every new project.
 
-### Projects
+## Why Automatic
 
-Create and manage projects that link a directory on your machine to a set of agent configurations. Each project can have:
+- Keep project instructions, rules, skills, and MCP servers in one place
+- Sync configuration into agent tools instead of maintaining each tool manually
+- Detect drift when a project no longer matches the saved configuration
+- Reuse proven setups through templates and cloned projects
+- Browse and install skills and MCP servers from curated marketplaces
+- Expose an MCP server so agents can pull skills, memory, and project configuration directly from Automatic
 
-- One or more **agents** (Claude Code, Cursor, etc.)
-- A set of **skills** to load into those agents
-- **MCP servers** to connect
-- A description and custom rules
+## Who It Is For
 
-When you sync a project, Automatic writes the appropriate configuration files into your project directory so the agents pick them up automatically. Automatic also monitors for **drift** — if the files on disk diverge from what you've configured here, the dashboard and project list will warn you.
+Automatic is for teams and individuals who use agent tools heavily and want consistent context across projects.
 
-### Agents
+It is especially useful if you:
 
-Configure the AI agents you work with (Claude Code, Cursor, and others). Agent configurations define how Automatic syncs settings to each tool's expected directory structure and config format.
+- switch between Claude Code, Codex, Cursor, and other tools
+- maintain the same MCP servers or instructions in multiple places
+- want reusable project templates for common workflows
+- need agents to read shared memory, skills, or project configuration over MCP
 
-### Skills
+## How It Works
 
-Skills are reusable sets of instructions, workflows, or domain knowledge that you load into an agent for a specific task. Create and edit your own skills in a built-in markdown editor, or install community skills directly from the Skills.sh marketplace. Skills are stored at `~/.agents/skills/` and are available across all your projects.
+Automatic is a hub, not an executor.
 
-### Project Templates
+It does not run agents for you. Instead, it stores and organises the configuration your agents need:
 
-Start new projects from pre-built templates that bundle a proven configuration of agents, skills, MCP servers, and rules. Browse the Template Marketplace to find community-contributed templates, or save your own as reusable starting points.
+1. Define skills, MCP servers, rules, templates, and project instructions in Automatic.
+2. Assign those resources to a project.
+3. Sync that project into supported agent tools.
+4. Let agents connect to Automatic's MCP server to read project context, skills, and memory.
 
-### File Templates
+That separation matters because it keeps your configuration portable. Your agents can change. Your context stays consistent.
 
-Manage reusable file templates (boilerplate, scaffolds, prompts) that your agents can use when generating code or content.
-
-### Rules
-
-Define standing instructions and constraints that apply across your projects — things like coding conventions, preferred libraries, output format expectations, or tone guidelines. Rules are shared to agent config files alongside skills and MCP server configs.
-
-### MCP Servers
-
-View and manage the MCP (Model Context Protocol) servers registered in your Claude Desktop configuration. MCP servers extend what your agents can do — giving them access to databases, APIs, file systems, and other external tools. Browse the MCP Marketplace to discover and add new servers.
-
-### Settings
-
-Configure global preferences for Automatic, including the skill sync mode (symlink or copy).
-
-### Marketplaces
-
-Three built-in marketplaces let you extend Automatic without leaving the app:
-
-- **Skills Marketplace (Skills.sh)** — Browse and install community skills
-- **Templates Marketplace** — Discover project and file templates
-- **MCP Servers Marketplace** — Find MCP server integrations to connect to your agents
-
-
-## Platforms
+## Install
 
 Automatic runs on macOS, Windows, and Linux.
 
-> **Note:** MCP server config reading currently reads from the Claude Desktop config path on macOS. Cross-platform support for this feature is in progress.
+- Download the latest desktop build from the [latest release](https://github.com/velvet-tiger/automatic/releases/latest)
+- Or start from [tryautomatic.app](https://tryautomatic.app)
+
+After installing:
+
+1. Open Automatic.
+2. Configure your agent tools and projects.
+3. Add the skills, rules, MCP servers, and templates you want to reuse.
+4. Sync the project configuration into your local agent setup.
+
+## Quick Start
+
+1. Install and open Automatic.
+2. Create or import a project.
+3. Add the skills, rules, and MCP servers that project needs.
+4. Sync the project to your agent tool.
+5. Use the marketplaces to import additional skills, MCP servers, or templates.
+6. Let connected agents pull project context and memory from Automatic over MCP.
+
+## Core Features
+
+### Configuration Hub
+
+- Manage skills, rules, MCP servers, sub-agents, and project instructions
+- Keep shared configuration separate from any single agent tool
+
+### Project Sync
+
+- Apply configuration consistently across projects
+- Detect configuration drift
+- Clone an existing project as a starting point for a new one
+
+### Reusable Templates
+
+- Bundle skills, MCP servers, rules, and instructions into project templates
+- Import pre-built templates from the marketplace
+
+### Marketplaces
+
+- Browse and install skills from skills.sh
+- Connect MCP servers from a curated directory
+
+### MCP Service
+
+- Expose an MCP server interface for agents to read skills, project config, and memory
+- Support agent workflows that need shared, persistent context
+
+## Supported Tools
+
+Automatic is designed to work with Claude, Codex, Cursor, and other MCP-compatible agent tools.
+
+The exact experience depends on the target tool and its MCP/configuration support, but the model is the same: Automatic stores the configuration, then syncs or serves it to the tool that needs it.
+
+## Privacy and Security
+
+Automatic stores and manages local agent configuration on your machine.
+
+- OAuth tokens are stored in the system keychain where applicable
+- MCP server and project configuration are managed locally by the desktop app
+
+If you are evaluating Automatic for a team, review the app configuration and MCP server setup for your environment before rolling it out broadly.
+
+## Development
+
+This repository contains the Automatic desktop app built with Tauri 2, Rust, React, and TypeScript.
+
+### Prerequisites
+
+- Node.js
+- Rust toolchain
+- Tauri 2 build prerequisites for your platform
+
+### Run Locally
+
+```bash
+npm install
+npm run tauri dev
+```
+
+### Build
+
+```bash
+npm run build
+```
+
+### Check and Test
+
+```bash
+npm run check
+npm run test
+```
+
+Equivalent lower-level commands:
+
+```bash
+cd src-tauri
+cargo check
+cargo test
+```
+
+## Architecture
+
+The desktop app has two main parts:
+
+- A React and TypeScript frontend for managing projects, skills, templates, settings, and marketplaces
+- A Rust backend that handles business logic, local configuration, syncing, and the MCP server
+
+At a high level:
+
+- `src/App.tsx` provides the shell and navigation
+- `src-tauri/src/core.rs` contains shared backend logic
+- `src-tauri/src/mcp.rs` implements the MCP server
+- `src-tauri/src/lib.rs` exposes Tauri commands
+- `src-tauri/src/main.rs` starts either the desktop app or the MCP server
+
+## Project Status
+
+Automatic currently includes:
+
+- project, skills, rules, templates, and MCP server management
+- curated marketplaces for skills, templates, and MCP servers
+- drift detection
+- analytics and updater integration
+- memory tools and MCP server support
+
+## Links
+
+- Website: [tryautomatic.app](https://tryautomatic.app)
+- Latest release: [github.com/velvet-tiger/automatic/releases/latest](https://github.com/velvet-tiger/automatic/releases/latest)
 
