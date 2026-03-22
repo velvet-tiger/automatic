@@ -102,6 +102,8 @@ pub async fn subscribe_newsletter(email: &str) -> Result<(), String> {
 /// `event`     — event name, e.g. "skill_created"
 /// `properties`— optional JSON object of event properties
 /// `enabled`   — the user's analytics opt-in preference from Settings
+/// `allow_when_disabled` — whether this event may be sent even when the user
+///                         has opted out of activity tracking
 ///
 /// Returns `Ok(())` whether or not the key is set (missing key is a silent
 /// no-op) so callers never need to handle the disabled case.
@@ -110,14 +112,19 @@ pub async fn track_event(
     event: &str,
     properties: Option<serde_json::Value>,
     enabled: bool,
+    allow_when_disabled: bool,
 ) -> Result<(), String> {
-    if !enabled {
+    if !enabled && !allow_when_disabled {
+        eprintln!("[analytics] disabled by user preference");
         return Ok(());
     }
 
     let api_key = match option_env!("AMPLITUDE_API_KEY") {
         Some(k) if !k.is_empty() => k,
-        _ => return Ok(()), // no key compiled in — silent no-op
+        _ => {
+            eprintln!("[analytics] skipping '{}' — no AMPLITUDE_API_KEY compiled in", event);
+            return Ok(());
+        }
     };
 
     let mut event_obj = serde_json::json!({
@@ -154,4 +161,9 @@ pub async fn track_event(
     }
 
     Ok(())
+}
+
+/// Returns true if an Amplitude API key was compiled into this build.
+pub fn is_analytics_configured() -> bool {
+    matches!(option_env!("AMPLITUDE_API_KEY"), Some(k) if !k.is_empty())
 }

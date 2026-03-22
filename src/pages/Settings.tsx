@@ -60,6 +60,7 @@ export default function Settings() {
   const [erasingData, setErasingData] = useState(false);
   const [reinstallStatus, setReinstallStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [reinstallError, setReinstallError] = useState("");
+  const [analyticsConfigured, setAnalyticsConfigured] = useState<boolean | null>(null);
 
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
     let saved = localStorage.getItem("automatic.theme") as string;
@@ -104,6 +105,14 @@ export default function Settings() {
           default_agents: raw.default_agents ?? [],
         });
         setAvailableAgents(agents);
+        
+        // Check if analytics API key was compiled into this build
+        try {
+          const configured = await invoke<boolean>("is_analytics_configured");
+          setAnalyticsConfigured(configured);
+        } catch {
+          setAnalyticsConfigured(false);
+        }
       } catch (e) {
         console.error("Failed to read settings", e);
       } finally {
@@ -509,13 +518,21 @@ export default function Settings() {
                       settings.analytics_enabled ? "bg-brand" : "bg-surface-active"
                     }`}
                   >
-                    <div
-                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
-                        settings.analytics_enabled ? "left-5" : "left-0.5"
-                      }`}
-                    />
-                  </div>
+<div
+                    className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                      settings.analytics_enabled ? "left-5" : "left-0.5"
+                    }`}
+                  />
+                </div>
                 </button>
+                
+                {/* Warning if analytics is enabled but not configured */}
+                {settings.analytics_enabled && analyticsConfigured === false && (
+                  <div className="mt-3 p-3 rounded-lg border border-warning/40 bg-warning/10 text-[12px] text-warning">
+                    Analytics is enabled but no API key was compiled into this build. 
+                    Events will not be sent. This is expected in local development.
+                  </div>
+                )}
               </div>
 
               {/* App Updates */}

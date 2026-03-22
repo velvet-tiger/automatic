@@ -23,6 +23,10 @@ let _userId: string = "anonymous";
 let _enabled: boolean = true;
 let _initialized: boolean = false;
 
+type SendOptions = {
+  allowWhenDisabled?: boolean;
+};
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -38,6 +42,7 @@ export async function initAnalytics(userId: string, enabled: boolean): Promise<v
 
   if (!_enabled) {
     console.info("[analytics] disabled by user setting");
+    await _send("no_track", { opted_out: true, source: "startup" }, { allowWhenDisabled: true });
     return;
   }
 
@@ -49,6 +54,10 @@ export async function initAnalytics(userId: string, enabled: boolean): Promise<v
  * Update the opt-out flag at runtime (e.g. when the user toggles the setting).
  */
 export function setAnalyticsEnabled(enabled: boolean): void {
+  if (_initialized && _enabled && !enabled) {
+    void _send("no_track", { opted_out: true, source: "settings_toggle" }, { allowWhenDisabled: true });
+  }
+
   _enabled = enabled;
 }
 
@@ -192,8 +201,14 @@ export function identifyOnboarding(onboarding: {
 
 // ─── Internal ─────────────────────────────────────────────────────────────────
 
-async function _send(event: string, properties?: Record<string, unknown>): Promise<void> {
-  if (!_initialized || !_enabled) return;
+async function _send(
+  event: string,
+  properties?: Record<string, unknown>,
+  options?: SendOptions
+): Promise<void> {
+  const allowWhenDisabled = options?.allowWhenDisabled ?? false;
+
+  if (!_initialized || (!_enabled && !allowWhenDisabled)) return;
 
   try {
     await invoke("track_event", {
@@ -201,6 +216,7 @@ async function _send(event: string, properties?: Record<string, unknown>): Promi
       event,
       properties: properties ?? null,
       enabled: _enabled,
+      allowWhenDisabled,
     });
   } catch (e) {
     // Analytics must never crash the app.

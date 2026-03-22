@@ -49,8 +49,16 @@ pub async fn track_event(
     event: String,
     properties: Option<serde_json::Value>,
     enabled: bool,
+    allow_when_disabled: bool,
 ) -> Result<(), String> {
-    core::track_event(&user_id, &event, properties, enabled).await
+    core::track_event(&user_id, &event, properties, enabled, allow_when_disabled).await
+}
+
+/// Returns true if an Amplitude API key was compiled into this build.
+/// Use to show diagnostics in settings.
+#[tauri::command]
+pub fn is_analytics_configured() -> bool {
+    core::is_analytics_configured()
 }
 
 // ── Plugins / Sessions ───────────────────────────────────────────────────────
