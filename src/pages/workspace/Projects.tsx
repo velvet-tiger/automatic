@@ -2221,7 +2221,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         { id: "custom_agents", label: "Agents" },
         { id: "skills", label: "Skills" },
         { id: "mcp_servers", label: "MCP Servers" },
-        { id: "groups", label: "Groups" },
       ],
     },
     {
@@ -2231,6 +2230,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         { id: "project_file", label: "Project Instructions" },
         { id: "rules", label: "Rules" },
         { id: "context", label: "Context" },
+        { id: "groups", label: "Groups" },
       ],
     },
     {
