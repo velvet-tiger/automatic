@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Bot, FolderOpen, AlertCircle, ArrowRight, CheckCircle2, XCircle, Settings2, Key, Eye, EyeOff, Check, Trash2 } from "lucide-react";
-import { ICONS } from "./icons";
-import { AgentIcon } from "./AgentIcon";
-import type { AgentCapabilities, AgentOptions } from "./AgentSelector";
+import { ICONS } from "../../lib/icons";
+import { AgentIcon } from "../../components/AgentIcon";
+import type { AgentCapabilities, AgentOptions } from "../../components/AgentSelector";
 
 interface AgentProject {
   name: string;

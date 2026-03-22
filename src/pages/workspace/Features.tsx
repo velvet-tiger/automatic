@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { MarkdownPreview } from "./MarkdownPreview";
+import { MarkdownPreview } from "../../components/MarkdownPreview";
 import {
   Plus,
   X,

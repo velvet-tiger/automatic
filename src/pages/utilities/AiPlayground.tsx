@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Send, Trash2, AlertCircle, ChevronDown, ChevronUp, Bot, Check, FolderOpen } from "lucide-react";
-import { flag } from "./flags";
+import { flag } from "../../lib/flags";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

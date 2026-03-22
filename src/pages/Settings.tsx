@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { THEMES, applyTheme, Theme } from "./theme";
+import { THEMES, applyTheme, Theme } from "../lib/theme";
 
 import { getVersion } from "@tauri-apps/api/app";
-import { setAnalyticsEnabled, trackSettingChanged } from "./analytics";
-import { useUpdate } from "./UpdateContext";
-import { useTaskLog } from "./TaskLogContext";
-import { AgentSelector, type AgentInfo } from "./AgentSelector";
-import SettingsPlugins from "./plugins/SettingsPlugins";
+import { setAnalyticsEnabled, trackSettingChanged } from "../lib/analytics";
+import { useUpdate } from "../contexts/UpdateContext";
+import { useTaskLog } from "../contexts/TaskLogContext";
+import { AgentSelector, type AgentInfo } from "../components/AgentSelector";
+import SettingsPlugins from "../plugins/SettingsPlugins";
 import { Code2, Bot, AppWindow, Puzzle, X } from "lucide-react";
 
 type SettingsPage = "skills" | "agents" | "app" | "plugins";

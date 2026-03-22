@@ -2,8 +2,8 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, Check, MessagesSquare, Copy, Lock, FolderGit2 } from "lucide-react";
-import { AuthorSection } from "./AuthorPanel";
-import { TokenPill } from "./TokenPill";
+import { AuthorSection } from "../../components/AuthorPanel";
+import { TokenPill } from "../../components/TokenPill";
 
 interface UserAgentEntry {
   id: string;

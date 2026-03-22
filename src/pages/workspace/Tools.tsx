@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { handleExternalLinkClick } from "./lib/externalLinks";
+import { handleExternalLinkClick } from "../../lib/externalLinks";
 import {
   Wrench,
   ExternalLink,

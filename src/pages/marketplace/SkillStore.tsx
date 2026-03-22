@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { trackSkillInstalled, trackSkillUpdated } from "./analytics";
-import { AuthorSection } from "./AuthorPanel";
-import { handleExternalLinkClick } from "./lib/externalLinks";
+import { trackSkillInstalled, trackSkillUpdated } from "../../lib/analytics";
+import { AuthorSection } from "../../components/AuthorPanel";
+import { handleExternalLinkClick } from "../../lib/externalLinks";
 import {
   Search,
   Download,
@@ -14,8 +14,8 @@ import {
   ArrowRight,
   ArrowLeft,
 } from "lucide-react";
-import featuredSkillsData from "../src-tauri/assets/marketplace/featured-skills.json";
-import { SkillAvatar } from "./SkillAvatar";
+import featuredSkillsData from "../../../src-tauri/assets/marketplace/featured-skills.json";
+import { SkillAvatar } from "../../components/SkillAvatar";
 
 interface RemoteSkillResult {
   id: string;

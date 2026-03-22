@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { identifyOnboarding } from "./analytics";
-import { applyTheme, type Theme } from "./theme";
+import { identifyOnboarding } from "../lib/analytics";
+import { applyTheme, type Theme } from "../lib/theme";
 import { ChevronRight, Check, FolderOpen } from "lucide-react";
 
-import graphLogo from "../logos/graph_5.svg";
+import graphLogo from "../../logos/graph_5.svg";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

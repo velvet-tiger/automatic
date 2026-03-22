@@ -2,9 +2,9 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, FileText, Check, ScrollText, RefreshCw, FolderGit2, Copy, Lock } from "lucide-react";
-import { ICONS } from "./icons";
-import { AuthorSection } from "./AuthorPanel";
-import { TokenPill } from "./TokenPill";
+import { ICONS } from "../../lib/icons";
+import { AuthorSection } from "../../components/AuthorPanel";
+import { TokenPill } from "../../components/TokenPill";
 
 interface RuleEntry {
   id: string;

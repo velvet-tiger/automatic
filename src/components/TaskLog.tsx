@@ -6,7 +6,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { X, CheckCircle, XCircle, Info, Loader, Copy, Check } from "lucide-react";
-import { useTaskLog, TaskLogStatus, TaskLogEntry } from "./TaskLogContext";
+import { useTaskLog, TaskLogStatus, TaskLogEntry } from "../contexts/TaskLogContext";
 
 // ── Status indicator ─────────────────────────────────────────────────────────
 

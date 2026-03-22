@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { trackMemoryStored, trackMemoryDeleted, trackMemoryCleared } from "./analytics";
+import { trackMemoryStored, trackMemoryDeleted, trackMemoryCleared } from "../lib/analytics";
 import {
   Trash2,
   Edit2,

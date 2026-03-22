@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { MarkdownPreview } from "./MarkdownPreview";
-import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
-import { handleExternalLinkClick } from "./lib/externalLinks";
+import { MarkdownPreview } from "../../components/MarkdownPreview";
+import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
+import { handleExternalLinkClick } from "../../lib/externalLinks";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   trackSkillCreated,
   trackSkillUpdated,
   trackSkillDeleted,
-} from "./analytics";
+} from "../../lib/analytics";
 import {
   Plus,
   X,
@@ -26,10 +26,10 @@ import {
   Lock,
   Upload,
 } from "lucide-react";
-import { ICONS } from "./icons";
-import { SkillAvatar } from "./SkillAvatar";
-import { TokenPill } from "./TokenPill";
-import SkillImportDialog from "./SkillImportDialog";
+import { ICONS } from "../../lib/icons";
+import { SkillAvatar } from "../../components/SkillAvatar";
+import { TokenPill } from "../../components/TokenPill";
+import SkillImportDialog from "../../components/SkillImportDialog";
 
 interface SkillSource {
   source: string; // "owner/repo"

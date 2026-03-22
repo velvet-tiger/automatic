@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { ICONS } from "./icons";
-import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
-import { SkillSelector } from "./SkillSelector";
-import { AgentSelector, AgentInfo } from "./AgentSelector";
-import { McpSelector } from "./McpSelector";
+import { ICONS } from "../../lib/icons";
+import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
+import { SkillSelector } from "../../components/SkillSelector";
+import { AgentSelector, AgentInfo } from "../../components/AgentSelector";
+import { McpSelector } from "../../components/McpSelector";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Plus,

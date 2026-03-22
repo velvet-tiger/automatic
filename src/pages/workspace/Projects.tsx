@@ -1,21 +1,21 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { SpecKittyPanel } from "./plugins/spec-kitty/SpecKittyPanel";
-import mcpServersData from "../src-tauri/assets/marketplace/featured-mcp-servers.json";
-import { SkillSelector } from "./SkillSelector";
-import { AgentSelector } from "./AgentSelector";
-import type { AgentOptions } from "./AgentSelector";
-import { AgentIcon } from "./AgentIcon";
-import { McpSelector } from "./McpSelector";
-import { MarkdownPreview } from "./MarkdownPreview";
-import { TokenPill } from "./TokenPill";
-import { useCurrentUser } from "./ProfileContext";
-import { useTaskLog } from "./TaskLogContext";
-import { MemoryBrowser } from "./MemoryBrowser";
-import { ClaudeMemoryPanel } from "./ClaudeMemoryPanel";
+import { SpecKittyPanel } from "../../plugins/spec-kitty/SpecKittyPanel";
+import mcpServersData from "../../../src-tauri/assets/marketplace/featured-mcp-servers.json";
+import { SkillSelector } from "../../components/SkillSelector";
+import { AgentSelector } from "../../components/AgentSelector";
+import type { AgentOptions } from "../../components/AgentSelector";
+import { AgentIcon } from "../../components/AgentIcon";
+import { McpSelector } from "../../components/McpSelector";
+import { MarkdownPreview } from "../../components/MarkdownPreview";
+import { TokenPill } from "../../components/TokenPill";
+import { useCurrentUser } from "../../contexts/ProfileContext";
+import { useTaskLog } from "../../contexts/TaskLogContext";
+import { MemoryBrowser } from "../../components/MemoryBrowser";
+import { ClaudeMemoryPanel } from "../../components/ClaudeMemoryPanel";
 import Features from "./Features";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { handleExternalLinkClick } from "./lib/externalLinks";
+import { handleExternalLinkClick } from "../../lib/externalLinks";
 import {
   trackProjectCreated,
   trackProjectUpdated,
@@ -27,7 +27,7 @@ import {
   trackProjectSkillRemoved,
   trackProjectMcpServerAdded,
   trackProjectMcpServerRemoved,
-} from "./analytics";
+} from "../../lib/analytics";
 
 import {
   Plus,

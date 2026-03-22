@@ -29,7 +29,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
-import { trackUpdateChecked, trackUpdateInstalled } from "./analytics";
+import { trackUpdateChecked, trackUpdateInstalled } from "../lib/analytics";
 
 export type UpdateStatus =
   | "idle"
