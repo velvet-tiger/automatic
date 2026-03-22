@@ -1,0 +1,54 @@
+Automatic Commercial License
+
+This document outlines the terms for obtaining a commercial license for Automatic.
+
+Purpose
+
+A commercial license grants rights beyond the Business Source License (BUSL), including:
+- Unlimited users within a single organization
+- Commercial distribution and resale rights
+- SaaS deployment and hosting rights
+- White-label and embedding rights (negotiable)
+- Priority support access (negotiable)
+
+Eligibility
+
+Commercial licenses are available for:
+- Organizations with more than ten (10) concurrent users
+- Companies wishing to distribute Automatic as part of a commercial product
+- SaaS providers hosting Automatic for customers
+- Partners requiring redistribution rights
+
+Pricing
+
+License pricing is based on:
+- Number of users or seats
+- Deployment model (on-premise, cloud, embedded)
+- Redistribution scope
+
+Contact for current pricing.
+
+How to Obtain
+
+1. Contact: licenses@automatic.dev
+2. Provide:
+   - Organization name and contact
+   - Intended use case (internal, SaaS, redistribution, etc.)
+   - Estimated user count
+   - Deployment environment
+
+3. Receive a commercial license agreement tailored to your use case.
+
+For Enterprises
+
+Enterprise licenses include:
+- Unlimited users within your organization
+- Indemnification protection
+- Custom terms and SLAs
+- Dedicated support channels
+
+Contact: enterprise@automatic.dev
+
+---
+
+Note: This file describes how to obtain a commercial license but does not substitute for the actual commercial license agreement. All commercial licenses are governed by a separate written agreement between you and Automatic.

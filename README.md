@@ -187,6 +187,19 @@ Automatic currently includes:
 - analytics and updater integration
 - memory tools and MCP server support
 
+## License
+
+Automatic is released under the **Business Source License 1.1**.
+
+- **Free use**: Internal business use with up to 10 concurrent users
+- **Commercial license required**: For use beyond 10 users, distribution, resale, or SaaS deployment
+- **Attribution required**: Forks must attribute the original Licensor
+- **Time-delayed open source**: Converts to MIT License on March 23, 2030
+
+See [LICENSE](LICENSE) for full terms and [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) for commercial licensing details.
+
+For commercial licenses, contact: licenses@automatic.dev
+
 ## Links
 
 - Website: [tryautomatic.app](https://tryautomatic.app)

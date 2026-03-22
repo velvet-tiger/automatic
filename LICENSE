@@ -1,0 +1,56 @@
+Business Source License 1.1
+
+Parameters
+
+Licensor:                        Automatic
+Licensed Work:                   Automatic Desktop Application
+                                The Licensed Work is defined in the source code at:
+                                https://github.com/anomalyco/automatic
+License Number:                  2026.001
+                                
+
+The Licensor hereby grants you a non-exclusive license to use the Licensed Work subject to the terms of this Business Source License.
+
+Change Date: March 23, 2030
+Change License: MIT License
+
+Conditions
+
+1. Additional Use Grant
+
+You may use the Licensed Work for internal business purposes, provided that:
+(a) the Licensed Work is used by no more than ten (10) concurrent users within your organization; and
+(b) you do not distribute, sell, lease, license, sublicense, or otherwise make the Licensed Work available to any third party.
+
+For usage beyond ten (10) concurrent users, or for any commercial distribution, resale, or SaaS deployment, you must obtain a separate commercial license from the Licensor. Contact: licenses@automatic.dev
+
+Forks and modifications must include attribution to the original Licensor and may not be sold, relicensed, or commercially distributed without a separate commercial agreement.
+
+2. Change Date
+
+On the Change Date, this license will convert to the Change License, granting irrevocable rights under the MIT License, with no additional conditions or restrictions.
+
+3. Trademark Attribution
+
+This License does not grant permission to use the trade names, trademarks, service marks, or product names of the Licensor, except as required for reasonable and customary use in describing the origin of the Licensed Work.
+
+Full License Text
+
+BUSINESS SOURCE LICENSE 1.1
+
+See https://mariadb.com/bsl11/ for full license text.
+
+The Licensed Work
+
+The Licensed Work is (a) the Software Project at:
+https://github.com/anomalyco/automatic
+
+(b) All files, modules, components, and documentation contained therein or derived therefrom, identified in the applicable metadata accompanying this License.
+
+Compatible Licenses
+
+The Change License identified above is a Compatible License.
+
+Usage Limitations
+
+Additional Use Grant defined above. You may not use the Licensed Work for any purpose beyond the Additional Use Grant without obtaining a commercial license.
