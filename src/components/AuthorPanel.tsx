@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ExternalLink, HardDrive, User } from "lucide-react";
-import { handleExternalLinkClick } from "./lib/externalLinks";
+import { handleExternalLinkClick } from "../lib/externalLinks";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

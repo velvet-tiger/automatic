@@ -1,5 +1,5 @@
 import { HardDrive, Globe } from "lucide-react";
-import { handleExternalLinkClick } from "./lib/externalLinks";
+import { handleExternalLinkClick } from "../lib/externalLinks";
 
 /**
  * Flexible author descriptor for skills, MCP servers, and templates.

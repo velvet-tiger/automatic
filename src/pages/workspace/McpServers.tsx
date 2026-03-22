@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { trackMcpServerCreated, trackMcpServerUpdated, trackMcpServerDeleted } from "./analytics";
-import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
-import { KvEditor, inputClass, smallInputClass, addBtnClass } from "./KvField";
+import { trackMcpServerCreated, trackMcpServerUpdated, trackMcpServerDeleted } from "../../lib/analytics";
+import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
+import { KvEditor, inputClass, smallInputClass, addBtnClass } from "../../components/KvField";
 import {
   Plus,
   X,
@@ -21,7 +21,7 @@ import {
   Loader2,
   Info,
 } from "lucide-react";
-import { ICONS } from "./icons";
+import { ICONS } from "../../lib/icons";
 
 type TransportType = "stdio" | "http" | "sse";
 

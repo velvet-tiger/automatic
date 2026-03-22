@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { handleExternalLinkClick } from "./lib/externalLinks";
+import { handleExternalLinkClick } from "../lib/externalLinks";
 import { 
   FolderOpen, 
   Code, 
@@ -23,7 +23,7 @@ import {
   Check,
   Lightbulb,
 } from "lucide-react";
-import { SkillAvatar } from "./SkillAvatar";
+import { SkillAvatar } from "../components/SkillAvatar";
 
 const BRANDFETCH_CLIENT_ID = import.meta.env.VITE_BRANDFETCH_CLIENT_ID as string | undefined;
 

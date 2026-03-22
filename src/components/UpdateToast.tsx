@@ -6,7 +6,7 @@
  * user restarts or when status changes away from "ready".
  */
 import { RefreshCw } from "lucide-react";
-import { useUpdate } from "./UpdateContext";
+import { useUpdate } from "../contexts/UpdateContext";
 
 export default function UpdateToast() {
   const { status, updateInfo, restartApp } = useUpdate();

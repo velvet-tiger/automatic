@@ -8,7 +8,7 @@ import {
   RefreshCw,
   Plus,
 } from "lucide-react";
-import { handleExternalLinkClick } from "./lib/externalLinks";
+import { handleExternalLinkClick } from "../lib/externalLinks";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

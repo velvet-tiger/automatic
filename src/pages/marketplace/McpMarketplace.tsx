@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AuthorSection } from "./AuthorPanel";
-import { handleExternalLinkClick } from "./lib/externalLinks";
+import { AuthorSection } from "../../components/AuthorPanel";
+import { handleExternalLinkClick } from "../../lib/externalLinks";
 import {
   Search,
   Server,

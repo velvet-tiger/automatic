@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
-import { handleExternalLinkClick } from "./lib/externalLinks";
-import { SkillAvatar } from "./SkillAvatar";
+import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
+import { handleExternalLinkClick } from "../../lib/externalLinks";
+import { SkillAvatar } from "../../components/SkillAvatar";
 import {
   Search,
   ArrowLeft,

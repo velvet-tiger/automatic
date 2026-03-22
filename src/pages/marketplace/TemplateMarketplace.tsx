@@ -16,7 +16,7 @@ import {
   AlertTriangle,
   PackagePlus,
 } from "lucide-react";
-import { AuthorSection, type AuthorDescriptor } from "./AuthorPanel";
+import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
