@@ -1,0 +1,19 @@
+{
+  "name": "fastapi-service",
+  "display_name": "FastAPI Service",
+  "icon": "fastapicloud.com",
+  "description": "A modern async Python API service built with FastAPI, SQLAlchemy 2 (async), Alembic for migrations, and Pydantic v2 for data validation. Designed for teams building high-performance REST microservices with full type safety and automated OpenAPI docs.",
+  "category": "API / Backend",
+  "tags": ["fastapi", "python", "async", "pydantic", "sqlalchemy", "alembic"],
+  "skills": ["python-pro", "fastapi-templates"],
+  "skill_sources": {
+    "fastapi-templates": "wshobson/agents"
+  },
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# FastAPI Service\n\n## Stack\n- **Framework**: FastAPI\n- **ORM**: SQLAlchemy 2 (async)\n- **Migrations**: Alembic\n- **Validation**: Pydantic v2\n- **Auth**: JWT (python-jose) or OAuth2\n- **Testing**: pytest + httpx AsyncClient\n- **Language**: Python 3.12+\n\n## Project Structure\n```\napp/\n  routers/         # Route handlers (thin — delegate to services)\n  services/        # Business logic\n  models/          # SQLAlchemy ORM models\n  schemas/         # Pydantic request/response schemas\n  dependencies.py  # Shared DI providers (db session, current user)\n  main.py          # App factory and lifespan\nalembic/\n  versions/        # Migration files\ntests/\n  conftest.py      # pytest fixtures\n```\n\n## Conventions\n- All endpoints are async — never mix sync I/O into async routes\n- Request and response shapes are fully typed Pydantic models\n- Business logic lives in service classes, not routers\n- DB session injected via `Depends` — never imported directly in routers\n- Errors use typed exception handlers; never leak internal tracebacks\n\n## Key Commands\n```bash\nuvicorn app.main:app --reload     # Start dev server\nalembic upgrade head               # Apply migrations\nalembic revision --autogenerate   # Generate new migration\npytest                            # Run test suite\n```\n",
+  "unified_rules": [],
+  "_author": { "type": "provider", "name": "Automatic", "url": "https://automatic.sh" }
+}

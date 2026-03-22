@@ -1,0 +1,20 @@
+{
+  "name": "rust-cli-app",
+  "display_name": "Rust CLI Application",
+  "icon": "rust-lang.org",
+  "description": "A command-line application built in Rust with Clap for argument parsing, Tokio for async I/O, and thiserror/anyhow for structured error handling. Includes a library crate alongside the binary for testability, with unit and integration tests using the standard Rust test harness.",
+  "category": "CLI / Systems",
+  "tags": ["rust", "cli", "clap", "tokio", "cargo", "systems"],
+  "skills": ["rust-async-patterns", "rust-best-practices"],
+  "skill_sources": {
+    "rust-async-patterns": "wshobson/agents",
+    "rust-best-practices": "apollographql/skills"
+  },
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# Rust CLI Application\n\n## Stack\n- **Language**: Rust (2021 edition)\n- **Args**: Clap v4 (derive API)\n- **Async**: Tokio (if I/O-bound)\n- **Errors**: thiserror (library), anyhow (binary)\n- **Logging**: tracing + tracing-subscriber\n- **Config**: config crate or environment variables\n\n## Crate Structure\n```\nsrc/\n  main.rs          # Entry point — thin, parses args, calls lib\n  lib.rs           # Public API and business logic\n  cli.rs           # Clap struct definitions\n  error.rs         # thiserror error types\ntests/\n  integration/     # Integration tests (black-box via CLI)\n```\n\n## Conventions\n- `main.rs` is thin — all logic lives in `lib.rs` or submodules\n- Use `thiserror` for typed library errors; `anyhow` in `main` for context wrapping\n- Never use `unwrap()` in library code — propagate with `?`\n- Add `#[cfg(test)]` unit tests alongside every non-trivial function\n- Run `cargo clippy -- -D warnings` as part of CI; fix all lints\n\n## Key Commands\n```bash\ncargo build --release       # Build optimised binary\ncargo run -- <args>         # Run in dev mode\ncargo test                  # Run all tests\ncargo clippy -- -D warnings # Lint with all warnings as errors\ncargo doc --open            # Browse generated docs\n```\n",
+  "unified_rules": [],
+  "_author": { "type": "provider", "name": "Automatic", "url": "https://automatic.sh" }
+}

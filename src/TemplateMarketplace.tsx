@@ -331,7 +331,9 @@ function TemplateDetail({
     })();
 
     return () => { cancelled = true; };
-  }, [template.name]);
+  // Re-run when `imported` flips so the panel reflects skills installed
+  // during template import (bundled and community alike).
+  }, [template.name, imported]);
 
   return (
     <div className="flex h-full flex-col bg-bg-base">

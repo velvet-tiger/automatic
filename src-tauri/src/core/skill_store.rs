@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use super::types::SkillsJson;
 use super::*;
-use super::types::{SkillsJson};
 
 // ── Skills Store (skills.sh) ─────────────────────────────────────────────────
 
@@ -82,7 +82,10 @@ pub async fn search_remote_skills(query: &str) -> Result<Vec<RemoteSkillResult>,
 /// Handles the `---\nkey: value\n---` block at the top of the file.
 /// Only handles simple scalar values (not block scalars or nested YAML).
 fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
-    let inner = content.strip_prefix("---")?.trim_start_matches('\n').trim_start_matches('\r');
+    let inner = content
+        .strip_prefix("---")?
+        .trim_start_matches('\n')
+        .trim_start_matches('\r');
     let end = inner.find("\n---")?;
     let prefix = format!("{}:", field);
     for line in inner[..end].lines() {
@@ -136,10 +139,7 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
     let static_urls: Vec<String> = ["main", "master"]
         .iter()
         .flat_map(|branch| {
-            let base = format!(
-                "https://raw.githubusercontent.com/{}/{}",
-                source, branch
-            );
+            let base = format!("https://raw.githubusercontent.com/{}/{}", source, branch);
             vec![
                 // Dedicated skill repo layout (e.g. vercel-labs/agent-skills)
                 format!("{}/skills/{}/SKILL.md", base, name),
@@ -272,7 +272,8 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
     let clone_result = std::process::Command::new("git")
         .args([
             "clone",
-            "--depth", "1",
+            "--depth",
+            "1",
             "--filter=blob:none",
             "--no-checkout",
             "--quiet",
@@ -296,25 +297,41 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
 
     // Get the flat file list from the local clone.
     let ls_result = std::process::Command::new("git")
-        .args(["-C", tmp_dir.to_str().unwrap_or(""), "ls-tree", "-r", "--name-only", "HEAD"])
+        .args([
+            "-C",
+            tmp_dir.to_str().unwrap_or(""),
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "HEAD",
+        ])
         .output();
 
     // Get the actual branch name so we can build a raw.githubusercontent.com URL.
     let branch_result = std::process::Command::new("git")
-        .args(["-C", tmp_dir.to_str().unwrap_or(""), "rev-parse", "--abbrev-ref", "HEAD"])
+        .args([
+            "-C",
+            tmp_dir.to_str().unwrap_or(""),
+            "rev-parse",
+            "--abbrev-ref",
+            "HEAD",
+        ])
         .output();
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
     let ls_output = match ls_result {
         Ok(out) if out.status.success() => out.stdout,
-        _ => return Err(format!("Could not list files in cloned repo for '{}'", name)),
+        _ => {
+            return Err(format!(
+                "Could not list files in cloned repo for '{}'",
+                name
+            ))
+        }
     };
 
     let branch = match branch_result {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
         _ => "main".to_string(),
     };
 
@@ -339,16 +356,20 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
             .and_then(|d| d.file_name())
             .and_then(|n| n.to_str())
             .unwrap_or("");
-        if parent == name { 0usize } else { 1usize }
+        if parent == name {
+            0usize
+        } else {
+            1usize
+        }
     });
 
     for path in candidate_paths {
         let url = format!("{}/{}", raw_base, path);
         let resp = match client
             .get(&url)
-        .header("User-Agent", "automatic-desktop/1.0")
-        .send()
-        .await
+            .header("User-Agent", "automatic-desktop/1.0")
+            .send()
+            .await
         {
             Ok(r) => r,
             Err(_) => continue,

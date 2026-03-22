@@ -1,0 +1,20 @@
+{
+  "name": "docker-containerised-service",
+  "display_name": "Docker Containerised Service",
+  "icon": "docker.com",
+  "description": "A service packaged as a Docker container with a multi-stage Dockerfile, Docker Compose for local development, and environment-based secrets management. Includes health checks, named volumes for persistent data, and a CI-ready build pipeline.",
+  "category": "DevOps / Infrastructure",
+  "tags": ["docker", "compose", "containers", "devops", "deployment", "ci-cd"],
+  "skills": ["multi-stage-dockerfile", "docker-expert"],
+  "skill_sources": {
+    "multi-stage-dockerfile": "github/awesome-copilot",
+    "docker-expert": "sickn33/antigravity-awesome-skills"
+  },
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# Docker Containerised Service\n\n## Stack\n- **Container runtime**: Docker\n- **Orchestration (local)**: Docker Compose\n- **Base image**: language-specific slim/alpine variant\n- **Registry**: Docker Hub / GitHub Container Registry / ECR\n\n## Project Structure\n```\nDockerfile             # Multi-stage build definition\ncompose.yaml           # Local dev services\n.env.example           # Required environment variables (committed)\n.env                   # Actual secrets (never committed)\nscripts/\n  entrypoint.sh        # Container entrypoint (if needed)\n```\n\n## Dockerfile Conventions\n- Use multi-stage builds: `builder` stage installs deps, `runtime` stage copies output\n- Run as a non-root user in the final stage\n- Pin base image versions — never use `latest` in production\n- No secrets in any image layer — mount at runtime via env or secrets\n\n## Compose Conventions\n- Define health checks for every long-running service\n- Use named volumes for all persistent data (databases, uploads)\n- Services communicate over a named bridge network, not `host` mode\n- Override dev-only settings in `compose.override.yaml`\n\n## Key Commands\n```bash\ndocker compose up --build     # Build images and start all services\ndocker compose run app test   # Run tests inside the container\ndocker compose down -v        # Stop and remove containers and volumes\ndocker compose config         # Validate compose file\ndocker build --target runtime # Build production image only\n```\n",
+  "unified_rules": [],
+  "_author": { "type": "provider", "name": "Automatic", "url": "https://automatic.sh" }
+}

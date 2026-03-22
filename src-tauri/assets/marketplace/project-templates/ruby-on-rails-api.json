@@ -1,0 +1,19 @@
+{
+  "name": "ruby-on-rails-api",
+  "display_name": "Ruby on Rails API",
+  "icon": "rubyonrails.org",
+  "description": "A production-ready Rails 7+ API-only backend with Active Record, JWT authentication, background jobs via Sidekiq, and a full RSpec test suite. Built for teams delivering mobile or SPA frontends on a well-structured Ruby backend.",
+  "category": "API / Backend",
+  "tags": ["rails", "ruby", "api", "activerecord", "rspec", "sidekiq", "jwt"],
+  "skills": ["rails-expert"],
+  "skill_sources": {
+    "rails-expert": "jeffallan/claude-skills"
+  },
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# Ruby on Rails API\n\n## Stack\n- **Framework**: Rails 7+ (API mode)\n- **Database**: PostgreSQL via Active Record\n- **Auth**: JWT (devise-jwt or rodauth)\n- **Background Jobs**: Sidekiq + Redis\n- **Serialisation**: jsonapi-serializer / blueprinter\n- **Testing**: RSpec + FactoryBot + Shoulda Matchers\n- **Language**: Ruby 3.3+\n\n## Project Structure\n```\napp/\n  controllers/api/v1/  # Versioned API controllers (thin)\n  models/              # Active Record models\n  services/            # Business logic (plain Ruby objects)\n  serializers/         # Response serialisers\n  jobs/                # Sidekiq jobs\ndb/\n  migrate/             # Active Record migrations\nspec/\n  requests/            # RSpec request specs (integration)\n  models/              # RSpec model unit specs\n  factories/           # FactoryBot factories\n```\n\n## Conventions\n- Controllers are thin — delegate to service objects immediately\n- All API routes are versioned: `/api/v1/...`\n- Never return raw Active Record models — always use a serialiser\n- Business logic lives in plain Ruby service classes, not callbacks\n- Every endpoint has a corresponding request spec\n\n## Key Commands\n```bash\nbundle exec rails server         # Start dev server\nbundle exec rails db:migrate     # Apply migrations\nbundle exec rspec                # Run test suite\nbundle exec sidekiq              # Start background worker\nbundle exec rubocop              # Lint Ruby code\n```\n",
+  "unified_rules": [],
+  "_author": { "type": "provider", "name": "Automatic", "url": "https://automatic.sh" }
+}

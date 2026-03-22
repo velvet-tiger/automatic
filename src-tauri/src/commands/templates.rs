@@ -62,8 +62,8 @@ pub fn read_bundled_project_template(name: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn import_bundled_project_template(name: &str) -> Result<(), String> {
-    core::import_bundled_project_template(name)?;
+pub async fn import_bundled_project_template(name: String) -> Result<(), String> {
+    core::import_bundled_project_template(&name).await?;
     // Mark getting-started flag; best-effort — never block the import.
     if let Err(e) = core::mark_template_imported() {
         eprintln!("[automatic] Failed to mark template_imported flag: {}", e);

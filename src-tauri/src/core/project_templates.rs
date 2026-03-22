@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -193,6 +194,12 @@ pub struct BundledProjectTemplate {
     /// Author/provider metadata, same shape as `ProjectTemplate::_author`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub _author: Option<serde_json::Value>,
+    /// Maps community skill name → GitHub source (e.g. `"wshobson/agents"`).
+    /// Used during template import to auto-fetch skills that are not bundled
+    /// with the app.  Bundled skills are installed without a network call;
+    /// community skills listed here are fetched from raw.githubusercontent.com.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub skill_sources: HashMap<String, String>,
 }
 
 /// All bundled marketplace templates, compiled in at build time.
@@ -228,6 +235,40 @@ pub(super) const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
         "react-component-library",
         include_str!("../../assets/marketplace/project-templates/react-component-library.json"),
     ),
+    (
+        "django-web-app",
+        include_str!("../../assets/marketplace/project-templates/django-web-app.json"),
+    ),
+    (
+        "fastapi-service",
+        include_str!("../../assets/marketplace/project-templates/fastapi-service.json"),
+    ),
+    (
+        "react-native-app",
+        include_str!("../../assets/marketplace/project-templates/react-native-app.json"),
+    ),
+    (
+        "rust-cli-app",
+        include_str!("../../assets/marketplace/project-templates/rust-cli-app.json"),
+    ),
+    (
+        "supabase-backend",
+        include_str!("../../assets/marketplace/project-templates/supabase-backend.json"),
+    ),
+    (
+        "graphql-api",
+        include_str!("../../assets/marketplace/project-templates/graphql-api.json"),
+    ),
+    (
+        "docker-containerised-service",
+        include_str!(
+            "../../assets/marketplace/project-templates/docker-containerised-service.json"
+        ),
+    ),
+    (
+        "ruby-on-rails-api",
+        include_str!("../../assets/marketplace/project-templates/ruby-on-rails-api.json"),
+    ),
 ];
 
 /// Return all bundled marketplace templates as JSON array.
@@ -254,15 +295,22 @@ pub fn read_bundled_project_template(name: &str) -> Result<String, String> {
 
 /// Import a bundled marketplace template into the user's local project templates.
 /// If a template with the same name already exists it is overwritten.
-/// Any skills listed in the template that are bundled with the app are installed
-/// to `~/.agents/skills/` at this point (skipping any already present).
-pub fn import_bundled_project_template(name: &str) -> Result<(), String> {
+///
+/// Install order:
+/// 1. Bundled skills — installed synchronously from the compiled-in binary.
+/// 2. Community skills — fetched asynchronously from raw.githubusercontent.com
+///    using the `skill_sources` map in the template.  Errors are logged but
+///    never propagate; a failed community skill fetch does not abort the import.
+pub async fn import_bundled_project_template(name: &str) -> Result<(), String> {
     let raw = read_bundled_project_template(name)?;
     let bundled: BundledProjectTemplate =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid template: {}", e))?;
 
-    // Install any bundled skills the template requires (skip already-installed ones).
+    // Step 1: install skills that are bundled with the app (no network).
     install_skills_from_bundle(&bundled.skills)?;
+
+    // Step 2: fetch and install community skills (network, best-effort).
+    install_community_skills(&bundled).await;
 
     // Convert to the standard ProjectTemplate structure for storage.
     // _author is preserved so the user-local copy retains provenance.
@@ -281,6 +329,67 @@ pub fn import_bundled_project_template(name: &str) -> Result<(), String> {
 
     let json = serde_json::to_string_pretty(&pt).map_err(|e| e.to_string())?;
     save_project_template(&bundled.name, &json)
+}
+
+/// Fetch and install community skills listed in a bundled template.
+///
+/// Only processes skills that are not already in the app bundle and are not
+/// already installed locally.  Each skill is fetched using the source from
+/// `template.skill_sources`.  Skills without a source entry are silently
+/// skipped — they remain listed as "install manually" in the dep panel.
+///
+/// All errors are logged to stderr; none propagate so a single failed fetch
+/// never aborts the overall template import.
+async fn install_community_skills(template: &BundledProjectTemplate) {
+    if template.skill_sources.is_empty() {
+        return;
+    }
+
+    let bundled_names: std::collections::HashSet<&str> =
+        bundled_skill_names().into_iter().collect();
+
+    let installed_names: std::collections::HashSet<String> =
+        list_skill_names().unwrap_or_default().into_iter().collect();
+
+    for skill_name in &template.skills {
+        // Bundled skills are already handled by install_skills_from_bundle.
+        if bundled_names.contains(skill_name.as_str()) {
+            continue;
+        }
+        // Skip skills the user already has installed.
+        if installed_names.contains(skill_name) {
+            continue;
+        }
+        let Some(source) = template.skill_sources.get(skill_name) else {
+            // No source info — leave for the user to install manually.
+            continue;
+        };
+
+        match fetch_remote_skill_content(source, skill_name).await {
+            Ok(content) => {
+                if let Err(e) = save_skill(skill_name, &content) {
+                    eprintln!(
+                        "[automatic] template import: failed to save community skill '{}': {}",
+                        skill_name, e
+                    );
+                } else {
+                    let id = format!("{}/{}", source, skill_name);
+                    if let Err(e) = record_skill_source(skill_name, source, &id, "github") {
+                        eprintln!(
+                            "[automatic] template import: failed to record source for '{}': {}",
+                            skill_name, e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "[automatic] template import: failed to fetch community skill '{}' from '{}': {}",
+                    skill_name, source, e
+                );
+            }
+        }
+    }
 }
 
 /// Search bundled templates by query (matches name, display_name, description, tags, category).

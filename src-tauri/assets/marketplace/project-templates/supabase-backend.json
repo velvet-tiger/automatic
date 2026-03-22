@@ -1,0 +1,19 @@
+{
+  "name": "supabase-backend",
+  "display_name": "Supabase Backend",
+  "icon": "supabase.com",
+  "description": "A backend powered by Supabase with PostgreSQL, Row Level Security, Edge Functions, and built-in auth. Structured for teams building SaaS or consumer apps that need a managed database, real-time subscriptions, and file storage without running their own infrastructure.",
+  "category": "API / Backend",
+  "tags": ["supabase", "postgresql", "rls", "edge-functions", "auth", "realtime"],
+  "skills": ["sparc:supabase-admin", "supabase-postgres-best-practices"],
+  "skill_sources": {
+    "supabase-postgres-best-practices": "supabase/agent-skills"
+  },
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# Supabase Backend\n\n## Stack\n- **Database**: PostgreSQL (via Supabase)\n- **Auth**: Supabase Auth (email, magic link, OAuth providers)\n- **Edge Functions**: Deno (TypeScript)\n- **Storage**: Supabase Storage\n- **Client**: @supabase/supabase-js\n- **Local Dev**: Supabase CLI\n\n## Project Structure\n```\nsupabase/\n  migrations/      # Versioned SQL migration files\n  functions/       # Edge Functions (one dir per function)\n  seed.sql         # Local dev seed data\n  config.toml      # Supabase project config\nsrc/\n  lib/supabase.ts  # Typed client singleton\n  types/           # Generated database types\n```\n\n## Conventions\n- RLS is enabled on every table — no exceptions\n- Use the anon key in the client; the service role key only in trusted server environments\n- Generate TypeScript types after every migration: `supabase gen types typescript`\n- All schema changes go through a migration file — never edit the schema directly in the dashboard\n- Edge Functions handle secrets via environment variables set in the Supabase dashboard\n\n## Key Commands\n```bash\nsupabase start                        # Start local Supabase stack\nsupabase db diff --file <name>        # Generate migration from schema changes\nsupabase migration up                 # Apply pending migrations locally\nsupabase gen types typescript > src/types/database.ts  # Regenerate types\nsupabase functions serve <name>       # Run Edge Function locally\n```\n",
+  "unified_rules": [],
+  "_author": { "type": "provider", "name": "Automatic", "url": "https://automatic.sh" }
+}

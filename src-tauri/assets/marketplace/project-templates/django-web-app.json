@@ -1,0 +1,19 @@
+{
+  "name": "django-web-app",
+  "display_name": "Django Web App",
+  "icon": "djangoproject.com",
+  "description": "A production-ready Django web application with Django REST Framework, PostgreSQL, Celery for background tasks, and pytest-django for testing. Structured for teams building API backends or full-stack Django projects with clean app separation.",
+  "category": "Web Application",
+  "tags": ["django", "python", "drf", "postgresql", "celery", "pytest"],
+  "skills": ["python-pro", "django-expert"],
+  "skill_sources": {
+    "django-expert": "vintasoftware/django-ai-plugins"
+  },
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# Django Web App\n\n## Stack\n- **Framework**: Django 5+\n- **API**: Django REST Framework\n- **Database**: PostgreSQL\n- **Background Tasks**: Celery + Redis\n- **Testing**: pytest-django\n- **Language**: Python 3.12+\n\n## Project Structure\n```\nconfig/\n  settings/\n    base.py        # Shared settings\n    local.py       # Dev overrides\n    production.py  # Prod overrides\n  urls.py          # Root URL config\napps/\n  users/           # Auth and profiles\n  <domain>/        # One Django app per bounded domain\ntemplates/         # HTML templates (if server-rendered)\nstatic/            # Static assets\ntests/             # pytest-django tests\n```\n\n## Conventions\n- One Django app per bounded domain — keep apps small and focused\n- Business logic lives in service modules (`services.py`), not views\n- All serializers are in `serializers.py`; all views in `views.py`\n- Use `select_related` / `prefetch_related` to prevent N+1 queries\n- Environment config via `django-environ`; never hardcode settings\n\n## Key Commands\n```bash\npython manage.py runserver        # Start dev server\npython manage.py makemigrations   # Generate migrations\npython manage.py migrate          # Apply migrations\npytest                            # Run test suite\ncelery -A config worker -l info   # Start Celery worker\n```\n",
+  "unified_rules": [],
+  "_author": { "type": "provider", "name": "Automatic", "url": "https://automatic.sh" }
+}

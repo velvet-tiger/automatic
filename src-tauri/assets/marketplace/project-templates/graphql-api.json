@@ -1,0 +1,21 @@
+{
+  "name": "graphql-api",
+  "display_name": "GraphQL API",
+  "icon": "graphql.org",
+  "description": "A type-safe GraphQL API with schema-first design, DataLoader for efficient batching, and typed error unions. Built with GraphQL Yoga or Apollo Server, Prisma ORM, and full TypeScript coverage. Suitable for teams building product APIs that need flexible querying from multiple clients.",
+  "category": "API / Backend",
+  "tags": ["graphql", "typescript", "apollo", "yoga", "prisma", "dataloader"],
+  "skills": ["graphql-schema", "graphql-operations", "apollo-server"],
+  "skill_sources": {
+    "graphql-schema": "apollographql/skills",
+    "graphql-operations": "apollographql/skills",
+    "apollo-server": "apollographql/skills"
+  },
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# GraphQL API\n\n## Stack\n- **Server**: GraphQL Yoga / Apollo Server\n- **Schema**: Schema-first (SDL) or code-first (Pothos)\n- **ORM**: Prisma\n- **Batching**: DataLoader\n- **Auth**: JWT in Authorization header\n- **Language**: TypeScript (strict)\n\n## Project Structure\n```\nsrc/\n  schema/          # SDL type definitions (schema-first)\n  resolvers/       # Resolver functions, one file per type\n  loaders/         # DataLoader instances (one per related entity)\n  services/        # Business logic — called by resolvers\n  context.ts       # Context type and factory (user, db, loaders)\n  server.ts        # Server setup and plugin config\nprisma/\n  schema.prisma    # Database schema\n```\n\n## Conventions\n- Resolvers are thin — delegate to service classes immediately\n- Every resolver that fetches a related entity must use a DataLoader — no direct DB calls\n- Mutations return the modified resource, not a boolean success flag\n- Expected errors (not found, unauthorised, conflict) are typed union members, not thrown errors\n- Never expose stack traces or internal error messages in production responses\n\n## Key Commands\n```bash\nnpm run dev           # Start server with hot reload\nnpm run codegen       # Generate TypeScript types from schema\nnpx prisma migrate dev  # Create and apply a migration\nnpm test              # Run test suite\n```\n",
+  "unified_rules": [],
+  "_author": { "type": "provider", "name": "Automatic", "url": "https://automatic.sh" }
+}

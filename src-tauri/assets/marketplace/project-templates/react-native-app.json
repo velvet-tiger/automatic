@@ -1,0 +1,20 @@
+{
+  "name": "react-native-app",
+  "display_name": "React Native App",
+  "icon": "reactnative.dev",
+  "description": "A cross-platform mobile application built with Expo and React Native. Features Expo Router for file-based navigation, NativeWind for styling, Zustand for state management, and React Query for data fetching. Targets iOS and Android from a single TypeScript codebase.",
+  "category": "Mobile",
+  "tags": ["react-native", "expo", "typescript", "mobile", "ios", "android", "nativewind"],
+  "skills": ["mobile-dev", "vercel-react-native-skills", "react-native-best-practices"],
+  "skill_sources": {
+    "vercel-react-native-skills": "vercel-labs/agent-skills",
+    "react-native-best-practices": "callstackincubator/agent-skills"
+  },
+  "mcp_servers": [],
+  "providers": [],
+  "agents": [],
+  "project_files": [],
+  "unified_instruction": "# React Native App\n\n## Stack\n- **Framework**: React Native via Expo (managed workflow)\n- **Navigation**: Expo Router (file-based)\n- **Styling**: NativeWind (Tailwind for React Native)\n- **State**: Zustand\n- **Data Fetching**: React Query (TanStack Query)\n- **Storage**: MMKV\n- **Language**: TypeScript (strict)\n\n## Project Structure\n```\napp/\n  (tabs)/          # Tab navigator routes\n  (auth)/          # Auth stack routes\n  _layout.tsx      # Root layout\ncomponents/        # Shared UI components\nhooks/             # Custom React hooks\nstores/            # Zustand stores\nlib/               # API clients and utilities\nassets/            # Images, fonts\n```\n\n## Conventions\n- Platform-specific code uses `.ios.tsx` / `.android.tsx` file suffixes\n- Use `Platform.select` for inline platform branches, not ternaries\n- Keep components pure — side effects and data fetching belong in hooks\n- All API calls go through a typed client in `lib/api.ts`\n- Test on both platforms before marking any UI task done\n\n## Key Commands\n```bash\nnpx expo start          # Start Metro bundler\nnpx expo run:ios        # Build and run on iOS simulator\nnpx expo run:android    # Build and run on Android emulator\nnpx expo install        # Install Expo-compatible package versions\n```\n",
+  "unified_rules": [],
+  "_author": { "type": "provider", "name": "Automatic", "url": "https://automatic.sh" }
+}
