@@ -92,14 +92,6 @@
         "source": "automatic/automatic-app",
         "id": "automatic/automatic-app/automatic-database-design",
         "kind": "bundled"
-      },
-      {
-        "name": "github-workflow-automation",
-        "display_name": "GitHub Workflow Automation",
-        "description": "Advanced GitHub Actions workflow automation with AI swarm coordination, intelligent CI/CD pipelines, and comprehensive repository management.",
-        "source": "automatic/automatic-app",
-        "id": "automatic/automatic-app/github-workflow-automation",
-        "kind": "bundled"
       }
     ],
     "mcp_servers": [],

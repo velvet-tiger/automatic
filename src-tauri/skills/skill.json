@@ -98,13 +98,6 @@
       "description": "Principles and patterns for writing effective tests. Use when writing unit, integration, or end-to-end tests, or reviewing test quality.",
       "category": "testing",
       "tags": ["testing", "unit-tests", "integration-tests", "e2e", "tdd", "test-quality"]
-    },
-    {
-      "name": "github-workflow-automation",
-      "path": "./github-workflow-automation",
-      "description": "Advanced GitHub Actions workflow automation with AI swarm coordination, intelligent CI/CD pipelines, and comprehensive repository management.",
-      "category": "github",
-      "tags": ["github", "github-actions", "ci-cd", "workflows", "automation", "pipelines"]
     }
   ]
 }
