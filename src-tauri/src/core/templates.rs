@@ -134,10 +134,6 @@ const BUNDLED_SKILL_CONTENTS: &[(&str, &str)] = &[
         "automatic-testing",
         include_str!("../../skills/automatic-testing/SKILL.md"),
     ),
-    (
-        "github-workflow-automation",
-        include_str!("../../skills/github-workflow-automation/SKILL.md"),
-    ),
     // Template-only skills (on-demand, not auto-installed)
     (
         "vercel-react-best-practices",
