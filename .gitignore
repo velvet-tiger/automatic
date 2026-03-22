@@ -33,6 +33,7 @@ src-tauri/tauri.dev.conf.json
 # AI agent configuration
 /.agents/
 /.claude/
+/.claude-flow/
 /.codex/
 /.mcp.json
 /.automatic/
