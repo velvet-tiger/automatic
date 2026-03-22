@@ -91,9 +91,7 @@ fn generate_code_challenge(verifier: &str) -> String {
 ///
 /// Follows the MCP spec: first tries `/.well-known/oauth-protected-resource`,
 /// then falls back to `/.well-known/oauth-authorization-server`.
-pub async fn discover_auth_server(
-    mcp_url: &str,
-) -> Result<AuthorizationServerMetadata, String> {
+pub async fn discover_auth_server(mcp_url: &str) -> Result<AuthorizationServerMetadata, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
@@ -105,7 +103,14 @@ pub async fn discover_auth_server(
     let prm_url = {
         let mut u = base.clone();
         let path = u.path().trim_end_matches('/');
-        u.set_path(&format!("/.well-known/oauth-protected-resource{}", if path.is_empty() || path == "/" { "" } else { path }));
+        u.set_path(&format!(
+            "/.well-known/oauth-protected-resource{}",
+            if path.is_empty() || path == "/" {
+                ""
+            } else {
+                path
+            }
+        ));
         u.to_string()
     };
 
@@ -136,12 +141,26 @@ pub async fn discover_auth_server(
     // Try well-known paths per RFC 8414.
     let path = as_base.path().trim_start_matches('/').trim_end_matches('/');
     let candidates = if path.is_empty() {
-        vec![format!("{}/.well-known/oauth-authorization-server", as_base.origin().ascii_serialization())]
+        vec![format!(
+            "{}/.well-known/oauth-authorization-server",
+            as_base.origin().ascii_serialization()
+        )]
     } else {
         vec![
-            format!("{}/.well-known/oauth-authorization-server/{}", as_base.origin().ascii_serialization(), path),
-            format!("{}/{}/.well-known/oauth-authorization-server", as_base.origin().ascii_serialization(), path),
-            format!("{}/.well-known/oauth-authorization-server", as_base.origin().ascii_serialization()),
+            format!(
+                "{}/.well-known/oauth-authorization-server/{}",
+                as_base.origin().ascii_serialization(),
+                path
+            ),
+            format!(
+                "{}/{}/.well-known/oauth-authorization-server",
+                as_base.origin().ascii_serialization(),
+                path
+            ),
+            format!(
+                "{}/.well-known/oauth-authorization-server",
+                as_base.origin().ascii_serialization()
+            ),
         ]
     };
 
@@ -220,10 +239,7 @@ pub async fn register_client(
 /// 6. Store token in keychain
 ///
 /// Returns the access token on success.
-pub async fn authorize_server(
-    server_name: &str,
-    mcp_url: &str,
-) -> Result<String, String> {
+pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String, String> {
     // 1. Discover OAuth metadata.
     let metadata = discover_auth_server(mcp_url).await?;
 
@@ -245,8 +261,7 @@ pub async fn authorize_server(
     let code_challenge = generate_code_challenge(&code_verifier);
     let state = uuid::Uuid::new_v4().to_string();
 
-    let mut auth_url =
-        Url::parse(&metadata.authorization_endpoint).map_err(|e| e.to_string())?;
+    let mut auth_url = Url::parse(&metadata.authorization_endpoint).map_err(|e| e.to_string())?;
     auth_url
         .query_pairs_mut()
         .append_pair("response_type", "code")
@@ -312,8 +327,8 @@ pub async fn authorize_server(
         expires_in: token_response.expires_in,
         acquired_at: now,
     };
-    let creds_json =
-        serde_json::to_string(&stored).map_err(|e| format!("failed to serialize credentials: {}", e))?;
+    let creds_json = serde_json::to_string(&stored)
+        .map_err(|e| format!("failed to serialize credentials: {}", e))?;
     crate::proxy::store_oauth_credentials(server_name, &creds_json)?;
 
     Ok(token_response.access_token)
@@ -388,7 +403,11 @@ async fn wait_for_callback(listener: TcpListener) -> Result<(String, String), St
 
         // Ignore requests that aren't our callback path (e.g. favicon, preflight).
         if !path.starts_with("/callback") {
-            send_http_response(&mut stream, "<!DOCTYPE html><html><body>Not found</body></html>").await;
+            send_http_response(
+                &mut stream,
+                "<!DOCTYPE html><html><body>Not found</body></html>",
+            )
+            .await;
             continue;
         }
 
@@ -397,7 +416,11 @@ async fn wait_for_callback(listener: TcpListener) -> Result<(String, String), St
         let url = match Url::parse(&fake_base) {
             Ok(u) => u,
             Err(_) => {
-                send_http_response(&mut stream, "<!DOCTYPE html><html><body>Bad request</body></html>").await;
+                send_http_response(
+                    &mut stream,
+                    "<!DOCTYPE html><html><body>Bad request</body></html>",
+                )
+                .await;
                 continue;
             }
         };
@@ -421,14 +444,22 @@ async fn wait_for_callback(listener: TcpListener) -> Result<(String, String), St
         let code = match params.get("code") {
             Some(c) => c.clone(),
             None => {
-                send_http_response(&mut stream, "<!DOCTYPE html><html><body>Missing code parameter</body></html>").await;
+                send_http_response(
+                    &mut stream,
+                    "<!DOCTYPE html><html><body>Missing code parameter</body></html>",
+                )
+                .await;
                 continue;
             }
         };
         let state = match params.get("state") {
             Some(s) => s.clone(),
             None => {
-                send_http_response(&mut stream, "<!DOCTYPE html><html><body>Missing state parameter</body></html>").await;
+                send_http_response(
+                    &mut stream,
+                    "<!DOCTYPE html><html><body>Missing state parameter</body></html>",
+                )
+                .await;
                 continue;
             }
         };
@@ -479,10 +510,7 @@ async fn exchange_code(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!(
-            "Token exchange failed (HTTP {}): {}",
-            status, text
-        ));
+        return Err(format!("Token exchange failed (HTTP {}): {}", status, text));
     }
 
     resp.json::<TokenResponse>()
@@ -495,8 +523,8 @@ async fn exchange_code(
 /// Attempt to refresh an expired token using stored credentials.
 pub async fn refresh_token(server_name: &str) -> Result<String, String> {
     let creds_json = crate::proxy::load_oauth_credentials(server_name)?;
-    let creds: StoredOAuthCredentials =
-        serde_json::from_str(&creds_json).map_err(|e| format!("invalid stored credentials: {}", e))?;
+    let creds: StoredOAuthCredentials = serde_json::from_str(&creds_json)
+        .map_err(|e| format!("invalid stored credentials: {}", e))?;
 
     let refresh_token = creds
         .refresh_token

@@ -39,7 +39,9 @@ pub async fn subscribe_newsletter(email: &str) -> Result<(), String> {
 
     if !person_status.is_success() {
         let body = person_resp.text().await.unwrap_or_default();
-        return Err(format!("Attio person upsert failed ({person_status}): {body}"));
+        return Err(format!(
+            "Attio person upsert failed ({person_status}): {body}"
+        ));
     }
 
     let person_json: serde_json::Value = person_resp
@@ -77,7 +79,9 @@ pub async fn subscribe_newsletter(email: &str) -> Result<(), String> {
 
     if !entry_status.is_success() {
         let body = entry_resp.text().await.unwrap_or_default();
-        return Err(format!("Attio list entry upsert failed ({entry_status}): {body}"));
+        return Err(format!(
+            "Attio list entry upsert failed ({entry_status}): {body}"
+        ));
     }
 
     Ok(())

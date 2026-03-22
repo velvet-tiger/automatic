@@ -58,10 +58,16 @@ pub fn run() {
                         Ok(mut settings) => {
                             settings.bundled_skills_version = Some(APP_VERSION.to_string());
                             if let Err(e) = core::write_settings(&settings) {
-                                eprintln!("[automatic] failed to persist bundled_skills_version: {}", e);
+                                eprintln!(
+                                    "[automatic] failed to persist bundled_skills_version: {}",
+                                    e
+                                );
                             }
                         }
-                        Err(e) => eprintln!("[automatic] failed to read settings after skill install: {}", e),
+                        Err(e) => eprintln!(
+                            "[automatic] failed to read settings after skill install: {}",
+                            e
+                        ),
                     }
                 }
 
@@ -86,22 +92,22 @@ pub fn run() {
                         // without requiring the user to press "Sync now".
                         for project_name in projects_to_sync {
                             match core::read_project(&project_name) {
-                                Ok(raw) => {
-                                    match serde_json::from_str::<core::Project>(&raw) {
-                                        Ok(mut project) => {
-                                            if let Err(e) = sync::sync_project_without_autodetect(&mut project) {
-                                                eprintln!(
-                                                    "[automatic] startup re-sync failed for '{}': {}",
-                                                    project_name, e
-                                                );
-                                            }
+                                Ok(raw) => match serde_json::from_str::<core::Project>(&raw) {
+                                    Ok(mut project) => {
+                                        if let Err(e) =
+                                            sync::sync_project_without_autodetect(&mut project)
+                                        {
+                                            eprintln!(
+                                                "[automatic] startup re-sync failed for '{}': {}",
+                                                project_name, e
+                                            );
                                         }
-                                        Err(e) => eprintln!(
-                                            "[automatic] failed to parse project '{}' for re-sync: {}",
-                                            project_name, e
-                                        ),
                                     }
-                                }
+                                    Err(e) => eprintln!(
+                                        "[automatic] failed to parse project '{}' for re-sync: {}",
+                                        project_name, e
+                                    ),
+                                },
                                 Err(e) => eprintln!(
                                     "[automatic] failed to read project '{}' for re-sync: {}",
                                     project_name, e

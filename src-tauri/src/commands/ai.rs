@@ -40,4 +40,3 @@ pub async fn ai_chat_with_tools(
 pub async fn ai_list_models() -> Result<Vec<String>, String> {
     ai::list_models().await
 }
-

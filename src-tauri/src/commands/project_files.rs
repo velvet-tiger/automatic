@@ -247,7 +247,8 @@ pub async fn ai_generate_instruction(name: &str, filename: &str) -> Result<Strin
         label
     };
 
-    let existing_content = core::read_project_file(&project.directory, filename).unwrap_or_default();
+    let existing_content =
+        core::read_project_file(&project.directory, filename).unwrap_or_default();
     let existing_section = if existing_content.trim().is_empty() {
         String::new()
     } else {
@@ -475,8 +476,7 @@ pub fn delete_doc_note(name: &str, note_name: &str) -> Result<(), String> {
         .join(note_name);
 
     if note_path.exists() {
-        std::fs::remove_file(&note_path)
-            .map_err(|e| format!("Failed to delete note: {}", e))?;
+        std::fs::remove_file(&note_path).map_err(|e| format!("Failed to delete note: {}", e))?;
     }
 
     Ok(())

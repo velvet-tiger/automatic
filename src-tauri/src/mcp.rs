@@ -351,8 +351,8 @@ impl AutomaticMcpServer {
     async fn list_projects(&self) -> Result<CallToolResult, McpError> {
         match crate::core::list_projects() {
             Ok(projects) => {
-                let json = serde_json::to_string_pretty(&projects)
-                    .unwrap_or_else(|_| "[]".to_string());
+                let json =
+                    serde_json::to_string_pretty(&projects).unwrap_or_else(|_| "[]".to_string());
                 Ok(CallToolResult::success(vec![Content::text(json)]))
             }
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -516,8 +516,11 @@ impl AutomaticMcpServer {
                 let gotcha_count = ctx.gotchas.len();
                 let doc_count = ctx.docs.len();
 
-                if cmd_count + ep_count + concept_count + conv_count + gotcha_count + doc_count == 0 {
-                    summary.push_str("No context defined yet (.automatic/context.json is absent or empty).\n");
+                if cmd_count + ep_count + concept_count + conv_count + gotcha_count + doc_count == 0
+                {
+                    summary.push_str(
+                        "No context defined yet (.automatic/context.json is absent or empty).\n",
+                    );
                 } else {
                     summary.push_str(&format!(
                         "commands: {cmd_count}, entry_points: {ep_count}, concepts: {concept_count}, \
@@ -567,8 +570,8 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         match crate::core::search_remote_skills(&params.0.query).await {
             Ok(results) => {
-                let json = serde_json::to_string_pretty(&results)
-                    .unwrap_or_else(|_| "[]".to_string());
+                let json =
+                    serde_json::to_string_pretty(&results).unwrap_or_else(|_| "[]".to_string());
                 Ok(CallToolResult::success(vec![Content::text(json)]))
             }
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -745,7 +748,11 @@ impl AutomaticMcpServer {
         if let Err(e) = validate_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
-        match crate::memory::clear_memories(&params.0.project, params.0.pattern.as_deref(), params.0.confirm) {
+        match crate::memory::clear_memories(
+            &params.0.project,
+            params.0.pattern.as_deref(),
+            params.0.confirm,
+        ) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to clear memories: {}",

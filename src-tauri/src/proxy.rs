@@ -6,7 +6,7 @@
 //! JSON-RPC messages between stdin/stdout and the remote HTTP server.
 //! The token never touches any file on disk.
 
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
 use std::sync::{Arc, Mutex};
@@ -128,9 +128,8 @@ pub async fn run_proxy(server_name: &str) -> Result<(), Box<dyn std::error::Erro
         }
 
         // Validate it's JSON before sending.
-        let _: Value = serde_json::from_str(trimmed).map_err(|e| {
-            format!("invalid JSON on stdin: {}", e)
-        })?;
+        let _: Value =
+            serde_json::from_str(trimmed).map_err(|e| format!("invalid JSON on stdin: {}", e))?;
 
         // Build request headers.
         let mut headers = HeaderMap::new();
@@ -300,7 +299,13 @@ mod tests {
 
     #[test]
     fn test_keychain_user_names() {
-        assert_eq!(oauth_token_user("amplitude-eu"), "mcp_oauth_token_amplitude-eu");
-        assert_eq!(oauth_creds_user("amplitude-eu"), "mcp_oauth_creds_amplitude-eu");
+        assert_eq!(
+            oauth_token_user("amplitude-eu"),
+            "mcp_oauth_token_amplitude-eu"
+        );
+        assert_eq!(
+            oauth_creds_user("amplitude-eu"),
+            "mcp_oauth_creds_amplitude-eu"
+        );
     }
 }

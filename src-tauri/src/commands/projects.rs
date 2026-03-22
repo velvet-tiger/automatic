@@ -204,7 +204,10 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
         let is_new_project = is_new;
         tauri::async_runtime::spawn(async move {
             if let Err(e) = run_ai_recommendations_bg(&project_name, is_new_project).await {
-                eprintln!("[automatic] AI recommendations skipped for '{}': {}", project_name, e);
+                eprintln!(
+                    "[automatic] AI recommendations skipped for '{}': {}",
+                    project_name, e
+                );
             }
         });
     }
@@ -581,7 +584,7 @@ fn convert_arrays_to_context_maps(ai: &serde_json::Value) -> Result<serde_json::
     let mut commands = Map::new();
     for item in arr(ai, "commands")? {
         let name = str_field(item, "name")?.to_string();
-        let cmd  = str_field(item, "command")?.to_string();
+        let cmd = str_field(item, "command")?.to_string();
         commands.insert(name, Value::String(cmd));
     }
     out.insert("commands".into(), Value::Object(commands));
@@ -590,7 +593,7 @@ fn convert_arrays_to_context_maps(ai: &serde_json::Value) -> Result<serde_json::
     let mut eps = Map::new();
     for item in arr(ai, "entry_points")? {
         let label = str_field(item, "label")?.to_string();
-        let path  = str_field(item, "path")?.to_string();
+        let path = str_field(item, "path")?.to_string();
         eps.insert(label, Value::String(path));
     }
     out.insert("entry_points".into(), Value::Object(eps));
@@ -598,9 +601,9 @@ fn convert_arrays_to_context_maps(ai: &serde_json::Value) -> Result<serde_json::
     // concepts: [{ name, summary, files }] → { name: { summary, files } }
     let mut concepts = Map::new();
     for item in arr(ai, "concepts")? {
-        let name    = str_field(item, "name")?.to_string();
+        let name = str_field(item, "name")?.to_string();
         let summary = str_field(item, "summary")?.to_string();
-        let files   = item.get("files").cloned().unwrap_or(Value::Array(vec![]));
+        let files = item.get("files").cloned().unwrap_or(Value::Array(vec![]));
         let mut concept = Map::new();
         concept.insert("summary".into(), Value::String(summary));
         concept.insert("files".into(), files);
