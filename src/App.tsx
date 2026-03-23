@@ -5,7 +5,7 @@ import { applyTheme, Theme, THEMES } from "./lib/theme";
 import { ProfileProvider } from "./contexts/ProfileContext";
 import { useCurrentUser } from "./contexts/ProfileContext";
 import { initAnalytics, setAnalyticsEnabled, trackNavigation } from "./lib/analytics";
-import Dashboard from "./pages/Dashboard";
+import GettingStarted from "./pages/GettingStarted";
 
 import Skills from "./pages/workspace/Skills";
 import SkillStore from "./pages/marketplace/SkillStore";
@@ -30,7 +30,7 @@ import { TaskLogProvider, useTaskLog } from "./contexts/TaskLogContext";
 import TaskLog from "./components/TaskLog";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import UpdateToast from "./components/UpdateToast";
-import { ClipboardList, Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, LayoutDashboard, FlaskConical, Lightbulb, List, Wrench, Hash, MessagesSquare } from "lucide-react";
+import { ClipboardList, Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, FlaskConical, Lightbulb, List, Wrench, Hash, MessagesSquare } from "lucide-react";
 import { flag } from "./lib/flags";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
@@ -92,9 +92,9 @@ function App() {
       localStorage.removeItem("nexus.activeTab");
     }
     const saved = localStorage.getItem("automatic.activeTab") || legacy;
-    // Reset to dashboard if saved tab was removed
-    if (saved === "activity" || saved === "configuration") return "dashboard";
-    return saved || "dashboard";
+    // Migrate from removed tabs: activity, configuration, dashboard → getting-started
+    if (saved === "activity" || saved === "configuration" || saved === "dashboard") return "getting-started";
+    return saved || "getting-started";
   });
   const [pendingProject, setPendingProject] = useState<string | null>(null);
   const [pendingProjectTab, setPendingProjectTab] = useState<string | null>(null);
@@ -172,7 +172,7 @@ function App() {
     if (answers.createdProjectName) {
       navigateToProject(answers.createdProjectName);
     } else {
-      setActiveTab("dashboard");
+      setActiveTab("getting-started");
     }
   };
 
@@ -314,7 +314,7 @@ function App() {
         <nav className="flex-1 overflow-y-auto py-3 px-3 custom-scrollbar">
           {/* Top-level items */}
           <ul className="space-y-0.5 mb-6">
-            <NavItem id="dashboard" icon={LayoutDashboard} label="Dashboard" />
+            <NavItem id="getting-started" icon={Sparkles} label="Getting Started" />
             <NavItem id="recommendations" icon={Lightbulb} label="Insights" />
           </ul>
 
@@ -490,17 +490,12 @@ function App() {
 
         {/* Content Area */}
         <div className="flex-1 overflow-hidden flex flex-col">
-          {activeTab === "dashboard" && (
+          {activeTab === "getting-started" && (
             <div className="flex-1 h-full">
-              <Dashboard
-                onNavigate={setActiveTab}
-                onNavigateToSkillStore={navigateToSkillStore}
-                onNavigateToMcpMarketplace={navigateToMcpMarketplace}
-                onNavigateToTemplateMarketplace={navigateToTemplateMarketplace}
-              />
+              <GettingStarted onNavigate={setActiveTab} />
             </div>
           )}
-{activeTab === "projects" && (
+          {activeTab === "projects" && (
             <div className="flex-1 h-full">
               <Projects
                 resetKey={projectsResetKey}
