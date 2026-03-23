@@ -1,9 +1,60 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
 use super::types::SkillsJson;
 use super::*;
+
+/// Represents a global skill source directory with its identifier.
+/// E.g., ("agents", ~/.agents/skills/), ("claude", ~/.claude/skills/), etc.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillSourceDir {
+    pub id: String,
+    pub path: String,
+}
+
+/// Returns all global skill source directories in priority order.
+/// The first source is always ~/.agents/skills/ (the canonical location).
+/// Additional sources come from each agent's extra_global_skill_dirs().
+pub fn get_all_skill_sources() -> Vec<SkillSourceDir> {
+    let mut sources = Vec::new();
+
+    // Primary: ~/.agents/skills/
+    if let Ok(agents_dir) = get_agents_skills_dir() {
+        sources.push(SkillSourceDir {
+            id: "agents".to_string(),
+            path: agents_dir.display().to_string(),
+        });
+    }
+
+    // Secondary: ~/.claude/skills/
+    if let Ok(claude_dir) = get_claude_skills_dir() {
+        sources.push(SkillSourceDir {
+            id: "claude".to_string(),
+            path: claude_dir.display().to_string(),
+        });
+    }
+
+    // Agent-specific extra directories
+    for agent in crate::agent::all() {
+        for extra_dir in agent.extra_global_skill_dirs() {
+            let id = agent.id().to_string();
+            // Avoid duplicates
+            if !sources
+                .iter()
+                .any(|s| s.path == extra_dir.display().to_string())
+            {
+                sources.push(SkillSourceDir {
+                    id: id.clone(),
+                    path: extra_dir.display().to_string(),
+                });
+            }
+        }
+    }
+
+    sources
+}
 
 // ── Skills ───────────────────────────────────────────────────────────────────
 
@@ -83,35 +134,43 @@ fn scan_skills_dir(dir: &PathBuf) -> Result<std::collections::HashSet<String>, S
     Ok(names)
 }
 
-/// List skills from both `~/.agents/skills/` and `~/.claude/skills/`,
-/// returning entries that indicate which locations each skill exists in,
+/// List skills from all global skill directories,
+/// returning entries that indicate which sources each skill exists in,
 /// with remote origin info joined from ~/.automatic/skills.json.
 pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
-    let agents_dir = get_agents_skills_dir()?;
-    let claude_dir = get_claude_skills_dir()?;
+    let sources = get_all_skill_sources();
 
-    let agents_names = scan_skills_dir(&agents_dir)?;
-    let claude_names = scan_skills_dir(&claude_dir)?;
+    // Map: skill name -> set of source IDs where it exists
+    let mut skill_sources: HashMap<String, Vec<String>> = HashMap::new();
+
+    // Scan each source directory
+    for source in &sources {
+        let source_path = PathBuf::from(&source.path);
+        let names = scan_skills_dir(&source_path)?;
+        for name in names {
+            skill_sources
+                .entry(name)
+                .or_insert_with(Vec::new)
+                .push(source.id.clone());
+        }
+    }
 
     // Best-effort registry load — don't fail list_skills if the file is missing/corrupt
     let registry = read_skill_sources().unwrap_or_default();
 
-    // Union of all names
-    let mut all_names: Vec<String> = agents_names.union(&claude_names).cloned().collect();
+    // Sort names for deterministic output
+    let mut all_names: Vec<String> = skill_sources.keys().cloned().collect();
     all_names.sort();
 
     let entries = all_names
         .into_iter()
         .map(|name| {
-            // Resolve the canonical skill directory (agents first, then claude)
-            let canonical_dir = {
-                let a = agents_dir.join(&name);
-                if a.exists() {
-                    a
-                } else {
-                    claude_dir.join(&name)
-                }
-            };
+            // Resolve the canonical skill directory (first source where it exists)
+            let canonical_dir = sources
+                .iter()
+                .find(|s| PathBuf::from(&s.path).join(&name).join("SKILL.md").exists())
+                .map(|s| PathBuf::from(&s.path).join(&name))
+                .unwrap_or_else(|| PathBuf::from(&sources.first().unwrap().path).join(&name));
 
             let has_resources = skill_has_resources(&canonical_dir);
 
@@ -120,9 +179,11 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
                 .ok()
                 .and_then(|c| super::skill_store::extract_frontmatter_license(&c));
 
+            let mut sources_list = skill_sources.get(&name).cloned().unwrap_or_default();
+            sources_list.sort();
+
             SkillEntry {
-                in_agents: agents_names.contains(&name),
-                in_claude: claude_names.contains(&name),
+                sources: sources_list,
                 source: registry.get(&name).cloned(),
                 has_resources,
                 license,
@@ -354,21 +415,18 @@ fn format_skill_with_companions(skill_content: &str, companions: &[CompanionFile
     output
 }
 
-/// Get the absolute path to a skill's directory. Checks `~/.agents/skills/` first,
-/// then falls back to `~/.claude/skills/`.
+/// Get the absolute path to a skill's directory. Searches all global sources
+/// in priority order (agents first, then claude, then other agent sources).
 pub fn get_skill_dir(name: &str) -> Result<Option<PathBuf>, String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
 
-    let agents_dir = get_agents_skills_dir()?.join(name);
-    if agents_dir.join("SKILL.md").exists() {
-        return Ok(Some(agents_dir));
-    }
-
-    let claude_dir = get_claude_skills_dir()?.join(name);
-    if claude_dir.join("SKILL.md").exists() {
-        return Ok(Some(claude_dir));
+    for source in get_all_skill_sources() {
+        let skill_dir = PathBuf::from(&source.path).join(name);
+        if skill_dir.join("SKILL.md").exists() {
+            return Ok(Some(skill_dir));
+        }
     }
 
     Ok(None)
@@ -394,36 +452,26 @@ fn resolve_entrypoint(skill_dir: &PathBuf, name: &str) -> String {
     "SKILL.md".to_string()
 }
 
-/// Get the absolute path to a skill's entrypoint file. Checks `~/.agents/skills/` first,
-/// then falls back to `~/.claude/skills/`.
+/// Get the absolute path to a skill's entrypoint file. Searches all global sources
+/// in priority order (agents first, then claude, then other agent sources).
 /// Respects the `entrypoint` field in `skill.json` if present; defaults to `SKILL.md`.
 pub fn get_skill_path(name: &str) -> Result<Option<PathBuf>, String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
 
-    let agents_skill_dir = get_agents_skills_dir()?.join(name);
-    let agents_entrypoint = resolve_entrypoint(&agents_skill_dir, name);
-    let agents_path = agents_skill_dir.join(&agents_entrypoint);
-    if agents_path.exists() {
-        return Ok(Some(agents_path));
-    }
-    // Fallback to SKILL.md for backward compatibility
-    let agents_fallback = agents_skill_dir.join("SKILL.md");
-    if agents_fallback.exists() {
-        return Ok(Some(agents_fallback));
-    }
-
-    let claude_skill_dir = get_claude_skills_dir()?.join(name);
-    let claude_entrypoint = resolve_entrypoint(&claude_skill_dir, name);
-    let claude_path = claude_skill_dir.join(&claude_entrypoint);
-    if claude_path.exists() {
-        return Ok(Some(claude_path));
-    }
-    // Fallback to SKILL.md for backward compatibility
-    let claude_fallback = claude_skill_dir.join("SKILL.md");
-    if claude_fallback.exists() {
-        return Ok(Some(claude_fallback));
+    for source in get_all_skill_sources() {
+        let skill_dir = PathBuf::from(&source.path).join(name);
+        let entrypoint = resolve_entrypoint(&skill_dir, name);
+        let entrypoint_path = skill_dir.join(&entrypoint);
+        if entrypoint_path.exists() {
+            return Ok(Some(entrypoint_path));
+        }
+        // Fallback to SKILL.md for backward compatibility
+        let fallback_path = skill_dir.join("SKILL.md");
+        if fallback_path.exists() {
+            return Ok(Some(fallback_path));
+        }
     }
 
     Ok(None)
@@ -469,52 +517,51 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Sync a single skill across both global directories.  Copies from
-/// whichever location has it to the other.  If both exist, the
-/// `~/.agents/skills/` version is canonical and overwrites claude.
+/// Sync a single skill into the primary ~/.agents/skills/ directory.
+/// Copies from the first source that has the skill.
+/// If it already exists in ~/.agents/skills/, this is a no-op.
 pub fn sync_skill(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
 
     let agents_dir = get_agents_skills_dir()?;
-    let claude_dir = get_claude_skills_dir()?;
-
     let agents_path = agents_dir.join(name).join("SKILL.md");
-    let claude_path = claude_dir.join(name).join("SKILL.md");
 
-    let agents_exists = agents_path.exists();
-    let claude_exists = claude_path.exists();
-
-    if !agents_exists && !claude_exists {
-        return Err(format!("Skill '{}' not found in any location", name));
+    // If already in agents directory, nothing to do
+    if agents_path.exists() {
+        return Ok(());
     }
 
-    if agents_exists {
-        // agents → claude  (agents is canonical)
-        let content = fs::read_to_string(&agents_path).map_err(|e| e.to_string())?;
-        let target_dir = claude_dir.join(name);
-        fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
-        fs::write(&claude_path, content).map_err(|e| e.to_string())?;
-    } else {
-        // claude → agents
-        let content = fs::read_to_string(&claude_path).map_err(|e| e.to_string())?;
-        let target_dir = agents_dir.join(name);
-        fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
-        fs::write(&agents_path, content).map_err(|e| e.to_string())?;
+    // Find the first source that has this skill
+    for source in get_all_skill_sources() {
+        if source.id == "agents" {
+            continue; // Skip primary, we already checked
+        }
+        let source_path = PathBuf::from(&source.path).join(name).join("SKILL.md");
+        if source_path.exists() {
+            // Copy to agents directory
+            let content = fs::read_to_string(&source_path).map_err(|e| e.to_string())?;
+            let target_dir = agents_dir.join(name);
+            fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+            fs::write(&agents_path, content).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
     }
 
-    Ok(())
+    Err(format!("Skill '{}' not found in any location", name))
 }
 
-/// Sync all skills across both global directories.
+/// Sync all skills across all global directories.
+/// Copies any skill missing from ~/.agents/skills/ into that location.
 /// Returns the list of skill names that were synced.
 pub fn sync_all_skills() -> Result<Vec<String>, String> {
     let entries = list_skills()?;
     let mut synced = Vec::new();
 
     for entry in entries {
-        if !entry.in_agents || !entry.in_claude {
+        // Sync any skill that doesn't exist in the primary agents directory
+        if !entry.sources.contains(&"agents".to_string()) {
             sync_skill(&entry.name)?;
             synced.push(entry.name);
         }

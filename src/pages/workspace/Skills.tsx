@@ -3,6 +3,7 @@ import { MarkdownPreview } from "../../components/MarkdownPreview";
 import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
 import { handleExternalLinkClick } from "../../lib/externalLinks";
 import { invoke } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   trackSkillCreated,
@@ -17,7 +18,6 @@ import {
   FileText,
   Check,
   Globe,
-  HardDrive,
   Github,
   Search,
   FolderOpen,
@@ -39,8 +39,7 @@ interface SkillSource {
 
 interface SkillEntry {
   name: string;
-  in_agents: boolean;
-  in_claude: boolean;
+  sources: string[]; // e.g., ["agents", "claude", "codex", "cline"]
   source?: SkillSource;
   has_resources: boolean;
   license?: string;
@@ -117,11 +116,26 @@ function parseFrontmatter(raw: string): { meta: Frontmatter; body: string } {
 interface SkillPreviewProps {
   content: string;
   source?: SkillSource;
+  sources?: string[];
   resources?: SkillResources | null;
   license?: string;
 }
 
-function SkillPreview({ content, source, resources, license }: SkillPreviewProps) {
+function resolveSkillAuthorDescriptor(source?: SkillSource, sources?: string[]): AuthorDescriptor {
+  if (source) {
+    return source.kind === "bundled"
+      ? { type: "provider", name: "Automatic", url: "https://automatic.sh" }
+      : { type: "github", repo: source.source };
+  }
+
+  if (sources?.includes("codex")) {
+    return { type: "provider", name: "OpenAI", url: "https://openai.com" };
+  }
+
+  return { type: "local" };
+}
+
+function SkillPreview({ content, source, sources, resources, license }: SkillPreviewProps) {
   const { meta, body } = parseFrontmatter(content);
   const displayName = meta.name || "";
   const description = meta.description || "";
@@ -136,11 +150,7 @@ function SkillPreview({ content, source, resources, license }: SkillPreviewProps
   // Derive AuthorDescriptor from SkillSource (or lack thereof).
   // "bundled" skills are shipped with the app — render as a provider entry
   // rather than doing a GitHub lookup (which would resolve the wrong org).
-  const authorDescriptor: AuthorDescriptor = source
-    ? source.kind === "bundled"
-      ? { type: "provider", name: "Automatic", url: "https://automatic.sh" }
-      : { type: "github", repo: source.source }
-    : { type: "local" };
+  const authorDescriptor = resolveSkillAuthorDescriptor(source, sources);
 
   // Track which directories are expanded
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
@@ -688,16 +698,38 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                       </div>
 
                       {/* Bottom row: origin + location badges */}
-                      <div className="flex items-center gap-1.5 mt-1">
+                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                         {isRemote ? (
                           <span className="flex items-center gap-1 text-[10px] text-success">
                             <Globe size={9} />
                             <span className="truncate max-w-[120px]">{skill.source!.source}</span>
                           </span>
-                        ) : (
+                        ) : null}
+
+                        {/* Source location badges */}
+                        {skill.sources && skill.sources.length > 0 && (
                           <span className="flex items-center gap-1 text-[10px] text-text-muted">
-                            <HardDrive size={9} />
-                            <span>local</span>
+                            {skill.sources.map(src => (
+                              <button
+                                key={src}
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  try {
+                                    const sources = await invoke<{ id: string; path: string }[]>("list_skill_directories");
+                                    const source = sources.find(s => s.id === src);
+                                    if (source) {
+                                      const skillDir = `${source.path}/${skill.name}`;
+                                      await openPath(skillDir);
+                                    }
+                                  } catch (err) {
+                                    console.error("Failed to open skill directory:", err);
+                                  }
+                                }}
+                                className="px-1 py-0.5 rounded bg-bg-base/50 text-[9px] hover:bg-brand/20 hover:text-brand cursor-pointer transition-colors"
+                                title={`Open ${src === "agents" ? "agentskills.io" : src} skill folder`}
+                              >{src === "agents" ? "agentskills.io" : src}
+                              </button>
+                            ))}
                           </span>
                         )}
 
@@ -1022,6 +1054,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                     <SkillPreview
                       content={skillContent}
                       source={selectedEntry?.source}
+                      sources={selectedEntry?.sources}
                       resources={skillResources}
                       license={selectedEntry?.license}
                     />

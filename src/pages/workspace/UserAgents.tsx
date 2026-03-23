@@ -8,6 +8,8 @@ import { TokenPill } from "../../components/TokenPill";
 interface UserAgentEntry {
   id: string;
   name: string;
+  source?: string; // "automatic" | "local" | "codex"
+  author?: string; // "Automatic" | "You" | "OpenAI"
 }
 
 interface UserAgent {
@@ -20,8 +22,11 @@ interface ProjectRef {
   directory: string;
 }
 
-/** Default bundled agents have machine names starting with "automatic-". */
+/** Default bundled agents have machine names starting with "automatic-".
+ *  Codex OpenAI agents start with "codex-" and end with "-openai".
+ */
 const isBundledAgent = (id: string) => id.startsWith("automatic-");
+const isCodexAgent = (id: string) => id.startsWith("codex-") && id.endsWith("-openai");
 
 const DEFAULT_AGENT_CONTENT = `---
 name: my-agent
@@ -227,7 +232,7 @@ export default function UserAgents() {
                         <div className="text-[10px] text-text-muted truncate">{entry.id}</div>
                       </div>
                     </button>
-                    {!isBundledAgent(entry.id) && (
+                    {!isBundledAgent(entry.id) && !isCodexAgent(entry.id) && (
                       <button
                         onClick={(e) => handleDelete(entry.id, e)}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
@@ -305,10 +310,15 @@ export default function UserAgents() {
                     Built-in
                   </span>
                 )}
-                {selectedId && isBundledAgent(selectedId) && !isEditing && (
+                {selectedId && isCodexAgent(selectedId) && !isEditing && (
+                  <span className="text-[10px] font-semibold text-success tracking-wider uppercase px-2 py-1 rounded-full bg-success/10 border border-success/20">
+                    OpenAI
+                  </span>
+                )}
+                {selectedId && (isBundledAgent(selectedId) || isCodexAgent(selectedId)) && !isEditing && (
                   <span
                     className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/40"
-                    title="Bundled agent provided by Automatic — editing is disabled. Duplicate to create a local copy."
+                    title={isCodexAgent(selectedId) ? "Codex OpenAI agent — editing is disabled. Duplicate to create a local copy." : "Bundled agent provided by Automatic — editing is disabled. Duplicate to create a local copy."}
                   >
                     <Lock size={10} />
                     <span>Read-only</span>
@@ -323,7 +333,7 @@ export default function UserAgents() {
                     <Copy size={12} /> Duplicate
                   </button>
                 )}
-                {!isEditing && selectedId && !isBundledAgent(selectedId) && (
+                {!isEditing && selectedId && !isBundledAgent(selectedId) && !isCodexAgent(selectedId) && (
                   <button
                     onClick={() => setIsEditing(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
@@ -372,9 +382,11 @@ export default function UserAgents() {
                     <div className="px-6 pt-4 pb-3 border-b border-border-strong/40">
                       <AuthorSection
                         descriptor={
-                          selectedId && isBundledAgent(selectedId)
-                            ? { type: "provider", name: "Automatic", url: "https://automatic.computer" }
-                            : { type: "local" }
+                          selectedEntry?.source === "codex"
+                            ? { type: "provider", name: "OpenAI", url: "https://openai.com" }
+                            : selectedEntry?.source === "automatic" || (selectedId && isBundledAgent(selectedId))
+                              ? { type: "provider", name: "Automatic", url: "https://automatic.computer" }
+                              : { type: "local" }
                         }
                       />
                     </div>

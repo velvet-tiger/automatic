@@ -11,6 +11,11 @@ pub fn get_skills() -> Result<Vec<core::SkillEntry>, String> {
 }
 
 #[tauri::command]
+pub fn list_skill_directories() -> Result<Vec<core::SkillSourceDir>, String> {
+    Ok(core::get_all_skill_sources())
+}
+
+#[tauri::command]
 pub fn read_skill(name: &str) -> Result<String, String> {
     core::read_skill(name)
 }

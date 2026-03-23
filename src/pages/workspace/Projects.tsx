@@ -3080,7 +3080,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   const loadAvailableSkills = async () => {
     try {
-      const result: { name: string; in_agents: boolean; in_claude: boolean }[] = await invoke("get_skills");
+      const result: { name: string; sources: string[]
+ }[] = await invoke("get_skills");
       setAvailableSkills(result.map((e) => e.name).sort());
     } catch {
       // Skills may not exist yet
