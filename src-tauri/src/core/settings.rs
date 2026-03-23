@@ -115,16 +115,19 @@ pub fn reset_settings() -> Result<(), String> {
     write_settings(&Settings::default())
 }
 
-/// Reinstall all bundled defaults (rules, templates, skills, MCP server)
-/// without touching projects, memories, or app settings.
+/// Reinstall all bundled defaults (rules, templates, skills, bundled agents,
+/// marketplace catalogues, and the Automatic MCP server) without touching
+/// projects, memories, or app settings.
 ///
 /// Every bundled file is force-overwritten so the on-disk copies match the
 /// current binary — equivalent to what happens on a version upgrade but
 /// scoped only to the factory-supplied content.
 pub fn reinstall_defaults() -> Result<(), String> {
+    super::init_marketplace_files(true)?;
     super::install_default_rules_inner(true)?;
     super::install_default_templates_inner(true)?;
     super::install_default_skills_inner(true)?;
+    super::install_default_user_agents_inner(true)?;
     super::ensure_automatic_in_global_mcp()?;
     Ok(())
 }
@@ -139,9 +142,11 @@ pub fn erase_app_data() -> Result<(), String> {
     // defaults (rules/instruction templates/skill registry metadata) without
     // requiring a restart.
     write_settings(&Settings::default())?;
+    super::init_marketplace_files(false)?;
     super::install_default_rules()?;
     super::install_default_templates()?;
     super::install_default_skills()?;
+    super::install_default_user_agents()?;
 
     Ok(())
 }
