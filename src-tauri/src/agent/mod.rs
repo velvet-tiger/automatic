@@ -176,10 +176,11 @@ pub trait Agent: Send + Sync {
     /// (binary present, or a global config directory exists in the home dir).
     ///
     /// Used during first-run to pre-filter which agents are worth scanning for
-    /// global config.  The default implementation always returns `true` so that
-    /// agents without a reliable global install check still participate.
+    /// global config.  The default implementation returns `false` so that agents
+    /// without a reliable global install check are NOT auto-selected — they
+    /// must override this method with a real detection heuristic.
     fn detect_global_install(&self) -> bool {
-        true
+        false
     }
 
     /// Scan this agent's user-level (home-directory) config files for MCP

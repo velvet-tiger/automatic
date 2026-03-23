@@ -41,6 +41,15 @@ impl Agent for Warp {
 
     // ── Detection ───────────────────────────────────────────────────────
 
+    fn detect_global_install(&self) -> bool {
+        // Warp ships as a macOS app bundle. Also check for the ~/.warp/
+        // config directory as a fallback for non-standard installs.
+        std::path::Path::new("/Applications/Warp.app").exists()
+            || super::home_dir()
+                .map(|h| h.join(".warp").exists())
+                .unwrap_or(false)
+    }
+
     fn detect_in(&self, dir: &Path) -> bool {
         // Detect via the `.warp/` directory or legacy `WARP.md`.
         // We do NOT match on AGENTS.md alone because that is shared with
