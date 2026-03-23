@@ -73,8 +73,8 @@ const USE_CASES: UseCase[] = [
     accentBg: "bg-icon-agent/10",
     accentText: "text-icon-agent",
     accentBorder: "border-icon-agent/20",
-    title: "Ship higher-quality AI code",
-    goal: "Your agent produces inconsistent results and doesn't follow your conventions. Give it the context it needs to work the way you do.",
+    title: "Organise agent context",
+    goal: "Set up a new project with the right instructions, rules, skills and tools.",
     actions: [
       { label: "Create a project", tab: "projects" },
       { label: "Add skills for your stack", tab: "skills" },
@@ -86,8 +86,8 @@ const USE_CASES: UseCase[] = [
     accentBg: "bg-icon-file-template/10",
     accentText: "text-icon-file-template",
     accentBorder: "border-icon-file-template/20",
-    title: "Reuse your setup everywhere",
-    goal: "You've found patterns that work, but rebuilding them for each project wastes time. Capture them once and share them across every agent and project.",
+    title: "Standardise context across projects",
+    goal: "Capture your settings and share them across every agent and project.",
     actions: [
       { label: "Create reusable instructions", tab: "templates" },
       { label: "Define shared rules", tab: "rules" },
@@ -100,7 +100,7 @@ const USE_CASES: UseCase[] = [
     accentText: "text-icon-mcp",
     accentBorder: "border-icon-mcp/20",
     title: "Discover the best tools",
-    goal: "The ecosystem moves fast. Find proven skills, pre-built project setups, and MCP servers that give your agents new capabilities without starting from scratch.",
+    goal: "Find proven skills, pre-built project setups, and MCP servers that give your agents new capabilities.",
     actions: [
       { label: "Browse the skill library", tab: "skill-store" },
       { label: "Explore project templates", tab: "template-marketplace" },
