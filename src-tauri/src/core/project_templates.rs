@@ -47,6 +47,12 @@ pub struct ProjectTemplate {
     /// the project's `file_rules["_unified"]` when the template is applied.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unified_rules: Vec<String>,
+    /// Workspace sub-agent IDs (from `~/.automatic/agents/`) to include when
+    /// this template is applied to a project.  These map to the project's
+    /// `user_agents` field and are written to each agent's sub-agent directory
+    /// (e.g. `.claude/agents/`) during sync.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_agents: Vec<String>,
     /// Author/provider metadata.  Mirrors the `_author` convention used by
     /// MCP server configs.  Stored as a raw JSON value so it round-trips
     /// without a dedicated struct — shape: `{ type, name?, url?, repo?, ... }`.
@@ -324,6 +330,7 @@ pub async fn import_bundled_project_template(name: &str) -> Result<(), String> {
         project_files: bundled.project_files,
         unified_instruction: bundled.unified_instruction,
         unified_rules: bundled.unified_rules,
+        user_agents: Vec::new(),
         _author: bundled._author,
     };
 
