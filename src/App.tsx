@@ -326,6 +326,15 @@ function App() {
             <ul className="space-y-0.5">
               <NavItem id="projects" icon={FolderOpen} label="Projects" />
               <NavItem id="project-groups" icon={Layers} label="Groups" />
+            </ul>
+          </div>
+
+          <div className="mb-6">
+            <div className="px-3 pb-1.5 text-[11px] font-semibold text-text-muted tracking-wider flex items-center justify-between group cursor-pointer hover:text-text-base">
+              <span>Library</span>
+              <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+            <ul className="space-y-0.5">
               <NavItem id="project-templates" icon={LayoutTemplate} label="Templates" />
               <NavItem id="templates" icon={ClipboardList} label="Instructions" />
               <NavItem id="rules" icon={ScrollText} label="Rules" />
