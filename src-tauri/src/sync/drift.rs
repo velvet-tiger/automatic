@@ -89,7 +89,8 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
     // Build the MCP server map using the same logic as the sync engine
     // (strips internal `_` fields, substitutes OAuth proxy configs).
     let mcp_config = load_mcp_server_configs()?;
-    let selected_servers = build_selected_servers(&project.name, &project.mcp_servers, &mcp_config);
+    let enabled_mcp_servers = project.enabled_mcp_servers();
+    let selected_servers = build_selected_servers(&project.name, &enabled_mcp_servers, &mcp_config);
 
     let skill_contents = load_skill_contents(&project.skills);
 

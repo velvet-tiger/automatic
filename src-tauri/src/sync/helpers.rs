@@ -149,6 +149,9 @@ pub(crate) fn build_selected_servers(
     // token out of every project file — the proxy loads it from the keychain
     // at runtime.
     for server_name in server_names {
+        if server_name == "automatic" {
+            continue;
+        }
         if let Some(server_config) = mcp_config.get(server_name) {
             let cleaned = strip_internal_fields(server_config.clone());
 

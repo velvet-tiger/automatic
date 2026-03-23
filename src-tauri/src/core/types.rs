@@ -204,6 +204,8 @@ pub struct Project {
     pub local_skills: Vec<String>,
     #[serde(default)]
     pub mcp_servers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_mcp_servers: Vec<String>,
     #[serde(default)]
     pub providers: Vec<String>,
     #[serde(default)]
@@ -259,6 +261,22 @@ pub struct Project {
     /// agents are project-scoped and travel with the project JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_agents: Option<Vec<CustomAgent>>,
+}
+
+impl Project {
+    pub fn enabled_mcp_servers(&self) -> Vec<String> {
+        self.mcp_servers
+            .iter()
+            .filter(|server| {
+                server.as_str() != "automatic"
+                    && !self
+                        .disabled_mcp_servers
+                        .iter()
+                        .any(|disabled| disabled == *server)
+            })
+            .cloned()
+            .collect()
+    }
 }
 
 /// An inline rule stored directly inside a project configuration.

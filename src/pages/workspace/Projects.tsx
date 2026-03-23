@@ -99,6 +99,7 @@ interface Project {
   skills: string[];
   local_skills: string[];
   mcp_servers: string[];
+  disabled_mcp_servers?: string[];
   providers: string[];
   agents: string[];
   created_at: string;
@@ -386,6 +387,7 @@ function emptyProject(name: string): Project {
     skills: [],
     local_skills: [],
     mcp_servers: [],
+    disabled_mcp_servers: [],
     providers: [],
     agents: [],
     created_at: new Date().toISOString(),
@@ -3845,6 +3847,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         skills: [...storedSkills, ...newSkills],
         local_skills: [...storedLocalSkills, ...newLocalSkills],
         mcp_servers: [...storedMcp, ...newMcp],
+        disabled_mcp_servers: stored.disabled_mcp_servers || [],
         providers: stored.providers || [],
         agents: [...storedAgents, ...newAgents],
         created_at: stored.created_at || new Date().toISOString(),
@@ -3918,6 +3921,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         skills: parsed.skills || [],
         local_skills: parsed.local_skills || [],
         mcp_servers: parsed.mcp_servers || [],
+        disabled_mcp_servers: parsed.disabled_mcp_servers || [],
         providers: parsed.providers || [],
         agents: parsed.agents || [],
         created_at: parsed.created_at || new Date().toISOString(),
@@ -4294,7 +4298,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       return await saveProjectSnapshot({ ...project, skills: newList as string[] });
     } else if (key === "mcp_servers") {
       trackProjectMcpServerAdded(pName, item.trim());
-      return await saveProjectSnapshot({ ...project, mcp_servers: newList as string[] });
+      const nextProject = {
+        ...project,
+        mcp_servers: newList as string[],
+        disabled_mcp_servers: (project.disabled_mcp_servers || []).filter((name) => name !== item.trim()),
+      };
+      setProject(nextProject);
+      return await saveProjectSnapshot(nextProject);
     }
     return true;
   };
@@ -4312,9 +4322,33 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         saveProjectSnapshot({ ...project, skills: newList as string[] });
       } else if (key === "mcp_servers") {
         trackProjectMcpServerRemoved(pName, removed);
-        saveProjectSnapshot({ ...project, mcp_servers: newList as string[] });
+        const nextProject = {
+          ...project,
+          mcp_servers: newList as string[],
+          disabled_mcp_servers: (project.disabled_mcp_servers || []).filter((name) => name !== removed),
+        };
+        setProject(nextProject);
+        saveProjectSnapshot(nextProject);
       }
     }
+  };
+
+  const isMcpServerEnabled = (server: string): boolean => {
+    if (!project || server === "automatic") return true;
+    return !(project.disabled_mcp_servers || []).includes(server);
+  };
+
+  const toggleMcpServerEnabled = async (server: string, enabled: boolean) => {
+    if (!project || server === "automatic") return;
+    const disabledServers = project.disabled_mcp_servers || [];
+    const nextDisabledServers = enabled
+      ? disabledServers.filter((name) => name !== server)
+      : [...new Set([...disabledServers, server])];
+
+    const nextProject = { ...project, disabled_mcp_servers: nextDisabledServers };
+    setProject(nextProject);
+    setDirty(true);
+    await saveProjectSnapshot(nextProject);
   };
 
   const handleDismissRecommendation = async (id: number) => {
@@ -8083,6 +8117,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                       availableServers={availableMcpServers}
                       onAdd={(s) => addItem("mcp_servers", s)}
                       onRemove={(i) => removeItem("mcp_servers", i)}
+                      isServerEnabled={isMcpServerEnabled}
+                      onToggleEnabled={toggleMcpServerEnabled}
                       showRemoveButtonAlways
                       disableAdd={allNoMcp}
                       emptyMessage={allNoMcp ? "Add other agent tools to enable MCP server syncing." : "No MCP servers attached."}
