@@ -58,6 +58,7 @@ export default function Settings() {
   const [showEraseDataModal, setShowEraseDataModal] = useState(false);
   const [eraseInput, setEraseInput] = useState("");
   const [erasingData, setErasingData] = useState(false);
+  const eraseConfirmationMatches = eraseInput.trim().toLowerCase() === "erase";
   const [reinstallStatus, setReinstallStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [reinstallError, setReinstallError] = useState("");
   const [analyticsConfigured, setAnalyticsConfigured] = useState<boolean | null>(null);
@@ -208,7 +209,7 @@ export default function Settings() {
 
   async function reinstallDefaults() {
     const confirmed = await ask(
-      "Reinstall all bundled defaults? This will overwrite your Rules, Templates, Skills, and the Automatic MCP server with the versions shipped in this release. Projects and other data are not affected.",
+      "Reinstall all bundled defaults? This will overwrite your Rules, Templates, Skills, bundled agents, marketplace catalogues, and the Automatic MCP server with the versions shipped in this release. Projects and other data are not affected.",
       { title: "Reinstall Defaults", kind: "warning" }
     );
 
@@ -219,14 +220,14 @@ export default function Settings() {
     const entryId = log("Reinstalling defaults…", "running");
     try {
       await invoke("reinstall_defaults");
-      update(entryId, "Defaults reinstalled — Rules, Templates, Skills, and MCP server restored.", "success");
+      update(entryId, "Defaults reinstalled — Rules, Templates, Skills, bundled agents, marketplace catalogues, and MCP server restored.", "success");
     } catch (e) {
       update(entryId, `Failed to reinstall defaults: ${e}`, "error");
     }
   }
 
   async function eraseAllData() {
-    if (eraseInput.trim() !== "erase") {
+    if (!eraseConfirmationMatches) {
       return;
     }
 
@@ -620,7 +621,7 @@ export default function Settings() {
 
                 <div className="mt-4">
                   <p className="text-[13px] text-text-muted mb-3 leading-relaxed">
-                    Overwrite bundled Rules, Templates, Skills, and the Automatic MCP server with the versions shipped in this release. Projects and other data are not affected.
+                    Overwrite bundled Rules, Templates, Skills, bundled agents, marketplace catalogues, and the Automatic MCP server with the versions shipped in this release. Projects and other data are not affected.
                   </p>
                   <button
                     onClick={reinstallDefaults}
@@ -677,7 +678,7 @@ export default function Settings() {
             </div>
 
             <p className="text-[12px] text-text-muted leading-relaxed mb-3">
-              This permanently deletes local Automatic data (projects registry, memories, activity, and plugin/session files) and restores bundled default rules and instruction templates.
+              This permanently deletes local Automatic data (projects registry, memories, activity, plugin/session files, and marketplace caches) and restores bundled defaults, including rules, templates, collections, and marketplace catalogues.
             </p>
             <p className="text-[12px] text-text-muted leading-relaxed mb-3">
               To confirm, type <span className="font-mono text-text-base">erase</span> below.
@@ -690,6 +691,9 @@ export default function Settings() {
               placeholder="type erase"
               className="w-full text-[13px] text-text-base font-mono bg-bg-base border border-border-strong/40 rounded px-3 py-2 focus:outline-none focus:border-danger"
               autoFocus
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
             />
 
             <div className="flex items-center justify-end gap-2 mt-4">
@@ -705,7 +709,7 @@ export default function Settings() {
               </button>
               <button
                 onClick={eraseAllData}
-                disabled={erasingData || eraseInput.trim() !== "erase"}
+                disabled={erasingData || !eraseConfirmationMatches}
                 className="px-3 py-1.5 text-[12px] font-medium rounded bg-danger text-white hover:bg-danger/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {erasingData ? "Erasing..." : "Erase Data"}
