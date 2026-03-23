@@ -21,9 +21,7 @@ export interface ToolPanelProps {
   sidebar: ReactNode;
 }
 
-type ToolPanelComponent = ComponentType<ToolPanelProps>;
-
-export type { ToolPanelComponent };
+export type ToolPanelComponent = ComponentType<ToolPanelProps>;
 
 const _registry = new Map<string, ToolPanelComponent>();
 
