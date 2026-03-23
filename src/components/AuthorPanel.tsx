@@ -65,7 +65,7 @@ function avatarColor(name: string): string {
 
 function resolveLocally(desc: AuthorDescriptor | null): AuthorProfile | null {
   if (!desc || desc.type === "local") {
-    return { name: "You", bio: "Created locally", avatar_url: "", url: "", kind: "local" };
+    return { name: "Local", bio: "Stored locally", avatar_url: "", url: "", kind: "local" };
   }
   if (desc.type === "provider") {
     return {
@@ -123,7 +123,7 @@ function Avatar({ url, name, size = 40 }: { url: string; name: string; size?: nu
       className="rounded-full flex items-center justify-center flex-shrink-0 text-white font-semibold select-none"
       style={{ width: size, height: size, background: bg, fontSize: size * 0.38 }}
     >
-      {name === "You" ? <User size={size * 0.5} strokeWidth={2} /> : initials(name)}
+      {name === "Local" ? <User size={size * 0.5} strokeWidth={2} /> : initials(name)}
     </div>
   );
 }
@@ -133,7 +133,7 @@ function Avatar({ url, name, size = 40 }: { url: string; name: string; size?: nu
 interface AuthorPanelProps {
   /**
    * Pass either a pre-built descriptor object or a JSON string (as stored in
-   * item data).  When omitted, the panel shows the "local / You" state.
+   * item data).  When omitted, the panel shows the local state.
    */
   descriptor?: AuthorDescriptor | string | null;
 }

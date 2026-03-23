@@ -193,6 +193,13 @@ impl Agent for CodexCli {
                 .unwrap_or(false)
     }
 
+    fn extra_global_skill_dirs(&self) -> Vec<PathBuf> {
+        match super::home_dir() {
+            Some(home) => vec![home.join(".codex").join("skills")],
+            None => vec![],
+        }
+    }
+
     fn discover_global_mcp_servers(&self) -> Map<String, Value> {
         let Some(home) = super::home_dir() else {
             return Map::new();

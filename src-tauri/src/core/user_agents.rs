@@ -22,6 +22,12 @@ pub struct UserAgent {
 pub struct UserAgentEntry {
     pub id: String,
     pub name: String,
+    /// Source: "automatic" for bundled, "local" for user-created, "codex" for discovered from Codex
+    #[serde(default)]
+    pub source: String,
+    /// Author display name: "Automatic", "You", "OpenAI", etc.
+    #[serde(default)]
+    pub author: String,
 }
 
 /// Validate an agent machine name: lowercase alphanumeric + hyphens only,
@@ -97,6 +103,16 @@ pub fn list_user_agents() -> Result<Vec<UserAgentEntry>, String> {
                             agents.push(UserAgentEntry {
                                 id: stem.to_string(),
                                 name,
+                                source: if is_bundled_agent(stem) {
+                                    "automatic".to_string()
+                                } else {
+                                    "local".to_string()
+                                },
+                                author: if is_bundled_agent(stem) {
+                                    "Automatic".to_string()
+                                } else {
+                                    "You".to_string()
+                                },
                             });
                         }
                     }
@@ -108,9 +124,159 @@ pub fn list_user_agents() -> Result<Vec<UserAgentEntry>, String> {
     Ok(agents)
 }
 
+/// Parsed OpenAI agent from Codex's openai.yaml format.
+#[derive(Debug, Clone)]
+struct CodexAgent {
+    display_name: String,
+    short_description: Option<String>,
+    default_prompt: Option<String>,
+}
+
+/// Parse an openai.yaml file from Codex and extract agent info.
+fn parse_codex_openai_yaml(content: &str) -> Option<CodexAgent> {
+    // Simple YAML parsing for the specific format used by Codex
+    let mut display_name: Option<String> = None;
+    let mut short_description: Option<String> = None;
+    let mut default_prompt: Option<String> = None;
+    let mut in_interface = false;
+    let mut in_default_prompt = false;
+    let mut prompt_lines: Vec<String> = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed == "interface:" {
+            in_interface = true;
+            in_default_prompt = false;
+            continue;
+        }
+
+        if trimmed == "dependencies:" {
+            in_interface = false;
+            in_default_prompt = false;
+            continue;
+        }
+
+        if in_interface {
+            if trimmed.starts_with("display_name:") {
+                let val = trimmed
+                    .strip_prefix("display_name:")
+                    .map(|s| s.trim().trim_matches('"').to_string());
+                display_name = val;
+            } else if trimmed.starts_with("short_description:") {
+                let val = trimmed
+                    .strip_prefix("short_description:")
+                    .map(|s| s.trim().trim_matches('"').to_string());
+                short_description = val;
+            } else if trimmed == "default_prompt:" {
+                in_default_prompt = true;
+            } else if in_default_prompt && trimmed.starts_with('"') && trimmed.ends_with('"') {
+                // Single-line prompt
+                default_prompt = Some(trimmed.trim_matches('"').to_string());
+                in_default_prompt = false;
+            } else if !in_default_prompt && trimmed.starts_with("default_prompt:") {
+                // Check if it's inline or multiline
+                let rest = trimmed.strip_prefix("default_prompt:").unwrap_or("").trim();
+                if rest.starts_with('"') && rest.ends_with('"') {
+                    default_prompt = Some(rest.trim_matches('"').to_string());
+                } else if rest.is_empty() {
+                    in_default_prompt = true;
+                }
+            }
+        }
+
+        // Handle multiline default_prompt (lines starting with spaces under it)
+        if in_default_prompt && line.starts_with("    ") && !trimmed.is_empty() {
+            prompt_lines.push(trimmed.to_string());
+        }
+    }
+
+    // Handle multiline prompt
+    if default_prompt.is_none() && !prompt_lines.is_empty() {
+        default_prompt = Some(prompt_lines.join(" "));
+    }
+
+    display_name.map(|name| CodexAgent {
+        display_name: name,
+        short_description,
+        default_prompt,
+    })
+}
+
+/// Discover Codex agents from ~/.codex/vendor_imports/skills/skills/.curated/*/agents/openai.yaml
+fn discover_codex_agents() -> Vec<UserAgentEntry> {
+    let mut agents = Vec::new();
+
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return agents,
+    };
+
+    // Path: ~/.codex/vendor_imports/skills/skills/.curated/{skill}/agents/openai.yaml
+    let curated_path = home
+        .join(".codex")
+        .join("vendor_imports")
+        .join("skills")
+        .join("skills")
+        .join(".curated");
+
+    if !curated_path.exists() {
+        return agents;
+    }
+
+    if let Ok(skill_dirs) = fs::read_dir(&curated_path) {
+        for skill_dir in skill_dirs.flatten() {
+            let agents_path = skill_dir.path().join("agents").join("openai.yaml");
+            if agents_path.exists() {
+                if let Ok(content) = fs::read_to_string(&agents_path) {
+                    if let Some(agent) = parse_codex_openai_yaml(&content) {
+                        // Create machine name from skill directory + "-openai"
+                        let skill_name = skill_dir.file_name().to_string_lossy().to_string();
+                        let id = format!("codex-{}-openai", skill_name);
+
+                        agents.push(UserAgentEntry {
+                            id,
+                            name: agent.display_name,
+                            source: "codex".to_string(),
+                            author: "OpenAI".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    agents
+}
+
+/// List all user agents, including discovered Codex OpenAI agents.
+pub fn list_all_user_agents() -> Result<Vec<UserAgentEntry>, String> {
+    let mut agents = list_user_agents()?;
+
+    // Append discovered Codex agents, avoiding duplicates
+    let codex_agents = discover_codex_agents();
+    for codex_agent in codex_agents {
+        if !agents.iter().any(|a| a.id == codex_agent.id) {
+            agents.push(codex_agent);
+        }
+    }
+
+    // Sort by name
+    agents.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Ok(agents)
+}
+
 /// Read the full agent (name + content) by machine name.
+/// For Codex agents, reads from openai.yaml and converts to MD format.
 /// Returns JSON: `{"name": "...", "content": "..."}`.
 pub fn read_user_agent(machine_name: &str) -> Result<String, String> {
+    // Check if it's a Codex agent
+    if machine_name.starts_with("codex-") && machine_name.ends_with("-openai") {
+        return read_codex_agent(machine_name);
+    }
+
+    // Regular local/bundled agent
     if !is_valid_agent_machine_name(machine_name) {
         return Err("Invalid agent machine name".into());
     }
@@ -126,6 +292,51 @@ pub fn read_user_agent(machine_name: &str) -> Result<String, String> {
     } else {
         Err(format!("Agent '{}' not found", machine_name))
     }
+}
+
+/// Read a Codex OpenAI agent by machine name and convert to MD format.
+fn read_codex_agent(machine_name: &str) -> Result<String, String> {
+    // Parse skill name from machine name: codex-{skill}-openai
+    let skill_name = machine_name
+        .strip_prefix("codex-")
+        .and_then(|s| s.strip_suffix("-openai"))
+        .ok_or("Invalid Codex agent name format")?;
+
+    let home = dirs::home_dir().ok_or("Could not find home directory")?;
+    let yaml_path = home
+        .join(".codex")
+        .join("vendor_imports")
+        .join("skills")
+        .join("skills")
+        .join(".curated")
+        .join(skill_name)
+        .join("agents")
+        .join("openai.yaml");
+
+    if !yaml_path.exists() {
+        return Err(format!("Codex agent '{}' not found", machine_name));
+    }
+
+    let content = fs::read_to_string(&yaml_path).map_err(|e| e.to_string())?;
+    let agent = parse_codex_openai_yaml(&content).ok_or("Failed to parse Codex agent YAML")?;
+
+    // Convert to MD format with frontmatter
+    let description = agent.short_description.unwrap_or_default();
+    let prompt = agent.default_prompt.unwrap_or_default();
+
+    let md_content = format!(
+        "---\nname: {}\ndescription: {}\ntools: inherit\nmodel: inherit\nauthor: OpenAI\nsource: codex\n---\n\n{}\n",
+        agent.display_name,
+        description,
+        prompt
+    );
+
+    let result = UserAgent {
+        name: agent.display_name,
+        content: md_content,
+    };
+
+    serde_json::to_string_pretty(&result).map_err(|e| e.to_string())
 }
 
 pub fn save_user_agent(machine_name: &str, name: &str, content: &str) -> Result<(), String> {

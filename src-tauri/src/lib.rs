@@ -150,6 +150,7 @@ pub fn run() {
             import_agent_global_configs,
             import_agent_global_skills,
             get_skills,
+            list_skill_directories,
             read_skill,
             save_skill,
             delete_skill,

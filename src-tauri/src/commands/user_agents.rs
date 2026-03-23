@@ -4,7 +4,7 @@ use crate::core;
 
 #[tauri::command]
 pub fn get_user_agents() -> Result<Vec<core::UserAgentEntry>, String> {
-    core::list_user_agents()
+    core::list_all_user_agents()
 }
 
 #[tauri::command]
@@ -14,6 +14,11 @@ pub fn read_user_agent(machine_name: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_user_agent(machine_name: String, name: String, content: String) -> Result<(), String> {
+    // Codex agents are read-only
+    if machine_name.starts_with("codex-") && machine_name.ends_with("-openai") {
+        return Err("Cannot modify Codex OpenAI agents. Duplicate to create a local copy.".into());
+    }
+
     // Validate machine name format
     if !core::is_valid_agent_machine_name(&machine_name) {
         return Err(
@@ -31,6 +36,11 @@ pub fn save_user_agent(machine_name: String, name: String, content: String) -> R
 
 #[tauri::command]
 pub fn delete_user_agent(machine_name: String) -> Result<(), String> {
+    // Codex agents cannot be deleted
+    if machine_name.starts_with("codex-") && machine_name.ends_with("-openai") {
+        return Err("Cannot delete Codex OpenAI agents.".into());
+    }
+
     core::delete_user_agent(&machine_name)
 }
 

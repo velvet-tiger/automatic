@@ -174,10 +174,10 @@ fn default_true() -> bool {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SkillEntry {
     pub name: String,
-    /// Exists in `~/.agents/skills/` (agentskills.io standard)
-    pub in_agents: bool,
-    /// Exists in `~/.claude/skills/` (Claude Code)
-    pub in_claude: bool,
+    /// Which global sources contain this skill: e.g., ["agents", "claude", "codex", "cline"]
+    /// "agents" refers to ~/.agents/skills/; other values match agent IDs.
+    #[serde(default)]
+    pub sources: Vec<String>,
     /// Remote origin from ~/.automatic/skills.json, if this was imported from skills.sh
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<SkillSource>,
