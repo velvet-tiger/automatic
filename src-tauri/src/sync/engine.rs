@@ -87,7 +87,8 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
     // substitution).  Uses the shared helper so drift detection produces
     // identical output.
     let mcp_config = load_mcp_server_configs()?;
-    let selected_servers = build_selected_servers(&project.name, &project.mcp_servers, &mcp_config);
+    let enabled_mcp_servers = project.enabled_mcp_servers();
+    let selected_servers = build_selected_servers(&project.name, &enabled_mcp_servers, &mcp_config);
 
     // Read all skill contents from the global skill registry
     let skill_contents = load_skill_contents(&project.skills);

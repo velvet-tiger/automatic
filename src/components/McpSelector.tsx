@@ -5,6 +5,7 @@ import {
   Search,
   Server,
   Trash2,
+  Power,
   X,
   ChevronDown,
   ChevronRight,
@@ -53,6 +54,10 @@ interface McpSelectorProps {
   onNavigateToMcpServer?: (serverName: string) => void;
   /** Keep remove buttons visible instead of only showing them on hover. */
   showRemoveButtonAlways?: boolean;
+  /** Optional project-scoped enabled state for each server. */
+  isServerEnabled?: (serverName: string) => boolean;
+  /** Optional callback to toggle whether a server is synced into agent config files. */
+  onToggleEnabled?: (serverName: string, enabled: boolean) => void | Promise<void>;
 }
 
 // ── Inline read-only config card ───────────────────────────────────────────
@@ -238,6 +243,8 @@ export function McpSelector({
   emptyMessage = "No MCP servers configured.",
   onNavigateToMcpServer,
   showRemoveButtonAlways = false,
+  isServerEnabled,
+  onToggleEnabled,
 }: McpSelectorProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -292,6 +299,8 @@ export function McpSelector({
       <div className="space-y-1.5">
         {servers.map((srv, idx) => {
           const isExpanded = expandedServer === srv;
+          const enabled = isServerEnabled ? isServerEnabled(srv) : true;
+          const canToggleEnabled = !!onToggleEnabled && srv !== "automatic";
           return (
             <div key={srv}>
               {/* Row — clicking toggles inline card */}
@@ -312,8 +321,38 @@ export function McpSelector({
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-medium text-text-base">{srv}</div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="text-[13px] font-medium text-text-base truncate">{srv}</div>
+                    {!enabled && (
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-text-muted/10 text-text-muted border border-border-strong/40 leading-none">
+                        Disabled
+                      </span>
+                    )}
+                  </div>
+                  {canToggleEnabled && (
+                    <div className="mt-0.5 text-[11px] text-text-muted">
+                      {enabled ? "Synced into agent MCP config" : "Kept in Automatic only"}
+                    </div>
+                  )}
                 </div>
+
+                {canToggleEnabled && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onToggleEnabled(srv, !enabled);
+                    }}
+                    className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors ${
+                      enabled
+                        ? "border-success/30 text-success hover:border-success/50 hover:bg-success/10"
+                        : "border-border-strong/50 text-text-muted hover:border-border-strong hover:text-text-base hover:bg-surface"
+                    }`}
+                    title={enabled ? "Disable syncing for this project" : "Enable syncing for this project"}
+                  >
+                    <Power size={11} />
+                    {enabled ? "On" : "Off"}
+                  </button>
+                )}
 
                 {srv !== "automatic" && (
                 <button

@@ -892,6 +892,9 @@ pub(crate) fn prune_mcp_server_from_projects(server_name: &str) {
     with_each_project_mut(|project_name, project| {
         let before = project.mcp_servers.len();
         project.mcp_servers.retain(|server| server != server_name);
+        project
+            .disabled_mcp_servers
+            .retain(|server| server != server_name);
 
         if project.mcp_servers.len() != before {
             project.updated_at = chrono::Utc::now().to_rfc3339();
