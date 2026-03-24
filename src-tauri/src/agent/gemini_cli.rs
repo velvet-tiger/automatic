@@ -34,10 +34,30 @@ impl Agent for GeminiCli {
         dir.join("GEMINI.md").exists()
             || dir.join(".gemini").join("settings.json").exists()
             || dir.join(".gemini").exists()
+            || dir.join(".gemini").join("commands").exists()
     }
 
     fn skill_dirs(&self, dir: &Path) -> Vec<PathBuf> {
         vec![dir.join(".agents").join("skills")]
+    }
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            commands: true,
+            ..Default::default()
+        }
+    }
+
+    fn commands_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".gemini").join("commands"))
+    }
+
+    fn commands_file_ext(&self) -> &'static str {
+        "toml"
+    }
+
+    fn convert_command_content(&self, content: &str, _name: &str) -> String {
+        convert_md_command_to_gemini_toml(content)
     }
 
     // ── Config writing ──────────────────────────────────────────────────
@@ -193,6 +213,26 @@ impl Agent for GeminiCli {
     fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
         Some(dir.join(".gemini").join("agents"))
     }
+}
+
+fn convert_md_command_to_gemini_toml(content: &str) -> String {
+    let (frontmatter, body) = super::parse_frontmatter(content);
+    let mut toml = String::from("automatic_managed = true\n");
+
+    if let Some(description) = frontmatter.get("description") {
+        toml.push_str(&format!(
+            "description = \"{}\"\n",
+            escape_toml_string(description)
+        ));
+    }
+
+    toml.push_str(&format!("prompt = \"\"\"\n{}\n\"\"\"\n", body.trim()));
+
+    toml
+}
+
+fn escape_toml_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Pass-through normaliser: Gemini's format is already canonical.

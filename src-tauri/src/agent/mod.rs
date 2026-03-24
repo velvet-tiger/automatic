@@ -28,7 +28,7 @@ mod warp;
 
 use serde::Serialize;
 use serde_json::{Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -73,6 +73,8 @@ pub struct AgentCapabilities {
     /// Automatic can sync sub-agents to this agent's agents directory.
     /// Agents that don't have a sub-agent discovery location set this to false.
     pub agents: bool,
+    /// Automatic can sync custom commands to this agent's commands directory.
+    pub commands: bool,
 }
 
 impl Default for AgentCapabilities {
@@ -83,6 +85,7 @@ impl Default for AgentCapabilities {
             instructions: true,
             mcp_servers: true,
             agents: true,
+            commands: false,
         }
     }
 }
@@ -233,6 +236,27 @@ pub trait Agent: Send + Sync {
     /// Codex overrides this to convert to TOML format.
     fn convert_agent_content(&self, content: &str, _name: &str) -> String {
         content.to_string()
+    }
+
+    /// Return the directory where this agent looks for custom command files.
+    /// Returns `None` if this agent does not support project-local commands.
+    fn commands_dir(&self, _dir: &Path) -> Option<PathBuf> {
+        None
+    }
+
+    /// Return the file extension for command files (without the dot).
+    fn commands_file_ext(&self) -> &'static str {
+        "md"
+    }
+
+    /// Return the filename to use for a specific command.
+    fn command_file_name(&self, machine_name: &str) -> String {
+        format!("{machine_name}.{}", self.commands_file_ext())
+    }
+
+    /// Convert canonical Markdown command content into this agent's native format.
+    fn convert_command_content(&self, content: &str, _name: &str) -> String {
+        render_markdown_command(content)
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────
@@ -543,6 +567,239 @@ fn cleanup_skill_dir(
     Ok(())
 }
 
+pub(crate) fn parse_frontmatter(content: &str) -> (HashMap<String, String>, &str) {
+    let mut frontmatter: HashMap<String, String> = HashMap::new();
+
+    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
+        return (frontmatter, content);
+    }
+
+    let after_first = &content[4..];
+    let end_marker_pos = after_first
+        .find("\n---")
+        .or_else(|| after_first.find("\r\n---"));
+
+    let end_marker_pos = match end_marker_pos {
+        Some(pos) => pos,
+        None => return (frontmatter, content),
+    };
+
+    let yaml_str = &after_first[..end_marker_pos];
+    let body_start = end_marker_pos + 4;
+    let body = if after_first[body_start..].starts_with('\n')
+        || after_first[body_start..].starts_with("\r\n")
+    {
+        body_start + 1
+    } else {
+        body_start
+    };
+    let body = &after_first[body..];
+
+    for line in yaml_str.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(colon_pos) = line.find(':') {
+            let key = line[..colon_pos].trim();
+            let mut value = line[colon_pos + 1..].trim();
+            if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+                value = &value[1..value.len() - 1];
+            } else if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
+                value = &value[1..value.len() - 1];
+            }
+            frontmatter.insert(key.to_string(), value.to_string());
+        }
+    }
+
+    (frontmatter, body)
+}
+
+fn render_markdown_command(content: &str) -> String {
+    if content.starts_with("---\n") || content.starts_with("---\r\n") {
+        let after_first = &content[4..];
+        if let Some(end_marker_pos) = after_first
+            .find("\n---")
+            .or_else(|| after_first.find("\r\n---"))
+        {
+            let yaml_str = &after_first[..end_marker_pos];
+            if yaml_str
+                .lines()
+                .any(|line| line.trim() == "automatic-managed: true")
+            {
+                return content.to_string();
+            }
+
+            let mut output = String::from("---\n");
+            output.push_str(yaml_str);
+            if !yaml_str.ends_with('\n') {
+                output.push('\n');
+            }
+            output.push_str("automatic-managed: true\n---");
+            output.push_str(&after_first[end_marker_pos + 4..]);
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+            return output;
+        }
+    }
+
+    let mut output = format!("---\nautomatic-managed: true\n---\n{}", content);
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output
+}
+
+fn is_managed_command_file(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+        return false;
+    };
+
+    let Ok(content) = fs::read_to_string(path) else {
+        return false;
+    };
+
+    match ext {
+        "md" => {
+            let (frontmatter, _) = parse_frontmatter(&content);
+            frontmatter
+                .get("automatic-managed")
+                .map(|value| value == "true")
+                .unwrap_or(false)
+        }
+        "toml" => content
+            .lines()
+            .any(|line| line.trim() == "automatic_managed = true"),
+        _ => false,
+    }
+}
+
+pub(crate) fn sync_commands_to_dir(
+    commands_dir: &Path,
+    workspace_commands: &[(String, String)],
+    custom_commands: &[crate::core::CustomCommand],
+    agent_instance: &dyn Agent,
+) -> Result<Vec<String>, String> {
+    let mut written = Vec::new();
+    let mut expected: HashSet<String> = HashSet::new();
+
+    let total_commands = workspace_commands.len() + custom_commands.len();
+    if total_commands > 0 && !commands_dir.exists() {
+        fs::create_dir_all(commands_dir).map_err(|e| {
+            format!(
+                "Failed to create commands dir '{}': {}",
+                commands_dir.display(),
+                e
+            )
+        })?;
+    }
+
+    for (name, content) in workspace_commands {
+        let file_name = agent_instance.command_file_name(name);
+        expected.insert(file_name.clone());
+        let path = commands_dir.join(&file_name);
+        let rendered = agent_instance.convert_command_content(content, name);
+        fs::write(&path, rendered)
+            .map_err(|e| format!("Failed to write command '{}': {}", name, e))?;
+        written.push(path.display().to_string());
+    }
+
+    for command in custom_commands {
+        let file_name = agent_instance.command_file_name(&command.name);
+        expected.insert(file_name.clone());
+        let path = commands_dir.join(&file_name);
+        let rendered = agent_instance.convert_command_content(&command.content, &command.name);
+        fs::write(&path, rendered)
+            .map_err(|e| format!("Failed to write command '{}': {}", command.name, e))?;
+        written.push(path.display().to_string());
+    }
+
+    if commands_dir.exists() {
+        for entry in fs::read_dir(commands_dir)
+            .map_err(|e| format!("Failed to read {}: {}", commands_dir.display(), e))?
+        {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+
+            if expected.contains(file_name) || !is_managed_command_file(&path) {
+                continue;
+            }
+
+            fs::remove_file(&path).map_err(|e| {
+                format!("Failed to remove stale command '{}': {}", path.display(), e)
+            })?;
+            written.push(path.display().to_string());
+        }
+
+        if fs::read_dir(commands_dir)
+            .map_err(|e| format!("Failed to read {}: {}", commands_dir.display(), e))?
+            .next()
+            .is_none()
+        {
+            let _ = fs::remove_dir(commands_dir);
+        }
+    }
+
+    Ok(written)
+}
+
+fn cleanup_command_files(agent_instance: &dyn Agent, dir: &Path) -> Vec<String> {
+    let Some(commands_dir) = agent_instance.commands_dir(dir) else {
+        return vec![];
+    };
+    if !commands_dir.exists() {
+        return vec![];
+    }
+
+    let mut removed = Vec::new();
+    if let Ok(entries) = fs::read_dir(&commands_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && is_managed_command_file(&path) && fs::remove_file(&path).is_ok() {
+                removed.push(path.display().to_string());
+            }
+        }
+    }
+
+    let is_empty = fs::read_dir(&commands_dir)
+        .ok()
+        .and_then(|mut entries| entries.next())
+        .is_none();
+    if is_empty {
+        let _ = fs::remove_dir(&commands_dir);
+    }
+
+    removed
+}
+
+fn cleanup_command_preview(agent_instance: &dyn Agent, dir: &Path) -> Vec<String> {
+    let Some(commands_dir) = agent_instance.commands_dir(dir) else {
+        return vec![];
+    };
+    if !commands_dir.exists() {
+        return vec![];
+    }
+
+    let mut preview = Vec::new();
+    if let Ok(entries) = fs::read_dir(&commands_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && is_managed_command_file(&path) {
+                preview.push(path.display().to_string());
+            }
+        }
+    }
+    preview
+}
+
 /// Recursively copy a directory and all its contents.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     fs::create_dir_all(dst)
@@ -593,6 +850,7 @@ pub(crate) fn cleanup_agent_from_project(
 
     // 1. Clean up MCP config
     removed.extend(agent_instance.cleanup_mcp_config(dir));
+    removed.extend(cleanup_command_files(agent_instance, dir));
 
     // 2. Remove agent-specific skill directories (never the shared hub)
     for skill_dir in agent_instance.skill_dirs(dir) {
@@ -633,6 +891,7 @@ pub(crate) fn cleanup_agent_preview(
 
     // MCP config files
     preview.extend(agent_instance.cleanup_mcp_preview(dir));
+    preview.extend(cleanup_command_preview(agent_instance, dir));
 
     // Agent-specific skill directories
     for skill_dir in agent_instance.skill_dirs(dir) {

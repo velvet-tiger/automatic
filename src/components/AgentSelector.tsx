@@ -7,6 +7,7 @@ export interface AgentCapabilities {
   instructions: boolean;
   mcp_servers: boolean;
   agents: boolean;
+  commands: boolean;
 }
 
 export interface AgentInfo {

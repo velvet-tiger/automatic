@@ -33,14 +33,26 @@ impl Agent for ClaudeCode {
         dir.join(".mcp.json").exists()
             || dir.join(".claude").join("settings.json").exists()
             || dir.join(".claude").join("skills").exists()
+            || dir.join(".claude").join("commands").exists()
     }
 
     fn skill_dirs(&self, dir: &Path) -> Vec<PathBuf> {
         vec![dir.join(".claude").join("skills")]
     }
 
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            commands: true,
+            ..Default::default()
+        }
+    }
+
     fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
         Some(dir.join(".claude").join("agents"))
+    }
+
+    fn commands_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".claude").join("commands"))
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────

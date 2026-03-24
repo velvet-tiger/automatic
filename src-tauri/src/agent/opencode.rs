@@ -34,10 +34,22 @@ impl Agent for OpenCode {
         dir.join("opencode.json").exists()
             || dir.join(".opencode.json").exists()
             || dir.join(".agents").join("skills").exists()
+            || dir.join(".opencode").join("commands").exists()
     }
 
     fn skill_dirs(&self, dir: &Path) -> Vec<PathBuf> {
         vec![dir.join(".agents").join("skills")]
+    }
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            commands: true,
+            ..Default::default()
+        }
+    }
+
+    fn commands_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".opencode").join("commands"))
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────
