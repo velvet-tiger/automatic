@@ -2,6 +2,43 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.0.0-beta1] — 2026-03-24
+
+### Added
+
+- **Projects**: Redesigned the project summary dashboard for a richer overview experience. (`162b450`)
+- **Commands**: Added a command library with project command sync support. (`114055a`)
+- **Projects**: Rebuild project state from disk to improve recovery and consistency. (`4fd6874`)
+- **Projects**: Added per-project MCP server disable controls. (`9a579b5`)
+- **Templates**: Added sub-agent support to project templates. (`b7616be`)
+- **Getting Started**: Refined the getting started content and replaced the dashboard entry point with a focused onboarding view. (`e523b74`)
+- **Navigation**: Added a dedicated library section to the app navigation. (`229920e`)
+- **Skills**: Detect Codex skill sources and authors. (`ecdc5cb`)
+
+### Fixes
+
+- **Agents**: Onboarding now only auto-selects agents that are actually detected. (`ab5681f`)
+- **Settings**: Restored bundled defaults after erase and reinstall flows. (`6406ebc`)
+- **Onboarding**: Removed the redundant first-project step. (`f3e5372`)
+- **Skills**: Removed the bundled `github-workflow-automation` skill entry. (`68485b6`)
+- **Analytics**: Record opted-out users without activity tracking. (`be8ef5c`)
+
+### Changed
+
+- **Navigation**: Replaced the dashboard landing flow with the new getting started experience. (`30bc865`)
+- **Projects**: Moved the Groups tab from Configuration to Context. (`8c1dcdd`)
+- **Plugins**: Replaced the hardcoded tool panel with a registry-driven pattern. (`caff355`)
+- **Frontend**: Reorganized `src/` into more logical subdirectories. (`af230d1`)
+
+### Maintenance
+
+- **Build**: Fixed export handling. (`3b1ec90`)
+- **License**: Added BUSL 1.1 commercial licensing terms. (`03dd611`)
+
+### Documentation
+
+- **README**: Refreshed project documentation. (`19c4f2f`)
+
 ## [0.13.0] — 2026-03-22
 
 ### Features
@@ -711,6 +748,7 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Junie removal deletes the entire `.junie/` directory
 
 [0.10.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.10.0
+[1.0.0-beta1]: https://github.com/velvet-tiger/automatic/releases/tag/1.0.0-beta1
 [0.9.1]: https://github.com/velvet-tiger/automatic/releases/tag/0.9.1
 [0.9.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.9.0
 [0.8.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.8.0

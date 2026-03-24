@@ -10,6 +10,9 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+.next
+build
+target
 *.local
 
 # Environment variables
@@ -22,9 +25,12 @@ src-tauri/tauri.dev.conf.json
 
 # Editor directories and files
 .vscode/*
+.vscode/
 !.vscode/extensions.json
 .idea
+.idea/
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
