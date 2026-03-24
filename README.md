@@ -196,9 +196,7 @@ Automatic is released under the **Business Source License 1.1**.
 - **Attribution required**: Forks must attribute the original Licensor
 - **Time-delayed open source**: Converts to MIT License on March 23, 2030
 
-See [LICENSE](LICENSE) for full terms and [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) for commercial licensing details.
-
-For commercial licenses, contact: licenses@automatic.dev
+See [LICENSE](LICENSE) for full terms
 
 ## Links
 
