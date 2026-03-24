@@ -16,6 +16,7 @@ import McpServers from "./pages/workspace/McpServers";
 import Templates from "./pages/workspace/Templates";
 import Rules from "./pages/workspace/Rules";
 import UserAgents from "./pages/workspace/UserAgents";
+import Commands from "./pages/workspace/Commands";
 import Agents from "./pages/workspace/Agents";
 import Tools from "./pages/workspace/Tools";
 import Recommendations from "./pages/Recommendations";
@@ -30,7 +31,7 @@ import { TaskLogProvider, useTaskLog } from "./contexts/TaskLogContext";
 import TaskLog from "./components/TaskLog";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import UpdateToast from "./components/UpdateToast";
-import { ClipboardList, Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, FlaskConical, Lightbulb, List, Wrench, Hash, MessagesSquare } from "lucide-react";
+import { ClipboardList, Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, FlaskConical, Lightbulb, List, Wrench, Hash, MessagesSquare, Terminal } from "lucide-react";
 import { flag } from "./lib/flags";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
@@ -339,6 +340,7 @@ function App() {
               <NavItem id="templates" icon={ClipboardList} label="Instructions" />
               <NavItem id="rules" icon={ScrollText} label="Rules" />
               <NavItem id="user-agents" icon={MessagesSquare} label="Sub-Agents" />
+              <NavItem id="commands" icon={Terminal} label="Commands" />
               <NavItem id="skills" icon={Code} label="Skills" />
               <NavItem id="mcp" icon={Server} label="MCP Servers" />
               <NavItem id="agents" icon={Bot} label="Providers" />
@@ -629,6 +631,11 @@ function App() {
           {activeTab === "user-agents" && (
             <div className="flex-1 h-full">
               <UserAgents />
+            </div>
+          )}
+          {activeTab === "commands" && (
+            <div className="flex-1 h-full">
+              <Commands />
             </div>
           )}
           {activeTab === "mcp" && (

@@ -23,6 +23,7 @@ mod templates;
 mod tokens;
 mod tools;
 mod user_agents;
+mod user_commands;
 
 pub use activity::*;
 pub use agents::*;
@@ -49,6 +50,7 @@ pub use templates::*;
 pub use tokens::*;
 pub use tools::*;
 pub use user_agents::*;
+pub use user_commands::*;
 
 // ── Plugin dispatch ───────────────────────────────────────────────────────────
 // All plugin commands flow through the single `invoke_tool_command` dispatcher

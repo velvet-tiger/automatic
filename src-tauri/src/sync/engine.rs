@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::agent;
-use crate::core::Project;
+use crate::core::{self, Project};
 
 use super::autodetect::autodetect_inner;
 use super::helpers::{
@@ -92,6 +92,15 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
 
     // Read all skill contents from the global skill registry
     let skill_contents = load_skill_contents(&project.skills);
+    let workspace_command_contents: Vec<(String, String)> = project
+        .user_commands
+        .iter()
+        .filter_map(|name| {
+            core::read_user_command(name)
+                .ok()
+                .map(|content| (name.clone(), content))
+        })
+        .collect();
 
     let mut written_files = Vec::new();
 
@@ -164,6 +173,17 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                         agent_instance,
                     )?;
                     written_files.extend(user_agent_files);
+                }
+
+                if let Some(commands_dir) = agent_instance.commands_dir(&dir) {
+                    let custom_commands = project.custom_commands.as_deref().unwrap_or(&[]);
+                    let command_files = agent::sync_commands_to_dir(
+                        &commands_dir,
+                        &workspace_command_contents,
+                        custom_commands,
+                        agent_instance,
+                    )?;
+                    written_files.extend(command_files);
                 }
 
                 // Strip legacy managed sections from project files (once per filename)

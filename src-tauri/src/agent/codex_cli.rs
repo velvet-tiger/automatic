@@ -365,7 +365,7 @@ pub fn merge_toml_mcp_section(existing: &str, mcp_section: &str) -> String {
 /// Input: Markdown content with YAML frontmatter (the Automatic canonical format).
 /// Output: TOML content for Codex agents.
 fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
-    let (frontmatter, body) = parse_frontmatter(content);
+    let (frontmatter, body) = super::parse_frontmatter(content);
 
     let mut toml = String::new();
 
@@ -411,57 +411,6 @@ fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
     }
 
     toml
-}
-
-/// Parse YAML frontmatter from Markdown content.
-/// Returns (frontmatter_map, body_content).
-fn parse_frontmatter(content: &str) -> (std::collections::HashMap<String, String>, &str) {
-    use std::collections::HashMap;
-    let mut frontmatter: HashMap<String, String> = HashMap::new();
-
-    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
-        return (frontmatter, content);
-    }
-
-    let after_first = &content[4..];
-    let end_marker_pos = after_first
-        .find("\n---")
-        .or_else(|| after_first.find("\r\n---"));
-
-    let end_marker_pos = match end_marker_pos {
-        Some(pos) => pos,
-        None => return (frontmatter, content),
-    };
-
-    let yaml_str = &after_first[..end_marker_pos];
-    let body_start = end_marker_pos + 4;
-    let body = if after_first[body_start..].starts_with('\n')
-        || after_first[body_start..].starts_with("\r\n")
-    {
-        body_start + 1
-    } else {
-        body_start
-    };
-    let body = &after_first[body..];
-
-    for line in yaml_str.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(colon_pos) = line.find(':') {
-            let key = line[..colon_pos].trim();
-            let mut value = line[colon_pos + 1..].trim();
-            if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-                value = &value[1..value.len() - 1];
-            } else if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
-                value = &value[1..value.len() - 1];
-            }
-            frontmatter.insert(key.to_string(), value.to_string());
-        }
-    }
-
-    (frontmatter, body)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

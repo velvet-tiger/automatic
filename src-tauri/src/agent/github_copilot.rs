@@ -36,6 +36,7 @@ impl Agent for GitHubCopilot {
     fn detect_in(&self, dir: &Path) -> bool {
         dir.join(".github").join("copilot-instructions.md").exists()
             || dir.join(".vscode").join("mcp.json").exists()
+            || dir.join(".github").join("prompts").exists()
     }
 
     fn skill_dirs(&self, dir: &Path) -> Vec<PathBuf> {
@@ -47,8 +48,17 @@ impl Agent for GitHubCopilot {
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
             agents: false,
+            commands: true,
             ..Default::default()
         }
+    }
+
+    fn commands_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".github").join("prompts"))
+    }
+
+    fn command_file_name(&self, machine_name: &str) -> String {
+        format!("{machine_name}.prompt.md")
     }
 
     // ── Config writing ──────────────────────────────────────────────────

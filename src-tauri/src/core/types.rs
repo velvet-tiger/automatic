@@ -255,12 +255,21 @@ pub struct Project {
     /// Agent machine names reference files in `~/.automatic/agents/`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub user_agents: Vec<String>,
+    /// Workspace command names selected for this project. These reference files
+    /// in `~/.automatic/commands/` and are written to agent-specific command
+    /// directories for providers that support custom commands.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_commands: Vec<String>,
     /// Inline custom sub-agents stored directly in the project configuration.
     /// These are written to each agent's sub-agent directory (e.g.
     /// `.claude/agents/`) during sync. Unlike workspace user_agents, custom
     /// agents are project-scoped and travel with the project JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_agents: Option<Vec<CustomAgent>>,
+    /// Inline custom commands stored directly in the project configuration.
+    /// These are written to each agent's command directory during sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_commands: Option<Vec<CustomCommand>>,
 }
 
 impl Project {
@@ -325,6 +334,17 @@ pub struct CustomAgent {
     /// Human-readable display name (from frontmatter `name` field).
     pub name: String,
     /// Full Markdown content including frontmatter.
+    pub content: String,
+}
+
+/// A user-defined command stored directly in a project configuration.
+/// Unlike global workspace commands (which live in `~/.automatic/commands/`),
+/// custom commands are project-scoped and travel with the project JSON.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomCommand {
+    /// Slash-command machine name.
+    pub name: String,
+    /// Full Markdown content for the command definition.
     pub content: String,
 }
 

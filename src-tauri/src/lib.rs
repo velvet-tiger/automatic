@@ -303,6 +303,10 @@ get_templates,
             save_user_agent,
             delete_user_agent,
             get_projects_referencing_user_agent,
+            get_user_commands,
+            read_user_command,
+            save_user_command,
+            delete_user_command,
             is_analytics_configured,
         ])
         .run(tauri::generate_context!())
