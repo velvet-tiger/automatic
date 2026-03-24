@@ -2,10 +2,10 @@ Business Source License 1.1
 
 Parameters
 
-Licensor:                        Automatic
+Licensor:                        Velvet Tiger
 Licensed Work:                   Automatic Desktop Application
                                 The Licensed Work is defined in the source code at:
-                                https://github.com/anomalyco/automatic
+                                https://github.com/velvet-tiger/automatic
 License Number:                  2026.001
                                 
 
@@ -22,7 +22,7 @@ You may use the Licensed Work for internal business purposes, provided that:
 (a) the Licensed Work is used by no more than ten (10) concurrent users within your organization; and
 (b) you do not distribute, sell, lease, license, sublicense, or otherwise make the Licensed Work available to any third party.
 
-For usage beyond ten (10) concurrent users, or for any commercial distribution, resale, or SaaS deployment, you must obtain a separate commercial license from the Licensor. Contact: licenses@automatic.dev
+For usage beyond ten (10) concurrent users, or for any commercial distribution, resale, or SaaS deployment, you must obtain a separate commercial license from the Licensor.
 
 Forks and modifications must include attribution to the original Licensor and may not be sold, relicensed, or commercially distributed without a separate commercial agreement.
 
@@ -43,7 +43,7 @@ See https://mariadb.com/bsl11/ for full license text.
 The Licensed Work
 
 The Licensed Work is (a) the Software Project at:
-https://github.com/anomalyco/automatic
+https://github.com/velvet-tiger/automatic
 
 (b) All files, modules, components, and documentation contained therein or derived therefrom, identified in the applicable metadata accompanying this License.
 
