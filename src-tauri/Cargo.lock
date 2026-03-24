@@ -271,7 +271,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "automatic"
-version = "1.0.0-beta1"
+version = "1.0.0-beta.1"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

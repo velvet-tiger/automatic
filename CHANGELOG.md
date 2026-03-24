@@ -2,6 +2,12 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.0.0-beta.1] — 2026-03-24
+
+### Fixed
+
+- **Windows MSI**: Use a WiX-compatible prerelease version format so Windows bundles can be built successfully.
+
 ## [1.0.0-beta1] — 2026-03-24
 
 ### Added
@@ -748,6 +754,7 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Junie removal deletes the entire `.junie/` directory
 
 [0.10.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.10.0
+[1.0.0-beta.1]: https://github.com/velvet-tiger/automatic/releases/tag/1.0.0-beta.1
 [1.0.0-beta1]: https://github.com/velvet-tiger/automatic/releases/tag/1.0.0-beta1
 [0.9.1]: https://github.com/velvet-tiger/automatic/releases/tag/0.9.1
 [0.9.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.9.0
