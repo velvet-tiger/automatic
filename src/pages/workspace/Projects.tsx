@@ -12,7 +12,7 @@ import { useCurrentUser } from "../../contexts/ProfileContext";
 import { useTaskLog } from "../../contexts/TaskLogContext";
 import { MemoryBrowser } from "../../components/MemoryBrowser";
 import { ClaudeMemoryPanel } from "../../components/ClaudeMemoryPanel";
-import Features from "./Features";
+import Features, { type Feature } from "./Features";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { handleExternalLinkClick } from "../../lib/externalLinks";
@@ -410,6 +410,58 @@ function ActivityFeed({ entries, loading }: ActivityFeedProps) {
           })
         )}
       </div>
+    </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface SummaryMetricCardProps {
+  icon: React.ReactNode;
+  label: string;
+  count: number;
+  accentClass: string;
+  onView: () => void;
+}
+
+function SummaryMetricCard({ icon, label, count, accentClass, onView }: SummaryMetricCardProps) {
+  return (
+    <section className="rounded-lg border border-border-strong/40 bg-bg-input px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className={`rounded-md p-1.5 ${accentClass}`}>{icon}</div>
+            <span className="text-[13px] font-semibold text-text-base">{label}</span>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-[24px] font-semibold leading-none tabular-nums text-text-base">{count}</span>
+            <span className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
+              total
+            </span>
+          </div>
+        </div>
+        <button
+          onClick={onView}
+          className="shrink-0 rounded-md border border-border-strong/50 px-3 py-1 text-[11px] font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text-base"
+        >
+          View
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function SummarySidebarSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-border-strong/40 bg-bg-input px-4 py-3">
+      <div className="mb-3 text-[13px] font-semibold text-text-base">{title}</div>
+      <div className="space-y-2">{children}</div>
     </section>
   );
 }
@@ -2508,6 +2560,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   // Memory state
   const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
   const [loadingMemories, setLoadingMemories] = useState(false);
+  const [buildItems, setBuildItems] = useState<Feature[]>([]);
+  const [loadingBuildItems, setLoadingBuildItems] = useState(false);
 
   // Groups state — names of all groups this project belongs to, and the full
   // list of all available groups (for the "add to group" picker).
@@ -3878,6 +3932,22 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     }
   };
 
+  const loadBuildItems = async (projectName: string) => {
+    try {
+      setLoadingBuildItems(true);
+      const result = await invoke<Feature[]>("list_features", { project: projectName });
+      const recent = [...result]
+        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+        .slice(0, 4);
+      setBuildItems(recent);
+    } catch (err: any) {
+      console.error("Failed to load build items:", err);
+      setBuildItems([]);
+    } finally {
+      setLoadingBuildItems(false);
+    }
+  };
+
   const loadProjectFiles = async (name: string) => {
     try {
       const raw: string = await invoke("get_project_file_info", { name });
@@ -4101,6 +4171,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       await loadActivity(name);
       await loadRecommendations(name);
       await loadContext(name);
+      await loadBuildItems(name);
       // Reset activity tab pagination for the newly selected project
       setActivityPage(0);
       setActivityPageEntries([]);
@@ -4164,6 +4235,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       await loadGroups(name);
       await loadActivity(name);
       await loadContext(name);
+      await loadBuildItems(name);
       notifyProjectUpdated();
       // Reset activity tab pagination on project reload
       setActivityPage(0);
@@ -7855,250 +7927,253 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                 })()}
 
                 {/* ── Summary tab ──────────────────────────────────────── */}
-                {projectTab === "summary" && (
-                  <div className="grid grid-cols-[1fr_280px] gap-6">
+                {projectTab === "summary" && (() => {
+                  const totalSkills = project.skills.length + project.local_skills.length;
+                  const totalRules = ((project.file_rules || {})["_project"] || []).length + (project.custom_rules?.length ?? 0);
+                  const totalSubAgents = (project.user_agents?.length ?? 0) + (project.custom_agents?.length ?? 0);
+                  const totalCommands = (project.user_commands?.length ?? 0) + (project.custom_commands?.length ?? 0);
+                  const memoryCount = Object.keys(memories).length;
+                  const hasInstructionFiles = projectFiles.some((file) => file.exists);
+                  const instructionStatus = !project.directory || project.agents.length === 0
+                    ? "Add a directory and at least one agent to generate instruction files."
+                    : hasInstructionFiles
+                      ? `${projectFiles.filter((file) => file.exists).length} instruction file${projectFiles.filter((file) => file.exists).length === 1 ? "" : "s"} available.`
+                      : "No instruction files found for this project yet.";
+                  const recentDocsLinks = linkDocEntries.slice(0, 5);
 
-                    {/* ── Column 1: Activity, recommendations, setup ──── */}
-                    <div className="space-y-6 min-w-0">
+                  return (
+                    <div className="space-y-6">
+                      <div className="grid gap-4 xl:grid-cols-5 md:grid-cols-2">
+                        <SummaryMetricCard
+                          icon={<Code size={13} className="text-icon-skill" />}
+                          label="Skills"
+                          count={totalSkills}
+                          accentClass="bg-icon-skill/10"
+                          onView={() => selectTab("skills")}
+                        />
+                        <SummaryMetricCard
+                          icon={<Server size={13} className="text-icon-mcp" />}
+                          label="MCP Servers"
+                          count={project.mcp_servers.length}
+                          accentClass="bg-icon-mcp/10"
+                          onView={() => selectTab("mcp_servers")}
+                        />
+                        <SummaryMetricCard
+                          icon={<ScrollText size={13} className="text-icon-rule" />}
+                          label="Rules"
+                          count={totalRules}
+                          accentClass="bg-icon-rule/10"
+                          onView={() => selectTab("rules")}
+                        />
+                        <SummaryMetricCard
+                          icon={<Bot size={13} className="text-brand" />}
+                          label="Sub-agents"
+                          count={totalSubAgents}
+                          accentClass="bg-brand/10"
+                          onView={() => selectTab("custom_agents")}
+                        />
+                        <SummaryMetricCard
+                          icon={<Terminal size={13} className="text-text-base" />}
+                          label="Commands"
+                          count={totalCommands}
+                          accentClass="bg-text-muted/10"
+                          onView={() => selectTab("commands")}
+                        />
+                      </div>
 
-                      {/* Recommendations banner */}
-                      {recsDisplayCount > 0 && (
-                        <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-warning/5 border border-warning/25">
-                          <Lightbulb size={14} className="text-warning shrink-0" />
-                          <p className="flex-1 text-[12px] text-text-muted leading-snug">
-                            <span className="font-semibold text-text-base">
-                              {recsDisplayCount === 1 ? "1 recommendation" : `${recsDisplayCount} recommendations`}
-                            </span>
-                            {" "}available for this project.
-                          </p>
-                          <button
-                            onClick={() => selectTab("recommendations")}
-                            className="shrink-0 flex items-center gap-1 text-[12px] font-medium text-warning hover:text-warning-hover transition-colors"
-                          >
-                            Review <ArrowRight size={11} />
-                          </button>
-                        </div>
-                      )}
+                      <div className="grid grid-cols-[minmax(0,1fr)_280px] gap-6 max-xl:grid-cols-1">
 
-                      {/* Getting Started callout (incomplete setup) */}
-                      {!isCreating && (!project.directory || project.agents.length === 0) && (
-                        <section className="bg-gradient-to-br from-brand/10 to-brand/5 border border-brand/20 rounded-lg p-5">
-                          <div className="flex items-start gap-3">
-                            <div className="p-2 bg-brand/20 rounded-lg flex-shrink-0">
-                              <Package size={18} className="text-brand" />
-                            </div>
-                            <div>
-                              <h3 className="text-[13px] font-semibold text-text-base mb-2">Complete Setup</h3>
-                              <p className="text-[12px] text-text-muted mb-3 leading-relaxed">To start using this project, complete these steps:</p>
-                              <ol className="space-y-2 text-[12px] text-text-base">
-                                {!project.directory && (
-                                  <li className="flex items-start gap-2">
-                                    <div className="w-5 h-5 rounded-full border border-brand flex items-center justify-center flex-shrink-0 mt-0.5">
-                                      <span className="text-[10px] text-brand">1</span>
-                                    </div>
-                                    <div>
-                                      <button
-                                        onClick={async () => {
-                                          const selected: string | null = await invoke("open_directory_dialog");
-                                          if (selected) updateField("directory", selected);
-                                        }}
-                                        className="text-brand hover:text-brand-hover transition-colors font-medium"
-                                      >
-                                        Set project directory
-                                      </button>
-                                      <div className="text-[11px] text-text-muted mt-0.5">Click the path below the project name, or click here</div>
-                                    </div>
-                                  </li>
-                                )}
-                                {project.agents.length === 0 && (
-                                  <li className="flex items-start gap-2">
-                                    <div className="w-5 h-5 rounded-full border border-brand flex items-center justify-center flex-shrink-0 mt-0.5">
-                                      <span className="text-[10px] text-brand">{!project.directory ? "2" : "1"}</span>
-                                    </div>
-                                    <div>
-                                      <button onClick={() => selectTab("agents")} className="text-brand hover:text-brand-hover transition-colors font-medium">Add agent tools</button>
-                                      <div className="text-[11px] text-text-muted mt-0.5">Select which agents will use this project</div>
-                                    </div>
-                                  </li>
-                                )}
-                                <li className="flex items-start gap-2">
-                                  <div className="w-5 h-5 rounded-full border border-text-muted/50 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                    <span className="text-[10px] text-text-muted">•</span>
-                                  </div>
-                                  <div>
-                                     <button onClick={() => selectTab("skills")} className="text-text-base hover:text-brand transition-colors">Add skills (optional)</button>
-                                    <div className="text-[11px] text-text-muted mt-0.5">Give agents specialized capabilities</div>
-                                  </div>
-                                </li>
-                              </ol>
-                            </div>
-                          </div>
-                        </section>
-                      )}
+                        {/* ── Column 1: Activity, recommendations, setup ──── */}
+                        <div className="space-y-6 min-w-0">
 
-                      {/* Activity */}
-                      <ActivityFeed entries={activityEntries} loading={loadingActivity} />
-                    </div>
-
-                    {/* ── Column 2: Skills, MCP Servers, Rules, Memory ── */}
-                    <div className="space-y-4">
-
-                      {/* Skills */}
-                      <section className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden flex flex-col">
-                        <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40">
-                          <div className="flex items-center gap-2">
-                            <div className="p-1 bg-icon-skill/10 rounded"><Code size={12} className="text-icon-skill" /></div>
-                            <span className="text-[13px] font-semibold text-text-base">Skills</span>
-                            <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-1.5 py-0.5 leading-none">
-                              {project.skills.length + project.local_skills.length}
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => selectTab("skills")}
-                            className="flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium"
-                          >
-                            <Plus size={11} /> Add
-                          </button>
-                        </div>
-                        {project.skills.length === 0 && project.local_skills.length === 0 ? (
-                          <div className="px-4 py-4 flex-1">
-                            <p className="text-[12px] text-text-muted italic">No skills attached</p>
-                          </div>
-                        ) : (
-                          <ul className="divide-y divide-border-strong/20 flex-1">
-                            {project.skills.map((s) => (
-                              <li key={s} className="flex items-center justify-between gap-2 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <Code size={11} className="text-icon-skill flex-shrink-0" />
-                                  <span className="text-[12px] text-text-base truncate">{s}</span>
-                                </div>
-                                <button
-                                  onClick={() => removeItem("skills", project.skills.indexOf(s))}
-                                  className="p-0.5 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all shrink-0"
-                                  title="Remove"
-                                >
-                                  <X size={11} />
-                                </button>
-                              </li>
-                            ))}
-                            {project.local_skills.map((s) => (
-                              <li key={s} className="flex items-center justify-between gap-2 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <Code size={11} className="text-icon-skill flex-shrink-0" />
-                                  <span className="text-[12px] text-text-base truncate">{s}</span>
-                                  <span className="text-[10px] text-text-muted bg-bg-sidebar rounded px-1.5 py-0.5 shrink-0 leading-none">local</span>
-                                </div>
-                                <button
-                                  onClick={() => updateField("local_skills", project.local_skills.filter((ls) => ls !== s))}
-                                  className="p-0.5 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all shrink-0"
-                                  title="Remove"
-                                >
-                                  <X size={11} />
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </section>
-
-                      {/* MCP Servers */}
-                      <section className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden flex flex-col">
-                        <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40">
-                          <div className="flex items-center gap-2">
-                            <div className="p-1 bg-icon-mcp/10 rounded"><Server size={12} className="text-icon-mcp" /></div>
-                            <span className="text-[13px] font-semibold text-text-base">MCP Servers</span>
-                            <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-1.5 py-0.5 leading-none">
-                              {project.mcp_servers.length}
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => selectTab("mcp_servers")}
-                            className="flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium"
-                          >
-                            <Plus size={11} /> Add
-                          </button>
-                        </div>
-                        {project.mcp_servers.length === 0 ? (
-                          <div className="px-4 py-4 flex-1">
-                            <p className="text-[12px] text-text-muted italic">No servers configured</p>
-                          </div>
-                        ) : (
-                          <ul className="divide-y divide-border-strong/20 flex-1">
-                            {project.mcp_servers.map((s) => (
-                              <li key={s} className="flex items-center justify-between gap-2 px-4 py-2.5 group hover:bg-surface-hover transition-colors">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <Server size={11} className="text-icon-mcp flex-shrink-0" />
-                                  <span className="text-[12px] text-text-base truncate">{s}</span>
-                                </div>
-                                <button
-                                  onClick={() => removeItem("mcp_servers", project.mcp_servers.indexOf(s))}
-                                  className="p-0.5 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all shrink-0"
-                                  title="Remove"
-                                >
-                                  <X size={11} />
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </section>
-
-                      {/* Rules */}
-                      {(() => {
-                        const projectRules = (project.file_rules || {})["_project"] || [];
-                        const customRules = project.custom_rules || [];
-                        const rulesCount = projectRules.length + customRules.length;
-                        return (
-                          <section className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden flex flex-col">
-                            <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40">
-                              <div className="flex items-center gap-2">
-                                <div className="p-1 bg-icon-rule/10 rounded"><ScrollText size={12} className="text-icon-rule" /></div>
-                                <span className="text-[13px] font-semibold text-text-base">Rules</span>
-                                <span className="text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded-full px-1.5 py-0.5 leading-none">
-                                  {rulesCount}
+                          {/* Recommendations banner */}
+                          {recsDisplayCount > 0 && (
+                            <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-warning/5 border border-warning/25">
+                              <Lightbulb size={14} className="text-warning shrink-0" />
+                              <p className="flex-1 text-[12px] text-text-muted leading-snug">
+                                <span className="font-semibold text-text-base">
+                                  {recsDisplayCount === 1 ? "1 recommendation" : `${recsDisplayCount} recommendations`}
                                 </span>
-                              </div>
+                                {" "}available for this project.
+                              </p>
                               <button
-                                onClick={() => selectTab("rules")}
-                                className="flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover transition-colors font-medium"
+                                onClick={() => selectTab("recommendations")}
+                                className="shrink-0 flex items-center gap-1 text-[12px] font-medium text-warning hover:text-warning-hover transition-colors"
                               >
-                                <Plus size={11} /> Add
+                                Review <ArrowRight size={11} />
                               </button>
                             </div>
-                            <div className="px-4 py-4 flex-1">
-                              <p className="text-[12px] text-text-muted italic">
-                                {rulesCount === 0
-                                  ? "No rules configured"
-                                  : `${projectRules.length} global, ${customRules.length} custom`}
-                              </p>
+                          )}
+
+                          {/* Getting Started callout (incomplete setup) */}
+                          {!isCreating && (!project.directory || project.agents.length === 0) && (
+                            <section className="bg-gradient-to-br from-brand/10 to-brand/5 border border-brand/20 rounded-lg p-5">
+                              <div className="flex items-start gap-3">
+                                <div className="p-2 bg-brand/20 rounded-lg flex-shrink-0">
+                                  <Package size={18} className="text-brand" />
+                                </div>
+                                <div>
+                                  <h3 className="text-[13px] font-semibold text-text-base mb-2">Complete Setup</h3>
+                                  <p className="text-[12px] text-text-muted mb-3 leading-relaxed">To start using this project, complete these steps:</p>
+                                  <ol className="space-y-2 text-[12px] text-text-base">
+                                    {!project.directory && (
+                                      <li className="flex items-start gap-2">
+                                        <div className="w-5 h-5 rounded-full border border-brand flex items-center justify-center flex-shrink-0 mt-0.5">
+                                          <span className="text-[10px] text-brand">1</span>
+                                        </div>
+                                        <div>
+                                          <button
+                                            onClick={async () => {
+                                              const selected: string | null = await invoke("open_directory_dialog");
+                                              if (selected) updateField("directory", selected);
+                                            }}
+                                            className="text-brand hover:text-brand-hover transition-colors font-medium"
+                                          >
+                                            Set project directory
+                                          </button>
+                                          <div className="text-[11px] text-text-muted mt-0.5">Click the path below the project name, or click here</div>
+                                        </div>
+                                      </li>
+                                    )}
+                                    {project.agents.length === 0 && (
+                                      <li className="flex items-start gap-2">
+                                        <div className="w-5 h-5 rounded-full border border-brand flex items-center justify-center flex-shrink-0 mt-0.5">
+                                          <span className="text-[10px] text-brand">{!project.directory ? "2" : "1"}</span>
+                                        </div>
+                                        <div>
+                                          <button onClick={() => selectTab("agents")} className="text-brand hover:text-brand-hover transition-colors font-medium">Add agent tools</button>
+                                          <div className="text-[11px] text-text-muted mt-0.5">Select which agents will use this project</div>
+                                        </div>
+                                      </li>
+                                    )}
+                                    <li className="flex items-start gap-2">
+                                      <div className="w-5 h-5 rounded-full border border-text-muted/50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                        <span className="text-[10px] text-text-muted">•</span>
+                                      </div>
+                                      <div>
+                                         <button onClick={() => selectTab("skills")} className="text-text-base hover:text-brand transition-colors">Add skills (optional)</button>
+                                        <div className="text-[11px] text-text-muted mt-0.5">Give agents specialized capabilities</div>
+                                      </div>
+                                    </li>
+                                  </ol>
+                                </div>
+                              </div>
+                            </section>
+                          )}
+
+                          {/* Activity */}
+                          <ActivityFeed entries={activityEntries} loading={loadingActivity} />
+                        </div>
+
+                        {/* ── Column 2: project sidebar ───────────────────── */}
+                        <div className="space-y-4">
+                          <SummarySidebarSection title="Instructions">
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="text-[12px] leading-relaxed text-text-muted">{instructionStatus}</p>
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${hasInstructionFiles ? "bg-success/10 text-success border border-success/20" : "bg-warning/10 text-warning border border-warning/20"}`}>
+                                {hasInstructionFiles ? "Set" : "Missing"}
+                              </span>
                             </div>
-                          </section>
-                        );
-                      })()}
+                            <button
+                              onClick={() => selectTab("project_file")}
+                              className="text-[11px] font-medium text-text-muted transition-colors hover:text-text-base"
+                            >
+                              View instructions
+                            </button>
+                          </SummarySidebarSection>
 
-                      {/* Memory */}
-                      <button
-                        onClick={() => selectTab("memory")}
-                        className="group w-full bg-bg-input border border-border-strong/40 hover:border-icon-rule/50 rounded-lg overflow-hidden flex flex-col text-left transition-all"
-                      >
-                        <div className="flex items-center justify-between px-4 py-3 border-b border-border-strong/40 flex-shrink-0">
-                          <div className="flex items-center gap-2">
-                            <div className="p-1 bg-icon-rule/10 rounded group-hover:bg-icon-rule/20 transition-colors"><Brain size={12} className="text-icon-rule" /></div>
-                            <span className="text-[13px] font-semibold text-text-base">Memory</span>
-                          </div>
-                          <ArrowRight size={13} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                          <SummarySidebarSection title="Groups">
+                            {loadingGroups ? (
+                              <p className="text-[12px] text-text-muted">Loading groups…</p>
+                            ) : projectGroupMemberships.length === 0 ? (
+                              <p className="text-[12px] text-text-muted">This project is not in any groups.</p>
+                            ) : (
+                              <div className="flex flex-wrap gap-2">
+                                {projectGroupMemberships.map((groupName) => (
+                                  <button
+                                    key={groupName}
+                                    onClick={() => selectTab("groups")}
+                                    className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2.5 py-1 text-[11px] text-text-base transition-colors hover:border-border-strong"
+                                  >
+                                    {groupName}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </SummarySidebarSection>
+
+                          <SummarySidebarSection title="Docs">
+                            {recentDocsLinks.length === 0 ? (
+                              <p className="text-[12px] text-text-muted">No docs links added yet.</p>
+                            ) : (
+                              <div className="space-y-2">
+                                {recentDocsLinks.map(([key, entry]) => (
+                                  <button
+                                    key={key}
+                                    onClick={() => handleExternalLinkClick(entry.path)}
+                                    className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-sidebar"
+                                  >
+                                    <ExternalLink size={11} className="mt-0.5 shrink-0 text-text-muted" />
+                                    <span className="min-w-0 text-[12px] text-text-base truncate">{entry.summary || key}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </SummarySidebarSection>
+
+                          <SummarySidebarSection title="Build">
+                            {loadingBuildItems ? (
+                              <p className="text-[12px] text-text-muted">Loading build items…</p>
+                            ) : buildItems.length === 0 ? (
+                              <p className="text-[12px] text-text-muted">No build items yet.</p>
+                            ) : (
+                              <div className="space-y-2">
+                                {buildItems.map((item) => (
+                                  <button
+                                    key={item.id}
+                                    onClick={() => selectTab("features")}
+                                    className="flex w-full items-start justify-between gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-sidebar"
+                                  >
+                                    <div className="min-w-0">
+                                      <div className="truncate text-[12px] font-medium text-text-base">{item.title}</div>
+                                      <div className="mt-0.5 text-[11px] text-text-muted">{relativeTime(item.updated_at)}</div>
+                                    </div>
+                                    <span className="shrink-0 rounded-full bg-bg-sidebar px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
+                                      {item.state.replace(/_/g, " ")}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </SummarySidebarSection>
+
+                          <SummarySidebarSection title="Memory">
+                            {loadingMemories ? (
+                              <p className="text-[12px] text-text-muted">Loading memory…</p>
+                            ) : (
+                              <>
+                                <div className="flex items-end gap-2">
+                                  <span className="text-[24px] font-semibold leading-none tabular-nums text-text-base">{memoryCount}</span>
+                                  <span className="pb-0.5 text-[12px] text-text-muted">{memoryCount === 1 ? "memory" : "memories"}</span>
+                                </div>
+                                <p className="text-[12px] text-text-muted">
+                                  {memoryCount === 0 ? "No stored memories for this project yet." : "Stored memories are available for connected agents."}
+                                </p>
+                                <button
+                                  onClick={() => selectTab("memory")}
+                                  className="text-[11px] font-medium text-text-muted transition-colors hover:text-text-base"
+                                >
+                                  View memory
+                                </button>
+                              </>
+                            )}
+                          </SummarySidebarSection>
                         </div>
-                        <div className="px-4 py-2.5 flex items-center gap-3">
-                          <span className="text-[28px] font-semibold text-text-base leading-none tabular-nums">{Object.keys(memories).length}</span>
-                          <span className="text-[12px] text-text-muted">
-                            {Object.keys(memories).length === 0 ? "No memories stored" : `entr${Object.keys(memories).length === 1 ? "y" : "ies"}`}
-                          </span>
-                        </div>
-                      </button>
+
+                      </div>
                     </div>
-
-                  </div>
-                )}
+                  );
+                })()}
 
 
 
