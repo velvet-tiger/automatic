@@ -1,6 +1,6 @@
 [package]
 name = "automatic"
-version = "0.13.0"
+version = "1.0.0-beta1"
 description = "Manage your AI dependencies"
 authors = ["you"]
 edition = "2021"
@@ -48,4 +48,3 @@ hex = "0.4"
 rusqlite = { version = "0.32", features = ["bundled"] }
 tiktoken-rs = "0.9"
 zip = "2"
-

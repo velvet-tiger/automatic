@@ -26,20 +26,33 @@ use aes_gcm::{
     Aes256Gcm, Key, Nonce,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+#[cfg(not(test))]
 use keyring::Entry;
 use serde_json::Value;
 
+#[cfg(not(test))]
 use crate::core::KEYCHAIN_SERVICE;
+#[cfg(not(test))]
 const KEYCHAIN_USER: &str = "env_encryption_key";
 const SENTINEL: &str = "enc:v1:";
+
+#[cfg(test)]
+static TEST_KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
 
 // ── Key management ────────────────────────────────────────────────────────────
 
 /// Retrieve the encryption key from the keychain, creating and storing a new
 /// random key if one does not yet exist.
 fn get_or_create_key() -> Result<[u8; 32], String> {
+    #[cfg(test)]
+    {
+        return Ok(*TEST_KEY.get_or_init(|| Aes256Gcm::generate_key(OsRng).into()));
+    }
+
+    #[cfg(not(test))]
     let entry = Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(|e| e.to_string())?;
 
+    #[cfg(not(test))]
     match entry.get_password() {
         Ok(hex) => {
             // Key already exists — decode it.
