@@ -27,7 +27,7 @@ jobs:
             args: --bundles appimage
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            args: --bundles msi
+            args: --bundles nsis
 
     steps:
       - uses: actions/checkout@v4
@@ -167,7 +167,7 @@ jobs:
       - name: List Windows bundle output (diagnostic)
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows-latest'
         shell: bash
-        run: ls -la src-tauri/target/release/bundle/msi/ || true
+        run: ls -la src-tauri/target/release/bundle/nsis/ || true
 
       - name: Upload Windows updater bundle and signature
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows-latest'
@@ -176,24 +176,24 @@ jobs:
           TAG: ${{ github.ref_name }}
         shell: bash
         run: |
-          BUNDLE_DIR=src-tauri/target/release/bundle/msi
-          MSI=$(ls "$BUNDLE_DIR"/*.msi 2>/dev/null | grep -v '\.sig' | head -1)
-          SIG_FILE="${MSI}.sig"
+          BUNDLE_DIR=src-tauri/target/release/bundle/nsis
+          EXE=$(ls "$BUNDLE_DIR"/*-setup.exe 2>/dev/null | grep -v '\.sig' | head -1)
+          SIG_FILE="${EXE}.sig"
 
-          if [ -z "$MSI" ] || [ ! -f "$SIG_FILE" ]; then
-            echo "ERROR: Could not find .msi or its .sig in $BUNDLE_DIR" >&2
+          if [ -z "$EXE" ] || [ ! -f "$SIG_FILE" ]; then
+            echo "ERROR: Could not find NSIS setup .exe or its .sig in $BUNDLE_DIR" >&2
             ls "$BUNDLE_DIR"/ || true
             exit 1
           fi
 
-          gh release upload "$TAG" "$MSI" "$SIG_FILE" --clobber
+          gh release upload "$TAG" "$EXE" "$SIG_FILE" --clobber
 
       - name: Stash Windows signature as workflow artifact
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: sig-windows
-          path: src-tauri/target/release/bundle/msi/*.msi.sig
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe.sig
           if-no-files-found: error
 
       - name: Build Tauri app (branch / dispatch)
@@ -267,10 +267,10 @@ jobs:
           # mismatches between the on-disk .sig filename and what tauri-action uploads.
           # macOS:   find the .app.tar.gz asset on the release (tauri-action may rename it)
           # Linux:   find the .AppImage asset on the release
-          # Windows: find the .msi asset on the release
+          # Windows: find the NSIS setup .exe asset on the release
           DARWIN_FILE=$(gh release view "$TAG" --json assets -q '.assets[].name' | grep '\.app\.tar\.gz$' | grep -v '\.sig' | head -1)
           LINUX_FILE=$(gh release view "$TAG" --json assets -q '.assets[].name' | grep '\.AppImage$' | grep -v '\.sig' | head -1)
-          WINDOWS_FILE=$(gh release view "$TAG" --json assets -q '.assets[].name' | grep '\.msi$' | grep -v '\.sig' | head -1)
+          WINDOWS_FILE=$(gh release view "$TAG" --json assets -q '.assets[].name' | grep '\-setup\.exe$' | grep -v '\.sig' | head -1)
 
           if [ -z "$DARWIN_FILE" ] || [ -z "$LINUX_FILE" ] || [ -z "$WINDOWS_FILE" ]; then
             echo "ERROR: Could not find all platform artifacts on the release."
@@ -302,7 +302,7 @@ jobs:
           darwin_sig  = open(darwin_sig_f).read().strip()
           linux_sig_f = glob.glob('sigs/linux/*.AppImage.sig')[0]
           linux_sig   = open(linux_sig_f).read().strip()
-          win_sig_f   = glob.glob('sigs/windows/*.msi.sig')[0]
+          win_sig_f   = glob.glob('sigs/windows/*-setup.exe.sig')[0]
           win_sig     = open(win_sig_f).read().strip()
 
           payload = {
