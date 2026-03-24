@@ -2,6 +2,7 @@ use crate::activity::{self, ActivityEvent};
 use crate::context;
 use crate::core;
 use crate::sync;
+use serde::Serialize;
 use std::collections::HashMap;
 
 // ── Projects ─────────────────────────────────────────────────────────────────
@@ -14,6 +15,55 @@ pub fn get_projects() -> Result<Vec<String>, String> {
 #[tauri::command]
 pub fn read_project(name: &str) -> Result<String, String> {
     core::read_project(name)
+}
+
+#[derive(Serialize)]
+struct RebuildPreviewCategory {
+    key: &'static str,
+    label: &'static str,
+    automatic: Vec<String>,
+    disk: Vec<String>,
+    added: Vec<String>,
+    removed: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct RebuildPreview {
+    project_name: String,
+    categories: Vec<RebuildPreviewCategory>,
+    changed: bool,
+}
+
+#[tauri::command]
+pub fn preview_rebuild_project(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let rebuilt = sync::rebuild_project_state(&project)?;
+
+    let categories = vec![
+        diff_category("agents", "Agent Tools", &project.agents, &rebuilt.agents),
+        diff_category("instruction_files", "Instruction Files", &instruction_files_for(&project), &instruction_files_for(&rebuilt)),
+        diff_category("skills", "Skills", &project.skills, &rebuilt.skills),
+        diff_category("local_skills", "Local Skills", &project.local_skills, &rebuilt.local_skills),
+        diff_category("mcp_servers", "MCP Servers", &project.mcp_servers, &rebuilt.mcp_servers),
+        diff_category("tools", "Tools", &project.tools, &rebuilt.tools),
+        diff_category("user_agents", "Workspace Sub-Agents", &project.user_agents, &rebuilt.user_agents),
+        diff_category(
+            "custom_agents",
+            "Project Sub-Agents",
+            &custom_agent_names(&project),
+            &custom_agent_names(&rebuilt),
+        ),
+    ];
+
+    let preview = RebuildPreview {
+        project_name: project.name.clone(),
+        changed: categories.iter().any(|category| !category.added.is_empty() || !category.removed.is_empty()),
+        categories,
+    };
+
+    serde_json::to_string_pretty(&preview).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -654,6 +704,86 @@ pub fn sync_project(name: &str) -> Result<String, String> {
         );
     }
     serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rebuild_project(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    let mut rebuilt = sync::rebuild_project_state(&project)?;
+    let rebuilt_json = serde_json::to_string_pretty(&rebuilt).map_err(|e| e.to_string())?;
+    core::save_project(name, &rebuilt_json)?;
+
+    sync::rebuild_instruction_snapshots(&rebuilt);
+    core::record_instruction_hashes(name, &mut rebuilt);
+
+    activity::log(
+        name,
+        ActivityEvent::ProjectUpdated,
+        "Rebuilt project state",
+        "Reloaded Automatic state from the current project files",
+    );
+
+    serde_json::to_string_pretty(&rebuilt).map_err(|e| e.to_string())
+}
+
+fn diff_category(
+    key: &'static str,
+    label: &'static str,
+    automatic: &[String],
+    disk: &[String],
+) -> RebuildPreviewCategory {
+    let automatic = sorted_unique(automatic);
+    let disk = sorted_unique(disk);
+    let added = disk
+        .iter()
+        .filter(|item| !automatic.contains(*item))
+        .cloned()
+        .collect();
+    let removed = automatic
+        .iter()
+        .filter(|item| !disk.contains(*item))
+        .cloned()
+        .collect();
+
+    RebuildPreviewCategory {
+        key,
+        label,
+        automatic,
+        disk,
+        added,
+        removed,
+    }
+}
+
+fn sorted_unique(items: &[String]) -> Vec<String> {
+    let mut values = items.to_vec();
+    values.sort();
+    values.dedup();
+    values
+}
+
+fn instruction_files_for(project: &core::Project) -> Vec<String> {
+    let mut files = Vec::new();
+    for agent_id in &project.agents {
+        if let Some(agent) = crate::agent::from_id(agent_id) {
+            let filename = agent.project_file_name().to_string();
+            if !files.contains(&filename) {
+                files.push(filename);
+            }
+        }
+    }
+    files
+}
+
+fn custom_agent_names(project: &core::Project) -> Vec<String> {
+    project
+        .custom_agents
+        .as_ref()
+        .map(|agents| agents.iter().map(|agent| agent.name.clone()).collect())
+        .unwrap_or_default()
 }
 
 /// Return the list of file/directory paths that would be removed if the given
