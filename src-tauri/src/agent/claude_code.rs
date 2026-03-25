@@ -136,26 +136,33 @@ impl Agent for ClaudeCode {
         let Some(home) = super::home_dir() else {
             return Map::new();
         };
-        let mut result = Map::new();
 
-        // ~/.claude/settings.json  — user-level Claude Code settings
-        let settings_path = home.join(".claude").join("settings.json");
-        result.extend(discover_mcp_servers_from_json(
-            &settings_path,
-            "mcpServers",
-            identity,
-        ));
-
-        // ~/.mcp.json  — user-level MCP config (also read by Claude Code)
-        let user_mcp_path = home.join(".mcp.json");
-        result.extend(discover_mcp_servers_from_json(
-            &user_mcp_path,
-            "mcpServers",
-            identity,
-        ));
-
-        result
+        // ~/.claude.json is the single source of truth for user-scoped MCP
+        // servers in Claude Code.  The top-level `mcpServers` object holds
+        // servers added with `claude mcp add --scope user`.
+        //
+        // Note: local-scoped servers (default scope / `--scope local`) live
+        // under `projects["<abs-path>"]["mcpServers"]` in the same file,
+        // keyed by absolute project path.  We don't read those here because
+        // this method has no project-path context — they are project-specific
+        // and would pollute every other project's import list if surfaced
+        // globally.
+        discover_claude_global_config(&home.join(".claude.json"))
     }
+}
+
+/// Read user-scoped MCP servers from Claude Code's `~/.claude.json`.
+///
+/// Claude Code stores MCP server configs at three scopes inside this file:
+/// - User scope (`--scope user`): top-level `mcpServers` object
+/// - Local scope (default / `--scope local`): `projects["<abs-path>"]["mcpServers"]`
+///
+/// This function reads only the top-level `mcpServers` — the user-scoped
+/// entries that apply across all projects.  Per-project local-scope entries
+/// are intentionally excluded because they are project-specific and we have
+/// no project path context here.
+fn discover_claude_global_config(path: &Path) -> Map<String, Value> {
+    discover_mcp_servers_from_json(path, "mcpServers", identity)
 }
 
 /// Pass-through normaliser: Claude's format is already canonical.
@@ -252,6 +259,153 @@ mod tests {
                 .as_str()
                 .unwrap(),
             "client_123"
+        );
+    }
+
+    // ── discover_claude_global_config tests ─────────────────────────────────
+
+    #[test]
+    fn test_discover_global_missing_file() {
+        let dir = tempdir().unwrap();
+        // No ~/.claude.json — should return empty map, not panic.
+        let result = discover_claude_global_config(&dir.path().join(".claude.json"));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_discover_global_user_scoped_stdio() {
+        // Simulates `claude mcp add --scope user my-server -- npx -y @foo/bar`
+        let dir = tempdir().unwrap();
+        let claude_json = json!({
+            "numStartups": 5,
+            "mcpServers": {
+                "github": {
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-github"],
+                    "env": { "GITHUB_TOKEN": "ghp_test" }
+                }
+            },
+            "projects": {}
+        });
+        fs::write(
+            dir.path().join(".claude.json"),
+            serde_json::to_string(&claude_json).unwrap(),
+        )
+        .unwrap();
+
+        let result = discover_claude_global_config(&dir.path().join(".claude.json"));
+
+        assert!(
+            result.contains_key("github"),
+            "should find user-scoped server"
+        );
+        assert_eq!(result["github"]["command"].as_str().unwrap(), "npx");
+        assert_eq!(result["github"]["args"][0].as_str().unwrap(), "-y");
+        assert_eq!(
+            result["github"]["env"]["GITHUB_TOKEN"].as_str().unwrap(),
+            "ghp_test"
+        );
+    }
+
+    #[test]
+    fn test_discover_global_user_scoped_http() {
+        // Simulates `claude mcp add --scope user --transport http sentry https://mcp.sentry.dev/mcp`
+        let dir = tempdir().unwrap();
+        let claude_json = json!({
+            "mcpServers": {
+                "sentry": {
+                    "type": "http",
+                    "url": "https://mcp.sentry.dev/mcp"
+                }
+            }
+        });
+        fs::write(
+            dir.path().join(".claude.json"),
+            serde_json::to_string(&claude_json).unwrap(),
+        )
+        .unwrap();
+
+        let result = discover_claude_global_config(&dir.path().join(".claude.json"));
+
+        assert!(result.contains_key("sentry"));
+        assert_eq!(result["sentry"]["type"].as_str().unwrap(), "http");
+        assert_eq!(
+            result["sentry"]["url"].as_str().unwrap(),
+            "https://mcp.sentry.dev/mcp"
+        );
+    }
+
+    #[test]
+    fn test_discover_global_automatic_server_skipped() {
+        // The "automatic" entry must always be injected fresh at sync time —
+        // it must never be imported from an existing config.
+        let dir = tempdir().unwrap();
+        let claude_json = json!({
+            "mcpServers": {
+                "automatic": {
+                    "command": "/old/path/to/nexus",
+                    "args": ["mcp-serve"]
+                },
+                "github": {
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-github"]
+                }
+            }
+        });
+        fs::write(
+            dir.path().join(".claude.json"),
+            serde_json::to_string(&claude_json).unwrap(),
+        )
+        .unwrap();
+
+        let result = discover_claude_global_config(&dir.path().join(".claude.json"));
+
+        assert!(
+            !result.contains_key("automatic"),
+            "automatic server must be filtered out"
+        );
+        assert!(
+            result.contains_key("github"),
+            "other servers should be kept"
+        );
+    }
+
+    #[test]
+    fn test_discover_global_local_scoped_not_imported() {
+        // Local-scoped servers live under projects["<path>"]["mcpServers"].
+        // They must NOT be surfaced by discover_global — they are
+        // project-specific and have no meaning outside that project.
+        let dir = tempdir().unwrap();
+        let claude_json = json!({
+            "mcpServers": {
+                "user-tool": { "command": "npx", "args": ["-y", "user-tool"] }
+            },
+            "projects": {
+                "/Users/someone/my-project": {
+                    "mcpServers": {
+                        "local-only-tool": {
+                            "command": "npx",
+                            "args": ["-y", "local-tool"]
+                        }
+                    }
+                }
+            }
+        });
+        fs::write(
+            dir.path().join(".claude.json"),
+            serde_json::to_string(&claude_json).unwrap(),
+        )
+        .unwrap();
+
+        let result = discover_claude_global_config(&dir.path().join(".claude.json"));
+
+        assert!(
+            result.contains_key("user-tool"),
+            "user-scoped server should be present"
+        );
+        assert!(
+            !result.contains_key("local-only-tool"),
+            "local-scoped server must not be imported globally"
         );
     }
 }
