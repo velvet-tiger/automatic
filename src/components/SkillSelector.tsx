@@ -57,7 +57,14 @@ export function SkillSelector({
   const [forkingSkill, setForkingSkill] = useState<string | null>(null);
   const [skillContentCache, setSkillContentCache] = useState<Record<string, string>>({});
 
-  const unaddedSkills = availableSkills.filter((s) => !skills.includes(s) && s !== "automatic");
+  // Sort current skills alphabetically for display, keeping original indices for onRemove.
+  const sortedSkills = skills
+    .map((skill, idx) => ({ skill, idx }))
+    .sort((a, b) => a.skill.localeCompare(b.skill, undefined, { sensitivity: "base" }));
+
+  const unaddedSkills = availableSkills
+    .filter((s) => !skills.includes(s) && s !== "automatic")
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   const filteredSkills = search.trim()
     ? unaddedSkills.filter((s) => s.toLowerCase().includes(search.toLowerCase()))
     : unaddedSkills;
@@ -175,7 +182,7 @@ export function SkillSelector({
 
       {/* Current skills list */}
       <div className="space-y-2">
-        {skills.map((skill, idx) => {
+        {sortedSkills.map(({ skill, idx }) => {
           const isExpanded = expandedSkill === skill;
           const isClickable = !!onReadSkill;
 
