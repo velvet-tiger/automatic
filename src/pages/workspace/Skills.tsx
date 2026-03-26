@@ -726,8 +726,8 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                                   }
                                 }}
                                 className="px-1 py-0.5 rounded bg-bg-base/50 text-[9px] hover:bg-brand/20 hover:text-brand cursor-pointer transition-colors"
-                                title={`Open ${src === "agents" ? "agentskills.io" : src} skill folder`}
-                              >{src === "agents" ? "agentskills.io" : src}
+                                title={`Open ${src === "agents" ? "local" : src} skill folder`}
+                              >{src === "agents" ? "local" : src}
                               </button>
                             ))}
                           </span>
