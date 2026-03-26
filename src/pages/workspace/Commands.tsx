@@ -9,12 +9,36 @@ interface UserCommandEntry {
   description: string;
 }
 
-const DEFAULT_COMMAND_CONTENT = `---
-description: Describe what this command does.
----
+/** Parse command markdown into frontmatter description + body. */
+function parseCommandContent(raw: string): { description: string; body: string } {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return { description: "", body: raw };
 
-Write the reusable prompt here.
-`;
+  let description = "";
+  for (const line of match[1]!.split("\n")) {
+    const trimmed = line.trim();
+    const value = trimmed.match(/^description:\s*(.*)$/)?.[1];
+    if (value !== undefined) {
+      description = value.replace(/^["']|["']$/g, "");
+    }
+  }
+
+  return { description, body: match[2]!.trimStart() };
+}
+
+/** Rebuild full markdown from description + body. */
+function buildCommandContent(description: string, body: string): string {
+  const safeDesc = description.includes(":") ? `"${description.replace(/"/g, '\\"')}"` : description;
+  return `---\ndescription: ${safeDesc}\n---\n\n${body}`;
+}
+
+function validateCommandDescription(value: string): string | null {
+  if (!value.trim()) return "Description is required.";
+  if (value.length > 256) return "Description must be 256 characters or fewer.";
+  return null;
+}
+
+const DEFAULT_COMMAND_BODY = `Write the reusable prompt here.`;
 
 /** Coerce raw input into a valid command name: lowercase, digits, hyphens. */
 function toCommandName(raw: string): string {
@@ -34,7 +58,9 @@ interface CommandsProps {
 export default function Commands({ initialCommand = null, onInitialCommandConsumed }: CommandsProps = {}) {
   const [commands, setCommands] = useState<UserCommandEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [commandContent, setCommandContent] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editBody, setEditBody] = useState("");
+  const [descriptionError, setDescriptionError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newMachineName, setNewMachineName] = useState("");
@@ -70,8 +96,11 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
   const loadCommand = async (id: string) => {
     try {
       const raw: string = await invoke("read_user_command", { machineName: id });
+      const { description, body } = parseCommandContent(raw);
       setSelectedId(id);
-      setCommandContent(raw);
+      setEditDescription(description);
+      setEditBody(body);
+      setDescriptionError(null);
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
@@ -84,12 +113,20 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
     const id = isCreating ? newMachineName.trim() : selectedId;
     if (!id) return;
 
+    const descErr = validateCommandDescription(editDescription);
+    if (descErr) {
+      setDescriptionError(descErr);
+      return;
+    }
+
     try {
-      await invoke("save_user_command", { machineName: id, content: commandContent });
+      const content = buildCommandContent(editDescription.trim(), editBody);
+      await invoke("save_user_command", { machineName: id, content });
       await loadCommands();
       setSelectedId(id);
       setIsCreating(false);
       setIsEditing(false);
+      setDescriptionError(null);
       setError(null);
     } catch (err: any) {
       setError(`Failed to save command: ${err}`);
@@ -105,7 +142,8 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
       await invoke("delete_user_command", { machineName: id });
       if (selectedId === id) {
         setSelectedId(null);
-        setCommandContent("");
+        setEditDescription("");
+        setEditBody("");
         setIsEditing(false);
       }
       await loadCommands();
@@ -117,7 +155,9 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
 
   const startCreateNew = () => {
     setSelectedId(null);
-    setCommandContent(DEFAULT_COMMAND_CONTENT);
+    setEditDescription("");
+    setEditBody(DEFAULT_COMMAND_BODY);
+    setDescriptionError(null);
     setIsCreating(true);
     setIsEditing(true);
     setNewMachineName("");
@@ -266,10 +306,12 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
                     <button
                       onClick={() => {
                         setIsEditing(false);
+                        setDescriptionError(null);
                         if (selectedId) void loadCommand(selectedId);
                         if (isCreating) {
                           setIsCreating(false);
-                          setCommandContent("");
+                          setEditDescription("");
+                          setEditBody("");
                         }
                       }}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border-strong/50 text-[12px] text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors"
@@ -287,18 +329,81 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-4">
-              <div className="flex items-center gap-3 text-[12px] text-text-muted">
-                <TokenPill text={commandContent} />
-                <span>Stored as Markdown and synced into provider-specific command formats.</span>
-              </div>
-              <textarea
-                value={commandContent}
-                onChange={(e) => setCommandContent(e.target.value)}
-                disabled={!isEditing}
-                rows={24}
-                className="w-full bg-bg-input border border-border-strong/40 focus:border-brand rounded-lg px-4 py-3 text-[12px] font-mono text-text-base outline-none resize-y leading-relaxed disabled:opacity-80"
-              />
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+              {isEditing ? (
+                <>
+                  {/* Frontmatter fields */}
+                  <div className="px-6 pt-5 pb-4 border-b border-border-strong/40 shrink-0 space-y-4">
+                    {/* description */}
+                    <div>
+                      <div className="flex items-baseline justify-between mb-1.5">
+                        <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
+                          Description <span className="text-red-400 ml-0.5">*</span>
+                        </label>
+                        <span className={`text-[11px] tabular-nums ${editDescription.length > 220 ? (editDescription.length > 256 ? "text-red-400" : "text-warning") : "text-text-muted"}`}>
+                          {editDescription.length}/256
+                        </span>
+                      </div>
+                      <textarea
+                        placeholder="A concise description of what this command does."
+                        value={editDescription}
+                        onChange={(e) => {
+                          setEditDescription(e.target.value);
+                          setDescriptionError(validateCommandDescription(e.target.value));
+                        }}
+                        rows={2}
+                        maxLength={256}
+                        className={`w-full px-3 py-2 rounded-md bg-bg-sidebar border outline-none text-[13px] text-text-base placeholder-text-muted/40 resize-none transition-colors leading-relaxed ${
+                          descriptionError ? "border-red-500/60 focus:border-red-500" : "border-border-strong/40 hover:border-border-strong focus:border-brand"
+                        }`}
+                        spellCheck={false}
+                      />
+                      {descriptionError && (
+                        <p className="mt-1 text-[11px] text-red-400">{descriptionError}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Body textarea */}
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    <div className="px-6 pt-3 pb-2 shrink-0 flex items-center justify-between">
+                      <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
+                        Prompt
+                      </label>
+                      <TokenPill text={buildCommandContent(editDescription, editBody)} />
+                    </div>
+                    <textarea
+                      value={editBody}
+                      onChange={(e) => setEditBody(e.target.value)}
+                      className="flex-1 px-6 pb-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar"
+                      spellCheck={false}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-4">
+                  <div className="flex items-center gap-3 text-[12px] text-text-muted">
+                    <TokenPill text={buildCommandContent(editDescription, editBody)} />
+                    <span>Stored as Markdown and synced into provider-specific command formats.</span>
+                  </div>
+
+                  {/* Read-only description */}
+                  <div className="bg-bg-input border border-border-strong/40 rounded-lg px-4 py-3">
+                    <div className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-1.5">Description</div>
+                    <div className="text-[13px] text-text-base leading-relaxed">
+                      {editDescription || <span className="text-text-muted italic">No description</span>}
+                    </div>
+                  </div>
+
+                  {/* Read-only body */}
+                  <div className="bg-bg-input border border-border-strong/40 rounded-lg px-4 py-3">
+                    <div className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-1.5">Prompt</div>
+                    <pre className="text-[12px] font-mono text-text-base leading-relaxed whitespace-pre-wrap">
+                      {editBody || <span className="text-text-muted italic">No content</span>}
+                    </pre>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         ) : (
