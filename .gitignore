@@ -47,3 +47,4 @@ Thumbs.db
 
 # OpenCode local config
 /opencode.json
+/.opencode
