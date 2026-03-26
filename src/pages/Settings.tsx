@@ -74,6 +74,9 @@ export default function Settings() {
   const [reinstallStatus, setReinstallStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [reinstallError, setReinstallError] = useState("");
   const [analyticsConfigured, setAnalyticsConfigured] = useState<boolean | null>(null);
+  const [newsletterEmail, setNewsletterEmail] = useState("");
+  const [unsubscribeStatus, setUnsubscribeStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [unsubscribeError, setUnsubscribeError] = useState("");
 
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
     let saved = localStorage.getItem("automatic.theme") as string;
@@ -118,7 +121,8 @@ export default function Settings() {
           default_agents: raw.default_agents ?? [],
         });
         setAvailableAgents(agents);
-        
+        setNewsletterEmail(raw.onboarding?.email ?? "");
+
         // Check if analytics API key was compiled into this build
         try {
           const configured = await invoke<boolean>("is_analytics_configured");
@@ -235,6 +239,26 @@ export default function Settings() {
       update(entryId, "Defaults reinstalled — Rules, Templates, Skills, bundled agents, marketplace catalogues, and MCP server restored.", "success");
     } catch (e) {
       update(entryId, `Failed to reinstall defaults: ${e}`, "error");
+    }
+  }
+
+  async function handleUnsubscribe() {
+    if (!newsletterEmail) return;
+    setUnsubscribeStatus("running");
+    setUnsubscribeError("");
+    try {
+      await invoke("unsubscribe_newsletter", { email: newsletterEmail });
+      // Clear the stored email in settings
+      const raw: Record<string, unknown> = await invoke("read_settings");
+      const onboarding = (raw.onboarding ?? {}) as Record<string, unknown>;
+      onboarding.email = "";
+      raw.onboarding = onboarding;
+      await invoke("write_settings", { settings: raw });
+      setNewsletterEmail("");
+      setUnsubscribeStatus("done");
+    } catch (e) {
+      setUnsubscribeError(String(e));
+      setUnsubscribeStatus("error");
     }
   }
 
@@ -464,6 +488,42 @@ export default function Settings() {
                     Analytics is enabled but no API key was compiled into this build.
                     Events will not be sent. This is expected in local development.
                   </div>
+                )}
+              </div>
+
+              {/* Newsletter subscription management */}
+              <div className="mb-8">
+                <h3 className="text-sm font-medium mb-2 text-text-base">Newsletter</h3>
+                {newsletterEmail ? (
+                  <div className="p-4 rounded-lg border border-border-strong/40 bg-bg-input-dark">
+                    <p className="text-[13px] text-text-muted mb-3">
+                      You are subscribed to the Automatic newsletter
+                      as <span className="text-text-base font-medium">{newsletterEmail}</span>.
+                    </p>
+                    {unsubscribeStatus === "done" && (
+                      <div className="mb-3 p-3 rounded-lg border border-success bg-success/10 text-[13px] text-success">
+                        Successfully unsubscribed.
+                      </div>
+                    )}
+                    {unsubscribeStatus === "error" && unsubscribeError && (
+                      <div className="mb-3 p-3 rounded-lg border border-danger bg-danger/10 text-[13px] text-danger">
+                        {unsubscribeError}
+                      </div>
+                    )}
+                    <button
+                      onClick={handleUnsubscribe}
+                      disabled={unsubscribeStatus === "running"}
+                      className="px-4 py-2 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] text-text-base hover:border-danger hover:bg-danger/10 hover:text-danger transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {unsubscribeStatus === "running" ? "Unsubscribing..." : "Unsubscribe"}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-[13px] text-text-muted">
+                    {unsubscribeStatus === "done"
+                      ? "You have been unsubscribed from the Automatic newsletter."
+                      : "You are not subscribed to the Automatic newsletter."}
+                  </p>
                 )}
               </div>
 

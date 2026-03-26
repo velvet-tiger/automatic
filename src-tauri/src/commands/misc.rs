@@ -22,6 +22,11 @@ pub async fn subscribe_newsletter(email: String) -> Result<(), String> {
     core::subscribe_newsletter(&email).await
 }
 
+#[tauri::command]
+pub async fn unsubscribe_newsletter(email: String) -> Result<(), String> {
+    core::unsubscribe_newsletter(&email).await
+}
+
 // ── Editor Detection & Open ───────────────────────────────────────────────────
 
 #[tauri::command]

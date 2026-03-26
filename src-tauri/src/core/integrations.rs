@@ -87,6 +87,128 @@ pub async fn subscribe_newsletter(email: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Unsubscribe an email address from the Automatic newsletter via Attio.
+///
+/// Flow:
+///   1. Look up the Person record by email.
+///   2. Query the "automatic-users" list for an entry belonging to that person.
+///   3. Delete the list entry if found.
+///
+/// Returns `Ok(())` on success (including if the email was never subscribed).
+pub async fn unsubscribe_newsletter(email: &str) -> Result<(), String> {
+    let api_key = option_env!("ATTIO_API_KEY")
+        .ok_or("Newsletter subscription is not configured in this build")?;
+
+    let client = reqwest::Client::new();
+    let auth = format!("Bearer {}", api_key);
+
+    // ── Step 1: look up person by email ─────────────────────────────────────
+    let person_body = serde_json::json!({
+        "data": {
+            "values": {
+                "email_addresses": [{ "email_address": email }]
+            }
+        }
+    });
+
+    let person_resp = client
+        .put("https://api.attio.com/v2/objects/people/records")
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .query(&[("matching_attribute", "email_addresses")])
+        .json(&person_body)
+        .send()
+        .await
+        .map_err(|e| format!("Attio request failed: {e}"))?;
+
+    let person_status = person_resp.status();
+    if !person_status.is_success() {
+        let body = person_resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "Attio person lookup failed ({person_status}): {body}"
+        ));
+    }
+
+    let person_json: serde_json::Value = person_resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Attio person response: {e}"))?;
+
+    let record_id = person_json
+        .pointer("/data/id/record_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Attio response missing record_id")?
+        .to_string();
+
+    // ── Step 2: query list entries for this person ──────────────────────────
+    let query_body = serde_json::json!({
+        "filter": {
+            "parent_record_id": record_id,
+            "parent_object": "people"
+        }
+    });
+
+    let list_id = "0c68f5fc-f912-4b2b-bf69-792920c020d4";
+
+    let query_resp = client
+        .post(format!(
+            "https://api.attio.com/v2/lists/{list_id}/entries/query"
+        ))
+        .header("Authorization", &auth)
+        .header("Content-Type", "application/json")
+        .json(&query_body)
+        .send()
+        .await
+        .map_err(|e| format!("Attio list query failed: {e}"))?;
+
+    let query_status = query_resp.status();
+    if !query_status.is_success() {
+        let body = query_resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "Attio list query failed ({query_status}): {body}"
+        ));
+    }
+
+    let query_json: serde_json::Value = query_resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Attio list query response: {e}"))?;
+
+    let entries = query_json
+        .pointer("/data")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&Vec::new())
+        .clone();
+
+    // ── Step 3: delete each matching entry ──────────────────────────────────
+    for entry in &entries {
+        let entry_id = entry
+            .pointer("/id/entry_id")
+            .and_then(|v| v.as_str());
+
+        if let Some(eid) = entry_id {
+            let del_resp = client
+                .delete(format!(
+                    "https://api.attio.com/v2/lists/{list_id}/entries/{eid}"
+                ))
+                .header("Authorization", &auth)
+                .send()
+                .await
+                .map_err(|e| format!("Attio entry delete failed: {e}"))?;
+
+            let del_status = del_resp.status();
+            if !del_status.is_success() {
+                let body = del_resp.text().await.unwrap_or_default();
+                return Err(format!(
+                    "Attio entry delete failed ({del_status}): {body}"
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // ── Analytics (Amplitude HTTP API v2) ────────────────────────────────────────
 //
 // Events are sent directly from Rust via reqwest so that:
