@@ -606,6 +606,7 @@ function App() {
                 onInitialSlugConsumed={() => setPendingMcpSlug(null)}
                 initialQuery={pendingMcpQuery}
                 onInitialQueryConsumed={() => setPendingMcpQuery(null)}
+                onNavigateToMcpServer={navigateToMcpServer}
               />
             </div>
           )}
