@@ -53,6 +53,12 @@ pub struct ProjectTemplate {
     /// (e.g. `.claude/agents/`) during sync.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub user_agents: Vec<String>,
+    /// Workspace command names (from `~/.automatic/commands/`) to include when
+    /// this template is applied to a project.  These map to the project's
+    /// `user_commands` field and are written to each agent's command directory
+    /// during sync.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_commands: Vec<String>,
     /// Author/provider metadata.  Mirrors the `_author` convention used by
     /// MCP server configs.  Stored as a raw JSON value so it round-trips
     /// without a dedicated struct — shape: `{ type, name?, url?, repo?, ... }`.
@@ -192,6 +198,9 @@ pub struct BundledProjectTemplate {
     pub unified_instruction: String,
     #[serde(default)]
     pub unified_rules: Vec<String>,
+    /// Workspace command names to include when this template is imported.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_commands: Vec<String>,
     /// Optional icon filename (png or svg) relative to the template-icons asset
     /// directory, e.g. "nextjs.svg". Served at /template-icons/<icon> in the
     /// frontend. When absent the UI falls back to the first letter of the name.
@@ -331,6 +340,7 @@ pub async fn import_bundled_project_template(name: &str) -> Result<(), String> {
         unified_instruction: bundled.unified_instruction,
         unified_rules: bundled.unified_rules,
         user_agents: Vec::new(),
+        user_commands: bundled.user_commands,
         _author: bundled._author,
     };
 
