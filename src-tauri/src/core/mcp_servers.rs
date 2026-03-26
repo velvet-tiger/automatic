@@ -104,10 +104,19 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Read raw Claude Desktop config (kept for backward compatibility).
+/// Read raw Claude Desktop config.
+///
+/// Uses [`dirs::config_dir`] to resolve the platform-specific configuration
+/// directory so the import works on macOS, Linux **and** Windows:
+///
+/// | Platform | Path                                                                |
+/// |----------|---------------------------------------------------------------------|
+/// | macOS    | `~/Library/Application Support/Claude/claude_desktop_config.json`   |
+/// | Linux    | `~/.config/Claude/claude_desktop_config.json`                       |
+/// | Windows  | `%APPDATA%\Claude\claude_desktop_config.json`                       |
 pub fn list_mcp_servers() -> Result<String, String> {
-    let home = dirs::home_dir().ok_or("Could not find home directory")?;
-    let config_path = home.join("Library/Application Support/Claude/claude_desktop_config.json");
+    let config_dir = dirs::config_dir().ok_or("Could not determine config directory")?;
+    let config_path = config_dir.join("Claude/claude_desktop_config.json");
 
     if config_path.exists() {
         fs::read_to_string(config_path).map_err(|e| e.to_string())
