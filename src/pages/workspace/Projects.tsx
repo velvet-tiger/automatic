@@ -1758,9 +1758,13 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject }: Project
 
 function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, folders, onSelect, onCreate, onSyncAll, syncAllStatus, selectedFolder, onClearFolder }: ProjectsOverviewProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortOrder, setSortOrder] = useState<"alphabetical" | "created" | "updated" | "last_activity">("updated");
+  const [sortOrder, setSortOrder] = useState<"sidebar" | "alphabetical" | "created" | "updated" | "last_activity">("sidebar");
   // Track which folder groups are collapsed in the overview (independent of sidebar state)
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+
+  const sidebarOrder = useMemo(() => {
+    return new Map(projects.map((name, index) => [name, index] as const));
+  }, [projects]);
 
   const getSortTimestamp = (project: Project | undefined, key: "created" | "updated" | "last_activity"): number => {
     if (!project) return 0;
@@ -1771,6 +1775,9 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
 
   const sortNames = (names: string[]) =>
     [...names].sort((a, b) => {
+      if (sortOrder === "sidebar") {
+        return (sidebarOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (sidebarOrder.get(b) ?? Number.MAX_SAFE_INTEGER);
+      }
       if (sortOrder === "alphabetical") return a.localeCompare(b);
       const aTime = getSortTimestamp(projectDetails.get(a), sortOrder);
       const bTime = getSortTimestamp(projectDetails.get(b), sortOrder);
@@ -1880,10 +1887,11 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
           <div className="relative">
             <select
               value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value as "alphabetical" | "created" | "updated" | "last_activity")}
+              onChange={(e) => setSortOrder(e.target.value as "sidebar" | "alphabetical" | "created" | "updated" | "last_activity")}
               className="h-7 min-w-[120px] appearance-none rounded-md border border-border-strong/50 bg-bg-input px-2.5 pr-7 text-[12px] text-text-base shadow-none focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60"
               aria-label="Sort projects"
             >
+              <option value="sidebar">Sidebar order</option>
               <option value="alphabetical">Alphabetical</option>
               <option value="created">Created</option>
               <option value="updated">Updated</option>
