@@ -55,6 +55,13 @@ pub fn preview_rebuild_project(name: &str) -> Result<String, String> {
             &custom_agent_names(&project),
             &custom_agent_names(&rebuilt),
         ),
+        diff_category("user_commands", "Workspace Commands", &project.user_commands, &rebuilt.user_commands),
+        diff_category(
+            "custom_commands",
+            "Project Commands",
+            &custom_command_names(&project),
+            &custom_command_names(&rebuilt),
+        ),
     ];
 
     let preview = RebuildPreview {
@@ -783,6 +790,14 @@ fn custom_agent_names(project: &core::Project) -> Vec<String> {
         .custom_agents
         .as_ref()
         .map(|agents| agents.iter().map(|agent| agent.name.clone()).collect())
+        .unwrap_or_default()
+}
+
+fn custom_command_names(project: &core::Project) -> Vec<String> {
+    project
+        .custom_commands
+        .as_ref()
+        .map(|commands| commands.iter().map(|cmd| cmd.name.clone()).collect())
         .unwrap_or_default()
 }
 

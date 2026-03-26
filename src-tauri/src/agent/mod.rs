@@ -651,7 +651,7 @@ fn render_markdown_command(content: &str) -> String {
     output
 }
 
-fn is_managed_command_file(path: &Path) -> bool {
+pub(crate) fn is_managed_command_file(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
         return false;
     };
