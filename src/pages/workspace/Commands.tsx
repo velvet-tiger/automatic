@@ -16,6 +16,14 @@ description: Describe what this command does.
 Write the reusable prompt here.
 `;
 
+/** Coerce raw input into a valid command name: lowercase, digits, hyphens. */
+function toCommandName(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-{2,}/g, "-");
+}
+
 export default function Commands() {
   const [commands, setCommands] = useState<UserCommandEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -24,6 +32,8 @@ export default function Commands() {
   const [isCreating, setIsCreating] = useState(false);
   const [newMachineName, setNewMachineName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameName, setRenameName] = useState("");
 
   useEffect(() => {
     void loadCommands();
@@ -94,6 +104,29 @@ export default function Commands() {
     setIsEditing(true);
     setNewMachineName("");
     setError(null);
+  };
+
+  const startRename = () => {
+    if (!selectedId || isCreating) return;
+    setRenameName(selectedId);
+    setIsRenaming(true);
+  };
+
+  const handleRename = async () => {
+    const trimmed = renameName.trim();
+    if (!selectedId || !trimmed || trimmed === selectedId) {
+      setIsRenaming(false);
+      return;
+    }
+    try {
+      await invoke("rename_user_command", { oldName: selectedId, newName: trimmed });
+      await loadCommands();
+      setSelectedId(trimmed);
+      setIsRenaming(false);
+      setError(null);
+    } catch (err: any) {
+      setError(`Failed to rename command: ${err}`);
+    }
   };
 
   const selectedEntry = commands.find((entry) => entry.id === selectedId) ?? null;
@@ -173,12 +206,31 @@ export default function Commands() {
                     <input
                       type="text"
                       value={newMachineName}
-                      onChange={(e) => setNewMachineName(e.target.value)}
+                      onChange={(e) => setNewMachineName(toCommandName(e.target.value))}
                       placeholder="command-name"
                       className="bg-transparent outline-none text-[15px] font-semibold text-text-base placeholder-text-muted/50"
                     />
+                  ) : isRenaming ? (
+                    <input
+                      type="text"
+                      value={renameName}
+                      onChange={(e) => setRenameName(toCommandName(e.target.value))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void handleRename();
+                        if (e.key === "Escape") setIsRenaming(false);
+                      }}
+                      onBlur={() => void handleRename()}
+                      autoFocus
+                      className="bg-transparent outline-none text-[15px] font-semibold text-text-base placeholder-text-muted/50"
+                    />
                   ) : (
-                    <div className="text-[15px] font-semibold text-text-base truncate">/{selectedEntry?.id}</div>
+                    <div
+                      className="text-[15px] font-semibold text-text-base truncate cursor-text"
+                      onDoubleClick={startRename}
+                      title="Double-click to rename"
+                    >
+                      /{selectedEntry?.id}
+                    </div>
                   )}
                   <div className="text-[11px] text-text-muted">Workspace command library</div>
                 </div>

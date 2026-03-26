@@ -101,6 +101,33 @@ pub fn save_user_command(machine_name: &str, content: &str) -> Result<(), String
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+pub fn rename_user_command(old_name: &str, new_name: &str) -> Result<(), String> {
+    if !is_valid_command_name(old_name) {
+        return Err("Invalid current command name".into());
+    }
+    if !is_valid_command_name(new_name) {
+        return Err(
+            "Invalid new command name. Use lowercase letters, digits, and hyphens only.".into(),
+        );
+    }
+    if old_name == new_name {
+        return Ok(());
+    }
+
+    let dir = get_commands_dir()?;
+    let old_path = dir.join(format!("{old_name}.md"));
+    let new_path = dir.join(format!("{new_name}.md"));
+
+    if !old_path.exists() {
+        return Err(format!("Command '{old_name}' not found"));
+    }
+    if new_path.exists() {
+        return Err(format!("A command named '{new_name}' already exists"));
+    }
+
+    fs::rename(&old_path, &new_path).map_err(|e| format!("Failed to rename command: {e}"))
+}
+
 pub fn delete_user_command(machine_name: &str) -> Result<(), String> {
     if !is_valid_command_name(machine_name) {
         return Err("Invalid command name".into());

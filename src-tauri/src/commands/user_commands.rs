@@ -16,6 +16,11 @@ pub fn save_user_command(machine_name: String, content: String) -> Result<(), St
 }
 
 #[tauri::command]
+pub fn rename_user_command(old_name: String, new_name: String) -> Result<(), String> {
+    core::rename_user_command(&old_name, &new_name)
+}
+
+#[tauri::command]
 pub fn delete_user_command(machine_name: String) -> Result<(), String> {
     core::delete_user_command(&machine_name)
 }

@@ -329,6 +329,7 @@ get_templates,
             read_user_command,
             save_user_command,
             delete_user_command,
+            rename_user_command,
             is_analytics_configured,
         ])
         .run(tauri::generate_context!())
