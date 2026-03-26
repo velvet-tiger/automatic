@@ -6955,12 +6955,19 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           entry={entry}
                           projectDir={project.directory}
                           active={(project.tools ?? []).includes(entry.name)}
-                          onAdd={() => {
+                          onAdd={async () => {
                             const tools = [...new Set([...(project.tools ?? []), entry.name])];
                             const updated = { ...project, tools, updated_at: new Date().toISOString() };
                             setProject(updated);
                             setDirty(false);
-                            saveProjectSnapshot(updated);
+                            await saveProjectSnapshot(updated);
+                            // Re-read the project — the backend may have enriched it
+                            // with plugin-provided skills and rules.
+                            try {
+                              const raw: string = await invoke("read_project", { name: selectedName });
+                              const refreshed = JSON.parse(raw);
+                              setProject(refreshed);
+                            } catch { /* best-effort */ }
                           }}
                           onRemove={() => {
                             const tools = (project.tools ?? []).filter((t) => t !== entry.name);
