@@ -92,7 +92,14 @@ export function AgentSelector({
   // Track which agent cards have their settings panel expanded
   const [expandedSettings, setExpandedSettings] = useState<Set<string>>(new Set());
 
-  const unaddedAgents = availableAgents.filter((a) => !agentIds.includes(a.id));
+  // Sort current agents alphabetically by label for display, keeping original indices for onRemove.
+  const sortedAgentIds = agentIds
+    .map((id, idx) => ({ id, idx, label: availableAgents.find((a) => a.id === id)?.label ?? id }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+
+  const unaddedAgents = availableAgents
+    .filter((a) => !agentIds.includes(a.id))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
   const filteredAgents = search.trim()
     ? unaddedAgents.filter(
         (a) =>
@@ -149,7 +156,7 @@ export function AgentSelector({
 
       {/* Current agents list */}
       <div className="space-y-2">
-        {agentIds.map((id, idx) => {
+        {sortedAgentIds.map(({ id, idx }) => {
           const info = availableAgents.find((a) => a.id === id);
           const optionDefs = AGENT_OPTION_DEFS[id] ?? [];
           const hasOptions = optionDefs.length > 0 && !!onOptionChange;
