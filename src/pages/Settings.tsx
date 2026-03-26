@@ -9,9 +9,9 @@ import { useUpdate } from "../contexts/UpdateContext";
 import { useTaskLog } from "../contexts/TaskLogContext";
 import { AgentSelector, type AgentInfo } from "../components/AgentSelector";
 import SettingsPlugins from "../plugins/SettingsPlugins";
-import { Code2, Bot, AppWindow, Puzzle, X } from "lucide-react";
+import { Code2, Bot, AppWindow, Puzzle, Shield, X } from "lucide-react";
 
-type SettingsPage = "skills" | "agents" | "app" | "plugins";
+type SettingsPage = "skills" | "agents" | "app" | "plugins" | "privacy";
 
 interface AppSettings {
   skill_sync_mode: string;
@@ -43,6 +43,12 @@ const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; descripti
     label: "Plugins",
     icon: <Puzzle size={15} />,
     description: "Enable & disable features",
+  },
+  {
+    id: "privacy",
+    label: "Privacy",
+    icon: <Shield size={15} />,
+    description: "Privacy policy",
   },
 ];
 
@@ -405,6 +411,135 @@ export default function Settings() {
           {/* ── App page ────────────────────────────────────────────── */}
           {/* ── Plugins page ────────────────────────────────────────────── */}
           {activePage === "plugins" && <SettingsPlugins />}
+
+          {/* ── Privacy page ─────────────────────────────────────────────── */}
+          {activePage === "privacy" && (
+            <div>
+              <h2 className="text-lg font-medium mb-1 text-text-base">Privacy Policy</h2>
+              <p className="text-[13px] text-text-muted mb-6">
+                How Automatic handles your data.
+              </p>
+
+              <div className="space-y-6 text-[13px] text-text-muted leading-relaxed">
+                <p>
+                  Automatic is a desktop application that manages AI agent configuration locally on your machine.
+                  Your privacy is important to us. This policy explains what data Automatic collects, how it is
+                  used, and how you can control it.
+                </p>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Local-First Architecture</h3>
+                  <p>
+                    All project configuration, skills, rules, templates, and MCP server settings are stored
+                    locally on your machine. Automatic does not upload your project files, source code, or agent
+                    configurations to any external server. Data is stored across three locations:
+                  </p>
+                  <ul className="list-disc list-inside mt-2 space-y-1.5 ml-2">
+                    <li>
+                      <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.agents/</code> — global
+                      library of skills, rules, templates, MCP server configs, and project registrations
+                    </li>
+                    <li>
+                      <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.automatic/</code> — application
+                      settings, credentials, and internal state
+                    </li>
+                    <li>
+                      <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">&lt;project&gt;/.automatic/</code> — per-project
+                      configuration synced into each project directory
+                    </li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Analytics</h3>
+                  <p>
+                    Automatic may collect anonymous usage analytics (such as which features are used and how
+                    often) to help improve the application. Analytics collection is <strong className="text-text-base">opt-in</strong> and
+                    can be enabled or disabled at any time in{" "}
+                    <strong className="text-text-base">Settings &gt; App</strong>.
+                  </p>
+                  <p className="mt-2">
+                    When enabled, analytics data is sent to Amplitude. This data does not include your source
+                    code, file contents, project names, or any personally identifiable information beyond an
+                    anonymous user identifier.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Network Requests</h3>
+                  <p>Automatic may make network requests for the following purposes:</p>
+                  <ul className="list-disc list-inside mt-2 space-y-1.5 ml-2">
+                    <li>Checking for application updates</li>
+                    <li>Browsing the Skill Store, Template Marketplace, and MCP Marketplace</li>
+                    <li>Sending anonymous analytics (when opted in)</li>
+                    <li>OAuth authentication for credential storage</li>
+                  </ul>
+                  <p className="mt-2">
+                    No data is sent unless you initiate one of these actions or have opted in to analytics.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Credentials &amp; API Keys</h3>
+                  <p>
+                    API keys and credentials you configure are stored locally using your operating system&apos;s
+                    secure credential storage (e.g. macOS Keychain). Automatic does not transmit your API keys
+                    to any third party. Keys are only used to authenticate with the services you configure.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Third-Party Services</h3>
+                  <p>
+                    When you connect MCP servers or AI providers, those services have their own privacy policies.
+                    Automatic facilitates the connection but does not control how those services handle your data.
+                    We recommend reviewing the privacy policies of any third-party services you connect.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Data Deletion</h3>
+                  <p>
+                    Since all data is stored locally, you can delete it at any time by removing
+                    the <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.agents/</code> and{" "}
+                    <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.automatic/</code> directories,
+                    or using the <strong className="text-text-base">Erase All Data</strong> option in Settings.
+                    Per-project configuration in <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">.automatic/</code> directories
+                    within your projects can be removed individually. Uninstalling Automatic removes the
+                    application but does not automatically delete your configuration data.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Contact</h3>
+                  <p>
+                    If you have questions about this privacy policy, please open an issue at{" "}
+                    <a
+                      href="https://github.com/velvet-tiger/automatic/issues"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand hover:underline"
+                    >
+                      github.com/velvet-tiger/automatic/issues
+                    </a>{" "}
+                    or reach out on{" "}
+                    <a
+                      href="https://discord.gg/bAhmvZTmcC"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand hover:underline"
+                    >
+                      Discord
+                    </a>.
+                  </p>
+                </div>
+
+                <p className="text-[11px] text-text-muted/60 pt-4 border-t border-border-strong/20">
+                  Last updated: March 2026
+                </p>
+              </div>
+            </div>
+          )}
 
           {activePage === "app" && (
             <div>
