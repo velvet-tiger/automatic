@@ -245,12 +245,14 @@ export default function McpMarketplace({
   onInitialSlugConsumed,
   initialQuery,
   onInitialQueryConsumed,
+  onNavigateToMcpServer,
 }: {
   resetKey?: number;
   initialSlug?: string | null;
   onInitialSlugConsumed?: () => void;
   initialQuery?: string | null;
   onInitialQueryConsumed?: () => void;
+  onNavigateToMcpServer?: (serverName: string) => void;
 }) {
   const [servers, setServers] = useState<McpServer[]>([]);
   const [serversLoading, setServersLoading] = useState(true);
@@ -482,7 +484,11 @@ export default function McpMarketplace({
               return (
                 <div className="mb-6">
                   {isInstalled ? (
-                    <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-success/10 border border-success/20">
+                    <button
+                      onClick={() => onNavigateToMcpServer?.(name)}
+                      disabled={!onNavigateToMcpServer}
+                      className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-success/10 border border-success/20 hover:border-success/40 transition-colors text-left group disabled:cursor-default"
+                    >
                       <CheckCircle2 size={15} className="text-success" />
                       <span className="text-[13px] text-success font-medium">
                         Added to MCP Servers
@@ -490,7 +496,13 @@ export default function McpMarketplace({
                       <span className="text-[11px] text-text-muted ml-1">
                         as "{name}"
                       </span>
-                    </div>
+                      {onNavigateToMcpServer && (
+                        <span className="ml-auto flex items-center gap-1 text-[11px] text-text-muted group-hover:text-success transition-colors">
+                          View in library
+                          <ArrowRight size={11} />
+                        </span>
+                      )}
+                    </button>
                   ) : (
                     <button
                       onClick={() => handleInstall(selected)}
