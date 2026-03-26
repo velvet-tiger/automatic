@@ -1762,10 +1762,6 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
   // Track which folder groups are collapsed in the overview (independent of sidebar state)
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
-  const sidebarOrder = useMemo(() => {
-    return new Map(projects.map((name, index) => [name, index] as const));
-  }, [projects]);
-
   const getSortTimestamp = (project: Project | undefined, key: "created" | "updated" | "last_activity"): number => {
     if (!project) return 0;
     if (key === "created") return new Date(project.created_at ?? 0).getTime();
@@ -1773,16 +1769,15 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
     return new Date(project.last_activity ?? project.updated_at ?? project.created_at ?? 0).getTime();
   };
 
-  const sortNames = (names: string[]) =>
-    [...names].sort((a, b) => {
-      if (sortOrder === "sidebar") {
-        return (sidebarOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (sidebarOrder.get(b) ?? Number.MAX_SAFE_INTEGER);
-      }
+  const sortNames = (names: string[]) => {
+    if (sortOrder === "sidebar") return names;
+    return [...names].sort((a, b) => {
       if (sortOrder === "alphabetical") return a.localeCompare(b);
       const aTime = getSortTimestamp(projectDetails.get(a), sortOrder);
       const bTime = getSortTimestamp(projectDetails.get(b), sortOrder);
       return bTime - aTime;
     });
+  };
 
   const matchesSearch = (name: string): boolean => {
     const query = searchQuery.trim().toLowerCase();
