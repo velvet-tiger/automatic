@@ -90,6 +90,25 @@ impl PluginToolDeclaration {
     }
 }
 
+/// A skill declared by a plugin.  When the plugin is enabled, the skill is
+/// installed to `~/.agents/skills/` and recorded in the registry with the
+/// plugin's id.  Plugin-provided skills cannot be deleted by the user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginSkillDeclaration {
+    /// The skill name (directory name under `~/.agents/skills/`).
+    pub name: String,
+}
+
+/// A rule declared by a plugin.  When the plugin is enabled, the rule is
+/// written to `~/.automatic/rules/`.  Plugin-provided rules cannot be deleted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginRuleDeclaration {
+    /// Machine name for the rule file (`{machine_name}.json`).
+    pub machine_name: String,
+    /// Human-readable display name.
+    pub display_name: String,
+}
+
 /// Static definition of a bundled plugin. These are compiled into the binary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
@@ -109,6 +128,12 @@ pub struct PluginManifest {
     /// tool is written to `~/.automatic/tools/`.  When disabled, it is removed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool: Option<PluginToolDeclaration>,
+    /// Skills this plugin provides.  Installed on enable, non-removable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<PluginSkillDeclaration>,
+    /// Rules this plugin provides.  Installed on enable, non-removable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<PluginRuleDeclaration>,
 }
 
 /// A plugin manifest combined with its current enabled/disabled state.
@@ -136,7 +161,10 @@ struct PluginState {
 /// Each plugin owns its manifest — see `plugins::<name>::manifest()`.
 /// To add a new plugin: create the plugin module and add one line here.
 fn bundled_plugins() -> Vec<PluginManifest> {
-    vec![crate::plugins::spec_kitty::manifest()]
+    vec![
+        crate::plugins::spec_kitty::manifest(),
+        crate::plugins::auto_docs::manifest(),
+    ]
 }
 
 // ── Persistence ──────────────────────────────────────────────────────────────
@@ -208,6 +236,106 @@ fn sync_plugin_tools(manifests: &[PluginManifest], state: &PluginState) {
     }
 }
 
+// ── Skill sync ──────────────────────────────────────────────────────────
+
+/// Install or remove plugin-declared skills based on current plugin state.
+///
+/// - Enabled plugin with skill declarations → install via
+///   `install_skills_from_bundle` and record source with `plugin_id`.
+/// - This is idempotent: re-running produces no net change.
+fn sync_plugin_skills(manifests: &[PluginManifest], state: &PluginState) {
+    for manifest in manifests {
+        if manifest.skills.is_empty() {
+            continue;
+        }
+
+        let enabled = state
+            .plugins
+            .get(&manifest.id)
+            .copied()
+            .unwrap_or(manifest.enabled_by_default);
+
+        if enabled {
+            let names: Vec<String> = manifest.skills.iter().map(|s| s.name.clone()).collect();
+            if let Err(e) = super::templates::install_skills_from_bundle(&names) {
+                eprintln!(
+                    "[automatic] failed to install skills for plugin '{}': {}",
+                    manifest.id, e
+                );
+            }
+        }
+        // Note: we do NOT remove plugin skills on disable — they remain on
+        // disk but are no longer marked as plugin-provided (the plugin_id
+        // lookup is dynamic based on enabled state).
+    }
+}
+
+// ── Rule sync ───────────────────────────────────────────────────────────
+
+/// Install or remove plugin-declared rules based on current plugin state.
+fn sync_plugin_rules(manifests: &[PluginManifest], state: &PluginState) {
+    for manifest in manifests {
+        if manifest.rules.is_empty() {
+            continue;
+        }
+
+        let enabled = state
+            .plugins
+            .get(&manifest.id)
+            .copied()
+            .unwrap_or(manifest.enabled_by_default);
+
+        if enabled {
+            for decl in &manifest.rules {
+                if let Some(content) = get_plugin_rule_content(&manifest.id, &decl.machine_name) {
+                    if let Err(e) = super::rules::save_plugin_rule(
+                        &decl.machine_name,
+                        &decl.display_name,
+                        &content,
+                        &manifest.id,
+                    ) {
+                        eprintln!(
+                            "[automatic] failed to install rule '{}' for plugin '{}': {}",
+                            decl.machine_name, manifest.id, e
+                        );
+                    }
+                }
+            }
+        }
+        // Note: we do NOT remove plugin rules on disable — they remain on
+        // disk but the plugin_id field is preserved so the UI can still
+        // show them as plugin-provided until re-enabled or manually cleared.
+    }
+}
+
+/// Retrieve the content for a plugin rule.  Each plugin module provides
+/// a `rule_content(machine_name)` function; this dispatches to the right one.
+fn get_plugin_rule_content(plugin_id: &str, machine_name: &str) -> Option<String> {
+    match plugin_id {
+        "auto-docs" => crate::plugins::auto_docs::rule_content(machine_name),
+        _ => None,
+    }
+}
+
+// ── Plugin-skill ownership lookup ───────────────────────────────────────
+
+/// If the named skill is declared by an enabled plugin, return that plugin's
+/// id.  Returns `None` if no enabled plugin owns the skill.
+pub fn plugin_id_for_skill(skill_name: &str) -> Option<String> {
+    let state = read_state().ok()?;
+    for manifest in bundled_plugins() {
+        let enabled = state
+            .plugins
+            .get(&manifest.id)
+            .copied()
+            .unwrap_or(manifest.enabled_by_default);
+        if enabled && manifest.skills.iter().any(|s| s.name == skill_name) {
+            return Some(manifest.id.clone());
+        }
+    }
+    None
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /// Return all bundled plugins, merged with their current enabled/disabled state.
@@ -239,9 +367,11 @@ pub fn set_app_plugin_enabled(id: &str, enabled: bool) -> Result<(), String> {
     state.plugins.insert(id.to_string(), enabled);
     write_state(&state)?;
 
-    // Sync tool declarations for the changed plugin.
+    // Sync all plugin-declared resources for the changed plugin.
     let manifests = bundled_plugins();
     sync_plugin_tools(&manifests, &state);
+    sync_plugin_skills(&manifests, &state);
+    sync_plugin_rules(&manifests, &state);
 
     Ok(())
 }
@@ -267,15 +397,17 @@ pub fn is_app_plugin_enabled(id: &str) -> Result<bool, String> {
 /// Called once on app startup to reconcile the tools registry with the current
 /// plugin states.  Ensures that a tool is present iff its declaring plugin is
 /// enabled, even across app restarts.
-pub fn reconcile_plugin_tools_on_startup() {
+pub fn reconcile_plugin_resources_on_startup() {
     match read_state() {
         Ok(state) => {
             let manifests = bundled_plugins();
             sync_plugin_tools(&manifests, &state);
+            sync_plugin_skills(&manifests, &state);
+            sync_plugin_rules(&manifests, &state);
         }
         Err(e) => {
             eprintln!(
-                "[automatic] failed to reconcile plugin tools on startup: {}",
+                "[automatic] failed to reconcile plugin resources on startup: {}",
                 e
             );
         }

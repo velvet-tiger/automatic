@@ -32,6 +32,12 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
     if core::is_builtin_skill(name) {
         return Err(format!("Cannot delete built-in skill '{}'", name));
     }
+    if let Some(pid) = core::plugin_id_for_skill(name) {
+        return Err(format!(
+            "Cannot delete skill '{}' — it is provided by plugin '{}'",
+            name, pid
+        ));
+    }
     core::delete_skill(name)?;
     super::projects::prune_skill_from_projects(name);
     Ok(())

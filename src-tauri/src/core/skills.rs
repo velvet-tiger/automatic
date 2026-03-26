@@ -182,11 +182,14 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
             let mut sources_list = skill_sources.get(&name).cloned().unwrap_or_default();
             sources_list.sort();
 
+            let plugin_id = super::app_plugins::plugin_id_for_skill(&name);
+
             SkillEntry {
                 sources: sources_list,
                 source: registry.get(&name).cloned(),
                 has_resources,
                 license,
+                plugin_id,
                 name,
             }
         })

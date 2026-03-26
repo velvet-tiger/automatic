@@ -139,8 +139,8 @@ pub fn run() {
                     }
                     Err(e) => eprintln!("[automatic] global MCP install error: {}", e),
                 }
-                // Reconcile tool registry with current plugin enabled states.
-                core::reconcile_plugin_tools_on_startup();
+                // Reconcile tool/skill/rule registries with current plugin states.
+                core::reconcile_plugin_resources_on_startup();
             });
             Ok(())
         })

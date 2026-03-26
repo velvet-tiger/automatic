@@ -31,5 +31,7 @@ pub fn manifest() -> PluginManifest {
             detect_binary: Some("spec-kitty".to_string()),
             detect_dir: Some("kitty-specs".to_string()),
         }),
+        skills: vec![],
+        rules: vec![],
     }
 }

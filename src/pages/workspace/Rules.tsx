@@ -9,11 +9,13 @@ import { TokenPill } from "../../components/TokenPill";
 interface RuleEntry {
   id: string;
   name: string;
+  plugin_id?: string;
 }
 
 interface Rule {
   name: string;
   content: string;
+  plugin_id?: string;
 }
 
 interface RuleProjectStatus {
@@ -304,7 +306,7 @@ export default function Rules() {
                         <div className="text-[10px] text-text-muted truncate">{entry.id}</div>
                       </div>
                     </button>
-                    {!isDefaultRule(entry.id) && (
+                    {!isDefaultRule(entry.id) && !entry.plugin_id && (
                       <button
                         onClick={(e) => handleDelete(entry.id, e)}
                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"

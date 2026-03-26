@@ -187,6 +187,9 @@ pub struct SkillEntry {
     /// License from the SKILL.md frontmatter `license:` field, if present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
+    /// When set, this skill is owned by a plugin and cannot be deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

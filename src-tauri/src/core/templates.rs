@@ -134,6 +134,15 @@ const BUNDLED_SKILL_CONTENTS: &[(&str, &str)] = &[
         "automatic-testing",
         include_str!("../../skills/automatic-testing/SKILL.md"),
     ),
+    // Plugin-provided skills (installed by the auto-docs plugin)
+    (
+        "automatic-docs",
+        include_str!("../../skills/automatic-docs/SKILL.md"),
+    ),
+    (
+        "automatic-docs-find",
+        include_str!("../../skills/automatic-docs-find/SKILL.md"),
+    ),
     // Template-only skills (on-demand, not auto-installed)
     (
         "vercel-react-best-practices",
@@ -159,6 +168,17 @@ const BUNDLED_SKILL_CONTENTS: &[(&str, &str)] = &[
     (
         "python-pro",
         include_str!("../../skills/python-pro/SKILL.md"),
+    ),
+];
+
+/// Companion resource files shipped with bundled skills.
+/// Each entry is (skill_name, relative_path, content).
+/// These are installed alongside the SKILL.md when the skill is written to disk.
+const BUNDLED_SKILL_RESOURCES: &[(&str, &str, &str)] = &[
+    (
+        "automatic-docs",
+        "references/specification.md",
+        include_str!("../../skills/automatic-docs/references/specification.md"),
     ),
 ];
 
@@ -261,6 +281,22 @@ pub fn install_skills_from_bundle(skill_names: &[String]) -> Result<(), String> 
         let skill_path = skill_dir.join("SKILL.md");
         if !skill_path.exists() {
             fs::write(&skill_path, content).map_err(|e| e.to_string())?;
+        }
+
+        // Install companion resource files for this skill.
+        for (res_skill, rel_path, res_content) in BUNDLED_SKILL_RESOURCES {
+            if *res_skill != name.as_str() {
+                continue;
+            }
+            let res_path = skill_dir.join(rel_path);
+            if let Some(parent) = res_path.parent() {
+                if !parent.exists() {
+                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+            }
+            if !res_path.exists() {
+                fs::write(&res_path, res_content).map_err(|e| e.to_string())?;
+            }
         }
     }
 

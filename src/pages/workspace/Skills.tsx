@@ -43,6 +43,7 @@ interface SkillEntry {
   source?: SkillSource;
   has_resources: boolean;
   license?: string;
+  plugin_id?: string;
 }
 
 interface SkillUsedBy {
@@ -684,7 +685,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                         </span>
                         {/* Hover actions */}
                         <span className="shrink-0 hidden group-hover:flex items-center gap-0.5">
-                          {skill.name !== "automatic" && (
+                          {skill.name !== "automatic" && !skill.plugin_id && (
                           <span
                             role="button"
                             onClick={(e) => handleDelete(skill.name, e)}

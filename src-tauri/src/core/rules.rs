@@ -15,6 +15,10 @@ pub struct Rule {
     pub name: String,
     /// Markdown content of the rule.
     pub content: String,
+    /// When set, this rule was provisioned by a plugin and cannot be deleted
+    /// by the user.  The value is the plugin's unique id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_id: Option<String>,
 }
 
 /// Summary returned by `list_rules` — machine name + display name.
@@ -22,6 +26,9 @@ pub struct Rule {
 pub struct RuleEntry {
     pub id: String,
     pub name: String,
+    /// When set, this rule is owned by a plugin and cannot be deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_id: Option<String>,
 }
 
 /// Validate a rule machine name: lowercase alphanumeric + hyphens only,
@@ -79,6 +86,7 @@ pub fn list_rules() -> Result<Vec<RuleEntry>, String> {
                                 rules.push(RuleEntry {
                                     id: stem.to_string(),
                                     name: rule.name,
+                                    plugin_id: rule.plugin_id,
                                 });
                             }
                         }
@@ -131,6 +139,7 @@ pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), St
     let rule = Rule {
         name: name.to_string(),
         content: content.to_string(),
+        plugin_id: None,
     };
     let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
     let path = dir.join(format!("{}.json", machine_name));
@@ -145,10 +154,53 @@ pub fn delete_rule(machine_name: &str) -> Result<(), String> {
     let path = dir.join(format!("{}.json", machine_name));
 
     if path.exists() {
+        // Prevent deletion of plugin-provided rules.
+        if let Ok(raw) = fs::read_to_string(&path) {
+            if let Ok(rule) = serde_json::from_str::<Rule>(&raw) {
+                if rule.plugin_id.is_some() {
+                    return Err(format!(
+                        "Cannot delete rule '{}' — it is provided by a plugin",
+                        machine_name
+                    ));
+                }
+            }
+        }
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
 
     Ok(())
+}
+
+/// Save a rule with an owning plugin id.  Used by the plugin system to
+/// install rules that cannot be deleted by the user.
+pub fn save_plugin_rule(
+    machine_name: &str,
+    name: &str,
+    content: &str,
+    plugin_id: &str,
+) -> Result<(), String> {
+    if !is_valid_machine_name(machine_name) {
+        return Err(
+            "Invalid rule machine name. Use lowercase letters, digits, and hyphens only.".into(),
+        );
+    }
+    if name.trim().is_empty() {
+        return Err("Rule display name cannot be empty".into());
+    }
+
+    let dir = get_rules_dir()?;
+    if !dir.exists() {
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+
+    let rule = Rule {
+        name: name.to_string(),
+        content: content.to_string(),
+        plugin_id: Some(plugin_id.to_string()),
+    };
+    let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}.json", machine_name));
+    fs::write(path, pretty).map_err(|e| e.to_string())
 }
 
 /// Built-in rules shipped with the app.  Each entry is (machine_name, display_name, content).
@@ -194,6 +246,7 @@ pub fn install_default_rules_inner(force: bool) -> Result<(), String> {
             let rule = Rule {
                 name: display_name.to_string(),
                 content: content.to_string(),
+                plugin_id: None,
             };
             let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
             fs::write(&path, pretty).map_err(|e| e.to_string())?;
@@ -215,6 +268,7 @@ pub fn install_default_rules_inner(force: bool) -> Result<(), String> {
             let rule = Rule {
                 name: display_name.to_string(),
                 content: content.to_string(),
+                plugin_id: None,
             };
             if let Ok(pretty) = serde_json::to_string_pretty(&rule) {
                 let _ = fs::write(&path, pretty);
@@ -406,6 +460,7 @@ mod tests {
         let rule = Rule {
             name: display_name.to_string(),
             content: content.to_string(),
+            plugin_id: None,
         };
         let json = serde_json::to_string_pretty(&rule).expect("serialize");
         fs::write(rules_dir.join(format!("{}.json", machine_name)), json).expect("write rule");
