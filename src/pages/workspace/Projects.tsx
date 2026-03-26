@@ -426,26 +426,22 @@ interface SummaryMetricCardProps {
 
 function SummaryMetricCard({ icon, label, count, accentClass, onView }: SummaryMetricCardProps) {
   return (
-    <section className="rounded-lg border border-border-strong/40 bg-bg-input px-4 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <div className={`rounded-md p-1.5 ${accentClass}`}>{icon}</div>
-            <span className="text-[13px] font-semibold text-text-base">{label}</span>
-          </div>
-          <div className="mt-3 flex items-center gap-2">
-            <span className="text-[24px] font-semibold leading-none tabular-nums text-text-base">{count}</span>
-            <span className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
-              total
-            </span>
-          </div>
-        </div>
-        <button
-          onClick={onView}
-          className="shrink-0 rounded-md border border-border-strong/50 px-3 py-1 text-[11px] font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text-base"
-        >
-          View
-        </button>
+    <section
+      role="button"
+      tabIndex={0}
+      onClick={onView}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onView(); } }}
+      className="cursor-pointer rounded-lg border border-border-strong/40 bg-bg-input px-4 py-3 transition-colors hover:border-border-strong hover:bg-bg-input/80"
+    >
+      <div className="flex items-center gap-2">
+        <div className={`shrink-0 rounded-md p-1.5 ${accentClass}`}>{icon}</div>
+        <span className="truncate text-[13px] font-semibold text-text-base">{label}</span>
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <span className="text-[24px] font-semibold leading-none tabular-nums text-text-base">{count}</span>
+        <span className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
+          total
+        </span>
       </div>
     </section>
   );
