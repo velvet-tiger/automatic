@@ -9,9 +9,9 @@ import { useUpdate } from "../contexts/UpdateContext";
 import { useTaskLog } from "../contexts/TaskLogContext";
 import { AgentSelector, type AgentInfo } from "../components/AgentSelector";
 import SettingsPlugins from "../plugins/SettingsPlugins";
-import { Code2, Bot, AppWindow, Puzzle, Shield, X } from "lucide-react";
+import { Code2, Bot, AppWindow, Puzzle, Shield, FileText, X } from "lucide-react";
 
-type SettingsPage = "skills" | "agents" | "app" | "plugins" | "privacy";
+type SettingsPage = "skills" | "agents" | "app" | "plugins" | "privacy" | "terms";
 
 interface AppSettings {
   skill_sync_mode: string;
@@ -49,6 +49,12 @@ const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; descripti
     label: "Privacy",
     icon: <Shield size={15} />,
     description: "Privacy policy",
+  },
+  {
+    id: "terms",
+    label: "Terms of Service",
+    icon: <FileText size={15} />,
+    description: "Usage terms",
   },
 ];
 
@@ -555,6 +561,145 @@ export default function Settings() {
                   <h3 className="text-sm font-medium text-text-base mb-2">Contact</h3>
                   <p>
                     If you have questions about this privacy policy, please open an issue at{" "}
+                    <a
+                      href="https://github.com/velvet-tiger/automatic/issues"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand hover:underline"
+                    >
+                      github.com/velvet-tiger/automatic/issues
+                    </a>{" "}
+                    or reach out on{" "}
+                    <a
+                      href="https://discord.gg/bAhmvZTmcC"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand hover:underline"
+                    >
+                      Discord
+                    </a>.
+                  </p>
+                </div>
+
+                <p className="text-[11px] text-text-muted/60 pt-4 border-t border-border-strong/20">
+                  Last updated: March 2026
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Terms of Service page ──────────────────────────────────── */}
+          {activePage === "terms" && (
+            <div>
+              <h2 className="text-lg font-medium mb-1 text-text-base">Terms of Service</h2>
+              <p className="text-[13px] text-text-muted mb-6">
+                Terms governing your use of Automatic.
+              </p>
+
+              <div className="space-y-6 text-[13px] text-text-muted leading-relaxed">
+                <p>
+                  By downloading, installing, or using Automatic (&quot;the Software&quot;), you agree to be bound by
+                  these Terms of Service (&quot;Terms&quot;). If you do not agree, do not use the Software.
+                </p>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">1. License</h3>
+                  <p>
+                    Automatic is provided under the terms of its published software license. Subject to your
+                    compliance with these Terms, you are granted a limited, non-exclusive, non-transferable,
+                    revocable license to use the Software for personal or commercial purposes in accordance with the
+                    license terms.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">2. Acceptable Use</h3>
+                  <p>You agree not to:</p>
+                  <ul className="list-disc list-inside mt-2 space-y-1.5 ml-2">
+                    <li>Reverse engineer, decompile, or disassemble the Software except as permitted by law</li>
+                    <li>Use the Software to violate any applicable law or regulation</li>
+                    <li>Redistribute or sublicense the Software except as permitted by its license</li>
+                    <li>Remove or alter any proprietary notices, labels, or marks on the Software</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">3. Your Data</h3>
+                  <p>
+                    Automatic stores all configuration data locally on your machine. You retain full ownership of
+                    your data, including project configurations, skills, rules, and credentials. Automatic does not
+                    claim any rights to your data. See our{" "}
+                    <button
+                      onClick={() => setActivePage("privacy")}
+                      className="text-brand hover:underline"
+                    >
+                      Privacy Policy
+                    </button>{" "}
+                    for details on data handling.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">4. Third-Party Services</h3>
+                  <p>
+                    Automatic integrates with third-party AI providers, MCP servers, and other services. Your use of
+                    those services is governed by their respective terms. Automatic is not responsible for the
+                    availability, accuracy, or conduct of any third-party service.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">5. Marketplace &amp; Skills</h3>
+                  <p>
+                    Skills, templates, and MCP server configurations available through the Automatic marketplace are
+                    provided by the community or by Velvet Tiger. Community-contributed content is provided
+                    as-is and may have its own license terms. You are responsible for reviewing the terms and
+                    suitability of any content you install.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">6. Disclaimer of Warranties</h3>
+                  <p>
+                    The Software is provided &quot;as is&quot; and &quot;as available&quot; without warranties of any
+                    kind, whether express or implied, including but not limited to implied warranties of
+                    merchantability, fitness for a particular purpose, and non-infringement. Velvet Tiger does not
+                    warrant that the Software will be uninterrupted, error-free, or free of harmful components.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">7. Limitation of Liability</h3>
+                  <p>
+                    To the maximum extent permitted by law, Velvet Tiger shall not be liable for any indirect,
+                    incidental, special, consequential, or punitive damages, or any loss of profits or revenues,
+                    whether incurred directly or indirectly, or any loss of data, use, goodwill, or other intangible
+                    losses resulting from your use of or inability to use the Software.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">8. Changes to These Terms</h3>
+                  <p>
+                    We may update these Terms from time to time. Updated terms will be included in new releases of
+                    the Software. Your continued use of the Software after an update constitutes acceptance of the
+                    revised Terms.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">9. Termination</h3>
+                  <p>
+                    You may stop using the Software at any time by uninstalling it. We reserve the right to suspend
+                    or terminate access to marketplace services or online features if you violate these Terms.
+                    Termination does not affect your locally stored data.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">10. Contact</h3>
+                  <p>
+                    If you have questions about these Terms, please open an issue at{" "}
                     <a
                       href="https://github.com/velvet-tiger/automatic/issues"
                       target="_blank"
