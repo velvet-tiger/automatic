@@ -1,5 +1,7 @@
+use crate::core::tools::ToolKind;
 use crate::core::{
     PluginCategory, PluginManifest, PluginRuleDeclaration, PluginSkillDeclaration,
+    PluginToolDeclaration,
 };
 
 /// Bundled rule content for the auto-docs plugin.
@@ -17,7 +19,18 @@ pub fn manifest() -> PluginManifest {
         version: "1.0.0".to_string(),
         category: PluginCategory::Core,
         enabled_by_default: false,
-        tool: None,
+        tool: Some(PluginToolDeclaration {
+            name: "auto-docs".to_string(),
+            display_name: "Auto Docs".to_string(),
+            description: "Standard documentation structure for projects. Scaffolds docs/ \
+                          directories and enforces documentation guidelines."
+                .to_string(),
+            url: "https://github.com/velvet-tiger/auto-docs".to_string(),
+            github_repo: Some("velvet-tiger/auto-docs".to_string()),
+            kind: ToolKind::DocGen,
+            detect_binary: None,
+            detect_dir: Some("docs".to_string()),
+        }),
         skills: vec![
             PluginSkillDeclaration {
                 name: "automatic-docs".to_string(),
