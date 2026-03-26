@@ -312,24 +312,25 @@ pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String
     // 8. Store in keychain.
     crate::proxy::store_oauth_token(server_name, &token_response.access_token)?;
 
-    // Also store full credentials for future refresh.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    let stored = StoredOAuthCredentials {
+    // Best-effort: store full credentials for future refresh.
+    // If this fails the access token is already saved, so auth succeeded —
+    // the only downside is that silent refresh won't be available.
+    if let Ok(creds_json) = serde_json::to_string(&StoredOAuthCredentials {
         client_id: registration.client_id,
         client_secret: registration.client_secret.filter(|s| !s.is_empty()),
         access_token: token_response.access_token.clone(),
         refresh_token: token_response.refresh_token,
         token_endpoint: metadata.token_endpoint.clone(),
         expires_in: token_response.expires_in,
-        acquired_at: now,
-    };
-    let creds_json = serde_json::to_string(&stored)
-        .map_err(|e| format!("failed to serialize credentials: {}", e))?;
-    crate::proxy::store_oauth_credentials(server_name, &creds_json)?;
+        acquired_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    }) {
+        if let Err(e) = crate::proxy::store_oauth_credentials(server_name, &creds_json) {
+            eprintln!("warning: could not store OAuth credentials for refresh: {e}");
+        }
+    }
 
     Ok(token_response.access_token)
 }
