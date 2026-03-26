@@ -24,7 +24,14 @@ function toCommandName(raw: string): string {
     .replace(/-{2,}/g, "-");
 }
 
-export default function Commands() {
+interface CommandsProps {
+  /** Pre-select this command when the component mounts / when it changes. */
+  initialCommand?: string | null;
+  /** Called once the initial command has been applied so the parent can clear it. */
+  onInitialCommandConsumed?: () => void;
+}
+
+export default function Commands({ initialCommand = null, onInitialCommandConsumed }: CommandsProps = {}) {
   const [commands, setCommands] = useState<UserCommandEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [commandContent, setCommandContent] = useState("");
@@ -38,6 +45,17 @@ export default function Commands() {
   useEffect(() => {
     void loadCommands();
   }, []);
+
+  // Navigate to the command specified by the parent (e.g. "View in library" from Projects)
+  useEffect(() => {
+    if (!initialCommand) return;
+    if (commands.length === 0) return;
+    const exists = commands.some((c) => c.id === initialCommand);
+    if (exists) {
+      void loadCommand(initialCommand);
+    }
+    onInitialCommandConsumed?.();
+  }, [initialCommand, commands]);
 
   const loadCommands = async () => {
     try {

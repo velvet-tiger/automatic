@@ -506,6 +506,8 @@ interface ProjectsProps {
   onNavigateToMcpMarketplace?: (slug: string) => void;
   /** Called when the user clicks on a project group name — navigates to the Project Groups page. */
   onNavigateToGroup?: (groupName: string) => void;
+  /** Called when the user clicks "View in library" on a workspace command — navigates to the Commands page. */
+  onNavigateToCommand?: (commandId: string) => void;
   /** When set, opens the new project wizard at step 3 with this template pre-selected. */
   initialCreateWithTemplate?: string | null;
   onInitialCreateWithTemplateConsumed?: () => void;
@@ -2230,7 +2232,7 @@ function getProjectRelativeDocPath(projectDirectory: string | undefined, path: s
   return normalizedPath.slice(prefix.length);
 }
 
-export default function Projects({ resetKey, initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToMcpMarketplace, onNavigateToGroup, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
+export default function Projects({ resetKey, initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToMcpMarketplace, onNavigateToGroup, onNavigateToCommand, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const { log, update } = useTaskLog();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
@@ -2689,6 +2691,12 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [customCommandEditingIdx, setCustomCommandEditingIdx] = useState<number | null>(null);
   const [customCommandEditName, setCustomCommandEditName] = useState("");
   const [customCommandEditContent, setCustomCommandEditContent] = useState("");
+
+  // Expanded workspace command preview state (mirrors SkillSelector pattern)
+  const [expandedCommandId, setExpandedCommandId] = useState<string | null>(null);
+  const [expandedCommandContent, setExpandedCommandContent] = useState<string>("");
+  const [expandedCommandLoading, setExpandedCommandLoading] = useState(false);
+  const [expandedCommandError, setExpandedCommandError] = useState<string | null>(null);
 
   // Global rule picker state (dropdown add, mirrors SkillSelector pattern)
   const [globalRuleAdding, setGlobalRuleAdding] = useState(false);
@@ -7561,34 +7569,113 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                             No workspace commands selected. Add commands from your library to include them in this project.
                           </div>
                         ) : (
-                          <div className="space-y-1">
+                          <div className="space-y-2">
                             {project.user_commands?.map((commandId) => {
                               const command = availableUserCommands.find((entry) => entry.id === commandId);
+                              const isExpanded = expandedCommandId === commandId;
+
+                              const handleToggleExpandCommand = async () => {
+                                if (isExpanded) {
+                                  setExpandedCommandId(null);
+                                  setExpandedCommandContent("");
+                                  setExpandedCommandError(null);
+                                  return;
+                                }
+                                setExpandedCommandId(commandId);
+                                setExpandedCommandContent("");
+                                setExpandedCommandError(null);
+                                setExpandedCommandLoading(true);
+                                try {
+                                  const raw: string = await invoke("read_user_command", { machineName: commandId });
+                                  setExpandedCommandContent(raw);
+                                } catch (err: unknown) {
+                                  setExpandedCommandError(String(err));
+                                } finally {
+                                  setExpandedCommandLoading(false);
+                                }
+                              };
+
+                              // Strip YAML frontmatter for the markdown preview body
+                              const extractCommandBody = (raw: string): string => {
+                                const match = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
+                                return match ? match[1]!.trimStart() : raw;
+                              };
+
                               return (
                                 <div
                                   key={commandId}
-                                  className="flex items-center gap-3 px-3 py-2 bg-bg-input border border-border-strong/40 hover:border-border-strong rounded-lg transition-colors"
+                                  className={`bg-bg-input border rounded-lg group transition-colors ${
+                                    isExpanded ? "border-brand/40" : "border-border-strong/40"
+                                  }`}
                                 >
-                                  <Terminal size={14} className="flex-shrink-0 text-text-muted" />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-[13px] font-medium text-text-base truncate">
-                                      /{command?.id ?? commandId}
-                                    </div>
-                                    <div className="text-[11px] text-text-muted truncate">
-                                      {command?.description || commandId}
-                                    </div>
+                                  {/* Row */}
+                                  <div className="flex items-center gap-3 px-3 py-2.5">
+                                    <Terminal size={14} className="flex-shrink-0 text-text-muted" />
+                                    <button
+                                      className="flex-1 flex items-center gap-2 text-left min-w-0"
+                                      onClick={handleToggleExpandCommand}
+                                    >
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-[13px] font-medium text-text-base truncate">
+                                          /{command?.id ?? commandId}
+                                        </div>
+                                        <div className="text-[11px] text-text-muted truncate">
+                                          {command?.description || commandId}
+                                        </div>
+                                      </div>
+                                      <ChevronRight
+                                        size={12}
+                                        className={`text-text-muted flex-shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                                      />
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const updated = (project.user_commands ?? []).filter((id) => id !== commandId);
+                                        setProject({ ...project, user_commands: updated.length > 0 ? updated : undefined });
+                                        setDirty(true);
+                                        if (isExpanded) {
+                                          setExpandedCommandId(null);
+                                          setExpandedCommandContent("");
+                                        }
+                                      }}
+                                      className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                                      title="Remove"
+                                    >
+                                      <X size={12} />
+                                    </button>
                                   </div>
-                                  <button
-                                    onClick={() => {
-                                      const updated = (project.user_commands ?? []).filter((id) => id !== commandId);
-                                      setProject({ ...project, user_commands: updated.length > 0 ? updated : undefined });
-                                      setDirty(true);
-                                    }}
-                                    className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0"
-                                    title="Remove"
-                                  >
-                                    <X size={12} />
-                                  </button>
+
+                                  {/* Expanded preview panel */}
+                                  {isExpanded && (
+                                    <div className="border-t border-border-strong/40">
+                                      {/* Action bar */}
+                                      {onNavigateToCommand && (
+                                        <div className="flex items-center gap-3 px-3 py-2 border-b border-border-strong/30 bg-bg-sidebar/30">
+                                          <button
+                                            onClick={() => onNavigateToCommand(commandId)}
+                                            className="flex items-center gap-1 text-[11px] text-text-muted hover:text-brand transition-colors"
+                                            title="View this command in the Commands library"
+                                          >
+                                            <ExternalLink size={11} />
+                                            View in library
+                                          </button>
+                                        </div>
+                                      )}
+
+                                      {/* Content */}
+                                      <div className="px-4 py-3 max-h-80 overflow-y-auto custom-scrollbar">
+                                        {expandedCommandLoading && (
+                                          <p className="text-[12px] text-text-muted italic">Loading…</p>
+                                        )}
+                                        {expandedCommandError && (
+                                          <p className="text-[12px] text-danger">{expandedCommandError}</p>
+                                        )}
+                                        {!expandedCommandLoading && !expandedCommandError && expandedCommandContent && (
+                                          <MarkdownPreview content={extractCommandBody(expandedCommandContent)} />
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}

@@ -116,6 +116,7 @@ function App() {
   const [pendingMarketplaceTemplate, setPendingMarketplaceTemplate] = useState<string | null>(null);
   const [pendingMcpServer, setPendingMcpServer] = useState<string | null>(null);
   const [pendingGroup, setPendingGroup] = useState<string | null>(null);
+  const [pendingCommand, setPendingCommand] = useState<string | null>(null);
 
 
 
@@ -210,6 +211,11 @@ function App() {
   const navigateToGroup = (groupName: string) => {
     setPendingGroup(groupName);
     setActiveTab("project-groups");
+  };
+
+  const navigateToCommand = (commandId: string) => {
+    setPendingCommand(commandId);
+    setActiveTab("commands");
   };
 
   const navigateToSkillStore = (skillId: string) => {
@@ -520,6 +526,7 @@ function App() {
                 onNavigateToSkillStoreWithResult={navigateToSkillStoreWithResult}
                 onNavigateToMcpMarketplace={navigateToMcpMarketplace}
                 onNavigateToGroup={navigateToGroup}
+                onNavigateToCommand={navigateToCommand}
                 initialCreateWithTemplate={pendingCreateWithTemplate}
                 onInitialCreateWithTemplateConsumed={() => setPendingCreateWithTemplate(null)}
               />
@@ -636,7 +643,10 @@ function App() {
           )}
           {activeTab === "commands" && (
             <div className="flex-1 h-full">
-              <Commands />
+              <Commands
+                initialCommand={pendingCommand}
+                onInitialCommandConsumed={() => setPendingCommand(null)}
+              />
             </div>
           )}
           {activeTab === "mcp" && (
