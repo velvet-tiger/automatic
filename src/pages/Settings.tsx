@@ -420,6 +420,47 @@ export default function Settings() {
                 How Automatic handles your data.
               </p>
 
+              {/* Analytics opt-in toggle */}
+              <div className="mb-8">
+                <button
+                  onClick={() => updateAnalyticsEnabled(!settings.analytics_enabled)}
+                  className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all ${
+                    settings.analytics_enabled
+                      ? "border-brand bg-brand/10"
+                      : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                  }`}
+                >
+                  <div>
+                    <div className="text-[13px] font-medium text-text-base">
+                      Anonymous usage analytics
+                    </div>
+                    <div className="text-[12px] text-text-muted">
+                      {settings.analytics_enabled
+                        ? "Enabled — thank you for helping improve Automatic"
+                        : "Disabled — no usage data is collected"}
+                    </div>
+                  </div>
+                  <div
+                    className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors ${
+                      settings.analytics_enabled ? "bg-brand" : "bg-surface-active"
+                    }`}
+                  >
+                    <div
+                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                        settings.analytics_enabled ? "left-5" : "left-0.5"
+                      }`}
+                    />
+                  </div>
+                </button>
+
+                {settings.analytics_enabled && analyticsConfigured === false && (
+                  <div className="mt-3 p-3 rounded-lg border border-warning/40 bg-warning/10 text-[12px] text-warning">
+                    Analytics is enabled but no API key was compiled into this build.
+                    Events will not be sent. This is expected in local development.
+                  </div>
+                )}
+              </div>
+
               <div className="space-y-6 text-[13px] text-text-muted leading-relaxed">
                 <p>
                   Automatic is a desktop application that manages AI agent configuration locally on your machine.
