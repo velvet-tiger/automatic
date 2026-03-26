@@ -493,22 +493,20 @@ pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
     fs::write(skill_path, content).map_err(|e| e.to_string())
 }
 
-/// Delete a skill from both global locations and remove its registry entry.
+/// Delete a skill from all global skill source directories and remove its registry entry.
 pub fn delete_skill(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
 
-    // Remove from ~/.agents/skills/
-    let agents_dir = get_agents_skills_dir()?.join(name);
-    if agents_dir.exists() {
-        fs::remove_dir_all(&agents_dir).map_err(|e| e.to_string())?;
-    }
-
-    // Remove from ~/.claude/skills/
-    let claude_dir = get_claude_skills_dir()?.join(name);
-    if claude_dir.exists() {
-        fs::remove_dir_all(&claude_dir).map_err(|e| e.to_string())?;
+    // Remove from all known skill source directories (agents, claude, codex, cline, etc.)
+    for source in get_all_skill_sources() {
+        let skill_dir = PathBuf::from(&source.path).join(name);
+        if skill_dir.exists() {
+            fs::remove_dir_all(&skill_dir).map_err(|e| {
+                format!("Failed to delete skill from {}: {}", source.path, e)
+            })?;
+        }
     }
 
     // Best-effort: remove from registry (ignore errors)
