@@ -250,7 +250,14 @@ export function McpSelector({
   const [search, setSearch] = useState("");
   const [expandedServer, setExpandedServer] = useState<string | null>(null);
 
-  const unaddedServers = availableServers.filter((s) => !servers.includes(s) && s !== "automatic");
+  // Sort current servers alphabetically for display, keeping original indices for onRemove.
+  const sortedServers = servers
+    .map((srv, idx) => ({ srv, idx }))
+    .sort((a, b) => a.srv.localeCompare(b.srv, undefined, { sensitivity: "base" }));
+
+  const unaddedServers = availableServers
+    .filter((s) => !servers.includes(s) && s !== "automatic")
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   const filteredServers = search.trim()
     ? unaddedServers.filter((s) => s.toLowerCase().includes(search.toLowerCase()))
     : unaddedServers;
@@ -297,7 +304,7 @@ export function McpSelector({
 
       {/* Current servers list */}
       <div className="space-y-1.5">
-        {servers.map((srv, idx) => {
+        {sortedServers.map(({ srv, idx }) => {
           const isExpanded = expandedServer === srv;
           const enabled = isServerEnabled ? isServerEnabled(srv) : true;
           const canToggleEnabled = !!onToggleEnabled && srv !== "automatic";
