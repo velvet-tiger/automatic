@@ -4595,8 +4595,16 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     try {
       const toSave = { ...snapshot, name, updated_at: new Date().toISOString() };
       await invoke("save_project", { name, data: JSON.stringify(toSave, null, 2) });
-      setSyncStatus(toSave.directory && toSave.agents.length > 0 ? "Saved & synced" : "Saved");
-      setProjectDetailsMap((prev) => new Map(prev).set(name, toSave));
+      // Re-read the project — the backend may have enriched it (e.g. plugin
+      // skills/rules added when a plugin tool is toggled on).
+      let saved = toSave;
+      try {
+        const raw: string = await invoke("read_project", { name });
+        saved = JSON.parse(raw);
+        setProject(saved);
+      } catch { /* fall back to pre-save snapshot */ }
+      setSyncStatus(saved.directory && saved.agents.length > 0 ? "Saved & synced" : "Saved");
+      setProjectDetailsMap((prev) => new Map(prev).set(name, saved));
       setDirty(false);
       return true;
     } catch (err: any) {
@@ -6955,19 +6963,12 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           entry={entry}
                           projectDir={project.directory}
                           active={(project.tools ?? []).includes(entry.name)}
-                          onAdd={async () => {
+                          onAdd={() => {
                             const tools = [...new Set([...(project.tools ?? []), entry.name])];
                             const updated = { ...project, tools, updated_at: new Date().toISOString() };
                             setProject(updated);
                             setDirty(false);
-                            await saveProjectSnapshot(updated);
-                            // Re-read the project — the backend may have enriched it
-                            // with plugin-provided skills and rules.
-                            try {
-                              const raw: string = await invoke("read_project", { name: selectedName });
-                              const refreshed = JSON.parse(raw);
-                              setProject(refreshed);
-                            } catch { /* best-effort */ }
+                            saveProjectSnapshot(updated);
                           }}
                           onRemove={() => {
                             const tools = (project.tools ?? []).filter((t) => t !== entry.name);

@@ -393,6 +393,33 @@ pub fn enrich_project_with_plugin_resources(
     }
 }
 
+/// When plugin tools are removed from a project, strip the plugin's declared
+/// skills and rules from the project.
+pub fn strip_plugin_resources(
+    project: &mut super::types::Project,
+    removed_tool_names: &[String],
+) {
+    for manifest in bundled_plugins() {
+        let tool_removed = manifest
+            .tool
+            .as_ref()
+            .map(|t| removed_tool_names.contains(&t.name))
+            .unwrap_or(false);
+
+        if !tool_removed {
+            continue;
+        }
+
+        let skill_names: Vec<String> = manifest.skills.iter().map(|s| s.name.clone()).collect();
+        project.skills.retain(|s| !skill_names.contains(s));
+
+        let rule_names: Vec<String> = manifest.rules.iter().map(|r| r.machine_name.clone()).collect();
+        if let Some(project_rules) = project.file_rules.get_mut("_project") {
+            project_rules.retain(|r| !rule_names.contains(r));
+        }
+    }
+}
+
 // ── Locked resource query ────────────────────────────────────────────────────
 
 /// Given a list of tool names on a project, return skill and rule names that

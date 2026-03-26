@@ -244,6 +244,18 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
             if !new_tools.is_empty() {
                 core::enrich_project_with_plugin_resources(&mut enriched, &new_tools);
             }
+
+            // ── Remove plugin-provided skills/rules when a plugin
+            //    tool is removed from the project ─────────────────────────
+            let removed_tools: Vec<String> = existing
+                .tools
+                .iter()
+                .filter(|t| !enriched.tools.contains(t))
+                .cloned()
+                .collect();
+            if !removed_tools.is_empty() {
+                core::strip_plugin_resources(&mut enriched, &removed_tools);
+            }
         }
 
         let enriched_data = serde_json::to_string_pretty(&enriched).map_err(|e| e.to_string())?;
