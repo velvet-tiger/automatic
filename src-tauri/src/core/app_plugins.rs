@@ -336,6 +336,106 @@ pub fn plugin_id_for_skill(skill_name: &str) -> Option<String> {
     None
 }
 
+// ── Project-level plugin resource enrichment ─────────────────────────────────
+
+/// When plugin tools are newly added to a project, add the plugin's declared
+/// skills and rules to the project so they are persisted and synced.
+///
+/// `new_tool_names` should contain only the tool names that were just added
+/// (i.e. present in the incoming project but absent from the existing one).
+pub fn enrich_project_with_plugin_resources(
+    project: &mut super::types::Project,
+    new_tool_names: &[String],
+) {
+    let state = match read_state() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    for manifest in bundled_plugins() {
+        let enabled = state
+            .plugins
+            .get(&manifest.id)
+            .copied()
+            .unwrap_or(manifest.enabled_by_default);
+        if !enabled {
+            continue;
+        }
+
+        // Check if this plugin's tool is among the newly added tools.
+        let tool_added = manifest
+            .tool
+            .as_ref()
+            .map(|t| new_tool_names.contains(&t.name))
+            .unwrap_or(false);
+
+        if !tool_added {
+            continue;
+        }
+
+        // Add plugin skills to the project's skill list.
+        for decl in &manifest.skills {
+            if !project.skills.contains(&decl.name) {
+                project.skills.push(decl.name.clone());
+            }
+        }
+
+        // Add plugin rules to the project's rule list.
+        let project_rules = project
+            .file_rules
+            .entry("_project".to_string())
+            .or_insert_with(Vec::new);
+        for decl in &manifest.rules {
+            if !project_rules.contains(&decl.machine_name) {
+                project_rules.push(decl.machine_name.clone());
+            }
+        }
+    }
+}
+
+// ── Locked resource query ────────────────────────────────────────────────────
+
+/// Given a list of tool names on a project, return skill and rule names that
+/// are provided by enabled plugins whose tool is in the list.
+pub fn get_plugin_locked_resources(tool_names: &[String]) -> (Vec<String>, Vec<String>) {
+    let state = match read_state() {
+        Ok(s) => s,
+        Err(_) => return (vec![], vec![]),
+    };
+
+    let mut skills = Vec::new();
+    let mut rules = Vec::new();
+
+    for manifest in bundled_plugins() {
+        let enabled = state
+            .plugins
+            .get(&manifest.id)
+            .copied()
+            .unwrap_or(manifest.enabled_by_default);
+        if !enabled {
+            continue;
+        }
+
+        let tool_present = manifest
+            .tool
+            .as_ref()
+            .map(|t| tool_names.contains(&t.name))
+            .unwrap_or(false);
+        if !tool_present {
+            continue;
+        }
+
+        for decl in &manifest.skills {
+            skills.push(decl.name.clone());
+        }
+        for decl in &manifest.rules {
+            rules.push(decl.machine_name.clone());
+        }
+    }
+
+    (skills, rules)
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /// Return all bundled plugins, merged with their current enabled/disabled state.

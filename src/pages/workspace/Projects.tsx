@@ -2395,6 +2395,11 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [availableSkills, setAvailableSkills] = useState<string[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<string[]>([]);
 
+  // Plugin-locked resources — skills/rules that cannot be removed because
+  // they are provided by a plugin whose tool is active on this project.
+  const [pluginLockedSkills, setPluginLockedSkills] = useState<string[]>([]);
+  const [pluginLockedRules, setPluginLockedRules] = useState<string[]>([]);
+
   // Inline add state
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   // "Sync all" button status for the overview grid
@@ -2867,6 +2872,25 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     setAiSkillsSuggestions([]);
     setAiMcpSuggestions([]);
   }, [selectedName]);
+
+  // Fetch plugin-locked skills/rules whenever the project's tools change.
+  useEffect(() => {
+    const tools = project?.tools ?? [];
+    if (tools.length === 0) {
+      setPluginLockedSkills([]);
+      setPluginLockedRules([]);
+      return;
+    }
+    invoke<{ skills: string[]; rules: string[] }>("get_plugin_locked_resources", { tools })
+      .then(({ skills, rules }) => {
+        setPluginLockedSkills(skills);
+        setPluginLockedRules(rules);
+      })
+      .catch(() => {
+        setPluginLockedSkills([]);
+        setPluginLockedRules([]);
+      });
+  }, [project?.tools?.join(",")]);
 
   // Periodically check for configuration drift while a project tab is active
   useEffect(() => {
@@ -6965,6 +6989,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
                   const handleToggleProjectRule = (ruleId: string) => {
                     const existing = (project.file_rules || {})["_project"] || [];
+                    // Prevent removal of plugin-locked rules.
+                    if (existing.includes(ruleId) && pluginLockedRules.includes(ruleId)) return;
                     const updated = existing.includes(ruleId)
                       ? existing.filter(r => r !== ruleId)
                       : [...existing, ruleId];
@@ -7200,6 +7226,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                       <div className="text-[11px] text-text-muted truncate">{ruleId}</div>
                                     </div>
                                     <TokenPill text={globalRuleContentCache[ruleId] ?? ""} />
+                                    {!pluginLockedRules.includes(ruleId) && (
                                     <button
                                       onClick={() => handleToggleProjectRule(ruleId)}
                                       className="text-text-muted hover:text-danger opacity-100 transition-all p-1 hover:bg-surface rounded"
@@ -7207,6 +7234,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                     >
                                       <Trash2 size={12} />
                                     </button>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -8301,6 +8329,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           onAdd={(s) => addItem("skills", s)}
                           onRemove={(i) => removeItem("skills", i)}
                           showRemoveButtonAlways
+                          lockedSkills={pluginLockedSkills}
                           emptyMessage="No skills attached."
                           onReadSkill={async (skillName) => {
                             const content: string = await invoke("read_skill", { name: skillName });

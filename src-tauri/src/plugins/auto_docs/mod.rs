@@ -29,7 +29,7 @@ pub fn manifest() -> PluginManifest {
             github_repo: Some("velvet-tiger/auto-docs".to_string()),
             kind: ToolKind::DocGen,
             detect_binary: None,
-            detect_dir: Some("docs".to_string()),
+            detect_dir: None,
         }),
         skills: vec![
             PluginSkillDeclaration {

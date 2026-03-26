@@ -228,6 +228,22 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
                     let _ = core::save_mcp_server_config(&server_name, &config_str);
                 }
             }
+
+            // ── Enrich with plugin-provided skills/rules when a plugin
+            //    tool is newly added to the project ───────────────────────
+            let new_tools: Vec<String> = enriched
+                .tools
+                .iter()
+                .filter(|t| {
+                    !existing
+                        .tools
+                        .contains(t)
+                })
+                .cloned()
+                .collect();
+            if !new_tools.is_empty() {
+                core::enrich_project_with_plugin_resources(&mut enriched, &new_tools);
+            }
         }
 
         let enriched_data = serde_json::to_string_pretty(&enriched).map_err(|e| e.to_string())?;

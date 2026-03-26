@@ -24,6 +24,8 @@ interface SkillSelectorProps {
   onForkSkill?: (skill: string, content: string) => Promise<void>;
   /** Keep remove buttons visible instead of only showing them on hover. */
   showRemoveButtonAlways?: boolean;
+  /** Skill names that cannot be removed (e.g. provided by a plugin). */
+  lockedSkills?: string[];
 }
 
 /**
@@ -45,6 +47,7 @@ export function SkillSelector({
   onNavigateToSkill,
   onForkSkill,
   showRemoveButtonAlways = false,
+  lockedSkills = [],
 }: SkillSelectorProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -219,7 +222,7 @@ export function SkillSelector({
 
                 <TokenPill text={skillContentCache[skill] ?? ""} />
 
-                {skill !== "automatic" && (
+                {skill !== "automatic" && !lockedSkills.includes(skill) && (
                 <button
                   onClick={() => onRemove(idx)}
                   className={`text-text-muted hover:text-danger transition-all p-1 hover:bg-surface rounded ${showRemoveButtonAlways ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
