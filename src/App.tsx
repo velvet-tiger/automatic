@@ -434,15 +434,7 @@ function App() {
             </div>
           );
         })()}
-        {/* Sidebar footer — setup wizard */}
         <div className="px-3 pt-0 pb-1">
-          <button
-            onClick={() => { setWizardIsReopen(true); setShowWizard(true); }}
-            className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] font-medium text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors"
-          >
-            <Sparkles size={14} className="text-text-muted" />
-            <span className="flex-1 text-left">Setup wizard</span>
-          </button>
           <NavItem id="settings" icon={SettingsIcon} label="Settings" />
         </div>
         {/* Sidebar footer — branding */}
@@ -660,7 +652,7 @@ function App() {
           )}
           {activeTab === "settings" && (
             <div className="flex-1 h-full">
-              <Settings />
+              <Settings onOpenWizard={() => { setWizardIsReopen(true); setShowWizard(true); }} />
             </div>
           )}
           {activeTab === "token-estimator" && (

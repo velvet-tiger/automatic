@@ -58,7 +58,11 @@ const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; descripti
   },
 ];
 
-export default function Settings() {
+interface SettingsProps {
+  onOpenWizard?: () => void;
+}
+
+export default function Settings({ onOpenWizard }: SettingsProps) {
   const [activePage, setActivePage] = useState<SettingsPage>("skills");
   const [settings, setSettings] = useState<AppSettings>({
     skill_sync_mode: "symlink",
@@ -793,6 +797,22 @@ export default function Settings() {
                   </button>
                 )}
               </div>
+
+              {/* Setup Wizard */}
+              {onOpenWizard && (
+                <div className="mb-8">
+                  <h3 className="text-sm font-medium mb-2 text-text-base">Setup Wizard</h3>
+                  <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
+                    Re-run the initial setup wizard to reconfigure your preferences.
+                  </p>
+                  <button
+                    onClick={onOpenWizard}
+                    className="px-4 py-2 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[13px] text-text-base hover:border-border-strong hover:bg-surface-hover transition-all"
+                  >
+                    Run Setup Wizard
+                  </button>
+                </div>
+              )}
 
               {/* Reset */}
               <div className="mb-8">
