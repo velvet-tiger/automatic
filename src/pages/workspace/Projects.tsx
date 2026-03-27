@@ -5520,9 +5520,9 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
               </button>
 
               <div className="flex items-center gap-2">
-                {syncStatus && (
-                  <span className={`text-[12px] ${syncStatus.startsWith("Sync failed") ? "text-danger" : syncStatus === "syncing" ? "text-text-muted" : "text-success"}`}>
-                    {syncStatus === "syncing" ? "Syncing..." : syncStatus}
+                {syncStatus && syncStatus !== "syncing" && (
+                  <span className={`text-[12px] ${syncStatus.startsWith("Sync failed") ? "text-danger" : "text-success"}`}>
+                    {syncStatus}
                   </span>
                 )}
                 {/* Rebuild button */}
@@ -5591,7 +5591,15 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                 )}
                 {/* Sync / in-sync indicator — shown when project has directory + agents configured */}
                 {!dirty && project.directory && project.agents.length > 0 && (
-                  driftReport?.drifted ? (
+                  syncStatus === "syncing" ? (
+                    <button
+                      disabled
+                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input text-brand rounded text-[12px] font-medium border border-brand/30 transition-colors shadow-sm opacity-80 cursor-not-allowed"
+                      title="Synchronising…"
+                    >
+                      <RefreshCw size={12} className="animate-spin" /> Syncing…
+                    </button>
+                  ) : driftReport?.drifted ? (
                     <button
                       onClick={handleSync}
                       className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-warning/10 text-warning rounded text-[12px] font-medium border border-border-strong hover:border-warning/60 transition-colors shadow-sm"
@@ -5629,6 +5637,18 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                 )}
               </div>
             </div>
+
+            {/* ── Sync progress bar ──────────────────────────────── */}
+            {syncStatus === "syncing" && (
+              <div className="h-1 w-full bg-brand/10 overflow-hidden flex-shrink-0">
+                <div
+                  className="h-full w-1/3 bg-brand rounded-full"
+                  style={{
+                    animation: "sync-progress 1.2s ease-in-out infinite",
+                  }}
+                />
+              </div>
+            )}
 
             {/* ── Project title ───────────────────────────────────── */}
             {!isCreating && (
@@ -5705,9 +5725,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   </div>
                   <button
                     onClick={handleSync}
-                    className="text-[12px] font-medium text-warning hover:text-warning-hover underline decoration-warning/40 hover:decoration-warning-hover transition-colors ml-4 flex-shrink-0"
+                    disabled={syncStatus === "syncing"}
+                    className="text-[12px] font-medium text-warning hover:text-warning-hover underline decoration-warning/40 hover:decoration-warning-hover transition-colors ml-4 flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Sync now
+                    {syncStatus === "syncing" ? "Syncing…" : "Sync now"}
                   </button>
                 </div>
                 {/* Detail: which agents/files have drifted — click any file to view the diff */}

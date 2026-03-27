@@ -587,6 +587,11 @@ body {
   animation: fadeIn 0.2s ease-out forwards;
 }
 
+@keyframes sync-progress {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
 /* ── Dashboard mesh background ── */
 
 /* Slow drift for gradient orbs */
