@@ -35,6 +35,7 @@ mod templates;
 pub mod tools;
 mod types;
 mod user_agents;
+mod whats_new;
 
 pub use app_plugins::*;
 pub use author::*;
@@ -62,3 +63,4 @@ pub use templates::*;
 pub use tools::*;
 pub use types::*;
 pub use user_agents::*;
+pub use whats_new::*;

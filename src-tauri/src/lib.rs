@@ -333,6 +333,8 @@ get_templates,
             delete_user_command,
             rename_user_command,
             is_analytics_configured,
+            get_whats_new,
+            mark_whats_new_seen,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

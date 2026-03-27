@@ -1,0 +1,14 @@
+[
+  {
+    "version": "1.0.0-beta.1",
+    "date": "2026-03-27",
+    "content": [
+      "We've been listening to your feedback and we're excited to share what's new in this release.",
+      "You asked for a cleaner Settings experience, so we consolidated Support, Privacy Policy, and Terms of Service into a single page — fewer tabs, less hunting around. We also pulled Appearance out into its own section so theming is easier to find.",
+      "A few more things:",
+      "- You can now unsubscribe from the Automatic newsletter directly from Settings",
+      "- The setup wizard now lives inside Settings too, so you can re-run it any time",
+      "- This \"What's New\" section you're reading right now — we'll keep you posted on updates here"
+    ]
+  }
+]

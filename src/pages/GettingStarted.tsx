@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowRight, Code, Compass, Copy, Layers, Server, Sparkles, Zap } from "lucide-react";
+import { ArrowRight, Bell, Code, Compass, Copy, Layers, Server, Sparkles, Zap } from "lucide-react";
 
 interface GettingStartedProps {
   onNavigate: (tab: string) => void;
@@ -233,28 +233,112 @@ function DiscoverAndExtendSection({ onNavigate }: GettingStartedProps) {
   );
 }
 
+interface WhatsNewRelease {
+  version: string;
+  date: string;
+  content: string[];
+}
+
+interface WhatsNewResponse {
+  releases: WhatsNewRelease[];
+  has_unseen: boolean;
+}
+
+function renderContentLine(line: string, index: number): React.ReactNode {
+  if (line.startsWith("- ")) {
+    return (
+      <li key={index} className="text-[12px] text-text-muted leading-relaxed ml-4 list-disc">
+        {line.slice(2)}
+      </li>
+    );
+  }
+  return (
+    <p key={index} className="text-[12px] text-text-muted leading-relaxed">
+      {line}
+    </p>
+  );
+}
+
+function WhatsNewSection({ releases }: { releases: WhatsNewRelease[] }) {
+  if (releases.length === 0) return null;
+
+  const latest = releases[0];
+  const formatDate = (iso: string): string => {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+  };
+
+  // Group consecutive bullet lines into <ul> blocks, keep paragraphs standalone.
+  const elements: React.ReactNode[] = [];
+  let bulletBuffer: React.ReactNode[] = [];
+  const flushBullets = () => {
+    if (bulletBuffer.length > 0) {
+      elements.push(<ul key={`ul-${elements.length}`} className="space-y-1 my-1">{bulletBuffer}</ul>);
+      bulletBuffer = [];
+    }
+  };
+  latest.content.forEach((line, i) => {
+    if (line.startsWith("- ")) {
+      bulletBuffer.push(renderContentLine(line, i));
+    } else {
+      flushBullets();
+      elements.push(renderContentLine(line, i));
+    }
+  });
+  flushBullets();
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-4">
+        <Bell size={13} className="text-brand" />
+        <h2 className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">What&apos;s New</h2>
+      </div>
+      <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden px-5 py-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-text-base">v{latest.version}</span>
+          <span className="text-[11px] text-text-muted">{formatDate(latest.date)}</span>
+        </div>
+        <div className="space-y-2">
+          {elements}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function GettingStarted({ onNavigate }: GettingStartedProps) {
   const [skillInstalled, setSkillInstalled] = useState(false);
   const [templateImported, setTemplateImported] = useState(false);
   const [projectCount, setProjectCount] = useState(0);
   const [mcpServerCount, setMcpServerCount] = useState(0);
+  const [whatsNewReleases, setWhatsNewReleases] = useState<WhatsNewRelease[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [projectNames, mcpNames, settings] = await Promise.all([
+        const [projectNames, mcpNames, settings, whatsNew] = await Promise.all([
           invoke<string[]>("get_projects").catch(() => [] as string[]),
           invoke<string[]>("list_mcp_server_configs").catch(() => [] as string[]),
-          invoke<any>("read_settings").catch(() => null),
+          invoke<Record<string, unknown>>("read_settings").catch(() => null),
+          invoke<WhatsNewResponse>("get_whats_new").catch(() => null),
         ]);
 
         setProjectCount(projectNames.length);
         setMcpServerCount(mcpNames.length);
 
         if (settings?.getting_started) {
-          setSkillInstalled(!!settings.getting_started.skill_installed);
-          setTemplateImported(!!settings.getting_started.template_imported);
+          const gs = settings.getting_started as Record<string, boolean>;
+          setSkillInstalled(!!gs.skill_installed);
+          setTemplateImported(!!gs.template_imported);
+        }
+
+        if (whatsNew) {
+          setWhatsNewReleases(whatsNew.releases);
+          // Mark as seen once displayed
+          if (whatsNew.has_unseen) {
+            invoke("mark_whats_new_seen").catch(() => {});
+          }
         }
       } catch (e) {
         console.error("Failed to load getting started data:", e);
@@ -287,6 +371,7 @@ export default function GettingStarted({ onNavigate }: GettingStartedProps) {
   return (
     <div className="flex-1 h-full overflow-y-auto p-8 custom-scrollbar bg-transparent relative z-10">
       <div className="max-w-5xl mx-auto space-y-8">
+        <WhatsNewSection releases={whatsNewReleases} />
         <UseCasesSection onNavigate={onNavigate} onboardingItems={onboardingItems} />
         <DiscoverAndExtendSection onNavigate={onNavigate} />
       </div>

@@ -69,6 +69,10 @@ pub struct Settings {
     /// skills are overwritten with the versions shipped in the new binary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundled_skills_version: Option<String>,
+    /// The release version the user last viewed in the "What's New" section.
+    /// Used to determine whether a badge/indicator should be shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whats_new_seen_version: Option<String>,
 }
 
 fn default_analytics_enabled() -> bool {
@@ -87,6 +91,7 @@ impl Default for Settings {
             welcome_dismissed: false,
             default_agent_options: HashMap::new(),
             bundled_skills_version: None,
+            whats_new_seen_version: None,
         }
     }
 }
