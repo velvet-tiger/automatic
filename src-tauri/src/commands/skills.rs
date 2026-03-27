@@ -131,13 +131,13 @@ pub fn import_skill_from_local_path(path: String) -> Result<String, String> {
     serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
 }
 
-/// Import a skill from a GitHub repository URL.
+/// Import skills from a GitHub repository URL.
 /// Accepts URLs in formats:
 /// - https://github.com/owner/repo
 /// - github.com/owner/repo
 /// - owner/repo
 ///
-/// Returns the imported skill info as JSON.
+/// Returns the list of imported skills as JSON.
 #[tauri::command]
 pub async fn import_skill_from_repository(
     repo_url: String,

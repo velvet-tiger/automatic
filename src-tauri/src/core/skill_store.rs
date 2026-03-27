@@ -509,19 +509,19 @@ fn parse_github_url(url: &str) -> Result<(String, String), String> {
     Err("Invalid GitHub URL format. Expected: https://github.com/owner/repo or owner/repo".to_string())
 }
 
-/// Import a skill from a GitHub repository URL.
+/// Import skills from a GitHub repository URL.
 ///
 /// Accepts URLs in the following formats:
 /// - https://github.com/owner/repo
 /// - github.com/owner/repo
 /// - owner/repo
 ///
-/// For multi-skill repos, this imports the first SKILL.md found.
-/// Returns the imported skill name and source info.
+/// For multi-skill repos with a skill.json manifest, imports all listed skills.
+/// Returns a list of all imported skills.
 pub async fn import_skill_from_repository(
     repo_url: &str,
     skill_name: Option<&str>,
-) -> Result<ImportedSkillFromRepo, String> {
+) -> Result<Vec<ImportedSkillFromRepo>, String> {
     let (owner, repo) = parse_github_url(repo_url)?;
     let source = format!("{}/{}", owner, repo);
 
@@ -545,25 +545,20 @@ pub async fn import_skill_from_repository(
     for name in names_to_try {
         match fetch_remote_skill_content(&source, &name).await {
             Ok(content) => {
-                // Determine the actual skill name from frontmatter
                 let actual_name = extract_frontmatter_name(&content)
                     .unwrap_or_else(|| name.clone());
 
-                // Save the skill
                 super::save_skill(&actual_name, &content)?;
 
-                // Record the source
                 let id = format!("{}/{}", source, actual_name);
                 record_skill_source(&actual_name, &source, &id, "github")?;
-
-                // Auto-assign to a collection named after the repo
                 let _ = super::set_skill_collection(&actual_name, &source);
 
-                return Ok(ImportedSkillFromRepo {
+                return Ok(vec![ImportedSkillFromRepo {
                     name: actual_name,
                     source,
                     id,
-                });
+                }]);
             }
             Err(e) => {
                 last_error = Some(e);
@@ -572,87 +567,73 @@ pub async fn import_skill_from_repository(
     }
 
     // If no skill found with derived names, try to discover skills via skill.json
-    let skills_json_url = format!("https://raw.githubusercontent.com/{}/main/skill.json", source);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
-    let resp = client
-        .get(&skills_json_url)
-        .header("User-Agent", "automatic-desktop/1.0")
-        .send()
-        .await;
+    for branch in &["main", "master"] {
+        let skills_json_url = format!(
+            "https://raw.githubusercontent.com/{}/{}/skill.json",
+            source, branch
+        );
 
-    if let Ok(resp) = resp {
-        if resp.status().is_success() {
-            if let Ok(text) = resp.text().await {
-                if let Ok(manifest) = serde_json::from_str::<super::types::SkillsJson>(&text) {
-                    if let Some(first_skill) = manifest.skills.first() {
-                        let name = &first_skill.name;
-                        match fetch_remote_skill_content(&source, name).await {
-                            Ok(content) => {
-                                let actual_name = extract_frontmatter_name(&content)
-                                    .unwrap_or_else(|| name.clone());
+        let resp = client
+            .get(&skills_json_url)
+            .header("User-Agent", "automatic-desktop/1.0")
+            .send()
+            .await;
 
-                                super::save_skill(&actual_name, &content)?;
+        let text = match resp {
+            Ok(r) if r.status().is_success() => match r.text().await {
+                Ok(t) => t,
+                Err(_) => continue,
+            },
+            _ => continue,
+        };
 
-                                let id = format!("{}/{}", source, actual_name);
-                                record_skill_source(&actual_name, &source, &id, "github")?;
+        let manifest: super::types::SkillsJson = match serde_json::from_str(&text) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
 
-                                return Ok(ImportedSkillFromRepo {
-                                    name: actual_name,
-                                    source,
-                                    id,
-                                });
-                            }
-                            Err(e) => {
-                                last_error = Some(e);
-                            }
-                        }
+        if manifest.skills.is_empty() {
+            continue;
+        }
+
+        // Import ALL skills from the manifest, not just the first one
+        let mut imported = Vec::new();
+        for skill_entry in &manifest.skills {
+            let name = &skill_entry.name;
+            match fetch_remote_skill_content(&source, name).await {
+                Ok(content) => {
+                    let actual_name = extract_frontmatter_name(&content)
+                        .unwrap_or_else(|| name.clone());
+
+                    if let Err(e) = super::save_skill(&actual_name, &content) {
+                        eprintln!("[automatic] Failed to save skill '{}': {}", actual_name, e);
+                        continue;
                     }
+
+                    let id = format!("{}/{}", source, actual_name);
+                    let _ = record_skill_source(&actual_name, &source, &id, "github");
+                    let _ = super::set_skill_collection(&actual_name, &source);
+
+                    imported.push(ImportedSkillFromRepo {
+                        name: actual_name,
+                        source: source.clone(),
+                        id,
+                    });
+                }
+                Err(e) => {
+                    eprintln!("[automatic] Failed to fetch skill '{}': {}", name, e);
+                    last_error = Some(e);
                 }
             }
         }
-    }
 
-    // Try master branch if main failed
-    let skills_json_url_master = format!("https://raw.githubusercontent.com/{}/master/skill.json", source);
-    let resp_master = client
-        .get(&skills_json_url_master)
-        .header("User-Agent", "automatic-desktop/1.0")
-        .send()
-        .await;
-
-    if let Ok(resp) = resp_master {
-        if resp.status().is_success() {
-            if let Ok(text) = resp.text().await {
-                if let Ok(manifest) = serde_json::from_str::<super::types::SkillsJson>(&text) {
-                    if let Some(first_skill) = manifest.skills.first() {
-                        let name = &first_skill.name;
-                        match fetch_remote_skill_content(&source, name).await {
-                            Ok(content) => {
-                                let actual_name = extract_frontmatter_name(&content)
-                                    .unwrap_or_else(|| name.clone());
-
-                                super::save_skill(&actual_name, &content)?;
-
-                                let id = format!("{}/{}", source, actual_name);
-                                record_skill_source(&actual_name, &source, &id, "github")?;
-
-                                return Ok(ImportedSkillFromRepo {
-                                    name: actual_name,
-                                    source,
-                                    id,
-                                });
-                            }
-                            Err(e) => {
-                                last_error = Some(e);
-                            }
-                        }
-                    }
-                }
-            }
+        if !imported.is_empty() {
+            return Ok(imported);
         }
     }
 

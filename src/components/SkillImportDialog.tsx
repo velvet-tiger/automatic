@@ -97,11 +97,12 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
         repoUrl: repoUrl.trim(),
         skillName: skillName.trim() || null,
       });
-      const result = parseInvokeResult<ImportedSkillFromRepo>(rawResult);
+      const result = parseInvokeResult<ImportedSkillFromRepo[]>(rawResult);
 
-      setImportedSkillNames([result.name]);
+      const importedNames = result.map((s) => s.name);
+      setImportedSkillNames(importedNames);
       setStatus("success");
-      onImport(result.name);
+      onImport(importedNames[0]!);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus("error");
