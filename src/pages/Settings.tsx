@@ -9,9 +9,9 @@ import { useUpdate } from "../contexts/UpdateContext";
 import { useTaskLog } from "../contexts/TaskLogContext";
 import { AgentSelector, type AgentInfo } from "../components/AgentSelector";
 import SettingsPlugins from "../plugins/SettingsPlugins";
-import { Code2, Bot, AppWindow, Puzzle, Shield, FileText, LifeBuoy, X } from "lucide-react";
+import { Code2, Bot, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X } from "lucide-react";
 
-type SettingsPage = "skills" | "agents" | "app" | "plugins" | "support";
+type SettingsPage = "skills" | "agents" | "appearance" | "app" | "plugins" | "support";
 
 interface AppSettings {
   skill_sync_mode: string;
@@ -33,10 +33,16 @@ const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; descripti
     description: "Default providers",
   },
   {
+    id: "appearance",
+    label: "Appearance",
+    icon: <Palette size={15} />,
+    description: "Theme & color scheme",
+  },
+  {
     id: "app",
     label: "App",
     icon: <AppWindow size={15} />,
-    description: "Analytics & updates",
+    description: "Updates & reset",
   },
   {
     id: "plugins",
@@ -587,84 +593,85 @@ export default function Settings() {
             </div>
           )}
 
+          {/* ── Appearance page ──────────────────────────────────────── */}
+          {activePage === "appearance" && (
+            <div>
+              <h2 className="text-lg font-medium mb-1 text-text-base">Appearance</h2>
+              <p className="text-[13px] text-text-muted mb-6">
+                Choose a color scheme for the application interface.
+              </p>
+
+              {/* Follow system toggle */}
+              <button
+                onClick={handleFollowSystemToggle}
+                className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all mb-4 ${
+                  followSystem
+                    ? "border-brand bg-brand/10"
+                    : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                }`}
+              >
+                <div>
+                  <div className="text-[13px] font-medium text-text-base">Follow system</div>
+                  <div className="text-[12px] text-text-muted">
+                    {followSystem
+                      ? "Automatically switches between Dark and Light based on your OS setting"
+                      : "Using a manually selected theme"}
+                  </div>
+                </div>
+                <div
+                  className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors ${
+                    followSystem ? "bg-brand" : "bg-surface-active"
+                  }`}
+                >
+                  <div
+                    className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                      followSystem ? "left-5" : "left-0.5"
+                    }`}
+                  />
+                </div>
+              </button>
+
+              {/* Manual theme grid — disabled when following system */}
+              <div className={`grid grid-cols-2 gap-4 transition-opacity ${followSystem ? "opacity-40 pointer-events-none" : ""}`}>
+                {THEMES.filter((t) => t.id !== "system").map((theme) => {
+                  const isActive = !followSystem && currentTheme === theme.id;
+                  return (
+                    <button
+                      key={theme.id}
+                      onClick={() => handleThemeChange(theme.id)}
+                      className={`flex flex-col text-left p-4 rounded-xl border transition-all ${
+                        isActive
+                          ? "border-brand bg-brand/10 ring-1 ring-brand/50"
+                          : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 mb-2">
+                        <div
+                          className="w-4 h-4 rounded-full border border-black/20"
+                          style={{ backgroundColor: theme.colors.primary }}
+                        />
+                        <div
+                          className="w-4 h-4 rounded-full border border-black/20 -ml-5"
+                          style={{ backgroundColor: theme.colors.surface }}
+                        />
+                        <span className="text-[13px] font-medium text-text-base">
+                          {theme.name}
+                        </span>
+                      </div>
+                      <span className="text-[12px] text-text-muted line-clamp-2">
+                        {theme.description}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {activePage === "app" && (
             <div>
               <h2 className="text-lg font-medium mb-1 text-text-base">App</h2>
-              <p className="text-[13px] text-text-muted mb-6">Analytics preferences and application updates.</p>
-
-              
-              {/* Appearance / Theme */}
-              <div className="mb-8">
-                <h3 className="text-sm font-medium mb-2 text-text-base">Appearance</h3>
-                <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
-                  Choose a color scheme for the application interface.
-                </p>
-
-                {/* Follow system toggle */}
-                <button
-                  onClick={handleFollowSystemToggle}
-                  className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all mb-4 ${
-                    followSystem
-                      ? "border-brand bg-brand/10"
-                      : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
-                  }`}
-                >
-                  <div>
-                    <div className="text-[13px] font-medium text-text-base">Follow system</div>
-                    <div className="text-[12px] text-text-muted">
-                      {followSystem
-                        ? "Automatically switches between Dark and Light based on your OS setting"
-                        : "Using a manually selected theme"}
-                    </div>
-                  </div>
-                  <div
-                    className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors ${
-                      followSystem ? "bg-brand" : "bg-surface-active"
-                    }`}
-                  >
-                    <div
-                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
-                        followSystem ? "left-5" : "left-0.5"
-                      }`}
-                    />
-                  </div>
-                </button>
-
-                {/* Manual theme grid — disabled when following system */}
-                <div className={`grid grid-cols-2 gap-4 transition-opacity ${followSystem ? "opacity-40 pointer-events-none" : ""}`}>
-                  {THEMES.filter((t) => t.id !== "system").map((theme) => {
-                    const isActive = !followSystem && currentTheme === theme.id;
-                    return (
-                      <button
-                        key={theme.id}
-                        onClick={() => handleThemeChange(theme.id)}
-                        className={`flex flex-col text-left p-4 rounded-xl border transition-all ${
-                          isActive
-                            ? "border-brand bg-brand/10 ring-1 ring-brand/50"
-                            : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 mb-2">
-                          <div
-                            className="w-4 h-4 rounded-full border border-black/20"
-                            style={{ backgroundColor: theme.colors.primary }}
-                          />
-                          <div
-                            className="w-4 h-4 rounded-full border border-black/20 -ml-5"
-                            style={{ backgroundColor: theme.colors.surface }}
-                          />
-                          <span className="text-[13px] font-medium text-text-base">
-                            {theme.name}
-                          </span>
-                        </div>
-                        <span className="text-[12px] text-text-muted line-clamp-2">
-                          {theme.description}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <p className="text-[13px] text-text-muted mb-6">Application updates and reset options.</p>
 
               {/* Analytics */}
               <div className="mb-8">
