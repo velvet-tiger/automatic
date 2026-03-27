@@ -9,9 +9,9 @@ import { useUpdate } from "../contexts/UpdateContext";
 import { useTaskLog } from "../contexts/TaskLogContext";
 import { AgentSelector, type AgentInfo } from "../components/AgentSelector";
 import SettingsPlugins from "../plugins/SettingsPlugins";
-import { Code2, Bot, AppWindow, Puzzle, Shield, FileText, X } from "lucide-react";
+import { Code2, Bot, AppWindow, Puzzle, Shield, FileText, LifeBuoy, X } from "lucide-react";
 
-type SettingsPage = "skills" | "agents" | "app" | "plugins" | "privacy" | "terms";
+type SettingsPage = "skills" | "agents" | "app" | "plugins" | "support";
 
 interface AppSettings {
   skill_sync_mode: string;
@@ -45,16 +45,10 @@ const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; descripti
     description: "Enable & disable features",
   },
   {
-    id: "privacy",
-    label: "Privacy",
-    icon: <Shield size={15} />,
-    description: "Privacy policy",
-  },
-  {
-    id: "terms",
-    label: "Terms of Service",
-    icon: <FileText size={15} />,
-    description: "Usage terms",
+    id: "support",
+    label: "Support",
+    icon: <LifeBuoy size={15} />,
+    description: "Get help",
   },
 ];
 
@@ -68,6 +62,8 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
   const [showEraseDataModal, setShowEraseDataModal] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [eraseInput, setEraseInput] = useState("");
   const [erasingData, setErasingData] = useState(false);
   const eraseConfirmationMatches = eraseInput.trim().toLowerCase() === "erase";
@@ -442,16 +438,61 @@ export default function Settings() {
           {/* ── Plugins page ────────────────────────────────────────────── */}
           {activePage === "plugins" && <SettingsPlugins />}
 
-          {/* ── Privacy page ─────────────────────────────────────────────── */}
-          {activePage === "privacy" && (
+          {/* ── Support page ──────────────────────────────────────────── */}
+          {activePage === "support" && (
             <div>
-              <h2 className="text-lg font-medium mb-1 text-text-base">Privacy Policy</h2>
-              <p className="text-[13px] text-text-muted mb-6">
-                How Automatic handles your data.
+              <h2 className="text-lg font-medium mb-1 text-text-base">Support</h2>
+              <p className="text-[13px] text-text-muted mb-8">
+                Need help? Choose one of the options below to get in touch.
               </p>
 
+              <div className="space-y-3">
+                <a
+                  href="https://github.com/velvet-tiger/automatic/issues"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block w-full text-left bg-bg-input border border-border-strong/40 rounded-lg p-5 hover:border-border-strong transition-colors group no-underline"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 text-text-muted group-hover:text-text-base transition-colors">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[14px] font-medium text-text-base">GitHub Issues</span>
+                      </div>
+                      <p className="text-[13px] text-text-muted leading-relaxed">
+                        Report bugs, request features, or browse existing issues on our GitHub repository.
+                      </p>
+                    </div>
+                  </div>
+                </a>
+
+                <a
+                  href="https://discord.gg/bAhmvZTmcC"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block w-full text-left bg-bg-input border border-border-strong/40 rounded-lg p-5 hover:border-border-strong transition-colors group no-underline"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="mt-0.5 text-text-muted group-hover:text-text-base transition-colors">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[14px] font-medium text-text-base">Discord Community</span>
+                      </div>
+                      <p className="text-[13px] text-text-muted leading-relaxed">
+                        Join our Discord server to chat with the team and other users, ask questions, and share feedback.
+                      </p>
+                    </div>
+                  </div>
+                </a>
+              </div>
+
               {/* Analytics opt-in toggle */}
-              <div className="mb-8">
+              <div className="mt-8">
+                <h3 className="text-sm font-medium mb-2 text-text-base">Usage Analytics</h3>
                 <button
                   onClick={() => updateAnalyticsEnabled(!settings.analytics_enabled)}
                   className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all ${
@@ -492,7 +533,7 @@ export default function Settings() {
               </div>
 
               {/* Newsletter subscription management */}
-              <div className="mb-8">
+              <div className="mt-8">
                 <h3 className="text-sm font-medium mb-2 text-text-base">Newsletter</h3>
                 {newsletterEmail ? (
                   <div className="p-4 rounded-lg border border-border-strong/40 bg-bg-input-dark">
@@ -527,262 +568,21 @@ export default function Settings() {
                 )}
               </div>
 
-              <div className="space-y-6 text-[13px] text-text-muted leading-relaxed">
-                <p>
-                  Automatic is a desktop application that manages AI agent configuration locally on your machine.
-                  Your privacy is important to us. This policy explains what data Automatic collects, how it is
-                  used, and how you can control it.
-                </p>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">Local-First Architecture</h3>
-                  <p>
-                    All project configuration, skills, rules, templates, and MCP server settings are stored
-                    locally on your machine. Automatic does not upload your project files, source code, or agent
-                    configurations to any external server. Data is stored across three locations:
-                  </p>
-                  <ul className="list-disc list-inside mt-2 space-y-1.5 ml-2">
-                    <li>
-                      <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.agents/</code> — global
-                      library of skills, rules, templates, MCP server configs, and project registrations
-                    </li>
-                    <li>
-                      <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.automatic/</code> — application
-                      settings, credentials, and internal state
-                    </li>
-                    <li>
-                      <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">&lt;project&gt;/.automatic/</code> — per-project
-                      configuration synced into each project directory
-                    </li>
-                  </ul>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">Analytics</h3>
-                  <p>
-                    Automatic may collect anonymous usage analytics (such as which features are used and how
-                    often) to help improve the application. Analytics collection is <strong className="text-text-base">opt-in</strong> and
-                    can be enabled or disabled at any time in{" "}
-                    <strong className="text-text-base">Settings &gt; App</strong>.
-                  </p>
-                  <p className="mt-2">
-                    When enabled, analytics data is sent to Amplitude. This data does not include your source
-                    code, file contents, project names, or any personally identifiable information beyond an
-                    anonymous user identifier.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">Network Requests</h3>
-                  <p>Automatic may make network requests for the following purposes:</p>
-                  <ul className="list-disc list-inside mt-2 space-y-1.5 ml-2">
-                    <li>Checking for application updates</li>
-                    <li>Browsing the Skill Store, Template Marketplace, and MCP Marketplace</li>
-                    <li>Sending anonymous analytics (when opted in)</li>
-                    <li>OAuth authentication for credential storage</li>
-                  </ul>
-                  <p className="mt-2">
-                    No data is sent unless you initiate one of these actions or have opted in to analytics.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">Credentials &amp; API Keys</h3>
-                  <p>
-                    API keys and credentials you configure are stored locally using your operating system&apos;s
-                    secure credential storage (e.g. macOS Keychain). Automatic does not transmit your API keys
-                    to any third party. Keys are only used to authenticate with the services you configure.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">Third-Party Services</h3>
-                  <p>
-                    When you connect MCP servers or AI providers, those services have their own privacy policies.
-                    Automatic facilitates the connection but does not control how those services handle your data.
-                    We recommend reviewing the privacy policies of any third-party services you connect.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">Data Deletion</h3>
-                  <p>
-                    Since all data is stored locally, you can delete it at any time by removing
-                    the <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.agents/</code> and{" "}
-                    <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.automatic/</code> directories,
-                    or using the <strong className="text-text-base">Erase All Data</strong> option in Settings.
-                    Per-project configuration in <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">.automatic/</code> directories
-                    within your projects can be removed individually. Uninstalling Automatic removes the
-                    application but does not automatically delete your configuration data.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">Contact</h3>
-                  <p>
-                    If you have questions about this privacy policy, please open an issue at{" "}
-                    <a
-                      href="https://github.com/velvet-tiger/automatic/issues"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-brand hover:underline"
-                    >
-                      github.com/velvet-tiger/automatic/issues
-                    </a>{" "}
-                    or reach out on{" "}
-                    <a
-                      href="https://discord.gg/bAhmvZTmcC"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-brand hover:underline"
-                    >
-                      Discord
-                    </a>.
-                  </p>
-                </div>
-
-                <p className="text-[11px] text-text-muted/60 pt-4 border-t border-border-strong/20">
-                  Last updated: March 2026
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* ── Terms of Service page ──────────────────────────────────── */}
-          {activePage === "terms" && (
-            <div>
-              <h2 className="text-lg font-medium mb-1 text-text-base">Terms of Service</h2>
-              <p className="text-[13px] text-text-muted mb-6">
-                Terms governing your use of Automatic.
-              </p>
-
-              <div className="space-y-6 text-[13px] text-text-muted leading-relaxed">
-                <p>
-                  By downloading, installing, or using Automatic (&quot;the Software&quot;), you agree to be bound by
-                  these Terms of Service (&quot;Terms&quot;). If you do not agree, do not use the Software.
-                </p>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">1. License</h3>
-                  <p>
-                    Automatic is provided under the terms of its published software license. Subject to your
-                    compliance with these Terms, you are granted a limited, non-exclusive, non-transferable,
-                    revocable license to use the Software for personal or commercial purposes in accordance with the
-                    license terms.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">2. Acceptable Use</h3>
-                  <p>You agree not to:</p>
-                  <ul className="list-disc list-inside mt-2 space-y-1.5 ml-2">
-                    <li>Reverse engineer, decompile, or disassemble the Software except as permitted by law</li>
-                    <li>Use the Software to violate any applicable law or regulation</li>
-                    <li>Redistribute or sublicense the Software except as permitted by its license</li>
-                    <li>Remove or alter any proprietary notices, labels, or marks on the Software</li>
-                  </ul>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">3. Your Data</h3>
-                  <p>
-                    Automatic stores all configuration data locally on your machine. You retain full ownership of
-                    your data, including project configurations, skills, rules, and credentials. Automatic does not
-                    claim any rights to your data. See our{" "}
-                    <button
-                      onClick={() => setActivePage("privacy")}
-                      className="text-brand hover:underline"
-                    >
-                      Privacy Policy
-                    </button>{" "}
-                    for details on data handling.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">4. Third-Party Services</h3>
-                  <p>
-                    Automatic integrates with third-party AI providers, MCP servers, and other services. Your use of
-                    those services is governed by their respective terms. Automatic is not responsible for the
-                    availability, accuracy, or conduct of any third-party service.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">5. Marketplace &amp; Skills</h3>
-                  <p>
-                    Skills, templates, and MCP server configurations available through the Automatic marketplace are
-                    provided by the community or by Velvet Tiger. Community-contributed content is provided
-                    as-is and may have its own license terms. You are responsible for reviewing the terms and
-                    suitability of any content you install.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">6. Disclaimer of Warranties</h3>
-                  <p>
-                    The Software is provided &quot;as is&quot; and &quot;as available&quot; without warranties of any
-                    kind, whether express or implied, including but not limited to implied warranties of
-                    merchantability, fitness for a particular purpose, and non-infringement. Velvet Tiger does not
-                    warrant that the Software will be uninterrupted, error-free, or free of harmful components.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">7. Limitation of Liability</h3>
-                  <p>
-                    To the maximum extent permitted by law, Velvet Tiger shall not be liable for any indirect,
-                    incidental, special, consequential, or punitive damages, or any loss of profits or revenues,
-                    whether incurred directly or indirectly, or any loss of data, use, goodwill, or other intangible
-                    losses resulting from your use of or inability to use the Software.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">8. Changes to These Terms</h3>
-                  <p>
-                    We may update these Terms from time to time. Updated terms will be included in new releases of
-                    the Software. Your continued use of the Software after an update constitutes acceptance of the
-                    revised Terms.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">9. Termination</h3>
-                  <p>
-                    You may stop using the Software at any time by uninstalling it. We reserve the right to suspend
-                    or terminate access to marketplace services or online features if you violate these Terms.
-                    Termination does not affect your locally stored data.
-                  </p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">10. Contact</h3>
-                  <p>
-                    If you have questions about these Terms, please open an issue at{" "}
-                    <a
-                      href="https://github.com/velvet-tiger/automatic/issues"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-brand hover:underline"
-                    >
-                      github.com/velvet-tiger/automatic/issues
-                    </a>{" "}
-                    or reach out on{" "}
-                    <a
-                      href="https://discord.gg/bAhmvZTmcC"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-brand hover:underline"
-                    >
-                      Discord
-                    </a>.
-                  </p>
-                </div>
-
-                <p className="text-[11px] text-text-muted/60 pt-4 border-t border-border-strong/20">
-                  Last updated: March 2026
-                </p>
+              <div className="mt-8 pt-6 border-t border-border-strong/20 flex items-center gap-4">
+                <button
+                  onClick={() => setShowPrivacyModal(true)}
+                  className="text-[13px] text-text-muted hover:text-text-base transition-colors"
+                >
+                  <Shield size={14} className="inline-block mr-1.5 -mt-0.5" />
+                  Privacy Policy
+                </button>
+                <button
+                  onClick={() => setShowTermsModal(true)}
+                  className="text-[13px] text-text-muted hover:text-text-base transition-colors"
+                >
+                  <FileText size={14} className="inline-block mr-1.5 -mt-0.5" />
+                  Terms of Service
+                </button>
               </div>
             </div>
           )}
@@ -1095,6 +895,293 @@ export default function Settings() {
               >
                 {erasingData ? "Erasing..." : "Erase Data"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPrivacyModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowPrivacyModal(false);
+          }}
+        >
+          <div className="w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col rounded-xl border border-border-strong/40 bg-bg-input shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border-strong/40">
+              <h3 className="text-[14px] font-semibold text-text-base">Privacy Policy</h3>
+              <button
+                onClick={() => setShowPrivacyModal(false)}
+                className="p-1 rounded text-text-muted hover:text-text-base transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-5 custom-scrollbar">
+              <div className="space-y-6 text-[13px] text-text-muted leading-relaxed">
+                <p>
+                  Automatic is a desktop application that manages AI agent configuration locally on your machine.
+                  Your privacy is important to us. This policy explains what data Automatic collects, how it is
+                  used, and how you can control it.
+                </p>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Local-First Architecture</h3>
+                  <p>
+                    All project configuration, skills, rules, templates, and MCP server settings are stored
+                    locally on your machine. Automatic does not upload your project files, source code, or agent
+                    configurations to any external server. Data is stored across three locations:
+                  </p>
+                  <ul className="list-disc list-inside mt-2 space-y-1.5 ml-2">
+                    <li>
+                      <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.agents/</code> — global
+                      library of skills, rules, templates, MCP server configs, and project registrations
+                    </li>
+                    <li>
+                      <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.automatic/</code> — application
+                      settings, credentials, and internal state
+                    </li>
+                    <li>
+                      <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">&lt;project&gt;/.automatic/</code> — per-project
+                      configuration synced into each project directory
+                    </li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Analytics</h3>
+                  <p>
+                    Automatic may collect anonymous usage analytics (such as which features are used and how
+                    often) to help improve the application. Analytics collection is <strong className="text-text-base">opt-in</strong> and
+                    can be enabled or disabled at any time in{" "}
+                    <strong className="text-text-base">Settings &gt; Support</strong>.
+                  </p>
+                  <p className="mt-2">
+                    When enabled, analytics data is sent to Amplitude. This data does not include your source
+                    code, file contents, project names, or any personally identifiable information beyond an
+                    anonymous user identifier.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Network Requests</h3>
+                  <p>Automatic may make network requests for the following purposes:</p>
+                  <ul className="list-disc list-inside mt-2 space-y-1.5 ml-2">
+                    <li>Checking for application updates</li>
+                    <li>Browsing the Skill Store, Template Marketplace, and MCP Marketplace</li>
+                    <li>Sending anonymous analytics (when opted in)</li>
+                    <li>OAuth authentication for credential storage</li>
+                  </ul>
+                  <p className="mt-2">
+                    No data is sent unless you initiate one of these actions or have opted in to analytics.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Credentials &amp; API Keys</h3>
+                  <p>
+                    API keys and credentials you configure are stored locally using your operating system&apos;s
+                    secure credential storage (e.g. macOS Keychain). Automatic does not transmit your API keys
+                    to any third party. Keys are only used to authenticate with the services you configure.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Third-Party Services</h3>
+                  <p>
+                    When you connect MCP servers or AI providers, those services have their own privacy policies.
+                    Automatic facilitates the connection but does not control how those services handle your data.
+                    We recommend reviewing the privacy policies of any third-party services you connect.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Data Deletion</h3>
+                  <p>
+                    Since all data is stored locally, you can delete it at any time by removing
+                    the <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.agents/</code> and{" "}
+                    <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.automatic/</code> directories,
+                    or using the <strong className="text-text-base">Erase All Data</strong> option in Settings.
+                    Per-project configuration in <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">.automatic/</code> directories
+                    within your projects can be removed individually. Uninstalling Automatic removes the
+                    application but does not automatically delete your configuration data.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">Contact</h3>
+                  <p>
+                    If you have questions about this privacy policy, please open an issue at{" "}
+                    <a
+                      href="https://github.com/velvet-tiger/automatic/issues"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand hover:underline"
+                    >
+                      github.com/velvet-tiger/automatic/issues
+                    </a>{" "}
+                    or reach out on{" "}
+                    <a
+                      href="https://discord.gg/bAhmvZTmcC"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand hover:underline"
+                    >
+                      Discord
+                    </a>.
+                  </p>
+                </div>
+
+                <p className="text-[11px] text-text-muted/60 pt-4 border-t border-border-strong/20">
+                  Last updated: March 2026
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showTermsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowTermsModal(false);
+          }}
+        >
+          <div className="w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col rounded-xl border border-border-strong/40 bg-bg-input shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border-strong/40">
+              <h3 className="text-[14px] font-semibold text-text-base">Terms of Service</h3>
+              <button
+                onClick={() => setShowTermsModal(false)}
+                className="p-1 rounded text-text-muted hover:text-text-base transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-5 custom-scrollbar">
+              <div className="space-y-6 text-[13px] text-text-muted leading-relaxed">
+                <p>
+                  By downloading, installing, or using Automatic (&quot;the Software&quot;), you agree to be bound by
+                  these Terms of Service (&quot;Terms&quot;). If you do not agree, do not use the Software.
+                </p>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">1. License</h3>
+                  <p>
+                    Automatic is provided under the terms of its published software license. Subject to your
+                    compliance with these Terms, you are granted a limited, non-exclusive, non-transferable,
+                    revocable license to use the Software for personal or commercial purposes in accordance with the
+                    license terms.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">2. Acceptable Use</h3>
+                  <p>You agree not to:</p>
+                  <ul className="list-disc list-inside mt-2 space-y-1.5 ml-2">
+                    <li>Reverse engineer, decompile, or disassemble the Software except as permitted by law</li>
+                    <li>Use the Software to violate any applicable law or regulation</li>
+                    <li>Redistribute or sublicense the Software except as permitted by its license</li>
+                    <li>Remove or alter any proprietary notices, labels, or marks on the Software</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">3. Your Data</h3>
+                  <p>
+                    Automatic stores all configuration data locally on your machine. You retain full ownership of
+                    your data, including project configurations, skills, rules, and credentials. Automatic does not
+                    claim any rights to your data. See our Privacy Policy for details on data handling.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">4. Third-Party Services</h3>
+                  <p>
+                    Automatic integrates with third-party AI providers, MCP servers, and other services. Your use of
+                    those services is governed by their respective terms. Automatic is not responsible for the
+                    availability, accuracy, or conduct of any third-party service.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">5. Marketplace &amp; Skills</h3>
+                  <p>
+                    Skills, templates, and MCP server configurations available through the Automatic marketplace are
+                    provided by the community or by Velvet Tiger. Community-contributed content is provided
+                    as-is and may have its own license terms. You are responsible for reviewing the terms and
+                    suitability of any content you install.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">6. Disclaimer of Warranties</h3>
+                  <p>
+                    The Software is provided &quot;as is&quot; and &quot;as available&quot; without warranties of any
+                    kind, whether express or implied, including but not limited to implied warranties of
+                    merchantability, fitness for a particular purpose, and non-infringement. Velvet Tiger does not
+                    warrant that the Software will be uninterrupted, error-free, or free of harmful components.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">7. Limitation of Liability</h3>
+                  <p>
+                    To the maximum extent permitted by law, Velvet Tiger shall not be liable for any indirect,
+                    incidental, special, consequential, or punitive damages, or any loss of profits or revenues,
+                    whether incurred directly or indirectly, or any loss of data, use, goodwill, or other intangible
+                    losses resulting from your use of or inability to use the Software.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">8. Changes to These Terms</h3>
+                  <p>
+                    We may update these Terms from time to time. Updated terms will be included in new releases of
+                    the Software. Your continued use of the Software after an update constitutes acceptance of the
+                    revised Terms.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">9. Termination</h3>
+                  <p>
+                    You may stop using the Software at any time by uninstalling it. We reserve the right to suspend
+                    or terminate access to marketplace services or online features if you violate these Terms.
+                    Termination does not affect your locally stored data.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-text-base mb-2">10. Contact</h3>
+                  <p>
+                    If you have questions about these Terms, please open an issue at{" "}
+                    <a
+                      href="https://github.com/velvet-tiger/automatic/issues"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand hover:underline"
+                    >
+                      github.com/velvet-tiger/automatic/issues
+                    </a>{" "}
+                    or reach out on{" "}
+                    <a
+                      href="https://discord.gg/bAhmvZTmcC"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand hover:underline"
+                    >
+                      Discord
+                    </a>.
+                  </p>
+                </div>
+
+                <p className="text-[11px] text-text-muted/60 pt-4 border-t border-border-strong/20">
+                  Last updated: March 2026
+                </p>
+              </div>
             </div>
           </div>
         </div>

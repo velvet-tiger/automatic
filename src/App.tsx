@@ -21,7 +21,6 @@ import Agents from "./pages/workspace/Agents";
 import Tools from "./pages/workspace/Tools";
 import Recommendations from "./pages/Recommendations";
 import Settings from "./pages/Settings";
-import Support from "./pages/Support";
 import TemplateMarketplace from "./pages/marketplace/TemplateMarketplace";
 import McpMarketplace from "./pages/marketplace/McpMarketplace";
 import CollectionMarketplace from "./pages/marketplace/CollectionMarketplace";
@@ -32,7 +31,7 @@ import { TaskLogProvider, useTaskLog } from "./contexts/TaskLogContext";
 import TaskLog from "./components/TaskLog";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import UpdateToast from "./components/UpdateToast";
-import { ClipboardList, Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, FlaskConical, Lightbulb, List, Wrench, Hash, MessagesSquare, Terminal, LifeBuoy } from "lucide-react";
+import { ClipboardList, Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, FlaskConical, Lightbulb, List, Wrench, Hash, MessagesSquare, Terminal } from "lucide-react";
 import { flag } from "./lib/flags";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
@@ -94,8 +93,9 @@ function App() {
       localStorage.removeItem("nexus.activeTab");
     }
     const saved = localStorage.getItem("automatic.activeTab") || legacy;
-    // Migrate from removed tabs: activity, configuration, dashboard → getting-started
+    // Migrate from removed tabs: activity, configuration, dashboard → getting-started; support → settings
     if (saved === "activity" || saved === "configuration" || saved === "dashboard") return "getting-started";
+    if (saved === "support") return "settings";
     return saved || "getting-started";
   });
   const [pendingProject, setPendingProject] = useState<string | null>(null);
@@ -443,7 +443,6 @@ function App() {
             <Sparkles size={14} className="text-text-muted" />
             <span className="flex-1 text-left">Setup wizard</span>
           </button>
-          <NavItem id="support" icon={LifeBuoy} label="Support" />
           <NavItem id="settings" icon={SettingsIcon} label="Settings" />
         </div>
         {/* Sidebar footer — branding */}
@@ -657,11 +656,6 @@ function App() {
                 initialServer={pendingMcpServer}
                 onInitialServerConsumed={() => setPendingMcpServer(null)}
               />
-            </div>
-          )}
-          {activeTab === "support" && (
-            <div className="flex-1 h-full">
-              <Support />
             </div>
           )}
           {activeTab === "settings" && (
