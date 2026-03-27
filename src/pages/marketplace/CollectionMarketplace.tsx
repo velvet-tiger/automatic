@@ -445,11 +445,11 @@ function CollectionDetail({
               {collection.templates.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-3">
-                    <LayoutTemplate size={13} className="text-brand" />
+                    <LayoutTemplate size={13} className={ACCENT_TEXT} />
                     <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
                       Templates
                     </span>
-                    <span className="text-[10px] bg-brand/15 text-brand px-1.5 py-0.5 rounded">
+                    <span className={`text-[10px] ${ACCENT_BG} ${ACCENT_TEXT} px-1.5 py-0.5 rounded`}>
                       {collection.templates.length}
                     </span>
                   </div>
@@ -459,8 +459,8 @@ function CollectionDetail({
                         key={tpl.name}
                         className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-bg-input border border-border-strong/40"
                       >
-                        <div className="w-8 h-8 rounded-md bg-brand/10 border border-brand/20 flex items-center justify-center flex-shrink-0">
-                          <LayoutTemplate size={15} className="text-brand" />
+                        <div className={`w-8 h-8 rounded-md ${ACCENT_BG} border ${ACCENT_BORDER} flex items-center justify-center flex-shrink-0`}>
+                          <LayoutTemplate size={15} className={ACCENT_TEXT} />
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="text-[13px] font-medium text-text-base leading-snug">
@@ -510,7 +510,7 @@ function CollectionDetail({
                   {collection.templates.length > 0 && (
                     <div className="flex items-center justify-between text-[12px]">
                       <span className="flex items-center gap-1.5 text-text-muted">
-                        <LayoutTemplate size={11} className="text-brand" />
+                        <LayoutTemplate size={11} className={ACCENT_TEXT} />
                         Templates
                       </span>
                       <span className="font-medium text-text-base">{collection.templates.length}</span>

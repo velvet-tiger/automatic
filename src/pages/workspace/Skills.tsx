@@ -385,7 +385,7 @@ function CollectionTagBar({ skill, collection, collections, onChanged }: Collect
       </span>
 
       {collection ? (
-        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand/10 border border-brand/20 text-[11px] font-medium text-brand">
+        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-icon-file-template/10 border border-icon-file-template/20 text-[11px] font-medium text-icon-file-template">
           {collection}
           <button
             onClick={handleRemove}
@@ -877,7 +877,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                               e.stopPropagation();
                               setCollectionFilter(collectionFilter === skill.collection ? null : skill.collection!);
                             }}
-                            className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-brand/10 text-[9px] text-brand hover:bg-brand/20 cursor-pointer transition-colors"
+                            className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-icon-file-template/10 text-[9px] text-icon-file-template hover:bg-icon-file-template/20 cursor-pointer transition-colors"
                             title={`Collection: ${skill.collection}`}
                           >
                             <Tag size={8} />
