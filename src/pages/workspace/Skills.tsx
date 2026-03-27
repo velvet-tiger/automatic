@@ -27,6 +27,7 @@ import {
   Download,
   Tag,
   ChevronDown,
+  Puzzle,
 } from "lucide-react";
 import { ICONS } from "../../lib/icons";
 import { SkillAvatar } from "../../components/SkillAvatar";
@@ -882,6 +883,16 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                             <Tag size={8} />
                             <span className="truncate max-w-[80px]">{skill.collection}</span>
                           </button>
+                        )}
+
+                        {skill.plugin_id && (
+                          <span
+                            className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-bg-base/50 text-[9px] text-text-muted"
+                            title={`Installed by plugin: ${skill.plugin_id}`}
+                          >
+                            <Puzzle size={8} />
+                            <span className="truncate max-w-[80px]">{skill.plugin_id}</span>
+                          </span>
                         )}
 
                         {skill.has_resources && (

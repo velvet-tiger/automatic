@@ -1,4 +1,4 @@
-# Auto Docs — Documentation Guidelines
+# Common Docs — Documentation Guidelines
 
 Follow the Automatic documentation specification when creating or modifying files in the `docs/` directory. These rules apply to all documentation changes.
 
@@ -39,5 +39,5 @@ related:
 
 - `docs/index.md` is the master entry point. Keep it current.
 - `AGENTS.md` or `CLAUDE.md` at the repo root must reference `docs/index.md` as the starting point.
-- Use the `automatic-docs-find` skill to locate the correct file for any topic.
-- Use the `automatic-docs` skill to scaffold new sections.
+- Use the `common-docs-find` skill to locate the correct file for any topic.
+- Use the `common-docs-scaffold` skill to scaffold new sections.

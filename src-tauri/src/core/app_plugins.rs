@@ -97,6 +97,10 @@ impl PluginToolDeclaration {
 pub struct PluginSkillDeclaration {
     /// The skill name (directory name under `~/.agents/skills/`).
     pub name: String,
+    /// Optional GitHub source ("owner/repo") for fetching the skill remotely.
+    /// When set, the skill is fetched from the repo instead of the app bundle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// A rule declared by a plugin.  When the plugin is enabled, the rule is
@@ -163,7 +167,7 @@ struct PluginState {
 fn bundled_plugins() -> Vec<PluginManifest> {
     vec![
         crate::plugins::spec_kitty::manifest(),
-        crate::plugins::auto_docs::manifest(),
+        crate::plugins::common_docs::manifest(),
     ]
 }
 
@@ -240,8 +244,8 @@ fn sync_plugin_tools(manifests: &[PluginManifest], state: &PluginState) {
 
 /// Install or remove plugin-declared skills based on current plugin state.
 ///
-/// - Enabled plugin with skill declarations → install via
-///   `install_skills_from_bundle` and record source with `plugin_id`.
+/// - Bundled skills (no `source`) are installed from the app binary.
+/// - Remote skills (with `source`) are fetched from GitHub in the background.
 /// - This is idempotent: re-running produces no net change.
 fn sync_plugin_skills(manifests: &[PluginManifest], state: &PluginState) {
     for manifest in manifests {
@@ -256,12 +260,66 @@ fn sync_plugin_skills(manifests: &[PluginManifest], state: &PluginState) {
             .unwrap_or(manifest.enabled_by_default);
 
         if enabled {
-            let names: Vec<String> = manifest.skills.iter().map(|s| s.name.clone()).collect();
-            if let Err(e) = super::templates::install_skills_from_bundle(&names) {
-                eprintln!(
-                    "[automatic] failed to install skills for plugin '{}': {}",
-                    manifest.id, e
-                );
+            // Split skills into bundled (no source) and remote (has source).
+            let bundled_names: Vec<String> = manifest
+                .skills
+                .iter()
+                .filter(|s| s.source.is_none())
+                .map(|s| s.name.clone())
+                .collect();
+
+            if !bundled_names.is_empty() {
+                if let Err(e) = super::templates::install_skills_from_bundle(&bundled_names) {
+                    eprintln!(
+                        "[automatic] failed to install bundled skills for plugin '{}': {}",
+                        manifest.id, e
+                    );
+                }
+            }
+
+            // Fetch remote skills in the background.
+            let remote_skills: Vec<(String, String)> = manifest
+                .skills
+                .iter()
+                .filter_map(|s| s.source.as_ref().map(|src| (s.name.clone(), src.clone())))
+                .collect();
+
+            let plugin_id = manifest.id.clone();
+            if !remote_skills.is_empty() {
+                tauri::async_runtime::spawn(async move {
+                    for (name, source) in &remote_skills {
+                        // Skip if already installed.
+                        if super::skills::skill_exists(name) {
+                            continue;
+                        }
+                        match super::skill_store::fetch_remote_skill_content(source, name).await {
+                            Ok(content) => {
+                                if let Err(e) = super::skills::save_skill(name, &content) {
+                                    eprintln!(
+                                        "[automatic] failed to save remote skill '{}' for plugin '{}': {}",
+                                        name, plugin_id, e
+                                    );
+                                } else {
+                                    let id = format!("{}/{}", source, name);
+                                    if let Err(e) = super::skill_store::record_skill_source(
+                                        name, source, &id, "github",
+                                    ) {
+                                        eprintln!(
+                                            "[automatic] failed to record source for skill '{}': {}",
+                                            name, e
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[automatic] failed to fetch remote skill '{}' from '{}': {}",
+                                    name, source, e
+                                );
+                            }
+                        }
+                    }
+                });
             }
         }
         // Note: we do NOT remove plugin skills on disable — they remain on
@@ -312,7 +370,7 @@ fn sync_plugin_rules(manifests: &[PluginManifest], state: &PluginState) {
 /// a `rule_content(machine_name)` function; this dispatches to the right one.
 fn get_plugin_rule_content(plugin_id: &str, machine_name: &str) -> Option<String> {
     match plugin_id {
-        "auto-docs" => crate::plugins::auto_docs::rule_content(machine_name),
+        "common-docs" => crate::plugins::common_docs::rule_content(machine_name),
         _ => None,
     }
 }

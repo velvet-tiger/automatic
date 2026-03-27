@@ -483,6 +483,14 @@ pub fn get_skill_path(name: &str) -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
 
+/// Returns true if a skill with the given name already exists on disk.
+pub fn skill_exists(name: &str) -> bool {
+    let Ok(agents_dir) = get_agents_skills_dir() else {
+        return false;
+    };
+    agents_dir.join(name).join("SKILL.md").exists()
+}
+
 /// Save a skill to `~/.agents/skills/` (the agentskills.io standard location).
 pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
     if !is_valid_name(name) {

@@ -134,15 +134,6 @@ const BUNDLED_SKILL_CONTENTS: &[(&str, &str)] = &[
         "automatic-testing",
         include_str!("../../skills/automatic-testing/SKILL.md"),
     ),
-    // Plugin-provided skills (installed by the auto-docs plugin)
-    (
-        "automatic-docs",
-        include_str!("../../skills/automatic-docs/SKILL.md"),
-    ),
-    (
-        "automatic-docs-find",
-        include_str!("../../skills/automatic-docs-find/SKILL.md"),
-    ),
     // Template-only skills (on-demand, not auto-installed)
     (
         "vercel-react-best-practices",
@@ -174,13 +165,7 @@ const BUNDLED_SKILL_CONTENTS: &[(&str, &str)] = &[
 /// Companion resource files shipped with bundled skills.
 /// Each entry is (skill_name, relative_path, content).
 /// These are installed alongside the SKILL.md when the skill is written to disk.
-const BUNDLED_SKILL_RESOURCES: &[(&str, &str, &str)] = &[
-    (
-        "automatic-docs",
-        "references/specification.md",
-        include_str!("../../skills/automatic-docs/references/specification.md"),
-    ),
-];
+const BUNDLED_SKILL_RESOURCES: &[(&str, &str, &str)] = &[];
 
 /// Parse `skill.json` (embedded at compile time) and return the names of
 /// skills that should be auto-installed.  Falls back to an empty list if
