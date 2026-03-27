@@ -681,7 +681,7 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
   return (
     <div className="flex h-full">
       {/* Left pane — search + results */}
-      <div className="w-[264px] flex-shrink-0 border-r border-border-strong/40 flex flex-col">
+      <div className="w-[320px] flex-shrink-0 border-r border-border-strong/40 flex flex-col">
         {/* Back + search box */}
         <div className="p-3 border-b border-border-strong/40">
            <button
