@@ -38,7 +38,11 @@ pub struct GettingStartedFlags {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
-    pub skill_sync_mode: String,
+    /// How items (skills, etc.) are synced to agent directories: `"symlink"` or `"copy"`.
+    /// Renamed from the legacy `skill_sync_mode`; the alias ensures old settings files
+    /// deserialise without data loss.
+    #[serde(alias = "skill_sync_mode")]
+    pub sync_mode: String,
     /// Whether the user has opted in to anonymous analytics.
     /// Defaults to true; can be disabled in Settings.
     #[serde(default = "default_analytics_enabled")]
@@ -82,7 +86,7 @@ fn default_analytics_enabled() -> bool {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            skill_sync_mode: "symlink".to_string(),
+            sync_mode: "symlink".to_string(),
             analytics_enabled: true,
             wizard_completed: false,
             onboarding: OnboardingData::default(),
@@ -228,7 +232,7 @@ mod tests {
     #[test]
     fn default_settings_have_expected_values() {
         let s = Settings::default();
-        assert_eq!(s.skill_sync_mode, "symlink");
+        assert_eq!(s.sync_mode, "symlink");
         assert!(s.analytics_enabled);
         assert!(!s.wizard_completed);
         assert!(!s.welcome_dismissed);
@@ -241,7 +245,7 @@ mod tests {
     fn read_returns_defaults_when_file_missing() {
         let dir = tmp();
         let settings = read_at(dir.path()).expect("read");
-        assert_eq!(settings.skill_sync_mode, "symlink");
+        assert_eq!(settings.sync_mode, "symlink");
         assert!(settings.analytics_enabled);
     }
 
@@ -251,14 +255,14 @@ mod tests {
     fn write_and_read_roundtrip() {
         let dir = tmp();
         let mut s = Settings::default();
-        s.skill_sync_mode = "copy".to_string();
+        s.sync_mode = "copy".to_string();
         s.analytics_enabled = false;
         s.wizard_completed = true;
 
         write_at(dir.path(), &s).expect("write");
         let loaded = read_at(dir.path()).expect("read");
 
-        assert_eq!(loaded.skill_sync_mode, "copy");
+        assert_eq!(loaded.sync_mode, "copy");
         assert!(!loaded.analytics_enabled);
         assert!(loaded.wizard_completed);
     }
@@ -331,7 +335,7 @@ mod tests {
 
         let loaded = read_at(dir.path()).expect("read");
         // unwrap_or_default() means we get defaults, not an error.
-        assert_eq!(loaded.skill_sync_mode, "symlink");
+        assert_eq!(loaded.sync_mode, "symlink");
     }
 
     // ── Getting-started flags ─────────────────────────────────────────────────

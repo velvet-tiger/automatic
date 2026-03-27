@@ -464,7 +464,7 @@ pub(crate) fn copy_skills_to_project(
 /// (e.g. `.claude/skills/`, `.cline/skills/`) get symlinks pointing back to
 /// the project hub.
 ///
-/// When the user's `skill_sync_mode` setting is `"copy"`, files are copied
+/// When the user's `sync_mode` setting is `"copy"`, files are copied
 /// instead of symlinked.
 pub(crate) fn symlink_skills_from_project(
     agent_skills_dir: &Path,
@@ -477,7 +477,7 @@ pub(crate) fn symlink_skills_from_project(
     cleanup_skill_dir(agent_skills_dir, selected_skill_names, preserve_names)?;
 
     let settings = crate::core::read_settings().unwrap_or_default();
-    let use_symlink = settings.skill_sync_mode == "symlink";
+    let use_symlink = settings.sync_mode == "symlink";
 
     for (name, content) in skills {
         let link_path = agent_skills_dir.join(name);

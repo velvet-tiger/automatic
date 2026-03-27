@@ -9,22 +9,22 @@ import { useUpdate } from "../contexts/UpdateContext";
 import { useTaskLog } from "../contexts/TaskLogContext";
 import { AgentSelector, type AgentInfo } from "../components/AgentSelector";
 import SettingsPlugins from "../plugins/SettingsPlugins";
-import { Code2, Bot, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X } from "lucide-react";
+import { Bot, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw } from "lucide-react";
 
-type SettingsPage = "skills" | "agents" | "appearance" | "app" | "plugins" | "support";
+type SettingsPage = "sync" | "agents" | "appearance" | "app" | "plugins" | "support";
 
 interface AppSettings {
-  skill_sync_mode: string;
+  sync_mode: string;
   analytics_enabled: boolean;
   default_agents: string[];
 }
 
 const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; description: string }[] = [
   {
-    id: "skills",
-    label: "Skills",
-    icon: <Code2 size={15} />,
-    description: "Sync mode",
+    id: "sync",
+    label: "Sync",
+    icon: <RefreshCw size={15} />,
+    description: "Sync mode & defaults",
   },
   {
     id: "agents",
@@ -63,9 +63,9 @@ interface SettingsProps {
 }
 
 export default function Settings({ onOpenWizard }: SettingsProps) {
-  const [activePage, setActivePage] = useState<SettingsPage>("skills");
+  const [activePage, setActivePage] = useState<SettingsPage>("sync");
   const [settings, setSettings] = useState<AppSettings>({
-    skill_sync_mode: "symlink",
+    sync_mode: "symlink",
     analytics_enabled: true,
     default_agents: [],
   });
@@ -122,7 +122,7 @@ export default function Settings({ onOpenWizard }: SettingsProps) {
         const agents = await invoke<AgentInfo[]>("list_agents");
         agents.sort((a, b) => a.label.localeCompare(b.label));
         setSettings({
-          skill_sync_mode: raw.skill_sync_mode ?? "symlink",
+          sync_mode: raw.sync_mode ?? raw.skill_sync_mode ?? "symlink",
           analytics_enabled: raw.analytics_enabled ?? true,
           default_agents: raw.default_agents ?? [],
         });
@@ -156,10 +156,10 @@ export default function Settings({ onOpenWizard }: SettingsProps) {
     }
   }
 
-  async function updateSkillSyncMode(mode: string) {
-    const updated = { ...settings, skill_sync_mode: mode };
+  async function updateSyncMode(mode: string) {
+    const updated = { ...settings, sync_mode: mode };
     setSettings(updated);
-    trackSettingChanged("skill_sync_mode", mode);
+    trackSettingChanged("sync_mode", mode);
     await persistSettings(updated);
   }
 
@@ -215,7 +215,7 @@ export default function Settings({ onOpenWizard }: SettingsProps) {
     try {
       await invoke("reset_settings");
       const defaults: AppSettings = {
-        skill_sync_mode: "symlink",
+        sync_mode: "symlink",
         analytics_enabled: true,
         default_agents: [],
       };
@@ -277,7 +277,7 @@ export default function Settings({ onOpenWizard }: SettingsProps) {
     try {
       await invoke("erase_app_data");
       const defaults: AppSettings = {
-        skill_sync_mode: "symlink",
+        sync_mode: "symlink",
         analytics_enabled: true,
         default_agents: [],
       };
@@ -340,26 +340,26 @@ export default function Settings({ onOpenWizard }: SettingsProps) {
       <div className="flex-1 overflow-y-auto h-full">
         <div className="p-8 max-w-2xl">
 
-          {/* ── Skills page ─────────────────────────────────────────── */}
-          {activePage === "skills" && (
+          {/* ── Sync page ──────────────────────────────────────────── */}
+          {activePage === "sync" && (
             <div>
-              <h2 className="text-lg font-medium mb-1 text-text-base">Skills</h2>
-              <p className="text-[13px] text-text-muted mb-6">Configure how skills are applied to your projects.</p>
+              <h2 className="text-lg font-medium mb-1 text-text-base">Sync</h2>
+              <p className="text-[13px] text-text-muted mb-6">Configure how items are synced to your project agent directories.</p>
 
               <div className="mb-8">
-                <h3 className="text-sm font-medium mb-2 text-text-base">Skill Sync Mode</h3>
+                <h3 className="text-sm font-medium mb-2 text-text-base">Sync Mode</h3>
                 <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
-                  Choose how skills are applied to your project agent directories.
-                  Symlinking ensures updates to skills are immediately reflected
-                  without needing a re-sync, while copying physically duplicates the
-                  file.
+                  Choose how skills and other items are applied to your project
+                  agent directories. Symlinking ensures updates are immediately
+                  reflected without needing a re-sync, while copying physically
+                  duplicates the files.
                 </p>
 
                 <div className="flex flex-col gap-2">
                   <button
-                    onClick={() => updateSkillSyncMode("symlink")}
+                    onClick={() => updateSyncMode("symlink")}
                     className={`flex flex-col items-start gap-1 p-4 rounded-lg border text-left transition-all ${
-                      settings.skill_sync_mode === "symlink"
+                      settings.sync_mode === "symlink"
                         ? "border-brand bg-brand/10"
                         : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
                     }`}
@@ -368,21 +368,21 @@ export default function Settings({ onOpenWizard }: SettingsProps) {
                       Symlink (Recommended)
                     </div>
                     <div className="text-[12px] text-text-muted">
-                      Creates a reference to the global skill file. Updates apply instantly.
+                      Creates a reference to the global file. Updates apply instantly.
                     </div>
                   </button>
 
                   <button
-                    onClick={() => updateSkillSyncMode("copy")}
+                    onClick={() => updateSyncMode("copy")}
                     className={`flex flex-col items-start gap-1 p-4 rounded-lg border text-left transition-all ${
-                      settings.skill_sync_mode === "copy"
+                      settings.sync_mode === "copy"
                         ? "border-brand bg-brand/10"
                         : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
                     }`}
                   >
                     <div className="text-[13px] font-medium text-text-base">Copy</div>
                     <div className="text-[12px] text-text-muted">
-                      Creates an independent physical copy of the skill file in the project.
+                      Creates an independent physical copy of the files in the project.
                     </div>
                   </button>
                 </div>
