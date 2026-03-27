@@ -5677,21 +5677,32 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                       {selectedName}
                     </h1>
                   )}
-                  {/* Directory path — click to change */}
-                  <button
-                    onClick={async () => {
-                      const selected: string | null = await invoke("open_directory_dialog");
-                      if (selected) updateField("directory", selected);
-                    }}
-                    className="mt-1 flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text-base font-mono transition-colors group"
-                    title="Click to change directory"
-                  >
-                    <FolderOpen size={11} className="flex-shrink-0 text-text-muted/60 group-hover:text-text-muted transition-colors" />
-                    {project.directory
-                      ? <span className="truncate max-w-[480px]">{project.directory.replace(/^\/Users\/[^/]+/, "~")}</span>
-                      : <span className="italic text-text-muted/50">No directory set — click to choose</span>
-                    }
-                  </button>
+                  {/* Directory path + group pills — inline */}
+                  <div className="mt-1 flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={async () => {
+                        const selected: string | null = await invoke("open_directory_dialog");
+                        if (selected) updateField("directory", selected);
+                      }}
+                      className="flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text-base font-mono transition-colors group"
+                      title="Click to change directory"
+                    >
+                      <FolderOpen size={11} className="flex-shrink-0 text-text-muted/60 group-hover:text-text-muted transition-colors" />
+                      {project.directory
+                        ? <span className="truncate max-w-[480px]">{project.directory.replace(/^\/Users\/[^/]+/, "~")}</span>
+                        : <span className="italic text-text-muted/50">No directory set — click to choose</span>
+                      }
+                    </button>
+                    {projectGroupMemberships.map((groupName) => (
+                      <button
+                        key={groupName}
+                        onClick={() => selectTab("groups")}
+                        className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:text-text-base hover:border-border-strong font-sans"
+                      >
+                        {groupName}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Right: agent icons */}
@@ -8129,26 +8140,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                             >
                               View instructions
                             </button>
-                          </SummarySidebarSection>
-
-                          <SummarySidebarSection title="Groups">
-                            {loadingGroups ? (
-                              <p className="text-[12px] text-text-muted">Loading groups…</p>
-                            ) : projectGroupMemberships.length === 0 ? (
-                              <p className="text-[12px] text-text-muted">This project is not in any groups.</p>
-                            ) : (
-                              <div className="flex flex-wrap gap-2">
-                                {projectGroupMemberships.map((groupName) => (
-                                  <button
-                                    key={groupName}
-                                    onClick={() => selectTab("groups")}
-                                    className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2.5 py-1 text-[11px] text-text-base transition-colors hover:border-border-strong"
-                                  >
-                                    {groupName}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
                           </SummarySidebarSection>
 
                           <SummarySidebarSection title="Docs">

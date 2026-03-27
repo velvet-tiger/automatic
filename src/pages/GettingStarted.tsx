@@ -109,7 +109,7 @@ const USE_CASES: UseCase[] = [
   },
 ];
 
-function UseCasesSection({ onNavigate, onboardingItems }: GettingStartedProps & { onboardingItems: OnboardingItem[] }) {
+function GettingStartedChecklist({ onNavigate, onboardingItems }: GettingStartedProps & { onboardingItems: OnboardingItem[] }) {
   return (
     <div>
       <div className="flex items-center gap-2 mb-4">
@@ -117,7 +117,7 @@ function UseCasesSection({ onNavigate, onboardingItems }: GettingStartedProps & 
         <h2 className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">Getting Started</h2>
       </div>
       {onboardingItems.length > 0 && (
-        <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden mb-6">
+        <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
           <div className="flex items-center gap-2 px-4 pt-4 pb-3">
             <Sparkles size={12} className="text-brand" />
             <h2 className="text-sm font-semibold text-text-base">Setup checklist</h2>
@@ -139,36 +139,41 @@ function UseCasesSection({ onNavigate, onboardingItems }: GettingStartedProps & 
           </div>
         </div>
       )}
-      <div className="grid grid-cols-3 gap-4">
-        {USE_CASES.map((uc) => (
-          <div
-            key={uc.title}
-            className="bg-bg-input border border-border-strong/40 rounded-xl p-5 flex flex-col"
-          >
-            <div className="flex items-start gap-3 mb-3">
-              <div className={`p-2 rounded-lg flex-shrink-0 ${uc.accentBg} border ${uc.accentBorder}`}>
-                <span className={uc.accentText}>{uc.icon}</span>
-              </div>
-              <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">{uc.title}</h3>
-            </div>
+    </div>
+  );
+}
 
-            <p className="text-[12px] text-text-muted leading-relaxed flex-1 mb-4">{uc.goal}</p>
-
-            <div className="space-y-1">
-              {uc.actions.map((action) => (
-                <button
-                  key={action.label}
-                  onClick={() => onNavigate(action.tab)}
-                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-[12px] font-medium transition-all group bg-bg-sidebar border border-transparent hover:border-border-strong/60 hover:bg-surface-hover ${uc.accentText}`}
-                >
-                  <span className="text-text-base group-hover:text-text-base transition-colors">{action.label}</span>
-                  <ArrowRight size={11} className={`flex-shrink-0 opacity-40 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all ${uc.accentText}`} />
-                </button>
-              ))}
+function UseCasesGrid({ onNavigate }: GettingStartedProps) {
+  return (
+    <div className="grid grid-cols-3 gap-4">
+      {USE_CASES.map((uc) => (
+        <div
+          key={uc.title}
+          className="bg-bg-input border border-border-strong/40 rounded-xl p-5 flex flex-col"
+        >
+          <div className="flex items-start gap-3 mb-3">
+            <div className={`p-2 rounded-lg flex-shrink-0 ${uc.accentBg} border ${uc.accentBorder}`}>
+              <span className={uc.accentText}>{uc.icon}</span>
             </div>
+            <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">{uc.title}</h3>
           </div>
-        ))}
-      </div>
+
+          <p className="text-[12px] text-text-muted leading-relaxed flex-1 mb-4">{uc.goal}</p>
+
+          <div className="space-y-1">
+            {uc.actions.map((action) => (
+              <button
+                key={action.label}
+                onClick={() => onNavigate(action.tab)}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-[12px] font-medium transition-all group bg-bg-sidebar border border-transparent hover:border-border-strong/60 hover:bg-surface-hover ${uc.accentText}`}
+              >
+                <span className="text-text-base group-hover:text-text-base transition-colors">{action.label}</span>
+                <ArrowRight size={11} className={`flex-shrink-0 opacity-40 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all ${uc.accentText}`} />
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -371,8 +376,11 @@ export default function GettingStarted({ onNavigate }: GettingStartedProps) {
   return (
     <div className="flex-1 h-full overflow-y-auto p-8 custom-scrollbar bg-transparent relative z-10">
       <div className="max-w-5xl mx-auto space-y-8">
-        <WhatsNewSection releases={whatsNewReleases} />
-        <UseCasesSection onNavigate={onNavigate} onboardingItems={onboardingItems} />
+        <div className="grid grid-cols-2 gap-8 items-start">
+          <GettingStartedChecklist onNavigate={onNavigate} onboardingItems={onboardingItems} />
+          <WhatsNewSection releases={whatsNewReleases} />
+        </div>
+        <UseCasesGrid onNavigate={onNavigate} />
         <DiscoverAndExtendSection onNavigate={onNavigate} />
       </div>
     </div>
