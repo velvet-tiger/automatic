@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ExternalLink, HardDrive, User } from "lucide-react";
 import { handleExternalLinkClick } from "../lib/externalLinks";
+import graphLogo from "../../logos/graph_5.svg";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -68,10 +69,12 @@ function resolveLocally(desc: AuthorDescriptor | null): AuthorProfile | null {
     return { name: "Local", bio: "Stored locally", avatar_url: "", url: "", kind: "local" };
   }
   if (desc.type === "provider") {
+    // Built-in providers use the Automatic graph logo as their avatar.
+    const isAutomatic = desc.name.toLowerCase() === "automatic";
     return {
       name: desc.name,
       bio: "",
-      avatar_url: "",
+      avatar_url: isAutomatic ? graphLogo : "",
       url: desc.url ?? desc.repository_url ?? "",
       kind: "provider",
     };

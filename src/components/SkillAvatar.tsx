@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Code } from "lucide-react";
+import graphLogo from "../../logos/graph_5.svg";
 
 interface SkillAvatarProps {
   /**
@@ -33,15 +34,18 @@ interface SkillAvatarProps {
  * Displays a skill's avatar.
  *
  * Priority:
- *  1. GitHub owner avatar derived from `source` ("owner/repo"), only when
+ *  1. Automatic app icon for bundled skills (`kind === "bundled"`)
+ *  2. GitHub owner avatar derived from `source` ("owner/repo"), only when
  *     `kind` is "github" (or unset with a source present).
- *  2. First-letter avatar (tinted with the skill icon colour)
- *  3. Generic <Code> lucide icon (only if name is somehow empty)
+ *  3. First-letter avatar (tinted with the skill icon colour)
+ *  4. Generic <Code> lucide icon (only if name is somehow empty)
  */
 export function SkillAvatar({ name, source, kind, size = 32, className = "" }: SkillAvatarProps) {
+  const isBundled = kind === "bundled";
+
   // Only attempt a GitHub avatar fetch for genuine GitHub-hosted skills.
-  // Bundled skills have no repository and must use the letter fallback.
-  const isGitHub = source && kind !== "bundled";
+  // Bundled skills use the Automatic app icon instead.
+  const isGitHub = source && !isBundled;
   const owner = isGitHub ? source.split("/")[0] : null;
   const avatarUrl = owner ? `https://github.com/${owner}.png?size=${size * 2}` : null;
 
@@ -59,6 +63,23 @@ export function SkillAvatar({ name, source, kind, size = 32, className = "" }: S
     height: size,
     flexShrink: 0,
   };
+
+  // ── Automatic logo (bundled skills) ─────────────────────────────────────────
+  if (isBundled) {
+    return (
+      <div
+        className={`rounded-md flex items-center justify-center bg-icon-skill/15 flex-shrink-0 ${className}`}
+        style={containerStyle}
+      >
+        <img
+          src={graphLogo}
+          alt="Automatic"
+          width={Math.round(size * 0.55)}
+          height={Math.round(size * 0.55)}
+        />
+      </div>
+    );
+  }
 
   // ── GitHub avatar ──────────────────────────────────────────────────────────
   if (avatarUrl && !broken) {
