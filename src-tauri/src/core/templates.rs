@@ -252,6 +252,10 @@ pub fn install_default_skills_inner(force: bool) -> Result<(), String> {
         let _ = record_skill_source(name, "automatic/automatic-app", &id, "bundled");
     }
 
+    // Auto-assign bundled skills to the "automatic-skills" collection.
+    let name_strings: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+    let _ = super::skills::set_skills_collection(&name_strings, "automatic-skills");
+
     Ok(())
 }
 

@@ -25,6 +25,8 @@ import {
   Copy,
   Lock,
   Upload,
+  Tag,
+  ChevronDown,
 } from "lucide-react";
 import { ICONS } from "../../lib/icons";
 import { SkillAvatar } from "../../components/SkillAvatar";
@@ -44,6 +46,12 @@ interface SkillEntry {
   has_resources: boolean;
   license?: string;
   plugin_id?: string;
+  collection?: string;
+}
+
+interface SkillCollection {
+  name: string;
+  skills: string[];
 }
 
 interface SkillUsedBy {
@@ -323,6 +331,107 @@ Write your skill instructions here. These will be loaded by agents when the skil
 - Behavior three
 `;
 
+// ── Collection Tag Bar ────────────────────────────────────────────────────────
+
+interface CollectionTagBarProps {
+  skill: string;
+  collection: string | null;
+  collections: SkillCollection[];
+  onChanged: () => void;
+}
+
+function CollectionTagBar({ skill, collection, collections, onChanged }: CollectionTagBarProps) {
+  const [isAdding, setIsAdding] = useState(false);
+  const [inputValue, setInputValue] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isAdding) inputRef.current?.focus();
+  }, [isAdding]);
+
+  // Reset adding state when skill changes
+  useEffect(() => { setIsAdding(false); setInputValue(""); }, [skill]);
+
+  const handleAssign = async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      await invoke("set_skill_collection", { skillName: skill, collection: trimmed });
+      onChanged();
+    } catch (err) {
+      console.error("Failed to set collection:", err);
+    }
+    setIsAdding(false);
+    setInputValue("");
+  };
+
+  const handleRemove = async () => {
+    try {
+      await invoke("remove_skill_collection", { skillName: skill });
+      onChanged();
+    } catch (err) {
+      console.error("Failed to remove collection:", err);
+    }
+  };
+
+  const collectionNames = collections.map(c => c.name);
+
+  return (
+    <div className="h-9 px-5 border-b border-border-strong/40 flex items-center gap-2 shrink-0 bg-bg-input/30">
+      <Tag size={11} className="text-text-muted shrink-0" />
+      <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase shrink-0">
+        Collection
+      </span>
+
+      {collection ? (
+        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand/10 border border-brand/20 text-[11px] font-medium text-brand">
+          {collection}
+          <button
+            onClick={handleRemove}
+            className="ml-0.5 hover:text-danger transition-colors"
+            title="Remove from collection"
+          >
+            <X size={10} />
+          </button>
+        </span>
+      ) : isAdding ? (
+        <div className="flex items-center gap-1">
+          <input
+            ref={inputRef}
+            type="text"
+            list="collection-suggestions"
+            value={inputValue}
+            onChange={e => setInputValue(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") handleAssign(inputValue);
+              if (e.key === "Escape") { setIsAdding(false); setInputValue(""); }
+            }}
+            onBlur={() => {
+              if (inputValue.trim()) handleAssign(inputValue);
+              else { setIsAdding(false); setInputValue(""); }
+            }}
+            placeholder="Collection name…"
+            className="w-40 px-2 py-0.5 rounded bg-bg-sidebar border border-border-strong/40 focus:border-brand outline-none text-[11px] text-text-base placeholder-text-muted/60"
+          />
+          <datalist id="collection-suggestions">
+            {collectionNames.map(name => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+        </div>
+      ) : (
+        <button
+          onClick={() => setIsAdding(true)}
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar border border-dashed border-border-strong/40 transition-colors"
+        >
+          <Plus size={10} />
+          Add to collection
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 interface SkillsProps {
@@ -347,6 +456,8 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   const [filter, setFilter] = useState<"all" | "remote" | "local">("all");
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
+  const [collections, setCollections] = useState<SkillCollection[]>([]);
 
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
   const isDragging = useRef(false);
@@ -409,8 +520,12 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
   const loadSkills = async () => {
     try {
-      const result: SkillEntry[] = await invoke("get_skills");
+      const [result, cols] = await Promise.all([
+        invoke<SkillEntry[]>("get_skills"),
+        invoke<SkillCollection[]>("get_skill_collections"),
+      ]);
       setSkills(result.sort((a, b) => a.name.localeCompare(b.name)));
+      setCollections(cols);
       setError(null);
     } catch (err: any) {
       setError(`Failed to load skills: ${err}`);
@@ -567,6 +682,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   const filteredSkills = skills.filter(s => {
     if (filter === "remote" && !s.source) return false;
     if (filter === "local" && !!s.source) return false;
+    if (collectionFilter && s.collection !== collectionFilter) return false;
     if (searchLower && !s.name.toLowerCase().includes(searchLower)) return false;
     return true;
   });
@@ -642,6 +758,26 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
               </button>
             )}
           </div>
+
+          {/* Collection filter */}
+          {collections.length > 0 && (
+            <div className="relative mt-2">
+              <Tag size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+              <select
+                value={collectionFilter ?? ""}
+                onChange={e => setCollectionFilter(e.target.value || null)}
+                className="w-full pl-7 pr-7 py-1.5 rounded bg-bg-sidebar border border-border-strong/40 hover:border-border-strong focus:border-brand outline-none text-[12px] text-text-base transition-colors appearance-none cursor-pointer"
+              >
+                <option value="">All collections</option>
+                {collections.map(c => (
+                  <option key={c.name} value={c.name}>
+                    {c.name} ({c.skills.length})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={11} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+            </div>
+          )}
         </div>
 
         {/* List */}
@@ -732,6 +868,20 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                               </button>
                             ))}
                           </span>
+                        )}
+
+                        {skill.collection && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCollectionFilter(collectionFilter === skill.collection ? null : skill.collection!);
+                            }}
+                            className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-brand/10 text-[9px] text-brand hover:bg-brand/20 cursor-pointer transition-colors"
+                            title={`Collection: ${skill.collection}`}
+                          >
+                            <Tag size={8} />
+                            <span className="truncate max-w-[80px]">{skill.collection}</span>
+                          </button>
                         )}
 
                         {skill.has_resources && (
@@ -964,6 +1114,16 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                 )}
               </div>
             </div>
+
+            {/* Collection tag bar */}
+            {!isEditing && (
+              <CollectionTagBar
+                skill={selectedSkill}
+                collection={selectedEntry?.collection ?? null}
+                collections={collections}
+                onChanged={loadSkills}
+              />
+            )}
 
             {/* Body */}
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col">

@@ -157,6 +157,7 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
 
     // Best-effort registry load — don't fail list_skills if the file is missing/corrupt
     let registry = read_skill_sources().unwrap_or_default();
+    let collections = read_skill_collections().unwrap_or_default();
 
     // Sort names for deterministic output
     let mut all_names: Vec<String> = skill_sources.keys().cloned().collect();
@@ -183,6 +184,7 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
             sources_list.sort();
 
             let plugin_id = super::app_plugins::plugin_id_for_skill(&name);
+            let collection = collections.get(&name).cloned();
 
             SkillEntry {
                 sources: sources_list,
@@ -190,6 +192,7 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
                 has_resources,
                 license,
                 plugin_id,
+                collection,
                 name,
             }
         })
@@ -512,8 +515,9 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
         }
     }
 
-    // Best-effort: remove from registry (ignore errors)
+    // Best-effort: remove from registry and collection (ignore errors)
     let _ = remove_skill_source(name);
+    let _ = remove_skill_collection(name);
 
     Ok(())
 }
@@ -693,6 +697,10 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
         }
 
         if !imported.is_empty() {
+            // Auto-assign all imported skills to a collection named after
+            // the skill.json package name.
+            let skill_names: Vec<String> = imported.iter().map(|s| s.name.clone()).collect();
+            let _ = set_skills_collection(&skill_names, &manifest.name);
             return Ok(imported);
         }
     }
@@ -875,6 +883,96 @@ pub fn import_skill_from_package(path: &str) -> Result<Vec<ImportedSkill>, Strin
 
     // Now use the existing local import logic on the extracted directory
     import_skill_from_local_path(&temp_path.to_string_lossy())
+}
+
+// ── Skill Collections ─────────────────────────────────────────────────────────
+
+/// Path to the skill collections registry file.
+fn get_skill_collections_path() -> Result<PathBuf, String> {
+    Ok(super::paths::get_automatic_dir()?.join("skill-collections.json"))
+}
+
+/// Read the skill → collection mapping. Returns an empty map if the file
+/// doesn't exist or is unreadable.
+pub fn read_skill_collections() -> Result<HashMap<String, String>, String> {
+    let path = get_skill_collections_path()?;
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| format!("Invalid skill-collections.json: {}", e))
+}
+
+/// Write the full collections registry atomically.
+fn write_skill_collections(registry: &HashMap<String, String>) -> Result<(), String> {
+    let path = get_skill_collections_path()?;
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    let json = serde_json::to_string_pretty(registry).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+/// Assign a skill to a collection.
+pub fn set_skill_collection(skill_name: &str, collection: &str) -> Result<(), String> {
+    let mut registry = read_skill_collections()?;
+    registry.insert(skill_name.to_string(), collection.to_string());
+    write_skill_collections(&registry)
+}
+
+/// Remove a skill from its collection.
+pub fn remove_skill_collection(skill_name: &str) -> Result<(), String> {
+    let mut registry = read_skill_collections()?;
+    registry.remove(skill_name);
+    write_skill_collections(&registry)
+}
+
+/// Assign multiple skills to the same collection in a single write.
+pub fn set_skills_collection(skill_names: &[String], collection: &str) -> Result<(), String> {
+    let mut registry = read_skill_collections()?;
+    for name in skill_names {
+        registry.insert(name.clone(), collection.to_string());
+    }
+    write_skill_collections(&registry)
+}
+
+/// Return the list of unique collection names, sorted alphabetically.
+pub fn list_skill_collection_names() -> Result<Vec<String>, String> {
+    let registry = read_skill_collections()?;
+    let mut names: Vec<String> = registry.values().cloned().collect::<std::collections::HashSet<_>>().into_iter().collect();
+    names.sort();
+    Ok(names)
+}
+
+/// A collection with its name and member skill names.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkillCollection {
+    pub name: String,
+    pub skills: Vec<String>,
+}
+
+/// Return all collections with their member skill names.
+pub fn list_skill_collections() -> Result<Vec<SkillCollection>, String> {
+    let registry = read_skill_collections()?;
+    let mut collections: HashMap<String, Vec<String>> = HashMap::new();
+    for (skill, collection) in &registry {
+        collections
+            .entry(collection.clone())
+            .or_default()
+            .push(skill.clone());
+    }
+
+    let mut result: Vec<SkillCollection> = collections
+        .into_iter()
+        .map(|(name, mut skills)| {
+            skills.sort();
+            SkillCollection { name, skills }
+        })
+        .collect();
+    result.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(result)
 }
 
 #[cfg(test)]

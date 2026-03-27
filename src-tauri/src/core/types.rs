@@ -190,6 +190,10 @@ pub struct SkillEntry {
     /// When set, this skill is owned by a plugin and cannot be deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin_id: Option<String>,
+    /// Skill collection this skill belongs to. Analogous to a repository or
+    /// skill.json package name. Stored in ~/.automatic/skill-collections.json.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

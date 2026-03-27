@@ -556,6 +556,9 @@ pub async fn import_skill_from_repository(
                 let id = format!("{}/{}", source, actual_name);
                 record_skill_source(&actual_name, &source, &id, "github")?;
 
+                // Auto-assign to a collection named after the repo
+                let _ = super::set_skill_collection(&actual_name, &source);
+
                 return Ok(ImportedSkillFromRepo {
                     name: actual_name,
                     source,

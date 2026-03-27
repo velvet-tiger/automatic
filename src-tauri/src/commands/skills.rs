@@ -160,3 +160,23 @@ pub fn import_skill_from_package(path: String) -> Result<String, String> {
     let imported = core::import_skill_from_package(&path)?;
     serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
 }
+
+// ── Skill Collections ─────────────────────────────────────────────────────
+
+/// Return all skill collections with their member skill names.
+#[tauri::command]
+pub fn get_skill_collections() -> Result<Vec<core::SkillCollection>, String> {
+    core::list_skill_collections()
+}
+
+/// Assign a skill to a collection.
+#[tauri::command]
+pub fn set_skill_collection(skill_name: String, collection: String) -> Result<(), String> {
+    core::set_skill_collection(&skill_name, &collection)
+}
+
+/// Remove a skill from its collection.
+#[tauri::command]
+pub fn remove_skill_collection(skill_name: String) -> Result<(), String> {
+    core::remove_skill_collection(&skill_name)
+}
