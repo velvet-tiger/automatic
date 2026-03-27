@@ -24,7 +24,7 @@ import {
   LayoutTemplate,
   Copy,
   Lock,
-  Upload,
+  Download,
   Tag,
   ChevronDown,
 } from "lucide-react";
@@ -709,7 +709,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                 className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
                 title="Import Skill"
               >
-                <Upload size={14} />
+                <Download size={14} />
               </button>
 
               <button
@@ -1304,7 +1304,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                 onClick={() => setShowImportDialog(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-bg-sidebar hover:bg-surface-hover border border-border-strong text-text-base rounded-lg text-[13px] font-medium transition-colors"
               >
-                <Upload size={14} />
+                <Download size={14} />
                 Import
               </button>
             </div>

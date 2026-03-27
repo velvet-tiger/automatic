@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { X, Upload, Github, Loader2, CheckCircle2, FolderOpen, FileText } from "lucide-react";
+import { X, Download, Github, Loader2, CheckCircle2, FolderOpen, FileText } from "lucide-react";
 
 interface ImportedSkill {
   name: string;
@@ -201,7 +201,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
                   </>
                 ) : (
                   <>
-                    <Upload size={16} />
+                    <Download size={16} />
                     Select File or Folder
                   </>
                 )}
