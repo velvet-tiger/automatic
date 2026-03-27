@@ -22,6 +22,7 @@ const AGENT_LOGO_MAP: Record<string, string> = {
   goose: "goose",
   codex: "codex",
   opencode: "opencode",
+  zed: "zed",
 };
 
 interface AgentIconProps {

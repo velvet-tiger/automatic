@@ -25,6 +25,7 @@ mod kilo_code;
 mod kiro;
 mod opencode;
 mod warp;
+mod zed;
 
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -49,6 +50,7 @@ pub use opencode::{
     OpenCode,
 };
 pub use warp::Warp;
+pub use zed::Zed;
 
 // ── Capabilities ─────────────────────────────────────────────────────────────
 
@@ -359,6 +361,7 @@ pub fn all() -> Vec<&'static dyn Agent> {
         &CodexCli,
         &OpenCode,
         &Warp,
+        &Zed,
     ];
     agents.sort_by(|a, b| a.label().to_lowercase().cmp(&b.label().to_lowercase()));
     agents
