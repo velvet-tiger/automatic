@@ -45,7 +45,6 @@ import {
   LayoutTemplate,
   Edit2,
   Upload,
-  ArrowRightLeft,
   GripVertical,
   Package,
   AlertCircle,
@@ -92,6 +91,11 @@ interface CustomCommand {
   content: string;
 }
 
+interface CustomSkill {
+  name: string;
+  content: string;
+}
+
 interface UserAgentEntry {
   id: string;
   name: string;
@@ -132,6 +136,8 @@ interface Project {
   user_commands?: string[];
   /** Inline custom commands stored directly in this project. */
   custom_commands?: CustomCommand[];
+  /** Inline custom skills stored directly in this project. Written to skill directories on sync. */
+  custom_skills?: CustomSkill[];
 }
 
 interface AgentInfo {
@@ -227,73 +233,6 @@ interface ProjectFolder {
   name: string;
   collapsed: boolean;
   projectNames: string[];
-}
-
-// ── Skill frontmatter helpers (shared with Skills.tsx logic) ─────────────────
-
-interface LocalSkillFrontmatter {
-  name?: string;
-  description?: string;
-  [key: string]: string | undefined;
-}
-
-function parseLocalSkillFrontmatter(raw: string): { meta: LocalSkillFrontmatter; body: string } {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return { meta: {}, body: raw };
-
-  const meta: LocalSkillFrontmatter = {};
-  const lines = match[1]!.split("\n");
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i]!;
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) { i++; continue; }
-    const key = line.slice(0, colonIdx).trim();
-    const rest = line.slice(colonIdx + 1).trim();
-    if (!key) { i++; continue; }
-    if (rest === ">" || rest === ">-" || rest === "|" || rest === "|-") {
-      i++;
-      const blockLines: string[] = [];
-      while (i < lines.length && (lines[i]!.startsWith(" ") || lines[i]!.startsWith("\t"))) {
-        blockLines.push(lines[i]!.trim());
-        i++;
-      }
-      meta[key] = blockLines.join(rest.startsWith("|") ? "\n" : " ");
-    } else {
-      meta[key] = rest.replace(/^["']|["']$/g, "");
-      i++;
-    }
-  }
-  return { meta, body: match[2]!.trimStart() };
-}
-
-const LOCAL_SKILL_XML_TAG_RE = /<[^>]+>/;
-const LOCAL_SKILL_RESERVED_WORDS = ["anthropic", "claude"];
-const LOCAL_SKILL_NAME_CHARSET_RE = /^[a-z0-9-]*$/;
-
-function validateLocalSkillName(value: string): string | null {
-  if (!value) return "Name is required.";
-  if (value.length > 64) return "Name must be 64 characters or fewer.";
-  if (!LOCAL_SKILL_NAME_CHARSET_RE.test(value)) return "Name may only contain lowercase letters, numbers, and hyphens.";
-  if (LOCAL_SKILL_XML_TAG_RE.test(value)) return "Name must not contain XML tags.";
-  for (const word of LOCAL_SKILL_RESERVED_WORDS) {
-    if (value === word || value.startsWith(word + "-") || value.endsWith("-" + word) || value.includes("-" + word + "-")) {
-      return `Name must not contain the reserved word "${word}".`;
-    }
-  }
-  return null;
-}
-
-function validateLocalSkillDescription(value: string): string | null {
-  if (!value.trim()) return "Description is required.";
-  if (value.length > 1024) return "Description must be 1024 characters or fewer.";
-  if (LOCAL_SKILL_XML_TAG_RE.test(value)) return "Description must not contain XML tags.";
-  return null;
-}
-
-function buildLocalSkillFrontmatter(name: string, description: string): string {
-  const safeDesc = description.includes(":") ? `"${description.replace(/"/g, '\\"')}"` : description;
-  return `---\nname: ${name}\ndescription: ${safeDesc}\n---\n`;
 }
 
 // ── Activity ──────────────────────────────────────────────────────────────────
@@ -2558,6 +2497,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     setProjectGroup(groupForTab(tab));
     if (tab !== "rules") setCustomRuleEditingIdx(null);
     if (tab !== "commands") setCustomCommandEditingIdx(null);
+    if (tab !== "skills") setCustomSkillEditingIdx(null);
     if (tab === "activity" && selectedName) {
       loadActivityPage(selectedName, 0);
     }
@@ -2660,17 +2600,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     () => Object.entries(projectDocs).filter(([, entry]) => isHttpDocPath(entry.path)),
     [projectDocs],
   );
-  // Local skill editing state
-  const [localSkillEditing, setLocalSkillEditing] = useState<string | null>(null); // skill name being edited
-  const [localSkillContent, setLocalSkillContent] = useState(""); // raw SKILL.md content
-  const [localSkillContentCache, setLocalSkillContentCache] = useState<Record<string, string>>({});
-  const [localSkillEditName, setLocalSkillEditName] = useState("");
-  const [localSkillEditDescription, setLocalSkillEditDescription] = useState("");
-  const [localSkillEditBody, setLocalSkillEditBody] = useState("");
-  const [localSkillFieldErrors, setLocalSkillFieldErrors] = useState<{ name: string | null; description: string | null }>({ name: null, description: null });
-  const [localSkillIsEditing, setLocalSkillIsEditing] = useState(false);
-  const [localSkillSaving, setLocalSkillSaving] = useState(false);
-
   // Custom rule editing state (for inline project rules in the Rules tab)
   const [customRuleEditingIdx, setCustomRuleEditingIdx] = useState<number | null>(null);
   const [customRuleEditName, setCustomRuleEditName] = useState("");
@@ -2696,6 +2625,11 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [customCommandEditingIdx, setCustomCommandEditingIdx] = useState<number | null>(null);
   const [customCommandEditName, setCustomCommandEditName] = useState("");
   const [customCommandEditContent, setCustomCommandEditContent] = useState("");
+
+  // Custom skill editing state (for project-local skills)
+  const [customSkillEditingIdx, setCustomSkillEditingIdx] = useState<number | null>(null);
+  const [customSkillEditName, setCustomSkillEditName] = useState("");
+  const [customSkillEditContent, setCustomSkillEditContent] = useState("");
 
   // Expanded workspace command preview state (mirrors SkillSelector pattern)
   const [expandedCommandId, setExpandedCommandId] = useState<string | null>(null);
@@ -2778,36 +2712,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       cancelled = true;
     };
   }, [globalRuleContentCache, project?.file_rules]);
-
-  useEffect(() => {
-    const localSkills = project?.local_skills || [];
-    if (!selectedName || localSkills.length === 0) return;
-
-    let cancelled = false;
-
-    async function warmLocalSkillContent(): Promise<void> {
-      for (const skillName of localSkills) {
-        if (localSkillContentCache[skillName] !== undefined) continue;
-        try {
-          const content: string = await invoke("read_local_skill", { name: selectedName, skillName });
-          const { body } = parseLocalSkillFrontmatter(content);
-          if (!cancelled) {
-            setLocalSkillContentCache((prev) => (prev[skillName] !== undefined ? prev : { ...prev, [skillName]: body }));
-          }
-        } catch {
-          if (!cancelled) {
-            setLocalSkillContentCache((prev) => (prev[skillName] !== undefined ? prev : { ...prev, [skillName]: "" }));
-          }
-        }
-      }
-    }
-
-    void warmLocalSkillContent();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [localSkillContentCache, project?.local_skills, selectedName]);
 
   // Close "Open in" dropdown when clicking outside
   useEffect(() => {
@@ -4175,6 +4079,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         user_agents: stored.user_agents || [],
         custom_commands: stored.custom_commands || [],
         user_commands: stored.user_commands || [],
+        custom_skills: stored.custom_skills || [],
       };
 
       setSelectedName(name);
@@ -4251,6 +4156,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         user_agents: parsed.user_agents || [],
         custom_commands: parsed.custom_commands || [],
         user_commands: parsed.user_commands || [],
+        custom_skills: parsed.custom_skills || [],
         tools: parsed.tools || [],
       };
       setSelectedName(name);
@@ -8050,7 +7956,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
                 {/* ── Summary tab ──────────────────────────────────────── */}
                 {projectTab === "summary" && (() => {
-                  const totalSkills = project.skills.length + project.local_skills.length;
+                  const totalSkills = project.skills.length + project.local_skills.length + (project.custom_skills?.length ?? 0);
                   const totalRules = ((project.file_rules || {})["_project"] || []).length + (project.custom_rules?.length ?? 0);
                   const totalSubAgents = (project.user_agents?.length ?? 0) + (project.custom_agents?.length ?? 0);
                   const totalCommands = (project.user_commands?.length ?? 0) + (project.custom_commands?.length ?? 0);
@@ -8329,6 +8235,220 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                 {/* ── Skills tab ───────────────────────────────────────── */}
                 {projectTab === "skills" && (
                   <>
+                    {/* ── Project Skills (custom, inline) ──────────────── */}
+                    {(() => {
+                      const customSkills: CustomSkill[] = project.custom_skills || [];
+
+                      // Helper: persist an updated project immediately (save + sync).
+                      const saveProjectWithSkills = async (updatedProject: Project) => {
+                        if (!selectedName) return;
+                        const toSave = { ...updatedProject, name: selectedName, updated_at: new Date().toISOString() };
+                        setProject(toSave);
+                        try {
+                          setSyncStatus("syncing");
+                          await invoke("save_project", {
+                            name: selectedName,
+                            data: JSON.stringify(toSave, null, 2),
+                          });
+                          setProjectDetailsMap((prev) => new Map(prev).set(selectedName, toSave));
+                          setDirty(false);
+                          setSyncStatus(toSave.directory && toSave.agents.length > 0 ? "Saved & synced" : "Saved");
+                          if (toSave.directory && toSave.agents.length > 0) {
+                            setDriftReport({ drifted: false, agents: [] });
+                            setDriftByProject((prev) => ({ ...prev, [selectedName]: false }));
+                          }
+                        } catch (err: unknown) {
+                          setError(`Save failed: ${err}`);
+                          setSyncStatus(null);
+                        }
+                      };
+
+                      const handleAddCustomSkill = () => {
+                        const newSkill: CustomSkill = {
+                          name: "new-skill",
+                          content: "---\nname: New Skill\ndescription: Describe what this skill does and when to use it.\n---\n\nWrite the skill instructions here.\n",
+                        };
+                        setProject({ ...project, custom_skills: [...customSkills, newSkill] });
+                        setCustomSkillEditingIdx(customSkills.length);
+                        setCustomSkillEditName(newSkill.name);
+                        setCustomSkillEditContent(newSkill.content);
+                        setDirty(true);
+                      };
+
+                      const handleDeleteCustomSkill = async (idx: number) => {
+                        const updated = customSkills.filter((_, i) => i !== idx);
+                        if (customSkillEditingIdx === idx) {
+                          setCustomSkillEditingIdx(null);
+                        } else if (customSkillEditingIdx !== null && customSkillEditingIdx > idx) {
+                          setCustomSkillEditingIdx(customSkillEditingIdx - 1);
+                        }
+                        await saveProjectWithSkills({ ...project, custom_skills: updated.length > 0 ? updated : undefined });
+                      };
+
+                      const handleStartEditCustomSkill = (idx: number) => {
+                        setCustomSkillEditingIdx(idx);
+                        setCustomSkillEditName(customSkills[idx]?.name ?? "");
+                        setCustomSkillEditContent(customSkills[idx]?.content ?? "");
+                      };
+
+                      const handleCommitCustomSkill = async () => {
+                        if (customSkillEditingIdx === null) return;
+                        const updated = customSkills.map((skill, i) =>
+                          i === customSkillEditingIdx
+                            ? {
+                                name: customSkillEditName.trim().toLowerCase().replace(/\s+/g, "-") || "untitled-skill",
+                                content: customSkillEditContent,
+                              }
+                            : skill
+                        );
+                        setCustomSkillEditingIdx(null);
+                        await saveProjectWithSkills({ ...project, custom_skills: updated });
+                      };
+
+                      return (
+                        <section className="mb-6">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <Code size={13} className="text-text-muted" />
+                              <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Project Skills</span>
+                              {customSkills.length > 0 && (
+                                <span className="text-[10px] bg-bg-sidebar border border-border-strong/40 rounded-full px-1.5 py-0.5 text-text-muted leading-none">
+                                  {customSkills.length}
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              onClick={handleAddCustomSkill}
+                              className="flex items-center gap-1 text-[12px] text-brand hover:text-brand-hover transition-colors font-medium"
+                            >
+                              <Plus size={12} /> Add Skill
+                            </button>
+                          </div>
+
+                          {customSkills.length === 0 ? (
+                            <button
+                              onClick={handleAddCustomSkill}
+                              className="w-full flex items-center justify-center gap-2 px-4 py-6 border border-dashed border-border-strong/60 hover:border-brand/40 rounded-lg text-text-muted hover:text-brand transition-colors text-[13px]"
+                            >
+                              <Plus size={14} /> Create a project-scoped skill
+                            </button>
+                          ) : (
+                            <div className="space-y-2">
+                              {customSkills.map((skill, idx) => {
+                                const isEditing = customSkillEditingIdx === idx;
+                                return (
+                                  <div
+                                    key={`${skill.name}-${idx}`}
+                                    className={`rounded-lg border transition-colors ${
+                                      isEditing
+                                        ? "border-brand/40 bg-bg-input"
+                                        : "border-border-strong/40 bg-bg-input hover:border-border-strong"
+                                    }`}
+                                  >
+                                    {isEditing ? (
+                                      <div className="p-3 space-y-2">
+                                        <input
+                                          type="text"
+                                          value={customSkillEditName}
+                                          onChange={(e) => setCustomSkillEditName(e.target.value)}
+                                          placeholder="skill-name (lowercase, hyphens)"
+                                          className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/50 outline-none transition-colors font-mono"
+                                        />
+                                        <textarea
+                                          value={customSkillEditContent}
+                                          onChange={(e) => setCustomSkillEditContent(e.target.value)}
+                                          placeholder="Write the skill content as Markdown with YAML frontmatter..."
+                                          rows={12}
+                                          className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-2 text-[12px] font-mono text-text-base placeholder-text-muted/50 outline-none resize-y transition-colors leading-relaxed"
+                                        />
+                                        <div className="flex items-center justify-end gap-2 pt-1">
+                                          <button
+                                            onClick={() => setCustomSkillEditingIdx(null)}
+                                            className="px-3 py-1 text-[12px] text-text-muted hover:text-text-base transition-colors"
+                                          >
+                                            Cancel
+                                          </button>
+                                          <button
+                                            onClick={handleCommitCustomSkill}
+                                            className="flex items-center gap-1 px-3 py-1 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded transition-colors"
+                                          >
+                                            <Check size={11} /> Save
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center gap-3 px-3 py-2.5">
+                                        <Code size={14} className="flex-shrink-0 text-text-muted" />
+                                        <div className="flex-1 min-w-0">
+                                          <div className="text-[13px] font-medium text-text-base truncate font-mono">{skill.name || "untitled-skill"}</div>
+                                          {skill.content.trim() ? (
+                                            <div className="text-[11px] text-text-muted truncate mt-0.5">
+                                              {skill.content.trim().split("\n").find(l => l.trim() && !l.startsWith("---"))?.slice(0, 60) || "Custom skill"}
+                                            </div>
+                                          ) : (
+                                            <div className="text-[11px] text-text-muted/60 italic mt-0.5">Empty</div>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                          <button
+                                            onClick={() => handleStartEditCustomSkill(idx)}
+                                            className="p-1.5 text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+                                            title="Edit"
+                                          >
+                                            <Edit2 size={12} />
+                                          </button>
+                                          <button
+                                            onClick={async () => {
+                                              if (!selectedName) return;
+                                              try {
+                                                setSyncStatus("syncing");
+                                                // Save the skill content to the global registry
+                                                await invoke("save_skill", { name: skill.name, content: skill.content });
+                                                // Move from custom_skills to global skills
+                                                const remainingCustom = customSkills.filter((_, i) => i !== idx);
+                                                const updatedProject = {
+                                                  ...project,
+                                                  skills: [...project.skills, skill.name],
+                                                  custom_skills: remainingCustom.length > 0 ? remainingCustom : undefined,
+                                                };
+                                                if (customSkillEditingIdx === idx) {
+                                                  setCustomSkillEditingIdx(null);
+                                                } else if (customSkillEditingIdx !== null && customSkillEditingIdx > idx) {
+                                                  setCustomSkillEditingIdx(customSkillEditingIdx - 1);
+                                                }
+                                                await saveProjectWithSkills(updatedProject);
+                                                await loadAvailableSkills();
+                                                setSyncStatus(`Imported "${skill.name}" to global registry`);
+                                                setTimeout(() => setSyncStatus(null), 4000);
+                                              } catch (err: unknown) {
+                                                setSyncStatus(`Import failed: ${err}`);
+                                                setTimeout(() => setSyncStatus(null), 4000);
+                                              }
+                                            }}
+                                            className="p-1.5 text-text-muted hover:text-success hover:bg-success/10 rounded transition-colors"
+                                            title="Import to global skill registry"
+                                          >
+                                            <Upload size={12} />
+                                          </button>
+                                          <button
+                                            onClick={() => handleDeleteCustomSkill(idx)}
+                                            className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors"
+                                            title="Delete"
+                                          >
+                                            <Trash2 size={12} />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </section>
+                      );
+                    })()}
+
                     {/* Global Skills */}
                      <section>
                         <SkillSelector
@@ -8347,17 +8467,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           onForkSkill={async (skillName, content) => {
                             if (!selectedName) return;
                             try {
-                              // A project directory is required so the skill file has
-                              // somewhere to live. Give a clear error rather than letting
-                              // the backend fail with a cryptic message.
-                              if (!project.directory) {
-                                throw new Error("Set a project directory before forking a skill to local.");
-                              }
-
-                              // Derive a unique local name: "<name>-copy", then
-                              // "<name>-copy-2", "<name>-copy-3", … until we find one
-                              // that isn't already in local_skills or global skills.
-                              const taken = new Set([...project.skills, ...project.local_skills]);
+                              // Derive a unique name: "<name>-copy", then
+                              // "<name>-copy-2", "<name>-copy-3", …
+                              const existingCustomNames = new Set((project.custom_skills ?? []).map(s => s.name));
+                              const taken = new Set([...project.skills, ...project.local_skills, ...existingCustomNames]);
                               let copyName = `${skillName}-copy`;
                               let n = 2;
                               while (taken.has(copyName)) {
@@ -8365,45 +8478,25 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                 n++;
                               }
 
-                              // save_local_skill reads the project from disk, so flush
-                              // current state first so agents/directory are up to date.
-                              const toSave = {
-                                ...project,
-                                name: selectedName,
-                                updated_at: new Date().toISOString(),
-                              };
-                              await invoke("save_project", {
-                                name: selectedName,
-                                data: JSON.stringify(toSave, null, 2),
-                              });
-                              setDirty(false);
-
-                              // Write the skill content under the copy name into the
-                              // project's local skill directory.
-                              await invoke("save_local_skill", {
-                                name: selectedName,
-                                skillName: copyName,
-                                content,
-                              });
-
-                              // Add the copy to local_skills; the original global skill
-                              // is left untouched in project.skills.
+                              // Add as a project-scoped custom skill and auto-save.
+                              const newCustomSkill: CustomSkill = { name: copyName, content };
                               const forkedProject = {
                                 ...project,
                                 name: selectedName,
-                                local_skills: [...project.local_skills, copyName],
+                                custom_skills: [...(project.custom_skills ?? []), newCustomSkill],
                                 updated_at: new Date().toISOString(),
                               };
+                              setProject(forkedProject);
                               await invoke("save_project", {
                                 name: selectedName,
                                 data: JSON.stringify(forkedProject, null, 2),
                               });
-                              setProject(forkedProject);
+                              setProjectDetailsMap((prev) => new Map(prev).set(selectedName, forkedProject));
                               setDirty(false);
                               notifyProjectUpdated();
-                              setSyncStatus(`Forked "${skillName}" → local skill "${copyName}"`);
+                              setSyncStatus(`Forked "${skillName}" → project skill "${copyName}"`);
                               setTimeout(() => setSyncStatus(null), 5000);
-                            } catch (err: any) {
+                            } catch (err: unknown) {
                               setError(`Fork failed: ${err}`);
                             }
                           }}
@@ -8515,326 +8608,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                        )}
                      </section>
 
-                     {/* Local Skills */}
-                     {project.local_skills.length > 0 && (
-                      <section>
-                        <div className="flex items-center justify-between mb-2">
-                          <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase flex items-center gap-1.5">
-                            <Code size={12} /> Local Skills
-                          </label>
-                          {project.local_skills.length > 1 && selectedName && (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  setSyncStatus("syncing");
-                                  await invoke("sync_local_skills", { name: selectedName });
-                                  setSyncStatus("Local skills synced across agents");
-                                  setTimeout(() => setSyncStatus(null), 4000);
-                                } catch (err: any) {
-                                  setSyncStatus(`Sync failed: ${err}`);
-                                  setTimeout(() => setSyncStatus(null), 4000);
-                                }
-                              }}
-                              className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-base px-1.5 py-0.5 hover:bg-bg-sidebar rounded transition-colors"
-                              title="Copy all local skills to every agent's skill directory"
-                            >
-                              <ArrowRightLeft size={11} /> Sync Across Agents
-                            </button>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-text-muted mb-2">
-                          These skills exist only in this project directory, not in the global registry.
-                        </p>
-                        <ul className="space-y-1">
-                          {project.local_skills.map((s) => (
-                            <li
-                              key={s}
-                              className={`group flex flex-col bg-bg-input rounded-md border text-[13px] transition-colors ${
-                                localSkillEditing === s ? "border-brand/50" : "border-border-strong/40"
-                              }`}
-                            >
-                              {/* Row: name + action buttons */}
-                              <div className="flex items-center justify-between px-3 py-1.5">
-                                <button
-                                  onClick={async () => {
-                                    if (!selectedName) return;
-                                    if (localSkillEditing === s) {
-                                      // Collapse if already open and not actively editing
-                                      if (!localSkillIsEditing) {
-                                        setLocalSkillEditing(null);
-                                        setLocalSkillContent("");
-                                      }
-                                      return;
-                                    }
-                                    // Load and expand
-                                    try {
-                                      const content: string = await invoke("read_local_skill", { name: selectedName, skillName: s });
-                                      const { meta, body } = parseLocalSkillFrontmatter(content);
-                                      setLocalSkillEditing(s);
-                                      setLocalSkillContent(content);
-                                      setLocalSkillEditName(meta.name ?? s);
-                                      setLocalSkillEditDescription(meta.description ?? "");
-                                      setLocalSkillEditBody(body);
-                                      setLocalSkillFieldErrors({ name: null, description: null });
-                                      setLocalSkillIsEditing(false);
-                                    } catch (err: any) {
-                                      setSyncStatus(`Failed to read skill: ${err}`);
-                                      setTimeout(() => setSyncStatus(null), 4000);
-                                    }
-                                  }}
-                                  className="flex items-center gap-2 flex-1 text-left text-text-base hover:text-text-base"
-                                >
-                                  <Code size={12} className="text-text-muted" />
-                                  <span>{s}</span>
-                                  <TokenPill text={localSkillContentCache[s] ?? ""} />
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-sidebar text-text-muted border border-border-strong/40">
-                                    local
-                                  </span>
-                                  {/* Chevron */}
-                                  <svg
-                                    width="10" height="10" viewBox="0 0 10 10" fill="currentColor"
-                                    className={`ml-auto text-text-muted transition-transform ${localSkillEditing === s ? "rotate-90" : ""}`}
-                                  >
-                                    <path d="M3 2l4 3-4 3V2z"/>
-                                  </svg>
-                                </button>
-                                <div className="flex items-center gap-1 ml-2">
-                                  <button
-                                    onClick={async () => {
-                                      if (!selectedName) return;
-                                      // Load and switch directly to edit mode
-                                      try {
-                                        const content: string = await invoke("read_local_skill", { name: selectedName, skillName: s });
-                                        const { meta, body } = parseLocalSkillFrontmatter(content);
-                                        setLocalSkillEditing(s);
-                                        setLocalSkillContent(content);
-                                        setLocalSkillEditName(meta.name ?? s);
-                                        setLocalSkillEditDescription(meta.description ?? "");
-                                        setLocalSkillEditBody(body);
-                                        setLocalSkillFieldErrors({ name: null, description: null });
-                                        setLocalSkillIsEditing(true);
-                                      } catch (err: any) {
-                                        setSyncStatus(`Failed to read skill: ${err}`);
-                                        setTimeout(() => setSyncStatus(null), 4000);
-                                      }
-                                    }}
-                                    className="text-text-muted hover:text-text-base p-1 hover:bg-bg-sidebar rounded transition-colors"
-                                    title="Edit skill"
-                                  >
-                                    <Edit2 size={12} />
-                                  </button>
-                                  <button
-                                    onClick={async () => {
-                                      if (!selectedName) return;
-                                      try {
-                                        setSyncStatus("syncing");
-                                        await invoke("sync_local_skills", { name: selectedName });
-                                        setSyncStatus(`Synced "${s}" across agents`);
-                                        setTimeout(() => setSyncStatus(null), 4000);
-                                      } catch (err: any) {
-                                        setSyncStatus(`Sync failed: ${err}`);
-                                        setTimeout(() => setSyncStatus(null), 4000);
-                                      }
-                                    }}
-                                    className="text-text-muted hover:text-text-base p-1 hover:bg-bg-sidebar rounded transition-colors"
-                                    title="Sync to all agents in this project"
-                                  >
-                                    <ArrowRightLeft size={12} />
-                                  </button>
-                                  <button
-                                    onClick={async () => {
-                                      if (!selectedName) return;
-                                      try {
-                                        setSyncStatus("syncing");
-                                        const result: string = await invoke("import_local_skill", { name: selectedName, skillName: s });
-                                        const updated = JSON.parse(result);
-                                        setProject({
-                                          ...project,
-                                          skills: updated.skills || project.skills,
-                                          local_skills: updated.local_skills || [],
-                                        });
-                                        if (localSkillEditing === s) {
-                                          setLocalSkillEditing(null);
-                                          setLocalSkillContent("");
-                                        }
-                                        await loadAvailableSkills();
-                                        setSyncStatus(`Imported "${s}" to global registry`);
-                                        setTimeout(() => setSyncStatus(null), 4000);
-                                      } catch (err: any) {
-                                        setSyncStatus(`Import failed: ${err}`);
-                                        setTimeout(() => setSyncStatus(null), 4000);
-                                      }
-                                    }}
-                                    className="text-text-muted hover:text-success p-1 hover:bg-bg-sidebar rounded transition-colors"
-                                    title="Import to global skill registry"
-                                  >
-                                    <Upload size={12} />
-                                  </button>
-                                </div>
-                              </div>
-
-                              {/* Expanded editor panel */}
-                              {localSkillEditing === s && (
-                                <div className="border-t border-border-strong/40 px-3 pt-3 pb-3 space-y-3">
-
-                                  {/* Editor header */}
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase flex items-center gap-1.5">
-                                      <FileText size={11} /> Edit Skill
-                                    </span>
-                                    <div className="flex items-center gap-1.5">
-                                      {localSkillIsEditing ? (
-                                        <>
-                                          <button
-                                            onClick={() => {
-                                              // Revert to last loaded content
-                                              const { meta, body } = parseLocalSkillFrontmatter(localSkillContent);
-                                              setLocalSkillEditName(meta.name ?? s);
-                                              setLocalSkillEditDescription(meta.description ?? "");
-                                              setLocalSkillEditBody(body);
-                                              setLocalSkillFieldErrors({ name: null, description: null });
-                                              setLocalSkillIsEditing(false);
-                                            }}
-                                            className="px-2 py-1 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[11px] font-medium transition-colors"
-                                          >
-                                            Cancel
-                                          </button>
-                                          <button
-                                            disabled={localSkillSaving}
-                                            onClick={async () => {
-                                              if (!selectedName) return;
-                                              const nameErr = validateLocalSkillName(localSkillEditName);
-                                              const descErr = validateLocalSkillDescription(localSkillEditDescription);
-                                              setLocalSkillFieldErrors({ name: nameErr, description: descErr });
-                                              if (nameErr || descErr) return;
-                                              const finalContent = buildLocalSkillFrontmatter(localSkillEditName, localSkillEditDescription) + "\n" + localSkillEditBody;
-                                              setLocalSkillSaving(true);
-                                              try {
-                                                await invoke("save_local_skill", { name: selectedName, skillName: s, content: finalContent });
-                                                setLocalSkillContent(finalContent);
-                                                setLocalSkillIsEditing(false);
-                                                setSyncStatus(`Saved "${s}"`);
-                                                setTimeout(() => setSyncStatus(null), 3000);
-                                              } catch (err: any) {
-                                                setSyncStatus(`Save failed: ${err}`);
-                                                setTimeout(() => setSyncStatus(null), 4000);
-                                              } finally {
-                                                setLocalSkillSaving(false);
-                                              }
-                                            }}
-                                            className="flex items-center gap-1 px-2 py-1 bg-brand hover:bg-brand-hover text-white rounded text-[11px] font-medium transition-colors disabled:opacity-50"
-                                          >
-                                            <Check size={11} /> Save
-                                          </button>
-                                        </>
-                                      ) : (
-                                        <button
-                                          onClick={() => setLocalSkillIsEditing(true)}
-                                          className="flex items-center gap-1 px-2 py-1 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[11px] font-medium transition-colors"
-                                        >
-                                          <Edit2 size={11} /> Edit
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {localSkillIsEditing ? (
-                                    /* Edit form */
-                                    <div className="space-y-3">
-                                      {/* Name field */}
-                                      <div>
-                                        <div className="flex items-baseline justify-between mb-1">
-                                          <label className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">
-                                            Name <span className="text-red-400 ml-0.5">*</span>
-                                          </label>
-                                          <span className={`text-[10px] tabular-nums ${localSkillEditName.length > 58 ? (localSkillEditName.length > 64 ? "text-red-400" : "text-warning") : "text-text-muted"}`}>
-                                            {localSkillEditName.length}/64
-                                          </span>
-                                        </div>
-                                        <input
-                                          type="text"
-                                          value={localSkillEditName}
-                                          onChange={(e) => {
-                                            const raw = e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-                                            setLocalSkillEditName(raw);
-                                            setLocalSkillFieldErrors(prev => ({ ...prev, name: validateLocalSkillName(raw) }));
-                                          }}
-                                          maxLength={64}
-                                          className={`w-full px-2.5 py-1.5 rounded-md bg-bg-sidebar border outline-none text-[12px] text-text-base placeholder-text-muted/40 font-mono transition-colors ${
-                                            localSkillFieldErrors.name ? "border-red-500/60 focus:border-red-500" : "border-border-strong/40 hover:border-border-strong focus:border-brand"
-                                          }`}
-                                          spellCheck={false}
-                                        />
-                                        {localSkillFieldErrors.name && (
-                                          <p className="mt-1 text-[10px] text-red-400">{localSkillFieldErrors.name}</p>
-                                        )}
-                                      </div>
-
-                                      {/* Description field */}
-                                      <div>
-                                        <div className="flex items-baseline justify-between mb-1">
-                                          <label className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">
-                                            Description <span className="text-red-400 ml-0.5">*</span>
-                                          </label>
-                                          <span className={`text-[10px] tabular-nums ${localSkillEditDescription.length > 900 ? (localSkillEditDescription.length > 1024 ? "text-red-400" : "text-warning") : "text-text-muted"}`}>
-                                            {localSkillEditDescription.length}/1024
-                                          </span>
-                                        </div>
-                                        <textarea
-                                          value={localSkillEditDescription}
-                                          onChange={(e) => {
-                                            setLocalSkillEditDescription(e.target.value);
-                                            setLocalSkillFieldErrors(prev => ({ ...prev, description: validateLocalSkillDescription(e.target.value) }));
-                                          }}
-                                          rows={2}
-                                          maxLength={1024}
-                                          className={`w-full px-2.5 py-1.5 rounded-md bg-bg-sidebar border outline-none text-[12px] text-text-base placeholder-text-muted/40 resize-none transition-colors leading-relaxed ${
-                                            localSkillFieldErrors.description ? "border-red-500/60 focus:border-red-500" : "border-border-strong/40 hover:border-border-strong focus:border-brand"
-                                          }`}
-                                          spellCheck={false}
-                                        />
-                                        {localSkillFieldErrors.description && (
-                                          <p className="mt-1 text-[10px] text-red-400">{localSkillFieldErrors.description}</p>
-                                        )}
-                                      </div>
-
-                                      {/* Body field */}
-                                      <div>
-                                        <label className="text-[10px] font-semibold text-text-muted tracking-wider uppercase block mb-1">
-                                          Body
-                                        </label>
-                                        <textarea
-                                          value={localSkillEditBody}
-                                          onChange={(e) => setLocalSkillEditBody(e.target.value)}
-                                          rows={12}
-                                          className="w-full px-2.5 py-1.5 rounded-md bg-bg-sidebar border border-border-strong/40 hover:border-border-strong focus:border-brand outline-none text-[12px] text-text-base font-mono resize-y transition-colors leading-relaxed custom-scrollbar"
-                                          spellCheck={false}
-                                        />
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    /* Preview */
-                                    <div className="rounded-md bg-bg-sidebar/40 border border-border-strong/40 px-3 py-2.5">
-                                      {localSkillEditName && (
-                                        <p className="text-[13px] font-medium text-text-base mb-1">{localSkillEditName}</p>
-                                      )}
-                                      {localSkillEditDescription && (
-                                        <p className="text-[12px] text-text-muted leading-relaxed mb-2">{localSkillEditDescription}</p>
-                                      )}
-                                      {localSkillEditBody ? (
-                                        <MarkdownPreview content={localSkillEditBody} />
-                                      ) : (
-                                        <p className="text-[12px] text-text-muted italic">No body content. Click Edit to add instructions.</p>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </section>
-                    )}
                   </>
                 )}
 

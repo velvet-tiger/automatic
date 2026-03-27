@@ -92,7 +92,18 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
     let enabled_mcp_servers = project.enabled_mcp_servers();
     let selected_servers = build_selected_servers(&project.name, &enabled_mcp_servers, &mcp_config);
 
-    let skill_contents = load_skill_contents(&project.skills);
+    let mut skill_contents = load_skill_contents(&project.skills);
+    let custom_skills = project.custom_skills.as_deref().unwrap_or(&[]);
+    for cs in custom_skills {
+        skill_contents.push((cs.name.clone(), cs.content.clone()));
+    }
+    let custom_skill_names: Vec<String> = custom_skills.iter().map(|s| s.name.clone()).collect();
+    let all_selected_skill_names: Vec<String> = project
+        .skills
+        .iter()
+        .chain(custom_skill_names.iter())
+        .cloned()
+        .collect();
 
     let mut agent_drifts: Vec<AgentDrift> = Vec::new();
 
@@ -105,7 +116,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
                 agent_instance,
                 &dir,
                 &skill_contents,
-                &project.skills,
+                &all_selected_skill_names,
                 &project.local_skills,
                 &mut files,
             );
@@ -804,6 +815,88 @@ mod tests {
             before.len(),
             after.len(),
             "Drift check must not write any files to disk"
+        );
+    }
+
+    /// Custom skills (project-scoped) should produce no drift after sync,
+    /// just like global skills.
+    #[test]
+    fn no_drift_after_sync_with_custom_skills() {
+        let project_dir = tempdir().unwrap();
+
+        // Mix of a global skill and a custom (project-scoped) skill
+        let skill_contents: Vec<(String, String)> = vec![
+            ("global-skill".to_string(), "# Global\n".to_string()),
+            ("custom-skill".to_string(), "# Custom\n".to_string()),
+        ];
+        let selected_names = vec![
+            "global-skill".to_string(),
+            "custom-skill".to_string(),
+        ];
+        let local_names: Vec<String> = vec![];
+
+        ClaudeCode
+            .sync_skills(
+                project_dir.path(),
+                &skill_contents,
+                &selected_names,
+                &local_names,
+            )
+            .expect("sync_skills should succeed");
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_skills_drift(
+            &ClaudeCode,
+            &project_dir.path().to_path_buf(),
+            &skill_contents,
+            &selected_names,
+            &local_names,
+            &mut files,
+        );
+
+        assert!(
+            files.is_empty(),
+            "Expected no drift after sync with custom skills, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A custom skill that is not synced to disk should appear as "missing"
+    /// in drift detection.
+    #[test]
+    fn drift_detected_for_missing_custom_skill() {
+        let project_dir = tempdir().unwrap();
+
+        // Create the skill dirs but don't write the custom skill
+        let skill_dir = project_dir.path().join(".claude").join("skills");
+        fs::create_dir_all(&skill_dir).unwrap();
+
+        let skill_contents: Vec<(String, String)> = vec![
+            ("my-custom".to_string(), "# My Custom Skill\n".to_string()),
+        ];
+        let selected_names = vec!["my-custom".to_string()];
+        let local_names: Vec<String> = vec![];
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_skills_drift(
+            &ClaudeCode,
+            &project_dir.path().to_path_buf(),
+            &skill_contents,
+            &selected_names,
+            &local_names,
+            &mut files,
+        );
+
+        assert!(
+            !files.is_empty(),
+            "Expected drift for missing custom skill"
+        );
+        assert!(
+            files.iter().any(|f| f.reason == "missing"),
+            "Expected a 'missing' drift entry"
         );
     }
 }

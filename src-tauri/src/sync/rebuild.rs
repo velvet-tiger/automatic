@@ -23,6 +23,9 @@ pub fn rebuild_project_state(project: &Project) -> Result<Project, String> {
     seed.custom_agents = None;
     seed.user_commands.clear();
     seed.custom_commands = None;
+    // Preserve custom_skills through rebuild — they are explicitly authored
+    // in the project JSON, not auto-discovered from disk.
+    let saved_custom_skills = seed.custom_skills.take();
 
     let (mut rebuilt, discovered_servers) = autodetect_inner(&seed)?;
 
@@ -63,6 +66,15 @@ pub fn rebuild_project_state(project: &Project) -> Result<Project, String> {
     } else {
         Some(custom_commands)
     };
+
+    // Restore custom_skills (they are user-authored, not auto-discovered).
+    // Filter out any custom skill names from local_skills to avoid duplication —
+    // autodetect may have classified them as local since they exist on disk.
+    rebuilt.custom_skills = saved_custom_skills;
+    if let Some(ref cs) = rebuilt.custom_skills {
+        let custom_names: HashSet<&str> = cs.iter().map(|s| s.name.as_str()).collect();
+        rebuilt.local_skills.retain(|n| !custom_names.contains(n.as_str()));
+    }
 
     rebuilt.updated_at = chrono::Utc::now().to_rfc3339();
 

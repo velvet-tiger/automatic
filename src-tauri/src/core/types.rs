@@ -273,6 +273,11 @@ pub struct Project {
     /// These are written to each agent's command directory during sync.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_commands: Option<Vec<CustomCommand>>,
+    /// Inline custom skills stored directly in the project configuration.
+    /// These are written to each agent's skill directory during sync,
+    /// alongside global and local skills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_skills: Option<Vec<CustomSkill>>,
 }
 
 impl Project {
@@ -351,10 +356,76 @@ pub struct CustomCommand {
     pub content: String,
 }
 
+/// A user-defined skill stored directly in a project configuration.
+/// Unlike global skills (which live in `~/.automatic/skills/`) or local skills
+/// (which are auto-discovered from the project directory), custom skills are
+/// explicitly authored in the project JSON and synced to skill directories
+/// during project sync.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomSkill {
+    /// Machine-name identifier (used as the skill directory name).
+    pub name: String,
+    /// Full Markdown content (SKILL.md) including optional YAML frontmatter.
+    pub content: String,
+}
+
 /// A lightweight reference to a project: name + directory.
 /// Used when listing projects that reference a rule or agent.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProjectRef {
     pub name: String,
     pub directory: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_skills_serialize_roundtrip() {
+        let mut project = Project {
+            name: "test".into(),
+            ..Default::default()
+        };
+        project.custom_skills = Some(vec![
+            CustomSkill {
+                name: "my-skill".into(),
+                content: "---\nname: my-skill\n---\n\nDo the thing.\n".into(),
+            },
+            CustomSkill {
+                name: "another".into(),
+                content: "# Another skill\n".into(),
+            },
+        ]);
+
+        let json = serde_json::to_string(&project).expect("serialize");
+        let parsed: Project = serde_json::from_str(&json).expect("deserialize");
+
+        let cs = parsed.custom_skills.expect("custom_skills should be Some");
+        assert_eq!(cs.len(), 2);
+        assert_eq!(cs[0].name, "my-skill");
+        assert_eq!(cs[1].name, "another");
+        assert!(cs[0].content.contains("Do the thing."));
+    }
+
+    #[test]
+    fn custom_skills_omitted_when_none() {
+        let project = Project {
+            name: "test".into(),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&project).expect("serialize");
+        assert!(
+            !json.contains("custom_skills"),
+            "custom_skills should be omitted from JSON when None"
+        );
+    }
+
+    #[test]
+    fn custom_skills_absent_in_json_deserializes_as_none() {
+        let json = r#"{"name":"test","description":"","directory":"","skills":[],"local_skills":[],"mcp_servers":[],"providers":[],"agents":[],"created_at":"","updated_at":""}"#;
+        let project: Project = serde_json::from_str(json).expect("deserialize");
+        assert!(project.custom_skills.is_none());
+    }
 }

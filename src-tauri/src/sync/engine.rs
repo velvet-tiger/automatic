@@ -90,8 +90,15 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
     let enabled_mcp_servers = project.enabled_mcp_servers();
     let selected_servers = build_selected_servers(&project.name, &enabled_mcp_servers, &mcp_config);
 
-    // Read all skill contents from the global skill registry
-    let skill_contents = load_skill_contents(&project.skills);
+    // Read all skill contents from the global skill registry, then append
+    // project-scoped custom skills (which live inline in the project JSON
+    // rather than in ~/.automatic/skills/).
+    let mut skill_contents = load_skill_contents(&project.skills);
+    let custom_skills = project.custom_skills.as_deref().unwrap_or(&[]);
+    for cs in custom_skills {
+        skill_contents.push((cs.name.clone(), cs.content.clone()));
+    }
+    let custom_skill_names: Vec<String> = custom_skills.iter().map(|s| s.name.clone()).collect();
     let workspace_command_contents: Vec<(String, String)> = project
         .user_commands
         .iter()
@@ -108,11 +115,18 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
     //
     // This is the project-local hub.  Full directories are copied from the
     // global registry (~/.agents/skills/) so companion files are included.
+    // Custom skills (project-scoped) are included alongside global skills.
     let project_skills_dir = dir.join(".agents").join("skills");
+    let all_selected_skill_names: Vec<String> = project
+        .skills
+        .iter()
+        .chain(custom_skill_names.iter())
+        .cloned()
+        .collect();
     agent::copy_skills_to_project(
         &project_skills_dir,
         &skill_contents,
-        &project.skills,
+        &all_selected_skill_names,
         &project.local_skills,
         &mut written_files,
     )?;
@@ -136,7 +150,7 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                         &skill_dir,
                         &project_skills_dir,
                         &skill_contents,
-                        &project.skills,
+                        &all_selected_skill_names,
                         &project.local_skills,
                         &mut written_files,
                     )?;
