@@ -37,6 +37,10 @@ pub fn manifest() -> PluginManifest {
                 source: Some("velvet-tiger/common-docs".to_string()),
             },
             PluginSkillDeclaration {
+                name: "common-docs-write".to_string(),
+                source: Some("velvet-tiger/common-docs".to_string()),
+            },
+            PluginSkillDeclaration {
                 name: "common-docs-find".to_string(),
                 source: Some("velvet-tiger/common-docs".to_string()),
             },
