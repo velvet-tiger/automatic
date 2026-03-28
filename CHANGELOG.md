@@ -2,6 +2,83 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.0.0-beta.2] — 2026-03-28
+
+### Added
+
+#### Skills
+- **Project-scoped custom skills**: Create and manage skills that live within a single project, enabling project-specific agent instructions without polluting the global library (VEL-51)
+- **Skill collections**: Group related skills together in the library for easier discovery and organisation (VEL-57)
+
+#### Agents
+- **Zed editor support**: Added Zed as a supported agent with SVG icon and sync configuration
+
+#### Plugins
+- **Common Docs plugin**: Plugin-provided skills and rules that enrich projects automatically when the plugin is enabled
+
+#### Commands
+- **Split editor**: Dedicated description field in the command editor for clearer authoring
+- **Rename support**: Inline rename with auto-formatting input for workspace commands
+- **Template commands**: Project templates can now include commands that sync to projects
+
+#### Settings & Legal
+- **Privacy policy page**: Dedicated sub-page with analytics opt-in toggle
+- **Terms of Service page**: In-app terms accessible from Settings
+- **Support page**: Quick links to GitHub and Discord support channels
+- **Newsletter unsubscribe**: Manage newsletter subscription directly from Settings
+
+#### Projects
+- **Sync progress bar**: Visual progress indicator with disabled button state during sync
+- **Sidebar order sort**: Default sort option that respects manual sidebar ordering
+- **Portable project metadata**: Resolved metadata embedded in project.json for cross-machine portability
+
+#### Navigation
+- **What's New section**: Per-release content on the Getting Started page
+- **View in library**: Installed MCP servers link back to their library entry from the marketplace
+- **MCP marketplace wiring**: Navigate directly to MCP server detail from the marketplace
+
+### Fixed
+
+#### Accessibility
+- **WCAG 2.2 form fields**: Compliant border contrast and placeholder text for all form inputs
+- **Light theme backgrounds**: Correct white bg-base with proper body background application
+
+#### Skills
+- **Multi-repo import**: All skills from multi-skill repositories are now imported correctly (VEL-58)
+- **Download icon**: Skill import buttons use a consistent download icon (VEL-59)
+- **Panel width**: Skills list panel widened from 264px to 320px for better readability (VEL-60)
+- **Bundled avatars**: Automatic graph logo used for bundled skill and provider avatars (VEL-62)
+- **Local source badge**: Shows "local" instead of "agentskills.io" for locally-sourced skills
+- **Cross-agent deletion**: Skills deleted from all agent directories, not just `agents/claude`
+
+#### Projects
+- **Alphabetical sorting**: Agents, skills, and MCP servers sorted alphabetically in project view
+- **Sidebar drag order**: Sort now preserves both folder grouping and manual drag order
+- **Stats cards**: Clickable stats cards with fixed label truncation
+- **Command preview**: Expandable preview and library navigation for workspace commands
+
+#### Plugins
+- **Lifecycle fixes**: Plugin skills/rules correctly stripped on removal, enriched on addition, and re-read after save
+
+#### MCP & Agents
+- **Platform config dir**: Claude Desktop import uses platform-specific config directory
+- **Claude Code servers**: MCP servers correctly read from `~/.claude.json`
+- **OAuth error**: False error suppressed when credential storage fails after successful authentication
+
+#### UI
+- **Getting Started layout**: Checklist and What's New shown as equal-width columns
+- **Collection labels**: Visible in Corporate Dark theme (VEL-63)
+- **Command rebuild**: Commands discovered during project rebuild
+
+### Changed
+
+- **Settings restructure**: Support, Privacy, and Terms consolidated into Settings; Appearance extracted into its own section; setup wizard moved to Settings > App
+- **Sync mode naming**: `skill_sync_mode` renamed to `sync_mode` with rebranded Settings page (VEL-61)
+- **Common Docs**: Auto Docs plugin renamed to Common Docs; skills now fetched from repository
+- **Project layout**: Group pills moved to right column under agent icons
+
+---
+
 ## [1.0.0-beta.1] — 2026-03-24
 
 ### Fixed
@@ -754,6 +831,7 @@ Initial public release of Automatic — a desktop hub for AI coding agents.
 - Junie removal deletes the entire `.junie/` directory
 
 [0.10.0]: https://github.com/velvet-tiger/automatic/releases/tag/0.10.0
+[1.0.0-beta.2]: https://github.com/velvet-tiger/automatic/releases/tag/1.0.0-beta.2
 [1.0.0-beta.1]: https://github.com/velvet-tiger/automatic/releases/tag/1.0.0-beta.1
 [1.0.0-beta1]: https://github.com/velvet-tiger/automatic/releases/tag/1.0.0-beta1
 [0.9.1]: https://github.com/velvet-tiger/automatic/releases/tag/0.9.1

@@ -1,5 +1,20 @@
 [
   {
+    "version": "1.0.0-beta.2",
+    "date": "2026-03-28",
+    "content": [
+      "Beta 2 brings project-scoped custom skills, skill collections, and Zed editor support.",
+      "The skills library now groups related skills into collections, and you can create skills that live within a single project for project-specific agent instructions.",
+      "We've also made a pass on accessibility — form fields now meet WCAG 2.2 contrast requirements, and light themes have proper backgrounds.",
+      "Other highlights:",
+      "- Sync progress bar shows visual feedback during project sync",
+      "- Commands can now be included in project templates",
+      "- Privacy Policy and Terms of Service pages added to Settings",
+      "- Alphabetical sorting across agents, skills, and MCP servers in project views",
+      "- Multi-skill repository imports now pull all skills correctly"
+    ]
+  },
+  {
     "version": "1.0.0-beta.1",
     "date": "2026-03-27",
     "content": [
