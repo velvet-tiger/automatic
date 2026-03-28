@@ -450,7 +450,7 @@
   --accent-light: #bae6fd; /* Sky-200 */
   --accent-hover-light: #e0f2fe; /* Sky-100 */
 
-  --bg-base: #f9fafb;      /* Gray-50 */
+  --bg-base: #ffffff;      /* White */
   --bg-sidebar: #f3f4f6;   /* Gray-100 */
   --bg-input: #ffffff;
   --bg-input-dark: #f9fafb;
@@ -553,6 +553,14 @@ body {
   padding: 0;
   background-color: #222327;
   color: #FAFAFA;
+}
+
+[data-theme="light"] body,
+[data-theme="arctic-light"] body,
+[data-theme="corporate-light"] body,
+[data-theme="accessible"] body {
+  background-color: var(--bg-base);
+  color: var(--text-base);
 }
 
 /* Custom Webkit Scrollbar */
