@@ -5677,52 +5677,56 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                       {selectedName}
                     </h1>
                   )}
-                  {/* Directory path + group pills — inline */}
-                  <div className="mt-1 flex items-center gap-2 flex-wrap">
-                    <button
-                      onClick={async () => {
-                        const selected: string | null = await invoke("open_directory_dialog");
-                        if (selected) updateField("directory", selected);
-                      }}
-                      className="flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text-base font-mono transition-colors group"
-                      title="Click to change directory"
-                    >
-                      <FolderOpen size={11} className="flex-shrink-0 text-text-muted/60 group-hover:text-text-muted transition-colors" />
-                      {project.directory
-                        ? <span className="truncate max-w-[480px]">{project.directory.replace(/^\/Users\/[^/]+/, "~")}</span>
-                        : <span className="italic text-text-muted/50">No directory set — click to choose</span>
-                      }
-                    </button>
-                    {projectGroupMemberships.map((groupName) => (
-                      <button
-                        key={groupName}
-                        onClick={() => selectTab("groups")}
-                        className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:text-text-base hover:border-border-strong font-sans"
-                      >
-                        {groupName}
-                      </button>
-                    ))}
-                  </div>
+                  {/* Directory path — click to change */}
+                  <button
+                    onClick={async () => {
+                      const selected: string | null = await invoke("open_directory_dialog");
+                      if (selected) updateField("directory", selected);
+                    }}
+                    className="mt-1 flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text-base font-mono transition-colors group"
+                    title="Click to change directory"
+                  >
+                    <FolderOpen size={11} className="flex-shrink-0 text-text-muted/60 group-hover:text-text-muted transition-colors" />
+                    {project.directory
+                      ? <span className="truncate max-w-[480px]">{project.directory.replace(/^\/Users\/[^/]+/, "~")}</span>
+                      : <span className="italic text-text-muted/50">No directory set — click to choose</span>
+                    }
+                  </button>
                 </div>
 
-                {/* Right: agent icons */}
-                {project.agents.length > 0 && (
-                  <button
-                    onClick={() => selectTab("agents")}
-                    className="flex items-center gap-1.5 flex-shrink-0 mt-1 group"
-                    title="Agents — click to manage"
-                  >
-                    {project.agents.map((agentId) => (
-                      <span
-                        key={agentId}
-                        className="opacity-70 group-hover:opacity-100 transition-opacity"
-                        title={availableAgents.find(a => a.id === agentId)?.label ?? agentId}
-                      >
-                        <AgentIcon agentId={agentId} size={20} />
-                      </span>
-                    ))}
-                  </button>
-                )}
+                {/* Right: agent icons + group pills */}
+                <div className="flex flex-col items-end flex-shrink-0">
+                  {project.agents.length > 0 && (
+                    <button
+                      onClick={() => selectTab("agents")}
+                      className="flex items-center gap-1.5 mt-1 group"
+                      title="Agents — click to manage"
+                    >
+                      {project.agents.map((agentId) => (
+                        <span
+                          key={agentId}
+                          className="opacity-70 group-hover:opacity-100 transition-opacity"
+                          title={availableAgents.find(a => a.id === agentId)?.label ?? agentId}
+                        >
+                          <AgentIcon agentId={agentId} size={20} />
+                        </span>
+                      ))}
+                    </button>
+                  )}
+                  {projectGroupMemberships.length > 0 && (
+                    <div className="flex flex-wrap justify-end gap-1.5 mt-1.5">
+                      {projectGroupMemberships.map((groupName) => (
+                        <button
+                          key={groupName}
+                          onClick={() => selectTab("groups")}
+                          className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:text-text-base hover:border-border-strong"
+                        >
+                          {groupName}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
