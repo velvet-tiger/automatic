@@ -20,10 +20,10 @@ import { useState } from "react";
 // ── CSS class helpers ──────────────────────────────────────────────────────
 
 export const inputClass =
-  "w-full bg-bg-input border border-surface hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors";
+  "w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors";
 
 export const smallInputClass =
-  "flex-1 bg-bg-input border border-surface hover:border-border-strong focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors";
+  "flex-1 bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors";
 
 export const addBtnClass =
   "px-3 py-1.5 bg-bg-sidebar hover:bg-surface text-text-base text-[12px] font-medium rounded border border-surface-hover transition-colors disabled:opacity-30 disabled:cursor-not-allowed";
@@ -94,10 +94,10 @@ export function KvEditor({
   const rowClass = "flex items-center gap-2";
 
   const keyInputClass =
-    "w-36 flex-shrink-0 bg-bg-input border border-surface rounded-md px-3 py-1.5 text-[13px] font-mono outline-none transition-colors";
+    "w-36 flex-shrink-0 bg-bg-input border border-border-strong/40 rounded-md px-3 py-1.5 text-[13px] font-mono outline-none transition-colors";
 
   const valInputClass =
-    "flex-1 min-w-0 bg-bg-input border border-surface hover:border-border-strong focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors";
+    "flex-1 min-w-0 bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors";
 
   const iconBtnClass =
     "flex-shrink-0 p-1.5 text-text-muted hover:text-text-base transition-colors rounded";
@@ -242,7 +242,7 @@ export function KvList({ entries, onRemove, onEdit, colorKey }: KvListProps) {
       {entries.map(([key, val]) => (
         <li
           key={key}
-          className="group flex items-center gap-2 px-3 py-1.5 bg-bg-input rounded-md border border-surface hover:border-border-strong transition-colors text-[13px] font-mono"
+          className="group flex items-center gap-2 px-3 py-1.5 bg-bg-input rounded-md border border-border-strong/40 hover:border-border-strong transition-colors text-[13px] font-mono"
         >
           <span className={`flex-shrink-0 ${colorKey ? "text-brand" : "text-text-base"}`}>
             {key}

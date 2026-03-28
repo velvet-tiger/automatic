@@ -219,7 +219,7 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
             <button
               onClick={handleRevoke}
               disabled={loading}
-              className="px-3 py-1.5 text-[11px] font-medium text-text-muted hover:text-danger border border-surface hover:border-danger/30 rounded transition-colors disabled:opacity-50"
+              className="px-3 py-1.5 text-[11px] font-medium text-text-muted hover:text-danger border border-border-strong/40 hover:border-danger/30 rounded transition-colors disabled:opacity-50"
             >
               {loading ? <Loader2 size={12} className="animate-spin" /> : "Revoke"}
             </button>
@@ -243,7 +243,7 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
                 </span>
                 <button
                   onClick={handleCancel}
-                  className="px-3 py-1.5 text-[11px] font-medium text-text-muted hover:text-danger border border-surface hover:border-danger/30 rounded transition-colors whitespace-nowrap"
+                  className="px-3 py-1.5 text-[11px] font-medium text-text-muted hover:text-danger border border-border-strong/40 hover:border-danger/30 rounded transition-colors whitespace-nowrap"
                 >
                   Cancel
                 </button>
@@ -644,7 +644,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                         isStdio
                           ? "bg-brand border-brand text-white"
-                          : "bg-bg-input border-surface text-text-muted hover:border-border-strong hover:text-text-base"
+                          : "bg-bg-input border-border-strong/40 text-text-muted hover:border-border-strong hover:text-text-base"
                       } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                     >
                       Local
@@ -655,7 +655,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                         !isStdio
                           ? "bg-brand border-brand text-white"
-                          : "bg-bg-input border-surface text-text-muted hover:border-border-strong hover:text-text-base"
+                          : "bg-bg-input border-border-strong/40 text-text-muted hover:border-border-strong hover:text-text-base"
                       } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                     >
                       Remote
@@ -681,7 +681,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                         className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                           config.type === "http"
                             ? "bg-bg-sidebar border-border-strong text-text-base"
-                            : "bg-bg-input border-surface text-text-muted hover:border-border-strong hover:text-text-base"
+                            : "bg-bg-input border-border-strong/40 text-text-muted hover:border-border-strong hover:text-text-base"
                         } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                       >
                         Streamable HTTP
@@ -692,7 +692,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                         className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
                           config.type === "sse"
                             ? "bg-bg-sidebar border-border-strong text-text-base"
-                            : "bg-bg-input border-surface text-text-muted hover:border-border-strong hover:text-text-base"
+                            : "bg-bg-input border-border-strong/40 text-text-muted hover:border-border-strong hover:text-text-base"
                         } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                       >
                         SSE (legacy)
@@ -729,7 +729,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                         {(config.args || []).map((arg, i) => (
                           <li
                             key={i}
-                            className={`group flex items-center justify-between px-3 py-1.5 bg-bg-input rounded-md border border-surface text-[13px] text-text-base font-mono ${isManaged ? "opacity-60" : ""}`}
+                            className={`group flex items-center justify-between px-3 py-1.5 bg-bg-input rounded-md border border-border-strong/40 text-[13px] text-text-base font-mono ${isManaged ? "opacity-60" : ""}`}
                           >
                             <span className="truncate">{arg}</span>
                             {!isManaged && (
@@ -873,7 +873,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     }
                     readOnly={isManaged}
                     placeholder="Optional — e.g. 5000"
-                    className={`w-48 bg-bg-input border border-surface hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
+                    className={`w-48 bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none font-mono transition-colors ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                   />
                 </section>
                 )}

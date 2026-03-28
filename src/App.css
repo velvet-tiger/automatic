@@ -459,7 +459,7 @@
   --surface-hover: #f3f4f6;
   --surface-active: #e5e7eb;
 
-  --border-strong: #9ca3af; /* Gray-400 — 3:1 contrast on white, visible to all CVD types */
+  --border-strong: #374151; /* Gray-700 — 10:1 on white, well above WCAG 3:1 for UI components */
 
   --text-base: #111827;    /* Gray-900 — 16:1 on white */
   --text-muted: #374151;   /* Gray-700 — 10:1 on white */
@@ -472,6 +472,21 @@
   --warning-hover: #78350f;
   --danger: #9f1239;       /* Rose-900 — 9.1:1 on white */
   --danger-hover: #881337;
+}
+
+/* Accessible theme: WCAG 2.2 compliance overrides.
+   The /40 opacity modifier used throughout the app makes borders invisible on white
+   backgrounds — even pure black at 40% on white is only 2.78:1 (fails 3:1 minimum).
+   These unlayered rules override Tailwind's layered utilities via CSS cascade. */
+[data-theme="accessible"] input,
+[data-theme="accessible"] textarea {
+  border-color: var(--border-strong); /* Gray-700: 10:1 on white — WCAG 2.2 non-text UI 3:1 ✓ */
+}
+
+/* Placeholder text: Tailwind's /40 opacity gives ~1.9:1 on white (fails 4.5:1).
+   Gray-500 (#6b7280) is 4.6:1 on white — WCAG 2.2 SC 1.4.3 ✓ */
+[data-theme="accessible"] ::placeholder {
+  color: #6b7280;
 }
 
 [data-theme="light"] {
