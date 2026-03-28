@@ -23,6 +23,16 @@ Use the memory tools to persist and retrieve project-specific context across ses
 - **Key format** — Use descriptive, hierarchical keys (e.g. `conventions/naming`, `setup/database`, `decisions/auth-approach`).
 - **Source** — Set the `source` parameter when storing memory so the origin is traceable.
 
+## Features
+
+Automatic provides project-scoped feature tracking for managing work items across sessions:
+
+- Call `automatic_list_features` to see planned work. Filter by state (`backlog`, `todo`, `in_progress`, `review`, `complete`, `cancelled`).
+- Before starting a task, call `automatic_set_feature_state` to move it to `in_progress`.
+- During work, call `automatic_add_feature_update` to log significant progress, decisions, or blockers.
+- On completion, move the feature to `review` so the user can verify before marking `complete`.
+- If new work is discovered, call `automatic_create_feature` to capture it in the backlog.
+
 ## Session End
 
 Before finishing a session, call `automatic_store_memory` to capture any new project-specific rules, pitfalls, setup steps, or decisions discovered during the session. This prevents knowledge loss across sessions.

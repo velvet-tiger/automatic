@@ -6,6 +6,34 @@ use super::paths::get_automatic_dir;
 
 // ── Rules ────────────────────────────────────────────────────────────────────
 
+// ── Mandatory rules ─────────────────────────────────────────────────────────
+//
+// These rules are always injected into every project's instruction files,
+// regardless of what the user has configured in `file_rules`.  They cannot
+// be removed from the UI.
+
+/// The `automatic-service` rule is mandatory for every project managed by
+/// Automatic.  It tells agents how to use the Automatic MCP tools (skills,
+/// memory, features, project context).
+pub const MANDATORY_RULE: &str = "automatic-service";
+
+/// Returns `true` if the given rule machine name is mandatory and cannot be
+/// removed from a project.
+pub fn is_mandatory_rule(machine_name: &str) -> bool {
+    machine_name == MANDATORY_RULE
+}
+
+/// Ensure mandatory rules are present in a resolved rule list.  If the
+/// mandatory rule is already in the list it is left in its current position.
+/// If absent it is prepended so it appears first.
+pub fn ensure_mandatory_rules(rules: &[String]) -> Vec<String> {
+    let mut result = rules.to_vec();
+    if !result.iter().any(|r| r == MANDATORY_RULE) {
+        result.insert(0, MANDATORY_RULE.to_string());
+    }
+    result
+}
+
 /// A rule stored as JSON in `~/.automatic/rules/{machine_name}.json`.
 /// The machine name (filename stem) is an immutable lowercase slug.
 /// The display `name` can be freely renamed.
@@ -150,6 +178,15 @@ pub fn delete_rule(machine_name: &str) -> Result<(), String> {
     if !is_valid_machine_name(machine_name) {
         return Err("Invalid rule machine name".into());
     }
+
+    // Prevent deletion of mandatory rules.
+    if is_mandatory_rule(machine_name) {
+        return Err(format!(
+            "Cannot delete rule '{}' — it is required by Automatic",
+            machine_name
+        ));
+    }
+
     let dir = get_rules_dir()?;
     let path = dir.join(format!("{}.json", machine_name));
 
@@ -632,5 +669,55 @@ mod tests {
     #[test]
     fn name_with_digits_only_after_letter_is_valid() {
         assert!(is_valid_machine_name("a123"));
+    }
+
+    // ── Mandatory rules ──────────────────────────────────────────────────────
+
+    #[test]
+    fn automatic_service_is_mandatory() {
+        assert!(is_mandatory_rule("automatic-service"));
+    }
+
+    #[test]
+    fn non_automatic_rules_are_not_mandatory() {
+        assert!(!is_mandatory_rule("automatic-general"));
+        assert!(!is_mandatory_rule("my-custom-rule"));
+        assert!(!is_mandatory_rule(""));
+    }
+
+    #[test]
+    fn ensure_mandatory_prepends_when_absent() {
+        let rules = vec!["my-rule".to_string()];
+        let result = ensure_mandatory_rules(&rules);
+        assert_eq!(result[0], MANDATORY_RULE);
+        assert_eq!(result[1], "my-rule");
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn ensure_mandatory_preserves_position_when_present() {
+        let rules = vec![
+            "other-rule".to_string(),
+            MANDATORY_RULE.to_string(),
+            "third-rule".to_string(),
+        ];
+        let result = ensure_mandatory_rules(&rules);
+        assert_eq!(
+            result, rules,
+            "should not move the mandatory rule if already present"
+        );
+    }
+
+    #[test]
+    fn ensure_mandatory_on_empty_list() {
+        let result = ensure_mandatory_rules(&[]);
+        assert_eq!(result, vec![MANDATORY_RULE.to_string()]);
+    }
+
+    #[test]
+    fn ensure_mandatory_does_not_duplicate() {
+        let rules = vec![MANDATORY_RULE.to_string()];
+        let result = ensure_mandatory_rules(&rules);
+        assert_eq!(result.len(), 1);
     }
 }

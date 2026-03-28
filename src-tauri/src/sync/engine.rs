@@ -230,7 +230,8 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                     //   1. "_project" — project-level rules set from the Rules tab (applies to all files)
                     //   2. "_unified" — legacy unified-mode key
                     //   3. Per-file key (e.g. "CLAUDE.md") — legacy per-agent mode
-                    let rules: Option<&Vec<String>> = project
+                    // Mandatory rules (e.g. automatic-service) are always included.
+                    let user_rules: Vec<String> = project
                         .file_rules
                         .get("_project")
                         .filter(|v| !v.is_empty())
@@ -240,7 +241,10 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                             } else {
                                 project.file_rules.get(pf)
                             }
-                        });
+                        })
+                        .cloned()
+                        .unwrap_or_default();
+                    let rules = crate::core::ensure_mandatory_rules(&user_rules);
 
                     // Resolve per-agent options for this agent (use defaults if absent).
                     let opts = project
@@ -257,94 +261,57 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                         .map(|r| r.content.clone())
                         .collect();
 
-                    let has_any_rules = rules.map(|r| !r.is_empty()).unwrap_or(false)
-                        || !custom_contents.is_empty();
-
-                    if let Some(rules) = rules {
-                        if !rules.is_empty() || !custom_contents.is_empty() {
-                            // Claude Code supports writing rules as individual files under
-                            // `.claude/rules/` — the format recommended by the Claude Code
-                            // documentation.  Use that path when the option is enabled.
-                            // Note: custom (inline) rules are always injected inline regardless
-                            // of this option — they don't have a machine name to use as a filename.
-                            if agent_id == "claude" && opts.claude_rules_in_dot_claude {
-                                // Write global rules as .claude/rules/<name>.md files.
-                                match crate::core::sync_rules_to_dot_claude_rules(
-                                    &project.directory,
-                                    rules,
-                                ) {
-                                    Ok(touched) => written_files.extend(touched),
-                                    Err(e) => {
-                                        eprintln!("Failed to sync rules to .claude/rules/: {}", e)
-                                    }
-                                }
-                                // Custom rules are still injected inline even in dot-claude mode.
-                                if !custom_contents.is_empty() {
-                                    if let Ok(true) =
-                                        crate::core::inject_rules_into_project_file_with_custom(
-                                            &project.directory,
-                                            pf,
-                                            &[],
-                                            &custom_contents,
-                                        )
-                                    {
-                                        let rule_path = dir.join(pf).display().to_string();
-                                        if !written_files.contains(&rule_path) {
-                                            written_files.push(rule_path);
-                                        }
-                                    }
-                                } else {
-                                    // No custom rules — strip any legacy inline rules block from CLAUDE.md.
-                                    if let Ok(path) = clean_project_file_rules_section(&dir, pf) {
-                                        if let Some(p) = path {
-                                            written_files.push(p);
-                                        }
-                                    }
-                                }
-                            } else {
-                                // Default: inject all rules inline into the project file.
-                                if let Ok(true) =
-                                    crate::core::inject_rules_into_project_file_with_custom(
-                                        &project.directory,
-                                        pf,
-                                        rules,
-                                        &custom_contents,
-                                    )
-                                {
-                                    let rule_path = dir.join(pf).display().to_string();
-                                    if !written_files.contains(&rule_path) {
-                                        written_files.push(rule_path);
-                                    }
-                                }
-                            }
-                        } else if agent_id == "claude" && opts.claude_rules_in_dot_claude {
-                            // No rules configured — still clean up any stale managed files.
-                            match crate::core::sync_rules_to_dot_claude_rules(
-                                &project.directory,
-                                rules,
-                            ) {
-                                Ok(touched) => written_files.extend(touched),
-                                Err(e) => eprintln!("Failed to clean .claude/rules/: {}", e),
+                    // Claude Code supports writing rules as individual files under
+                    // `.claude/rules/` — the format recommended by the Claude Code
+                    // documentation.  Use that path when the option is enabled.
+                    // Note: custom (inline) rules are always injected inline regardless
+                    // of this option — they don't have a machine name to use as a filename.
+                    if agent_id == "claude" && opts.claude_rules_in_dot_claude {
+                        // Write global rules as .claude/rules/<name>.md files.
+                        match crate::core::sync_rules_to_dot_claude_rules(
+                            &project.directory,
+                            &rules,
+                        ) {
+                            Ok(touched) => written_files.extend(touched),
+                            Err(e) => {
+                                eprintln!("Failed to sync rules to .claude/rules/: {}", e)
                             }
                         }
-                    } else if has_any_rules {
-                        // No global rules key but there are custom rules — inject inline.
+                        // Custom rules are still injected inline even in dot-claude mode.
+                        if !custom_contents.is_empty() {
+                            if let Ok(true) =
+                                crate::core::inject_rules_into_project_file_with_custom(
+                                    &project.directory,
+                                    pf,
+                                    &[],
+                                    &custom_contents,
+                                )
+                            {
+                                let rule_path = dir.join(pf).display().to_string();
+                                if !written_files.contains(&rule_path) {
+                                    written_files.push(rule_path);
+                                }
+                            }
+                        } else {
+                            // No custom rules — strip any legacy inline rules block from CLAUDE.md.
+                            if let Ok(path) = clean_project_file_rules_section(&dir, pf) {
+                                if let Some(p) = path {
+                                    written_files.push(p);
+                                }
+                            }
+                        }
+                    } else {
+                        // Default: inject all rules inline into the project file.
                         if let Ok(true) = crate::core::inject_rules_into_project_file_with_custom(
                             &project.directory,
                             pf,
-                            &[],
+                            &rules,
                             &custom_contents,
                         ) {
                             let rule_path = dir.join(pf).display().to_string();
                             if !written_files.contains(&rule_path) {
                                 written_files.push(rule_path);
                             }
-                        }
-                    } else if agent_id == "claude" && opts.claude_rules_in_dot_claude {
-                        // No rules key at all — clean up any stale managed files.
-                        match crate::core::sync_rules_to_dot_claude_rules(&project.directory, &[]) {
-                            Ok(touched) => written_files.extend(touched),
-                            Err(e) => eprintln!("Failed to clean .claude/rules/: {}", e),
                         }
                     }
                 }
