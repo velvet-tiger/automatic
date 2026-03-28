@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -66,23 +67,240 @@ pub fn read_project(name: &str) -> Result<String, String> {
     };
 
     // If directory is set, try to read full config from the project directory
-    if !registry_project.directory.is_empty() {
+    let mut project = if !registry_project.directory.is_empty() {
         let config_path = project_config_path(&registry_project.directory);
         if config_path.exists() {
             let project_raw = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-            let full_project = match serde_json::from_str::<Project>(&project_raw) {
+            match serde_json::from_str::<Project>(&project_raw) {
                 Ok(p) => p,
                 Err(_) => registry_project, // fall back to registry data
-            };
-            let formatted =
-                serde_json::to_string_pretty(&full_project).map_err(|e| e.to_string())?;
-            return Ok(formatted);
+            }
+        } else {
+            registry_project
+        }
+    } else {
+        registry_project
+    };
+
+    // Restore: write project-level metadata back into user-level registries
+    // for any entries that are missing locally.  This is the key portability
+    // mechanism — when a project arrives on a new machine, its resolved data
+    // seeds the local registries so skills regain their provenance.
+    restore_to_user_registries(&project);
+
+    // Enrich with current user-level metadata and persist so the project
+    // config stays up-to-date on disk (important for portability).
+    enrich_project(&mut project);
+    if !project.directory.is_empty() {
+        let config_path = project_config_path(&project.directory);
+        if let Ok(pretty) = serde_json::to_string_pretty(&project) {
+            let _ = fs::write(&config_path, &pretty);
         }
     }
 
-    // No project-directory config found — use registry data (legacy or no-directory case)
-    let formatted = serde_json::to_string_pretty(&registry_project).map_err(|e| e.to_string())?;
+    let formatted = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
     Ok(formatted)
+}
+
+// ── Restore from project to user-level registries ───────────────────────────
+//
+// When a project is opened on a machine that doesn't have the original
+// user-level registry entries (e.g. cloned repo, different Automatic
+// instance), this function seeds the local registries from the resolved
+// metadata stored in project.json.  Only missing entries are written —
+// existing local entries are never overwritten, so local state wins.
+
+fn restore_to_user_registries(project: &Project) {
+    restore_skill_sources(project);
+    restore_skill_collections(project);
+}
+
+fn restore_skill_sources(project: &Project) {
+    if project.skill_sources.is_empty() {
+        return;
+    }
+    let Ok(existing) = read_skill_sources() else {
+        return;
+    };
+    for (name, source) in &project.skill_sources {
+        if !existing.contains_key(name) {
+            let _ = record_skill_source(name, &source.source, &source.id, &source.kind);
+        }
+    }
+}
+
+fn restore_skill_collections(project: &Project) {
+    if project.skill_collections.is_empty() {
+        return;
+    }
+    let Ok(existing) = read_skill_collections() else {
+        return;
+    };
+    for (name, collection) in &project.skill_collections {
+        if !existing.contains_key(name) {
+            let _ = set_skill_collection(name, collection);
+        }
+    }
+}
+
+// ── Project enrichment ───────────────────────────────────────────────────────
+//
+// Snapshots user-level registry data into the project config so it is
+// self-contained when the project is opened on another machine.  Runs on
+// every save — fields are overwritten with the current user-level state.
+// Failures in individual lookups are silently skipped so that a missing
+// registry never prevents a project from being saved.
+
+fn enrich_project(project: &mut Project) {
+    enrich_skill_sources(project);
+    enrich_skill_collections(project);
+    enrich_mcp_server_specs(project);
+    enrich_resolved_rules(project);
+    enrich_resolved_agents(project);
+    enrich_resolved_commands(project);
+}
+
+fn enrich_skill_sources(project: &mut Project) {
+    let Ok(all_sources) = read_skill_sources() else {
+        return;
+    };
+    let mut sources = HashMap::new();
+    for name in &project.skills {
+        if let Some(src) = all_sources.get(name) {
+            sources.insert(name.clone(), src.clone());
+        }
+    }
+    project.skill_sources = sources;
+}
+
+fn enrich_skill_collections(project: &mut Project) {
+    let Ok(all_collections) = read_skill_collections() else {
+        return;
+    };
+    let mut collections = HashMap::new();
+    for name in &project.skills {
+        if let Some(coll) = all_collections.get(name) {
+            collections.insert(name.clone(), coll.clone());
+        }
+    }
+    project.skill_collections = collections;
+}
+
+fn enrich_mcp_server_specs(project: &mut Project) {
+    let mut specs = HashMap::new();
+    for name in &project.mcp_servers {
+        let Ok(raw) = read_mcp_server_config(name) else {
+            continue;
+        };
+        let Ok(config) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        let server_type = config.get("type").and_then(|v| v.as_str()).map(String::from);
+        let command = config.get("command").and_then(|v| v.as_str()).map(String::from);
+        let args = config
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let env_keys = config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .map(|obj| obj.keys().cloned().collect())
+            .unwrap_or_default();
+        let url = config.get("url").and_then(|v| v.as_str()).map(String::from);
+
+        specs.insert(
+            name.clone(),
+            McpServerSpec {
+                server_type,
+                command,
+                args,
+                env_keys,
+                url,
+            },
+        );
+    }
+    project.mcp_server_specs = specs;
+}
+
+fn enrich_resolved_rules(project: &mut Project) {
+    let mut resolved = HashMap::new();
+    // Collect all unique rule machine names from file_rules values.
+    let rule_names: std::collections::HashSet<&String> =
+        project.file_rules.values().flatten().collect();
+    for machine_name in rule_names {
+        let Ok(raw) = read_rule(machine_name) else {
+            continue;
+        };
+        let Ok(rule) = serde_json::from_str::<Rule>(&raw) else {
+            continue;
+        };
+        resolved.insert(
+            machine_name.clone(),
+            ResolvedRule {
+                name: rule.name,
+                content: rule.content,
+            },
+        );
+    }
+    project.resolved_rules = resolved;
+}
+
+fn enrich_resolved_agents(project: &mut Project) {
+    let mut resolved = HashMap::new();
+    for machine_name in &project.user_agents {
+        let Ok(content) = read_user_agent(machine_name) else {
+            continue;
+        };
+        // Extract display name from frontmatter, fall back to machine name.
+        let name = extract_frontmatter_name(&content)
+            .unwrap_or_else(|| machine_name.clone());
+        resolved.insert(
+            machine_name.clone(),
+            CustomAgent { name, content },
+        );
+    }
+    project.resolved_agents = resolved;
+}
+
+fn enrich_resolved_commands(project: &mut Project) {
+    let mut resolved = HashMap::new();
+    for machine_name in &project.user_commands {
+        let Ok(content) = read_user_command(machine_name) else {
+            continue;
+        };
+        resolved.insert(
+            machine_name.clone(),
+            CustomCommand {
+                name: machine_name.clone(),
+                content,
+            },
+        );
+    }
+    project.resolved_commands = resolved;
+}
+
+/// Extract the `name` field from YAML frontmatter in markdown content.
+fn extract_frontmatter_name(content: &str) -> Option<String> {
+    if !content.starts_with("---\n") {
+        return None;
+    }
+    let end = content[4..].find("\n---")?;
+    let yaml = &content[4..end + 4];
+    for line in yaml.lines() {
+        let line = line.trim();
+        if let Some(name_val) = line.strip_prefix("name:") {
+            let name = name_val.trim().trim_matches('"').trim_matches('\'');
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
 }
 
 pub fn save_project(name: &str, data: &str) -> Result<(), String> {
@@ -90,8 +308,9 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
         return Err("Invalid project name".into());
     }
 
-    let project: Project =
+    let mut project: Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
+    enrich_project(&mut project);
     let pretty = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
 
     let projects_dir = get_projects_dir()?;
@@ -509,6 +728,123 @@ mod tests {
     }
 
     // ── overwrite ────────────────────────────────────────────────────────────
+
+    // ── extract_frontmatter_name ──────────────────────────────────────────
+
+    #[test]
+    fn extract_frontmatter_name_returns_name() {
+        let content = "---\nname: My Agent\ndescription: does stuff\n---\n\nBody here.";
+        assert_eq!(
+            super::extract_frontmatter_name(content),
+            Some("My Agent".into())
+        );
+    }
+
+    #[test]
+    fn extract_frontmatter_name_strips_quotes() {
+        let content = "---\nname: \"Quoted Name\"\n---\n\nBody.";
+        assert_eq!(
+            super::extract_frontmatter_name(content),
+            Some("Quoted Name".into())
+        );
+    }
+
+    #[test]
+    fn extract_frontmatter_name_returns_none_without_frontmatter() {
+        let content = "# Just a heading\n\nNo frontmatter.";
+        assert_eq!(super::extract_frontmatter_name(content), None);
+    }
+
+    #[test]
+    fn extract_frontmatter_name_returns_none_for_empty_name() {
+        let content = "---\nname: \n---\n\nBody.";
+        assert_eq!(super::extract_frontmatter_name(content), None);
+    }
+
+    // ── resolved fields roundtrip through save/read ─────────────────────
+
+    #[test]
+    fn resolved_fields_survive_save_and_read() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let projects_dir = tmp.path().join("projects");
+        let project_dir = tmp.path().join("my-project");
+        fs::create_dir_all(&project_dir).expect("mkdir");
+
+        let mut project = Project {
+            name: "portable".into(),
+            directory: project_dir.to_str().unwrap().into(),
+            skills: vec!["my-skill".into()],
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            ..Default::default()
+        };
+        project.skill_sources.insert(
+            "my-skill".into(),
+            SkillSource {
+                source: "owner/repo".into(),
+                id: "owner/repo/my-skill".into(),
+                kind: "github".into(),
+            },
+        );
+        project
+            .skill_collections
+            .insert("my-skill".into(), "test-collection".into());
+        project.mcp_server_specs.insert(
+            "github".into(),
+            McpServerSpec {
+                server_type: Some("stdio".into()),
+                command: Some("docker".into()),
+                args: vec!["run".into(), "ghcr.io/github/server".into()],
+                env_keys: vec!["GITHUB_TOKEN".into()],
+                url: None,
+            },
+        );
+        project.resolved_rules.insert(
+            "my-rule".into(),
+            ResolvedRule {
+                name: "My Rule".into(),
+                content: "Do the thing.".into(),
+            },
+        );
+
+        let data = serde_json::to_string(&project).expect("serialize");
+        save_project_at(&projects_dir, "portable", &data).expect("save");
+
+        let raw = read_project_at(&projects_dir, "portable").expect("read");
+        let loaded: Project = serde_json::from_str(&raw).expect("parse");
+
+        // skill_sources preserved
+        let src = loaded
+            .skill_sources
+            .get("my-skill")
+            .expect("skill source should survive roundtrip");
+        assert_eq!(src.source, "owner/repo");
+        assert_eq!(src.kind, "github");
+
+        // skill_collections preserved
+        assert_eq!(
+            loaded.skill_collections.get("my-skill").map(|s| s.as_str()),
+            Some("test-collection")
+        );
+
+        // mcp_server_specs preserved
+        let spec = loaded
+            .mcp_server_specs
+            .get("github")
+            .expect("server spec should survive roundtrip");
+        assert_eq!(spec.command.as_deref(), Some("docker"));
+        assert_eq!(spec.env_keys, vec!["GITHUB_TOKEN"]);
+
+        // resolved_rules preserved
+        let rule = loaded
+            .resolved_rules
+            .get("my-rule")
+            .expect("rule should survive roundtrip");
+        assert_eq!(rule.name, "My Rule");
+        assert_eq!(rule.content, "Do the thing.");
+    }
+
+    // ── overwrite ────────────────────────────────────────────────────────
 
     #[test]
     fn save_overwrites_existing_project() {

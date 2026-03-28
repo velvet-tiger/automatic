@@ -137,6 +137,39 @@ fn default_skill_source_kind() -> String {
     "github".to_string()
 }
 
+/// MCP server specification stored in project config for portability.
+/// Contains the server definition (type, command, args) but NOT secret
+/// environment variable values — only the key names are recorded so that
+/// another Automatic instance knows which env vars need to be configured.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct McpServerSpec {
+    /// Server transport type (e.g. "stdio", "sse").
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub server_type: Option<String>,
+    /// Executable command (e.g. "npx", "uvx").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Command arguments.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// Environment variable names required by this server (values omitted).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_keys: Vec<String>,
+    /// Server URL for SSE/HTTP transports.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// Resolved content of a workspace rule, snapshotted into project config
+/// so that the project remains self-contained across machines.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResolvedRule {
+    /// Human-readable display name.
+    pub name: String,
+    /// Markdown content of the rule.
+    pub content: String,
+}
+
 // ── Agent Options ─────────────────────────────────────────────────────────────
 
 /// Per-agent configuration options stored in a project.
@@ -282,6 +315,45 @@ pub struct Project {
     /// alongside global and local skills.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_skills: Option<Vec<CustomSkill>>,
+
+    // ── Resolved metadata (project portability) ─────────────────────────────
+    //
+    // These fields snapshot user-level registry data into the project config
+    // so that the project is self-contained when opened on another machine.
+    // They are populated automatically on save and should not be edited by hand.
+
+    /// Provenance metadata for skills in the `skills` list.
+    /// Keyed by skill name → SkillSource (GitHub owner/repo, skills.sh id, kind).
+    /// Populated from `~/.automatic/skills.json` on save.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub skill_sources: HashMap<String, SkillSource>,
+
+    /// Collection grouping for skills in the `skills` list.
+    /// Keyed by skill name → collection name.
+    /// Populated from `~/.automatic/skill-collections.json` on save.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub skill_collections: HashMap<String, String>,
+
+    /// MCP server specifications (transport, command, args) without secret
+    /// values.  Keyed by server name.  Allows another Automatic instance to
+    /// know what servers are required even without the user-level config.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub mcp_server_specs: HashMap<String, McpServerSpec>,
+
+    /// Snapshot of workspace rule content for rules referenced in
+    /// `file_rules`.  Keyed by rule machine name.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub resolved_rules: HashMap<String, ResolvedRule>,
+
+    /// Snapshot of workspace agent content for agents in `user_agents`.
+    /// Keyed by agent machine name.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub resolved_agents: HashMap<String, CustomAgent>,
+
+    /// Snapshot of workspace command content for commands in `user_commands`.
+    /// Keyed by command machine name.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub resolved_commands: HashMap<String, CustomCommand>,
 }
 
 impl Project {
@@ -431,5 +503,164 @@ mod tests {
         let json = r#"{"name":"test","description":"","directory":"","skills":[],"local_skills":[],"mcp_servers":[],"providers":[],"agents":[],"created_at":"","updated_at":""}"#;
         let project: Project = serde_json::from_str(json).expect("deserialize");
         assert!(project.custom_skills.is_none());
+    }
+
+    // ── Resolved metadata fields ────────────────────────────────────────────
+
+    #[test]
+    fn mcp_server_spec_serialize_roundtrip() {
+        let spec = McpServerSpec {
+            server_type: Some("stdio".into()),
+            command: Some("npx".into()),
+            args: vec!["-y".into(), "@modelcontextprotocol/server-github".into()],
+            env_keys: vec!["GITHUB_TOKEN".into()],
+            url: None,
+        };
+        let json = serde_json::to_string(&spec).expect("serialize");
+        let parsed: McpServerSpec = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.server_type.as_deref(), Some("stdio"));
+        assert_eq!(parsed.command.as_deref(), Some("npx"));
+        assert_eq!(parsed.args.len(), 2);
+        assert_eq!(parsed.env_keys, vec!["GITHUB_TOKEN"]);
+        assert!(parsed.url.is_none());
+    }
+
+    #[test]
+    fn mcp_server_spec_empty_fields_omitted() {
+        let spec = McpServerSpec {
+            server_type: None,
+            command: None,
+            args: vec![],
+            env_keys: vec![],
+            url: None,
+        };
+        let json = serde_json::to_string(&spec).expect("serialize");
+        assert!(!json.contains("args"));
+        assert!(!json.contains("env_keys"));
+        assert!(!json.contains("url"));
+    }
+
+    #[test]
+    fn resolved_rule_serialize_roundtrip() {
+        let rule = ResolvedRule {
+            name: "My Rule".into(),
+            content: "# Rule\nDo the thing.".into(),
+        };
+        let json = serde_json::to_string(&rule).expect("serialize");
+        let parsed: ResolvedRule = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.name, "My Rule");
+        assert!(parsed.content.contains("Do the thing."));
+    }
+
+    #[test]
+    fn project_resolved_fields_serialize_roundtrip() {
+        let mut project = Project {
+            name: "portable".into(),
+            skills: vec!["my-skill".into()],
+            mcp_servers: vec!["github".into()],
+            ..Default::default()
+        };
+
+        project.skill_sources.insert(
+            "my-skill".into(),
+            SkillSource {
+                source: "owner/repo".into(),
+                id: "owner/repo/my-skill".into(),
+                kind: "github".into(),
+            },
+        );
+        project
+            .skill_collections
+            .insert("my-skill".into(), "my-collection".into());
+        project.mcp_server_specs.insert(
+            "github".into(),
+            McpServerSpec {
+                server_type: Some("stdio".into()),
+                command: Some("npx".into()),
+                args: vec![],
+                env_keys: vec!["GITHUB_TOKEN".into()],
+                url: None,
+            },
+        );
+        project.resolved_rules.insert(
+            "my-rule".into(),
+            ResolvedRule {
+                name: "My Rule".into(),
+                content: "rule content".into(),
+            },
+        );
+        project.resolved_agents.insert(
+            "researcher".into(),
+            CustomAgent {
+                name: "Researcher".into(),
+                content: "---\nname: Researcher\n---\nDo research.".into(),
+            },
+        );
+        project.resolved_commands.insert(
+            "lint".into(),
+            CustomCommand {
+                name: "lint".into(),
+                content: "Run the linter.".into(),
+            },
+        );
+
+        let json = serde_json::to_string(&project).expect("serialize");
+        let parsed: Project = serde_json::from_str(&json).expect("deserialize");
+
+        // skill_sources
+        let src = parsed.skill_sources.get("my-skill").expect("skill source");
+        assert_eq!(src.source, "owner/repo");
+        assert_eq!(src.id, "owner/repo/my-skill");
+        assert_eq!(src.kind, "github");
+
+        // skill_collections
+        assert_eq!(
+            parsed.skill_collections.get("my-skill").map(|s| s.as_str()),
+            Some("my-collection")
+        );
+
+        // mcp_server_specs
+        let spec = parsed.mcp_server_specs.get("github").expect("server spec");
+        assert_eq!(spec.command.as_deref(), Some("npx"));
+        assert_eq!(spec.env_keys, vec!["GITHUB_TOKEN"]);
+
+        // resolved_rules
+        let rule = parsed.resolved_rules.get("my-rule").expect("rule");
+        assert_eq!(rule.name, "My Rule");
+
+        // resolved_agents
+        let agent = parsed.resolved_agents.get("researcher").expect("agent");
+        assert_eq!(agent.name, "Researcher");
+
+        // resolved_commands
+        let cmd = parsed.resolved_commands.get("lint").expect("command");
+        assert_eq!(cmd.content, "Run the linter.");
+    }
+
+    #[test]
+    fn resolved_fields_omitted_when_empty() {
+        let project = Project {
+            name: "minimal".into(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&project).expect("serialize");
+        assert!(!json.contains("skill_sources"));
+        assert!(!json.contains("skill_collections"));
+        assert!(!json.contains("mcp_server_specs"));
+        assert!(!json.contains("resolved_rules"));
+        assert!(!json.contains("resolved_agents"));
+        assert!(!json.contains("resolved_commands"));
+    }
+
+    #[test]
+    fn resolved_fields_absent_in_json_deserialize_as_empty() {
+        let json = r#"{"name":"old","description":"","directory":"","skills":[],"local_skills":[],"mcp_servers":[],"providers":[],"agents":[],"created_at":"","updated_at":""}"#;
+        let project: Project = serde_json::from_str(json).expect("deserialize");
+        assert!(project.skill_sources.is_empty());
+        assert!(project.skill_collections.is_empty());
+        assert!(project.mcp_server_specs.is_empty());
+        assert!(project.resolved_rules.is_empty());
+        assert!(project.resolved_agents.is_empty());
+        assert!(project.resolved_commands.is_empty());
     }
 }
