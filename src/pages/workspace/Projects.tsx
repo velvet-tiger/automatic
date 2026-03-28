@@ -1697,7 +1697,16 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState<"sidebar" | "alphabetical" | "created" | "updated" | "last_activity">("sidebar");
   // Track which folder groups are collapsed in the overview (independent of sidebar state)
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  // Persisted so the user's collapse preferences survive page reloads.
+  const OVERVIEW_COLLAPSED_KEY = "automatic.projects.overview.collapsed";
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      const stored = localStorage.getItem("automatic.projects.overview.collapsed");
+      return stored ? (JSON.parse(stored) as Record<string, boolean>) : {};
+    } catch {
+      return {};
+    }
+  });
 
   const getSortTimestamp = (project: Project | undefined, key: "created" | "updated" | "last_activity"): number => {
     if (!project) return 0;
@@ -1759,7 +1768,11 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
     filteredUngrouped.length;
 
   const toggleGroup = (id: string) =>
-    setCollapsedGroups((prev) => ({ ...prev, [id]: !prev[id] }));
+    setCollapsedGroups((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      try { localStorage.setItem(OVERVIEW_COLLAPSED_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
 
   const renderCardGrid = (names: string[]) => (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
@@ -6934,13 +6947,24 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
                 {/* ── Rules tab ─────────────────────────────────────────── */}
                 {projectTab === "rules" && (() => {
-                  const projectRules = (project.file_rules || {})["_project"] || [];
+                  // The automatic-service rule is mandatory on every project.
+                  // It is always enforced by the backend and cannot be removed.
+                  const MANDATORY_RULE = "automatic-service";
+                  const isRuleLocked = (ruleId: string) =>
+                    pluginLockedRules.includes(ruleId) || ruleId === MANDATORY_RULE;
+
+                  const configuredRules = (project.file_rules || {})["_project"] || [];
+                  // Ensure the mandatory rule always appears in the displayed list,
+                  // even if the user hasn't explicitly added it to file_rules.
+                  const projectRules = configuredRules.includes(MANDATORY_RULE)
+                    ? configuredRules
+                    : [MANDATORY_RULE, ...configuredRules];
                   const customRules: CustomRule[] = project.custom_rules || [];
 
                   const handleToggleProjectRule = (ruleId: string) => {
                     const existing = (project.file_rules || {})["_project"] || [];
-                    // Prevent removal of plugin-locked rules.
-                    if (existing.includes(ruleId) && pluginLockedRules.includes(ruleId)) return;
+                    // Prevent removal of mandatory and plugin-locked rules.
+                    if (existing.includes(ruleId) && isRuleLocked(ruleId)) return;
                     const updated = existing.includes(ruleId)
                       ? existing.filter(r => r !== ruleId)
                       : [...existing, ruleId];
@@ -7176,7 +7200,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                       <div className="text-[11px] text-text-muted truncate">{ruleId}</div>
                                     </div>
                                     <TokenPill text={globalRuleContentCache[ruleId] ?? ""} />
-                                    {!pluginLockedRules.includes(ruleId) && (
+                                    {!isRuleLocked(ruleId) && (
                                     <button
                                       onClick={() => handleToggleProjectRule(ruleId)}
                                       className="text-text-muted hover:text-danger opacity-100 transition-all p-1 hover:bg-surface rounded"
