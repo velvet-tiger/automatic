@@ -321,10 +321,20 @@ fn sync_plugin_skills(manifests: &[PluginManifest], state: &PluginState) {
                     }
                 });
             }
+        } else {
+            // Plugin disabled: delete its skills so they do not linger as
+            // decoupled, unattributed entries in the user's skill library.
+            for decl in &manifest.skills {
+                if super::skills::skill_exists(&decl.name) {
+                    if let Err(e) = super::skills::delete_skill(&decl.name) {
+                        eprintln!(
+                            "[automatic] failed to remove skill '{}' for disabled plugin '{}': {}",
+                            decl.name, manifest.id, e
+                        );
+                    }
+                }
+            }
         }
-        // Note: we do NOT remove plugin skills on disable — they remain on
-        // disk but are no longer marked as plugin-provided (the plugin_id
-        // lookup is dynamic based on enabled state).
     }
 }
 
