@@ -2,6 +2,21 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.0.0-beta.3] — 2026-03-29
+
+### Added
+
+- **Mandatory automatic-service rule**: The `automatic-service` rule is now enforced as a mandatory project rule, ensuring all projects carry the Automatic MCP service instructions
+
+### Fixed
+
+- **Plugin skill cleanup**: Plugin skills are now deleted when a plugin is disabled, preventing stale skills from persisting (a6e9a11)
+- **Project health bar deduplication**: Skill and MCP server counts in the project overview health bar are no longer double-counted (4e0535f)
+- **Overview folder collapsed state**: Collapsed/expanded state of overview folders is now persisted to `localStorage` across sessions (efe1a47)
+- **Common Docs plugin manifest**: Added `common-docs-write` skill to the Common Docs plugin manifest (c24d531)
+
+---
+
 ## [1.0.0-beta.2] — 2026-03-28
 
 ### Added
