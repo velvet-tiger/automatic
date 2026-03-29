@@ -20,6 +20,9 @@ pub struct GetCredentialParams {
 pub struct ReadSkillParams {
     /// The skill name (directory name under ~/.agents/skills/ or ~/.claude/skills/)
     pub name: String,
+    /// Optional project name. When provided, project-local skills are searched first
+    /// before falling back to the global skill registry.
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -299,17 +302,44 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_read_skill",
-        description = "Read the content of a specific skill from the Automatic skill registry"
+        description = "Read the content of a specific skill. Pass `project` to also search \
+                       project-local skills (skills that exist only within a project directory, \
+                       not in the global registry). When `project` is given, local skills are \
+                       checked first; the global registry is used as a fallback."
     )]
     async fn read_skill(
         &self,
         params: Parameters<ReadSkillParams>,
     ) -> Result<CallToolResult, McpError> {
-        match crate::core::read_skill(&params.0.name) {
+        let name = &params.0.name;
+
+        // When a project is specified, try project-local skills first.
+        if let Some(ref project_name) = params.0.project {
+            if let Ok(raw) = crate::core::read_project(project_name) {
+                if let Ok(project) = serde_json::from_str::<crate::core::Project>(&raw) {
+                    if project.local_skills.iter().any(|s| s == name) {
+                        match crate::sync::read_local_skill(&project, name) {
+                            Ok(content) => {
+                                return Ok(CallToolResult::success(vec![Content::text(content)]))
+                            }
+                            Err(e) => {
+                                return Ok(CallToolResult::error(vec![Content::text(format!(
+                                    "Failed to read local skill '{}' from project '{}': {}",
+                                    name, project_name, e
+                                ))]))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fall back to the global registry.
+        match crate::core::read_skill(name) {
             Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to read skill '{}': {}",
-                params.0.name, e
+                name, e
             ))])),
         }
     }
