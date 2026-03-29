@@ -376,10 +376,14 @@ export default function GettingStarted({ onNavigate }: GettingStartedProps) {
   return (
     <div className="flex-1 h-full overflow-y-auto p-8 custom-scrollbar bg-transparent relative z-10">
       <div className="max-w-5xl mx-auto space-y-8">
-        <div className="grid grid-cols-2 gap-8 items-start">
-          <GettingStartedChecklist onboardingItems={onboardingItems} />
+        {onboardingItems.length > 0 ? (
+          <div className="grid grid-cols-2 gap-8 items-start">
+            <GettingStartedChecklist onboardingItems={onboardingItems} />
+            <WhatsNewSection releases={whatsNewReleases} />
+          </div>
+        ) : (
           <WhatsNewSection releases={whatsNewReleases} />
-        </div>
+        )}
         <UseCasesGrid onNavigate={onNavigate} />
         <DiscoverAndExtendSection onNavigate={onNavigate} />
       </div>
