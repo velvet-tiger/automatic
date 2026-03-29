@@ -1562,19 +1562,22 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject }: Project
   const drifted = projects.filter((n) => driftByProject[n] === true).length;
   const checking = projects.filter((n) => driftByProject[n] === undefined).length;
 
-  // Unique agent ids across all projects
+  // Unique agent ids, skill names, and MCP server names across all projects
   const agentSet = new Set<string>();
-  let totalSkills = 0;
-  let totalMcp = 0;
+  const skillSet = new Set<string>();
+  const mcpSet = new Set<string>();
   let fullyConfigured = 0;
   for (const name of projects) {
     const p = projectDetails.get(name);
     if (!p) continue;
     (p.agents ?? []).forEach((a) => agentSet.add(a));
-    totalSkills += (p.skills?.length ?? 0) + (p.local_skills?.length ?? 0);
-    totalMcp += p.mcp_servers?.length ?? 0;
+    (p.skills ?? []).forEach((s) => skillSet.add(s));
+    (p.local_skills ?? []).forEach((s) => skillSet.add(s));
+    (p.mcp_servers ?? []).forEach((m) => mcpSet.add(m));
     if ((p.agents?.length ?? 0) > 0 && !!p.directory) fullyConfigured++;
   }
+  const totalSkills = skillSet.size;
+  const totalMcp = mcpSet.size;
 
   // Show a compact progress-like bar for synced/drifted/checking ratio
   const syncedPct = total > 0 ? Math.round((synced / total) * 100) : 0;
