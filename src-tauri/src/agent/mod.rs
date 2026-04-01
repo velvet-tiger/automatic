@@ -33,6 +33,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::core::Project;
+
 pub use antigravity::Antigravity;
 pub use claude_code::ClaudeCode;
 pub use cline::Cline;
@@ -141,6 +143,21 @@ pub trait Agent: Send + Sync {
         selected_names: &[String],
         local_skill_names: &[String],
     ) -> Result<Vec<String>, String>;
+
+    /// Apply provider-specific instruction-file rule syncing.
+    ///
+    /// Return `Ok(Some(touched_paths))` when this agent has a custom
+    /// instruction sync implementation and handled the write itself.
+    /// Return `Ok(None)` to let the generic sync pipeline handle the file.
+    fn sync_instruction_rules(
+        &self,
+        _project: &Project,
+        _filename: &str,
+        _rule_names: &[String],
+        _custom_contents: &[String],
+    ) -> Result<Option<Vec<String>>, String> {
+        Ok(None)
+    }
 
     // ── Capabilities ────────────────────────────────────────────────────
 
@@ -1023,7 +1040,10 @@ pub(crate) fn discover_mcp_servers_from_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::CustomCommand;
     use std::collections::HashSet;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_from_id_roundtrips() {
@@ -1040,5 +1060,73 @@ mod tests {
         let ids: Vec<&str> = all().iter().map(|a| a.id()).collect();
         let unique: HashSet<&str> = ids.iter().copied().collect();
         assert_eq!(ids.len(), unique.len());
+    }
+
+    #[test]
+    fn sync_commands_writes_expected_commands_and_removes_stale_managed_files() {
+        let dir = tempdir().expect("tempdir");
+        let commands_dir = dir.path().join("commands");
+        fs::create_dir_all(&commands_dir).expect("create commands dir");
+
+        fs::write(
+            commands_dir.join("stale.md"),
+            "---\nautomatic-managed: true\n---\nStale command.\n",
+        )
+        .expect("write stale command");
+        fs::write(
+            commands_dir.join("keep.md"),
+            "---\ndescription: user command\n---\nDo not remove.\n",
+        )
+        .expect("write unmanaged command");
+
+        let written = sync_commands_to_dir(
+            &commands_dir,
+            &[(
+                "workspace-cmd".to_string(),
+                "---\ndescription: workspace\n---\nRun workspace.\n".to_string(),
+            )],
+            &[CustomCommand {
+                name: "custom-cmd".to_string(),
+                content: "Run custom.\n".to_string(),
+            }],
+            &ClaudeCode,
+        )
+        .expect("sync commands");
+
+        let workspace_path = commands_dir.join("workspace-cmd.md");
+        let custom_path = commands_dir.join("custom-cmd.md");
+        assert!(written.iter().any(|p| p.ends_with("workspace-cmd.md")));
+        assert!(written.iter().any(|p| p.ends_with("custom-cmd.md")));
+        assert!(written.iter().any(|p| p.ends_with("stale.md")));
+        assert!(workspace_path.exists());
+        assert!(custom_path.exists());
+        assert!(!commands_dir.join("stale.md").exists());
+        assert!(commands_dir.join("keep.md").exists());
+        assert!(is_managed_command_file(&workspace_path));
+        assert!(is_managed_command_file(&custom_path));
+    }
+
+    #[test]
+    fn copy_skills_to_project_writes_selected_and_removes_stale_entries() {
+        let dir = tempdir().expect("tempdir");
+        let skills_dir = dir.path().join("skills");
+        fs::create_dir_all(&skills_dir).expect("create skills dir");
+        fs::create_dir_all(skills_dir.join("stale-skill")).expect("create stale skill");
+        fs::create_dir_all(skills_dir.join("local-skill")).expect("create local skill");
+
+        let mut written = Vec::new();
+        copy_skills_to_project(
+            &skills_dir,
+            &[("fresh-skill".to_string(), "# Fresh skill\n".to_string())],
+            &["fresh-skill".to_string()],
+            &["local-skill".to_string()],
+            &mut written,
+        )
+        .expect("copy skills");
+
+        assert!(written.iter().any(|p| p.ends_with("fresh-skill")));
+        assert!(skills_dir.join("fresh-skill").join("SKILL.md").exists());
+        assert!(!skills_dir.join("stale-skill").exists());
+        assert!(skills_dir.join("local-skill").exists());
     }
 }

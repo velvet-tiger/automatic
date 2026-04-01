@@ -23,8 +23,8 @@ pub fn read_project_file(directory: &str, filename: &str) -> Result<String, Stri
     }
 
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    Ok(strip_groups_section(&strip_rules_section(
-        &strip_managed_section(&content),
+    Ok(strip_index_section(&strip_groups_section(
+        &strip_rules_section(&strip_managed_section(&content)),
     )))
 }
 
@@ -96,9 +96,17 @@ pub fn save_project_file_for_project(
     };
 
     let mut dot_claude_synced = false;
+    let custom_rule_structs: Vec<CustomRule> = project.custom_rules.clone();
 
     for f in &target_files {
-        if project_uses_dot_claude_rules(project, f) {
+        if project.instructions_index_mode && !project_uses_dot_claude_rules(project, f) {
+            // Index mode: write rules to .automatic/instructions/ and inject an
+            // index section into the main file instead of inlining rule content.
+            // Claude is excluded here — it uses .claude/rules/ via the branch below.
+            save_project_file(&project.directory, f, user_content)?;
+            sync_rules_to_automatic_instructions(&project.directory, &rules, &custom_rule_structs)?;
+            inject_index_into_project_file(&project.directory, f, &rules, &custom_rule_structs)?;
+        } else if project_uses_dot_claude_rules(project, f) {
             // Save with custom rules inline — global rules go to .claude/rules/.
             // Custom rules are always injected inline because they don't have a
             // machine name to use as a filename in .claude/rules/.

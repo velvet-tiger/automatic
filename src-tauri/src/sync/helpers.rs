@@ -81,30 +81,6 @@ pub(crate) fn clean_project_file(dir: &PathBuf, filename: &str) -> Result<Option
     }
 }
 
-/// Strip any `<!-- automatic:rules:start -->…<!-- automatic:rules:end -->`
-/// managed section from a project file.  Used when switching a Claude project
-/// to the `.claude/rules/` mode so the two representations do not co-exist.
-/// Returns the path if the file was modified, or None if no cleanup was needed.
-pub(crate) fn clean_project_file_rules_section(
-    dir: &PathBuf,
-    filename: &str,
-) -> Result<Option<String>, String> {
-    let path = dir.join(filename);
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let cleaned = crate::core::strip_rules_section_pub(&content);
-
-    if cleaned != content {
-        fs::write(&path, cleaned).map_err(|e| e.to_string())?;
-        Ok(Some(path.display().to_string()))
-    } else {
-        Ok(None)
-    }
-}
-
 pub(crate) fn add_unique(items: &mut Vec<String>, value: &str) -> bool {
     if items.iter().any(|v| v == value) {
         false
@@ -359,4 +335,115 @@ pub(crate) fn sync_user_agents(
     }
 
     Ok(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::ClaudeCode;
+    use crate::core::{save_user_agent, CustomAgent};
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::TempDir;
+
+    fn tmp() -> TempDir {
+        tempfile::tempdir().expect("tempdir")
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct HomeGuard {
+        original: Option<String>,
+    }
+
+    impl HomeGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let original = std::env::var("HOME").ok();
+            unsafe {
+                std::env::set_var("HOME", path);
+            }
+            Self { original }
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(original) = &self.original {
+                    std::env::set_var("HOME", original);
+                } else {
+                    std::env::remove_var("HOME");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sync_custom_agents_uses_frontmatter_name_and_fallback_name() {
+        let dir = tmp();
+        let agents_dir = dir.path().join("agents");
+        let custom_agents = vec![
+            CustomAgent {
+                name: "Display Name".to_string(),
+                content: "---\nname: Planner Agent\n---\n\nPlan carefully.\n".to_string(),
+            },
+            CustomAgent {
+                name: "Fallback Agent".to_string(),
+                content: "No frontmatter here.\n".to_string(),
+            },
+        ];
+
+        let written = sync_custom_agents(&agents_dir, &custom_agents, &ClaudeCode).expect("sync");
+
+        assert_eq!(written.len(), 2);
+        assert!(agents_dir.join("planner-agent.md").exists());
+        assert!(agents_dir.join("fallback-agent.md").exists());
+        assert!(fs::read_to_string(agents_dir.join("planner-agent.md"))
+            .expect("read planner")
+            .contains("Plan carefully."));
+    }
+
+    #[test]
+    fn sync_user_agents_writes_selected_and_removes_stale_non_custom_files() {
+        let _lock = env_lock().lock().expect("env lock");
+        let home = tmp();
+        let _home_guard = HomeGuard::set(home.path());
+        let project = tmp();
+        let agents_dir = project.path().join("agents");
+        fs::create_dir_all(&agents_dir).expect("create agents dir");
+
+        save_user_agent(
+            "reviewer-agent",
+            "Reviewer Agent",
+            "---\nname: Reviewer Agent\n---\n\nReview thoroughly.\n",
+        )
+        .expect("save reviewer agent");
+
+        let stale_path = agents_dir.join("stale-agent.md");
+        fs::write(&stale_path, "---\nname: Stale Agent\n---\n\nOld content.\n")
+            .expect("write stale agent");
+
+        let custom_path = agents_dir.join("custom-agent.md");
+        fs::write(&custom_path, "---\nname: Custom Agent\n---\n\nKeep me.\n")
+            .expect("write custom agent");
+
+        let written = sync_user_agents(
+            &agents_dir,
+            &["reviewer-agent".to_string()],
+            &["custom-agent".to_string()],
+            &ClaudeCode,
+        )
+        .expect("sync user agents");
+
+        assert!(written.iter().any(|p| p.ends_with("reviewer-agent.md")));
+        assert!(written.iter().any(|p| p.ends_with("stale-agent.md")));
+        assert!(agents_dir.join("reviewer-agent.md").exists());
+        assert!(!stale_path.exists());
+        assert!(custom_path.exists());
+        assert!(fs::read_to_string(agents_dir.join("reviewer-agent.md"))
+            .expect("read synced user agent")
+            .contains("Review thoroughly."));
+    }
 }

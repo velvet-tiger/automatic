@@ -278,6 +278,263 @@ pub fn is_dot_claude_rules_current(
     Ok(true)
 }
 
+// ── Instructions Index Mode ──────────────────────────────────────────────────
+//
+// When a project has `instructions_index_mode: true`, rules are written as
+// individual files under `.automatic/instructions/` rather than being injected
+// inline.  The main instruction file (CLAUDE.md, AGENTS.md, etc.) receives a
+// short index section listing those files.
+
+const INDEX_START_MARKER: &str = "<!-- automatic:index:start -->";
+const INDEX_END_MARKER: &str = "<!-- automatic:index:end -->";
+const AUTOMATIC_INSTRUCTIONS_DIR: &str = ".automatic/instructions";
+
+/// Marker placed at the start of every rule file written by Automatic under
+/// `.automatic/instructions/`.
+const AUTOMATIC_INSTRUCTIONS_MANAGED_HEADER: &str =
+    "<!-- managed by Automatic — do not edit by hand -->\n\n";
+
+/// Write rules as individual Markdown files under
+/// `<project_dir>/.automatic/instructions/`.
+///
+/// Global rules are written as `<machine_name>.md`; custom rules are written
+/// as `custom-<slug>.md` where `slug` is the lowercased, hyphenated rule name.
+/// Returns the list of files written or removed.
+pub fn sync_rules_to_automatic_instructions(
+    project_dir: &str,
+    rule_names: &[String],
+    custom_rules: &[crate::core::CustomRule],
+) -> Result<Vec<String>, String> {
+    let instructions_dir = PathBuf::from(project_dir).join(AUTOMATIC_INSTRUCTIONS_DIR);
+    fs::create_dir_all(&instructions_dir)
+        .map_err(|e| format!("Failed to create .automatic/instructions/: {}", e))?;
+
+    let mut touched: Vec<String> = Vec::new();
+
+    // Build the set of filenames we intend to write.
+    let mut intended: HashSet<String> = rule_names.iter().map(|n| format!("{}.md", n)).collect();
+    for cr in custom_rules {
+        intended.insert(format!("custom-{}.md", slugify(&cr.name)));
+    }
+
+    // Remove stale Automatic-managed files no longer in the intended set.
+    if let Ok(entries) = fs::read_dir(&instructions_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let file_name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if intended.contains(&file_name) {
+                continue;
+            }
+            if let Ok(content) = fs::read_to_string(&path) {
+                if content.starts_with(AUTOMATIC_INSTRUCTIONS_MANAGED_HEADER) {
+                    if fs::remove_file(&path).is_ok() {
+                        touched.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Write global rule files.
+    for machine_name in rule_names {
+        let content = match read_rule_content(machine_name) {
+            Ok(c) if !c.trim().is_empty() => c,
+            _ => continue,
+        };
+
+        let file_path = instructions_dir.join(format!("{}.md", machine_name));
+        let file_content = format!(
+            "{}{}\n",
+            AUTOMATIC_INSTRUCTIONS_MANAGED_HEADER,
+            content.trim_end()
+        );
+
+        let existing = fs::read_to_string(&file_path).unwrap_or_default();
+        if existing != file_content {
+            fs::write(&file_path, &file_content)
+                .map_err(|e| format!("Failed to write rule '{}': {}", machine_name, e))?;
+            touched.push(file_path.display().to_string());
+        }
+    }
+
+    // Write custom rule files.
+    for cr in custom_rules {
+        if cr.content.trim().is_empty() {
+            continue;
+        }
+        let slug = slugify(&cr.name);
+        let file_path = instructions_dir.join(format!("custom-{}.md", slug));
+        let file_content = format!(
+            "{}{}\n",
+            AUTOMATIC_INSTRUCTIONS_MANAGED_HEADER,
+            cr.content.trim_end()
+        );
+
+        let existing = fs::read_to_string(&file_path).unwrap_or_default();
+        if existing != file_content {
+            fs::write(&file_path, &file_content)
+                .map_err(|e| format!("Failed to write custom rule '{}': {}", cr.name, e))?;
+            touched.push(file_path.display().to_string());
+        }
+    }
+
+    Ok(touched)
+}
+
+/// Build the index section that is injected into the main instruction file when
+/// `instructions_index_mode` is enabled.  Lists all rule files with their
+/// relative path from the project root.
+pub fn build_index_section(
+    rule_names: &[String],
+    custom_rules: &[crate::core::CustomRule],
+) -> String {
+    let mut entries: Vec<String> = Vec::new();
+
+    for machine_name in rule_names {
+        entries.push(format!(
+            "- [{}]({}/{}.md)",
+            machine_name_to_display(machine_name),
+            AUTOMATIC_INSTRUCTIONS_DIR,
+            machine_name
+        ));
+    }
+
+    for cr in custom_rules {
+        if cr.content.trim().is_empty() {
+            continue;
+        }
+        entries.push(format!(
+            "- [{}]({}/custom-{}.md)",
+            cr.name,
+            AUTOMATIC_INSTRUCTIONS_DIR,
+            slugify(&cr.name)
+        ));
+    }
+
+    if entries.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "{}\n## Agent Instructions\n\nThe following instruction files are loaded by Automatic. \
+         Refer to them for project-specific rules and context.\n\n{}\n{}",
+        INDEX_START_MARKER,
+        entries.join("\n"),
+        INDEX_END_MARKER
+    )
+}
+
+/// Strip the `<!-- automatic:index:start -->...<!-- automatic:index:end -->`
+/// section from file content.
+pub fn strip_index_section(content: &str) -> String {
+    if let (Some(start), Some(end)) = (
+        content.find(INDEX_START_MARKER),
+        content.find(INDEX_END_MARKER),
+    ) {
+        let before = &content[..start];
+        let after = &content[end + INDEX_END_MARKER.len()..];
+        let result = format!("{}{}", before.trim_end(), after.trim_start());
+        if result.trim().is_empty() {
+            String::new()
+        } else {
+            result
+        }
+    } else {
+        content.to_string()
+    }
+}
+
+/// Inject or update the index section in a project instruction file when
+/// `instructions_index_mode` is enabled.  Returns `true` if the file was written.
+pub fn inject_index_into_project_file(
+    directory: &str,
+    filename: &str,
+    rule_names: &[String],
+    custom_rules: &[crate::core::CustomRule],
+) -> Result<bool, String> {
+    if directory.is_empty() {
+        return Ok(false);
+    }
+
+    let path = PathBuf::from(directory).join(filename);
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+
+    // Strip all managed sections to isolate user content.
+    let user_content = strip_index_section(&strip_groups_section(&strip_rules_section(
+        &strip_managed_section(&raw),
+    )));
+    let groups_section = extract_groups_section(&raw);
+    let index_section = build_index_section(rule_names, custom_rules);
+
+    let full_content = assemble_file_with_index(&user_content, &groups_section, &index_section);
+
+    if full_content != raw {
+        fs::write(&path, full_content).map_err(|e| e.to_string())?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Assemble a file with an index section instead of an inline rules section.
+fn assemble_file_with_index(
+    user_content: &str,
+    groups_section: &str,
+    index_section: &str,
+) -> String {
+    let mut parts: Vec<&str> = vec![user_content.trim_end()];
+
+    if !groups_section.is_empty() {
+        parts.push(groups_section.trim());
+    }
+    if !index_section.is_empty() {
+        parts.push(index_section.trim());
+    }
+
+    if parts.len() == 1 && parts[0].is_empty() {
+        return String::new();
+    }
+
+    format!("{}\n", parts.join("\n\n"))
+}
+
+/// Convert a rule machine name (e.g. `automatic-service`) to a display label
+/// (e.g. `Automatic Service`).
+fn machine_name_to_display(name: &str) -> String {
+    name.split('-')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Convert a display name to a URL-safe slug (lowercase, hyphens).
+fn slugify(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 /// Re-inject rules into an existing project file.  Reads the file, strips
 /// any existing rules section, rebuilds it from the provided rule names,
 /// and writes back.  Used during sync to keep rules current.
@@ -306,8 +563,12 @@ pub fn inject_rules_into_project_file_with_custom(
     }
 
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    // Strip both managed sections so we start from pure user content.
-    let user_content = strip_groups_section(&strip_rules_section(&strip_managed_section(&raw)));
+    // Strip all managed sections so we start from pure user content.
+    // Also strip the index section so switching from index mode to inline mode
+    // cleanly removes the old index block.
+    let user_content = strip_index_section(&strip_groups_section(&strip_rules_section(
+        &strip_managed_section(&raw),
+    )));
 
     let rules_section = build_rules_section_with_custom(rule_names, custom_contents)?;
 
@@ -354,7 +615,7 @@ pub fn strip_groups_section(content: &str) -> String {
 
 /// Extract the raw `<!-- automatic:groups:start -->...<!-- automatic:groups:end -->` block
 /// (including markers) from a file, or return an empty string if absent.
-fn extract_groups_section(content: &str) -> String {
+pub(crate) fn extract_groups_section(content: &str) -> String {
     if let (Some(start), Some(end)) = (
         content.find(GROUPS_START_MARKER),
         content.find(GROUPS_END_MARKER),
@@ -534,12 +795,22 @@ pub fn inject_groups_into_project_file(
 
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
 
-    // Decompose the current file into its three layers.
-    let user_content = strip_groups_section(&strip_rules_section(&strip_managed_section(&raw)));
+    // Decompose the current file into its three layers, stripping the index
+    // section from user content so it doesn't accumulate if the mode changes.
+    let user_content = strip_index_section(&strip_groups_section(&strip_rules_section(
+        &strip_managed_section(&raw),
+    )));
     let rules_section = extract_rules_section(&raw);
+    let index_section = extract_index_section(&raw);
     let new_groups_section = build_groups_section(this_project_name, directory, groups);
 
-    let full_content = assemble_file(&user_content, &new_groups_section, &rules_section);
+    // Preserve whichever trailing section the file has: an index section
+    // (index mode) or an inline rules section (default mode).
+    let full_content = if !index_section.is_empty() {
+        assemble_file_with_index(&user_content, &new_groups_section, &index_section)
+    } else {
+        assemble_file(&user_content, &new_groups_section, &rules_section)
+    };
 
     if full_content != raw {
         fs::write(&path, full_content).map_err(|e| e.to_string())?;
@@ -557,6 +828,19 @@ fn extract_rules_section(content: &str) -> String {
         content.find(RULES_END_MARKER),
     ) {
         content[start..end + RULES_END_MARKER.len()].to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Extract the raw `<!-- automatic:index:start -->...<!-- automatic:index:end -->` block
+/// (including markers) from a file, or return an empty string if absent.
+fn extract_index_section(content: &str) -> String {
+    if let (Some(start), Some(end)) = (
+        content.find(INDEX_START_MARKER),
+        content.find(INDEX_END_MARKER),
+    ) {
+        content[start..end + INDEX_END_MARKER.len()].to_string()
     } else {
         String::new()
     }
@@ -885,5 +1169,176 @@ mod tests {
 
         // User file should be untouched.
         assert!(rules_dir.join("user-file.md").exists());
+    }
+
+    // ── strip_index_section ──────────────────────────────────────────────────
+
+    #[test]
+    fn strip_index_removes_markers_and_content() {
+        let content = "# Header\n\n<!-- automatic:index:start -->\n## Agent Instructions\n\nSome index.\n<!-- automatic:index:end -->\n\nTrailing.";
+        let result = strip_index_section(content);
+        assert!(!result.contains("<!-- automatic:index:start -->"));
+        assert!(!result.contains("Some index."));
+        assert!(result.contains("# Header"));
+        assert!(result.contains("Trailing."));
+    }
+
+    #[test]
+    fn strip_index_leaves_content_without_markers_unchanged() {
+        let content = "# My file\n\nNo index here.";
+        assert_eq!(strip_index_section(content), content);
+    }
+
+    #[test]
+    fn strip_index_is_idempotent() {
+        let content =
+            "# File\n\n<!-- automatic:index:start -->\nindex\n<!-- automatic:index:end -->";
+        let once = strip_index_section(content);
+        let twice = strip_index_section(&once);
+        assert_eq!(once, twice);
+    }
+
+    // ── build_index_section ──────────────────────────────────────────────────
+
+    #[test]
+    fn build_index_returns_empty_when_no_rules_and_no_custom() {
+        let result = build_index_section(&[], &[]);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn build_index_wraps_rule_names_in_markers() {
+        let rules = vec!["my-rule".to_string()];
+        let result = build_index_section(&rules, &[]);
+        assert!(result.starts_with("<!-- automatic:index:start -->"));
+        assert!(result.ends_with("<!-- automatic:index:end -->"));
+        assert!(result.contains(".automatic/instructions/my-rule.md"));
+        assert!(result.contains("My Rule"));
+    }
+
+    #[test]
+    fn build_index_includes_custom_rules() {
+        use crate::core::CustomRule;
+        let custom = vec![CustomRule {
+            name: "My Custom Rule".to_string(),
+            content: "Some rule content.".to_string(),
+        }];
+        let result = build_index_section(&[], &custom);
+        assert!(result.contains(".automatic/instructions/custom-my-custom-rule.md"));
+        assert!(result.contains("My Custom Rule"));
+    }
+
+    #[test]
+    fn build_index_skips_empty_custom_rules() {
+        use crate::core::CustomRule;
+        let custom = vec![CustomRule {
+            name: "Empty Rule".to_string(),
+            content: "".to_string(),
+        }];
+        let result = build_index_section(&[], &custom);
+        assert_eq!(result, "");
+    }
+
+    // ── sync_rules_to_automatic_instructions ────────────────────────────────
+
+    #[test]
+    fn sync_creates_automatic_instructions_directory() {
+        let dir = tmp();
+        sync_rules_to_automatic_instructions(dir.path().to_str().unwrap(), &no_rules(), &[])
+            .expect("sync");
+        assert!(dir.path().join(".automatic").join("instructions").exists());
+    }
+
+    #[test]
+    fn sync_instructions_removes_stale_managed_files() {
+        let dir = tmp();
+        let instructions_dir = dir.path().join(".automatic").join("instructions");
+        fs::create_dir_all(&instructions_dir).expect("create dir");
+
+        // Write a managed file that won't be in the new rule set.
+        let managed_content =
+            "<!-- managed by Automatic — do not edit by hand -->\n\nOld content.\n";
+        fs::write(instructions_dir.join("old-rule.md"), managed_content).expect("write");
+
+        sync_rules_to_automatic_instructions(dir.path().to_str().unwrap(), &no_rules(), &[])
+            .expect("sync");
+
+        assert!(!instructions_dir.join("old-rule.md").exists());
+    }
+
+    #[test]
+    fn sync_instructions_does_not_remove_unmanaged_user_files() {
+        let dir = tmp();
+        let instructions_dir = dir.path().join(".automatic").join("instructions");
+        fs::create_dir_all(&instructions_dir).expect("create dir");
+
+        // Write a file WITHOUT the managed header.
+        fs::write(instructions_dir.join("user-file.md"), "# User wrote this").expect("write");
+
+        sync_rules_to_automatic_instructions(dir.path().to_str().unwrap(), &no_rules(), &[])
+            .expect("sync");
+
+        assert!(instructions_dir.join("user-file.md").exists());
+    }
+
+    // ── inject_index_into_project_file ──────────────────────────────────────
+
+    #[test]
+    fn inject_index_appends_index_to_existing_file() {
+        let dir = tmp();
+        let file = dir.path().join("AGENTS.md");
+        fs::write(&file, "# My File\n\nUser content.").expect("write");
+
+        inject_index_into_project_file(dir.path().to_str().unwrap(), "AGENTS.md", &no_rules(), &[])
+            .expect("inject");
+
+        // No rules and no custom → index section should not be present.
+        let on_disk = fs::read_to_string(&file).expect("read");
+        assert!(!on_disk.contains("<!-- automatic:index:start -->"));
+        assert!(on_disk.contains("User content."));
+    }
+
+    #[test]
+    fn inject_index_replaces_existing_index_section() {
+        let dir = tmp();
+        let file = dir.path().join("AGENTS.md");
+        let initial = "# File\n\n<!-- automatic:index:start -->\n## Agent Instructions\n\nOld index.\n<!-- automatic:index:end -->\n";
+        fs::write(&file, initial).expect("write");
+
+        // No rules in this call → index section is removed.
+        inject_index_into_project_file(dir.path().to_str().unwrap(), "AGENTS.md", &no_rules(), &[])
+            .expect("inject");
+
+        let on_disk = fs::read_to_string(&file).expect("read");
+        assert!(!on_disk.contains("<!-- automatic:index:start -->"));
+        assert!(!on_disk.contains("Old index."));
+        assert!(on_disk.contains("# File"));
+    }
+
+    // ── slugify ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn slugify_lowercases_and_replaces_spaces() {
+        assert_eq!(slugify("My Custom Rule"), "my-custom-rule");
+    }
+
+    #[test]
+    fn slugify_removes_consecutive_separators() {
+        assert_eq!(slugify("foo  bar"), "foo-bar");
+    }
+
+    // ── machine_name_to_display ──────────────────────────────────────────────
+
+    #[test]
+    fn machine_name_to_display_capitalises_words() {
+        assert_eq!(
+            machine_name_to_display("automatic-service"),
+            "Automatic Service"
+        );
+    }
+
+    #[test]
+    fn machine_name_to_display_handles_single_word() {
+        assert_eq!(machine_name_to_display("coding"), "Coding");
     }
 }

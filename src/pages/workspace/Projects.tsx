@@ -138,6 +138,8 @@ interface Project {
   custom_commands?: CustomCommand[];
   /** Inline custom skills stored directly in this project. Written to skill directories on sync. */
   custom_skills?: CustomSkill[];
+  /** When true, rules are written to .automatic/instructions/ and the instruction file becomes an index. */
+  instructions_index_mode?: boolean;
 }
 
 interface AgentInfo {
@@ -4174,6 +4176,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         user_commands: parsed.user_commands || [],
         custom_skills: parsed.custom_skills || [],
         tools: parsed.tools || [],
+        instructions_index_mode: parsed.instructions_index_mode || false,
       };
       setSelectedName(name);
       setIsCreating(false);
@@ -7034,6 +7037,38 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           </span>
                         )}
                       </div>
+
+                      {/* ── How rules are written ── */}
+                      <section className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+                        <div className="px-4 py-3 flex items-start gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[13px] font-medium text-text-base">Write rules to separate files</div>
+                            <p className="text-[12px] text-text-muted mt-0.5">
+                              Instead of embedding rules inline, each rule is saved as its own file under{" "}
+                              <code className="text-[11px] bg-bg-sidebar px-1 rounded">.automatic/instructions/</code>.
+                              The instruction file (CLAUDE.md, AGENTS.md, etc.) becomes a short index that lists them.
+                              Keeps instruction files under 100 lines — the recommended best practice.
+                            </p>
+                          </div>
+                          <button
+                            role="switch"
+                            aria-checked={!!project.instructions_index_mode}
+                            onClick={() => {
+                              setProject({ ...project, instructions_index_mode: !project.instructions_index_mode });
+                              setDirty(true);
+                            }}
+                            className={`flex-shrink-0 mt-0.5 relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                              project.instructions_index_mode ? "bg-brand" : "bg-border-strong/60"
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                                project.instructions_index_mode ? "translate-x-4.5" : "translate-x-0.5"
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      </section>
 
                       {/* ── Custom Rules ── */}
                       <section>

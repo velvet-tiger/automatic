@@ -315,13 +315,19 @@ pub struct Project {
     /// alongside global and local skills.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_skills: Option<Vec<CustomSkill>>,
+    /// When `true`, rules and injected content are written as individual files
+    /// under `.automatic/instructions/` and the main instruction file (CLAUDE.md,
+    /// AGENTS.md, etc.) becomes a short index listing those files.  This keeps
+    /// instruction files under ~100 lines, which is the recommended best practice.
+    /// Defaults to `false` to preserve existing inline-injection behaviour.
+    #[serde(default)]
+    pub instructions_index_mode: bool,
 
     // ── Resolved metadata (project portability) ─────────────────────────────
     //
     // These fields snapshot user-level registry data into the project config
     // so that the project is self-contained when opened on another machine.
     // They are populated automatically on save and should not be edited by hand.
-
     /// Provenance metadata for skills in the `skills` list.
     /// Keyed by skill name → SkillSource (GitHub owner/repo, skills.sh id, kind).
     /// Populated from `~/.automatic/skills.json` on save.

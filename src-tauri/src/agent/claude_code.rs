@@ -113,6 +113,47 @@ impl Agent for ClaudeCode {
         Ok(written)
     }
 
+    fn sync_instruction_rules(
+        &self,
+        project: &crate::core::Project,
+        filename: &str,
+        rule_names: &[String],
+        custom_contents: &[String],
+    ) -> Result<Option<Vec<String>>, String> {
+        let opts = project
+            .agent_options
+            .get(self.id())
+            .cloned()
+            .unwrap_or_default();
+        if !opts.claude_rules_in_dot_claude {
+            return Ok(None);
+        }
+
+        let mut touched = Vec::new();
+        if !rule_names.is_empty() {
+            touched.extend(crate::core::sync_rules_to_dot_claude_rules(
+                &project.directory,
+                rule_names,
+            )?);
+        }
+
+        if crate::core::inject_rules_into_project_file_with_custom(
+            &project.directory,
+            filename,
+            &[],
+            custom_contents,
+        )? {
+            touched.push(
+                PathBuf::from(&project.directory)
+                    .join(filename)
+                    .display()
+                    .to_string(),
+            );
+        }
+
+        Ok(Some(touched))
+    }
+
     // ── Discovery ───────────────────────────────────────────────────────
 
     fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value> {
