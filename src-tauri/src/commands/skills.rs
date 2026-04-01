@@ -143,11 +143,7 @@ pub async fn import_skill_from_repository(
     repo_url: String,
     skill_name: Option<String>,
 ) -> Result<String, String> {
-    let imported = core::import_skill_from_repository(
-        &repo_url,
-        skill_name.as_deref(),
-    )
-    .await?;
+    let imported = core::import_skill_from_repository(&repo_url, skill_name.as_deref()).await?;
     serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
 }
 

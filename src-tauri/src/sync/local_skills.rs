@@ -141,7 +141,12 @@ mod tests {
         fs::create_dir_all(&project_dir).expect("create project dir");
 
         // ClaudeCode stores skills at <project>/.claude/skills/<name>/SKILL.md
-        make_local_skill(&project_dir, ".claude/skills", "my-skill", "# My Local Skill");
+        make_local_skill(
+            &project_dir,
+            ".claude/skills",
+            "my-skill",
+            "# My Local Skill",
+        );
 
         let project =
             project_with_dir(&project_dir, vec!["claude".into()], vec!["my-skill".into()]);
@@ -155,8 +160,7 @@ mod tests {
         let project_dir = tmp.path().join("project");
         fs::create_dir_all(&project_dir).expect("create project dir");
 
-        let project =
-            project_with_dir(&project_dir, vec!["claude".into()], vec!["missing".into()]);
+        let project = project_with_dir(&project_dir, vec!["claude".into()], vec!["missing".into()]);
         let result = read_local_skill(&project, "missing");
         assert!(result.is_err(), "expected error for missing skill");
     }

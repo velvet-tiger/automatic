@@ -73,7 +73,9 @@ pub fn rebuild_project_state(project: &Project) -> Result<Project, String> {
     rebuilt.custom_skills = saved_custom_skills;
     if let Some(ref cs) = rebuilt.custom_skills {
         let custom_names: HashSet<&str> = cs.iter().map(|s| s.name.as_str()).collect();
-        rebuilt.local_skills.retain(|n| !custom_names.contains(n.as_str()));
+        rebuilt
+            .local_skills
+            .retain(|n| !custom_names.contains(n.as_str()));
     }
 
     rebuilt.updated_at = chrono::Utc::now().to_rfc3339();
@@ -150,9 +152,7 @@ struct GlobalUserCommand {
     content: String,
 }
 
-fn discover_sub_commands(
-    project: &Project,
-) -> Result<(Vec<String>, Vec<CustomCommand>), String> {
+fn discover_sub_commands(project: &Project) -> Result<(Vec<String>, Vec<CustomCommand>), String> {
     let project_dir = Path::new(&project.directory);
     let global_user_commands = load_global_user_commands()?;
 
@@ -244,8 +244,7 @@ fn match_global_user_command(
     global_user_commands: &[GlobalUserCommand],
 ) -> Option<String> {
     for global_cmd in global_user_commands {
-        let expected =
-            agent_instance.convert_command_content(&global_cmd.content, &global_cmd.id);
+        let expected = agent_instance.convert_command_content(&global_cmd.content, &global_cmd.id);
         if expected == raw_disk_content {
             return Some(global_cmd.id.clone());
         }

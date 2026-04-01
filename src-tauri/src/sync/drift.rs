@@ -206,8 +206,10 @@ fn collect_instruction_file_conflicts(
             Err(_) => continue,
         };
 
-        let disk_user_content = crate::core::strip_rules_section_pub(
-            &crate::core::strip_managed_section_pub(&raw_disk),
+        let disk_user_content = crate::core::strip_index_section(
+            &crate::core::strip_groups_section(&crate::core::strip_rules_section_pub(
+                &crate::core::strip_managed_section_pub(&raw_disk),
+            )),
         );
 
         // Skip files with no user content.
@@ -256,8 +258,10 @@ fn collect_instruction_file_conflicts(
                 continue;
             }
             if let Ok(raw) = fs::read_to_string(&file_path) {
-                let user_content = crate::core::strip_rules_section_pub(
-                    &crate::core::strip_managed_section_pub(&raw),
+                let user_content = crate::core::strip_index_section(
+                    &crate::core::strip_groups_section(&crate::core::strip_rules_section_pub(
+                        &crate::core::strip_managed_section_pub(&raw),
+                    )),
                 );
                 all_contents.push((filename, user_content));
             }
@@ -829,10 +833,7 @@ mod tests {
             ("global-skill".to_string(), "# Global\n".to_string()),
             ("custom-skill".to_string(), "# Custom\n".to_string()),
         ];
-        let selected_names = vec![
-            "global-skill".to_string(),
-            "custom-skill".to_string(),
-        ];
+        let selected_names = vec!["global-skill".to_string(), "custom-skill".to_string()];
         let local_names: Vec<String> = vec![];
 
         ClaudeCode
@@ -874,9 +875,8 @@ mod tests {
         let skill_dir = project_dir.path().join(".claude").join("skills");
         fs::create_dir_all(&skill_dir).unwrap();
 
-        let skill_contents: Vec<(String, String)> = vec![
-            ("my-custom".to_string(), "# My Custom Skill\n".to_string()),
-        ];
+        let skill_contents: Vec<(String, String)> =
+            vec![("my-custom".to_string(), "# My Custom Skill\n".to_string())];
         let selected_names = vec!["my-custom".to_string()];
         let local_names: Vec<String> = vec![];
 
@@ -890,10 +890,7 @@ mod tests {
             &mut files,
         );
 
-        assert!(
-            !files.is_empty(),
-            "Expected drift for missing custom skill"
-        );
+        assert!(!files.is_empty(), "Expected drift for missing custom skill");
         assert!(
             files.iter().any(|f| f.reason == "missing"),
             "Expected a 'missing' drift entry"

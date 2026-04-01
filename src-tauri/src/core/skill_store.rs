@@ -484,7 +484,8 @@ fn parse_github_url(url: &str) -> Result<(String, String), String> {
             .ok_or("Invalid GitHub URL")?;
 
         let parts: Vec<&str> = rest.split('/').collect();
-        if parts.len() < 2 {return Err("GitHub URL must include owner and repository name".to_string());
+        if parts.len() < 2 {
+            return Err("GitHub URL must include owner and repository name".to_string());
         }
 
         return Ok((parts[0].to_string(), parts[1].to_string()));
@@ -492,10 +493,13 @@ fn parse_github_url(url: &str) -> Result<(String, String), String> {
 
     // Try without protocol prefix
     if url.starts_with("github.com/") {
-        let rest = url.strip_prefix("github.com/").ok_or("Invalid GitHub URL")?;
+        let rest = url
+            .strip_prefix("github.com/")
+            .ok_or("Invalid GitHub URL")?;
         let parts: Vec<&str> = rest.split('/').collect();
         if parts.len() < 2 {
-            return Err("GitHub URL must include owner and repository name".to_string());}
+            return Err("GitHub URL must include owner and repository name".to_string());
+        }
 
         return Ok((parts[0].to_string(), parts[1].to_string()));
     }
@@ -506,7 +510,10 @@ fn parse_github_url(url: &str) -> Result<(String, String), String> {
         return Ok((parts[0].to_string(), parts[1].to_string()));
     }
 
-    Err("Invalid GitHub URL format. Expected: https://github.com/owner/repo or owner/repo".to_string())
+    Err(
+        "Invalid GitHub URL format. Expected: https://github.com/owner/repo or owner/repo"
+            .to_string(),
+    )
 }
 
 /// Import skills from a GitHub repository URL.
@@ -533,11 +540,7 @@ pub async fn import_skill_from_repository(
         // Try repo name as-is, then lowercased, then kebab-cased variations
         let repo_lower = repo.to_lowercase();
         let repo_kebab = repo_lower.replace('_', "-");
-        vec![
-            repo.clone(),
-            repo_lower.clone(),
-            repo_kebab.clone(),
-        ]
+        vec![repo.clone(), repo_lower.clone(), repo_kebab.clone()]
     };
 
     let mut last_error: Option<String> = None;
@@ -545,8 +548,8 @@ pub async fn import_skill_from_repository(
     for name in names_to_try {
         match fetch_remote_skill_content(&source, &name).await {
             Ok(content) => {
-                let actual_name = extract_frontmatter_name(&content)
-                    .unwrap_or_else(|| name.clone());
+                let actual_name =
+                    extract_frontmatter_name(&content).unwrap_or_else(|| name.clone());
 
                 super::save_skill(&actual_name, &content)?;
 
@@ -607,8 +610,8 @@ pub async fn import_skill_from_repository(
             let name = &skill_entry.name;
             match fetch_remote_skill_content(&source, name).await {
                 Ok(content) => {
-                    let actual_name = extract_frontmatter_name(&content)
-                        .unwrap_or_else(|| name.clone());
+                    let actual_name =
+                        extract_frontmatter_name(&content).unwrap_or_else(|| name.clone());
 
                     if let Err(e) = super::save_skill(&actual_name, &content) {
                         eprintln!("[automatic] Failed to save skill '{}': {}", actual_name, e);

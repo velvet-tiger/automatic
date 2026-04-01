@@ -46,8 +46,7 @@ impl Agent for Zed {
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         let zed_dir = dir.join(".zed");
         if !zed_dir.exists() {
-            fs::create_dir_all(&zed_dir)
-                .map_err(|e| format!("Failed to create .zed/: {}", e))?;
+            fs::create_dir_all(&zed_dir).map_err(|e| format!("Failed to create .zed/: {}", e))?;
         }
 
         let path = zed_dir.join("settings.json");
@@ -92,10 +91,7 @@ impl Agent for Zed {
             zed_servers.insert(name.clone(), server);
         }
 
-        root.insert(
-            "context_servers".to_string(),
-            Value::Object(zed_servers),
-        );
+        root.insert("context_servers".to_string(), Value::Object(zed_servers));
 
         let content = serde_json::to_string_pretty(&Value::Object(root))
             .map_err(|e| format!("JSON error: {}", e))?;
@@ -290,7 +286,9 @@ mod tests {
             .unwrap()
             .contains("automatic"));
         assert_eq!(
-            parsed["context_servers"]["github"]["command"].as_str().unwrap(),
+            parsed["context_servers"]["github"]["command"]
+                .as_str()
+                .unwrap(),
             "npx"
         );
     }
@@ -338,7 +336,9 @@ mod tests {
         // Existing non-MCP settings preserved
         assert_eq!(parsed["ui_font_size"].as_u64().unwrap(), 16);
         assert_eq!(
-            parsed["agent"]["default_model"]["provider"].as_str().unwrap(),
+            parsed["agent"]["default_model"]["provider"]
+                .as_str()
+                .unwrap(),
             "ollama"
         );
         // MCP servers replaced
@@ -411,10 +411,7 @@ mod tests {
         let servers = Zed.discover_mcp_servers(dir.path());
         assert!(servers.contains_key("my-server"));
         // Normaliser should add type: stdio
-        assert_eq!(
-            servers["my-server"]["type"].as_str().unwrap(),
-            "stdio"
-        );
+        assert_eq!(servers["my-server"]["type"].as_str().unwrap(), "stdio");
     }
 
     #[test]

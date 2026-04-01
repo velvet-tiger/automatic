@@ -43,19 +43,44 @@ pub fn preview_rebuild_project(name: &str) -> Result<String, String> {
 
     let categories = vec![
         diff_category("agents", "Agent Tools", &project.agents, &rebuilt.agents),
-        diff_category("instruction_files", "Instruction Files", &instruction_files_for(&project), &instruction_files_for(&rebuilt)),
+        diff_category(
+            "instruction_files",
+            "Instruction Files",
+            &instruction_files_for(&project),
+            &instruction_files_for(&rebuilt),
+        ),
         diff_category("skills", "Skills", &project.skills, &rebuilt.skills),
-        diff_category("local_skills", "Local Skills", &project.local_skills, &rebuilt.local_skills),
-        diff_category("mcp_servers", "MCP Servers", &project.mcp_servers, &rebuilt.mcp_servers),
+        diff_category(
+            "local_skills",
+            "Local Skills",
+            &project.local_skills,
+            &rebuilt.local_skills,
+        ),
+        diff_category(
+            "mcp_servers",
+            "MCP Servers",
+            &project.mcp_servers,
+            &rebuilt.mcp_servers,
+        ),
         diff_category("tools", "Tools", &project.tools, &rebuilt.tools),
-        diff_category("user_agents", "Workspace Sub-Agents", &project.user_agents, &rebuilt.user_agents),
+        diff_category(
+            "user_agents",
+            "Workspace Sub-Agents",
+            &project.user_agents,
+            &rebuilt.user_agents,
+        ),
         diff_category(
             "custom_agents",
             "Project Sub-Agents",
             &custom_agent_names(&project),
             &custom_agent_names(&rebuilt),
         ),
-        diff_category("user_commands", "Workspace Commands", &project.user_commands, &rebuilt.user_commands),
+        diff_category(
+            "user_commands",
+            "Workspace Commands",
+            &project.user_commands,
+            &rebuilt.user_commands,
+        ),
         diff_category(
             "custom_commands",
             "Project Commands",
@@ -66,7 +91,9 @@ pub fn preview_rebuild_project(name: &str) -> Result<String, String> {
 
     let preview = RebuildPreview {
         project_name: project.name.clone(),
-        changed: categories.iter().any(|category| !category.added.is_empty() || !category.removed.is_empty()),
+        changed: categories
+            .iter()
+            .any(|category| !category.added.is_empty() || !category.removed.is_empty()),
         categories,
     };
 
@@ -234,11 +261,7 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
             let new_tools: Vec<String> = enriched
                 .tools
                 .iter()
-                .filter(|t| {
-                    !existing
-                        .tools
-                        .contains(t)
-                })
+                .filter(|t| !existing.tools.contains(t))
                 .cloned()
                 .collect();
             if !new_tools.is_empty() {

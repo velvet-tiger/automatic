@@ -164,9 +164,7 @@ pub async fn unsubscribe_newsletter(email: &str) -> Result<(), String> {
     let query_status = query_resp.status();
     if !query_status.is_success() {
         let body = query_resp.text().await.unwrap_or_default();
-        return Err(format!(
-            "Attio list query failed ({query_status}): {body}"
-        ));
+        return Err(format!("Attio list query failed ({query_status}): {body}"));
     }
 
     let query_json: serde_json::Value = query_resp
@@ -182,9 +180,7 @@ pub async fn unsubscribe_newsletter(email: &str) -> Result<(), String> {
 
     // ── Step 3: delete each matching entry ──────────────────────────────────
     for entry in &entries {
-        let entry_id = entry
-            .pointer("/id/entry_id")
-            .and_then(|v| v.as_str());
+        let entry_id = entry.pointer("/id/entry_id").and_then(|v| v.as_str());
 
         if let Some(eid) = entry_id {
             let del_resp = client
@@ -199,9 +195,7 @@ pub async fn unsubscribe_newsletter(email: &str) -> Result<(), String> {
             let del_status = del_resp.status();
             if !del_status.is_success() {
                 let body = del_resp.text().await.unwrap_or_default();
-                return Err(format!(
-                    "Attio entry delete failed ({del_status}): {body}"
-                ));
+                return Err(format!("Attio entry delete failed ({del_status}): {body}"));
             }
         }
     }
@@ -244,7 +238,10 @@ pub async fn track_event(
     let api_key = match option_env!("AMPLITUDE_API_KEY") {
         Some(k) if !k.is_empty() => k,
         _ => {
-            eprintln!("[analytics] skipping '{}' — no AMPLITUDE_API_KEY compiled in", event);
+            eprintln!(
+                "[analytics] skipping '{}' — no AMPLITUDE_API_KEY compiled in",
+                event
+            );
             return Ok(());
         }
     };

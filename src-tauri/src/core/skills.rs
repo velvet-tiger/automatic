@@ -517,9 +517,8 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
     for source in get_all_skill_sources() {
         let skill_dir = PathBuf::from(&source.path).join(name);
         if skill_dir.exists() {
-            fs::remove_dir_all(&skill_dir).map_err(|e| {
-                format!("Failed to delete skill from {}: {}", source.path, e)
-            })?;
+            fs::remove_dir_all(&skill_dir)
+                .map_err(|e| format!("Failed to delete skill from {}: {}", source.path, e))?;
         }
     }
 
@@ -949,7 +948,12 @@ pub fn set_skills_collection(skill_names: &[String], collection: &str) -> Result
 /// Return the list of unique collection names, sorted alphabetically.
 pub fn list_skill_collection_names() -> Result<Vec<String>, String> {
     let registry = read_skill_collections()?;
-    let mut names: Vec<String> = registry.values().cloned().collect::<std::collections::HashSet<_>>().into_iter().collect();
+    let mut names: Vec<String> = registry
+        .values()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
     names.sort();
     Ok(names)
 }

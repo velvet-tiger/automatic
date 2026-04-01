@@ -195,8 +195,14 @@ fn enrich_mcp_server_specs(project: &mut Project) {
         let Ok(config) = serde_json::from_str::<serde_json::Value>(&raw) else {
             continue;
         };
-        let server_type = config.get("type").and_then(|v| v.as_str()).map(String::from);
-        let command = config.get("command").and_then(|v| v.as_str()).map(String::from);
+        let server_type = config
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let command = config
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let args = config
             .get("args")
             .and_then(|v| v.as_array())
@@ -257,12 +263,8 @@ fn enrich_resolved_agents(project: &mut Project) {
             continue;
         };
         // Extract display name from frontmatter, fall back to machine name.
-        let name = extract_frontmatter_name(&content)
-            .unwrap_or_else(|| machine_name.clone());
-        resolved.insert(
-            machine_name.clone(),
-            CustomAgent { name, content },
-        );
+        let name = extract_frontmatter_name(&content).unwrap_or_else(|| machine_name.clone());
+        resolved.insert(machine_name.clone(), CustomAgent { name, content });
     }
     project.resolved_agents = resolved;
 }
