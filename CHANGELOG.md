@@ -2,6 +2,20 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.0.0-beta.4] — 2026-04-01
+
+### Added
+
+- **Instructions index mode**: Rules can now be written as individual files under `.automatic/instructions/` instead of being injected inline into the main instruction file. The instruction file (CLAUDE.md, AGENTS.md, etc.) becomes a short index listing those files, keeping it under ~100 lines. Toggle this per-project from the Rules settings panel. (5f8de37)
+
+### Fixed
+
+- **Split instruction index sync**: When the sync engine writes instruction files to `.automatic/instructions/`, it now correctly injects the index section back into the main instruction file so agents can discover them (bc5ff53)
+- **Getting Started checklist**: The checklist is now hidden and What's New expands to full width once all items are complete (b7e3e05)
+- **MCP read_skill for local skills**: `read_skill` now resolves project-local skills, not just global registry entries (e782296)
+
+---
+
 ## [1.0.0-beta.3] — 2026-03-29
 
 ### Added
