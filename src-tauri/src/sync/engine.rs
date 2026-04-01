@@ -7,10 +7,14 @@ use crate::core::{self, Project};
 
 use super::autodetect::autodetect_inner;
 use super::helpers::{
-    build_selected_servers, clean_project_file, clean_project_file_rules_section,
-    extract_agent_machine_name, load_mcp_server_configs, load_skill_contents, sync_custom_agents,
-    sync_user_agents,
+    build_selected_servers, clean_project_file, extract_agent_machine_name,
+    load_mcp_server_configs, load_skill_contents, sync_custom_agents, sync_user_agents,
 };
+
+struct InstructionTarget {
+    agent_id: String,
+    filename: String,
+}
 
 /// Discover MCP server configurations from specific agents' existing on-disk
 /// config files.  Used when new agents are added to an existing project so
@@ -110,67 +114,98 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         .collect();
 
     let mut written_files = Vec::new();
-
-    // ── Step 1: Copy skills into the project's canonical .agents/skills/ ──
-    //
-    // This is the project-local hub.  Full directories are copied from the
-    // global registry (~/.agents/skills/) so companion files are included.
-    // Custom skills (project-scoped) are included alongside global skills.
-    let project_skills_dir = dir.join(".agents").join("skills");
     let all_selected_skill_names: Vec<String> = project
         .skills
         .iter()
         .chain(custom_skill_names.iter())
         .cloned()
         .collect();
-    agent::copy_skills_to_project(
+
+    let project_skills_dir = sync_project_skills_step(
+        &dir,
+        project,
+        &skill_contents,
+        &all_selected_skill_names,
+        &mut written_files,
+    )?;
+    let instruction_targets = sync_agent_configs_step(
+        &dir,
+        project,
         &project_skills_dir,
         &skill_contents,
         &all_selected_skill_names,
-        &project.local_skills,
+        &workspace_command_contents,
+        &selected_servers,
         &mut written_files,
     )?;
+    sync_instruction_files_step(&dir, project, &instruction_targets, &mut written_files)?;
+    record_instruction_state_step(project);
 
-    // Look up all groups this project belongs to once, before the per-agent loop.
+    Ok(written_files)
+}
+
+fn sync_project_skills_step(
+    dir: &PathBuf,
+    project: &Project,
+    skill_contents: &[(String, String)],
+    all_selected_skill_names: &[String],
+    written_files: &mut Vec<String>,
+) -> Result<PathBuf, String> {
+    // Step 1: copy skills into the project's canonical .agents/skills/.
+    let project_skills_dir = dir.join(".agents").join("skills");
+    agent::copy_skills_to_project(
+        &project_skills_dir,
+        skill_contents,
+        all_selected_skill_names,
+        &project.local_skills,
+        written_files,
+    )?;
+
+    Ok(project_skills_dir)
+}
+
+fn sync_agent_configs_step(
+    dir: &PathBuf,
+    project: &Project,
+    project_skills_dir: &PathBuf,
+    skill_contents: &[(String, String)],
+    all_selected_skill_names: &[String],
+    workspace_command_contents: &[(String, String)],
+    selected_servers: &serde_json::Map<String, serde_json::Value>,
+    written_files: &mut Vec<String>,
+) -> Result<Vec<InstructionTarget>, String> {
     let project_groups = crate::core::groups_for_project(&project.name);
-
-    // ── Step 2: Per-agent config (MCP, symlinks, project-file cleanup) ────
     let mut cleaned_project_files = HashSet::new();
+    let mut instruction_targets = Vec::new();
+
     for agent_id in &project.agents {
         match agent::from_id(agent_id) {
             Some(agent_instance) => {
-                // Symlink agent-specific skill directories to the project hub.
-                // Agents whose skill dir IS .agents/skills/ are skipped — they
-                // already have the skills from Step 1.
-                for skill_dir in agent_instance.skill_dirs(&dir) {
-                    if skill_dir == project_skills_dir {
+                for skill_dir in agent_instance.skill_dirs(dir) {
+                    if skill_dir == *project_skills_dir {
                         continue;
                     }
                     agent::symlink_skills_from_project(
                         &skill_dir,
-                        &project_skills_dir,
-                        &skill_contents,
-                        &all_selected_skill_names,
+                        project_skills_dir,
+                        skill_contents,
+                        all_selected_skill_names,
                         &project.local_skills,
-                        &mut written_files,
+                        written_files,
                     )?;
                 }
 
-                let path = agent_instance.write_mcp_config(&dir, &selected_servers)?;
-                // write_mcp_config returns "" for agents (like Warp) that
-                // cannot have their MCP config managed by Automatic.
+                let path = agent_instance.write_mcp_config(dir, selected_servers)?;
                 if !path.is_empty() {
                     written_files.push(path);
                 }
 
-                // Sync custom agents to this provider's agents directory
-                if let Some(agents_dir) = agent_instance.agents_dir(&dir) {
+                if let Some(agents_dir) = agent_instance.agents_dir(dir) {
                     let custom_agents = project.custom_agents.as_deref().unwrap_or(&[]);
                     let agent_files =
                         sync_custom_agents(&agents_dir, custom_agents, agent_instance)?;
                     written_files.extend(agent_files);
 
-                    // Collect custom agent machine names for stale file check
                     let custom_agent_names: Vec<String> = custom_agents
                         .iter()
                         .map(|a| {
@@ -179,7 +214,6 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                         })
                         .collect();
 
-                    // Sync workspace user_agents (from ~/.automatic/agents/)
                     let user_agent_files = sync_user_agents(
                         &agents_dir,
                         &project.user_agents,
@@ -189,30 +223,31 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                     written_files.extend(user_agent_files);
                 }
 
-                if let Some(commands_dir) = agent_instance.commands_dir(&dir) {
+                if let Some(commands_dir) = agent_instance.commands_dir(dir) {
                     let custom_commands = project.custom_commands.as_deref().unwrap_or(&[]);
                     let command_files = agent::sync_commands_to_dir(
                         &commands_dir,
-                        &workspace_command_contents,
+                        workspace_command_contents,
                         custom_commands,
                         agent_instance,
                     )?;
                     written_files.extend(command_files);
                 }
 
-                // Strip legacy managed sections from project files (once per filename)
                 let pf = agent_instance.project_file_name();
                 if !cleaned_project_files.contains(pf) {
                     cleaned_project_files.insert(pf.to_string());
-                    if let Ok(path) = clean_project_file(&dir, pf) {
+                    instruction_targets.push(InstructionTarget {
+                        agent_id: agent_id.clone(),
+                        filename: pf.to_string(),
+                    });
+
+                    if let Ok(path) = clean_project_file(dir, pf) {
                         if let Some(p) = path {
                             written_files.push(p);
                         }
                     }
 
-                    // Inject (or update) the project-group context block.
-                    // This sits between the user content and the rules section
-                    // so agents can discover related projects.
                     if let Ok(true) = crate::core::inject_groups_into_project_file(
                         &project.directory,
                         pf,
@@ -224,96 +259,6 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
                             written_files.push(groups_path);
                         }
                     }
-
-                    // Resolve the rules assigned to this project file.
-                    // Priority order:
-                    //   1. "_project" — project-level rules set from the Rules tab (applies to all files)
-                    //   2. "_unified" — legacy unified-mode key
-                    //   3. Per-file key (e.g. "CLAUDE.md") — legacy per-agent mode
-                    // Mandatory rules (e.g. automatic-service) are always included.
-                    let user_rules: Vec<String> = project
-                        .file_rules
-                        .get("_project")
-                        .filter(|v| !v.is_empty())
-                        .or_else(|| {
-                            if project.instruction_mode == "unified" {
-                                project.file_rules.get("_unified")
-                            } else {
-                                project.file_rules.get(pf)
-                            }
-                        })
-                        .cloned()
-                        .unwrap_or_default();
-                    let rules = crate::core::ensure_mandatory_rules(&user_rules);
-
-                    // Resolve per-agent options for this agent (use defaults if absent).
-                    let opts = project
-                        .agent_options
-                        .get(agent_id)
-                        .cloned()
-                        .unwrap_or_default();
-
-                    // Collect custom rule content strings for this project.
-                    let custom_contents: Vec<String> = project
-                        .custom_rules
-                        .iter()
-                        .filter(|r| !r.content.trim().is_empty())
-                        .map(|r| r.content.clone())
-                        .collect();
-
-                    // Claude Code supports writing rules as individual files under
-                    // `.claude/rules/` — the format recommended by the Claude Code
-                    // documentation.  Use that path when the option is enabled.
-                    // Note: custom (inline) rules are always injected inline regardless
-                    // of this option — they don't have a machine name to use as a filename.
-                    if agent_id == "claude" && opts.claude_rules_in_dot_claude {
-                        // Write global rules as .claude/rules/<name>.md files.
-                        match crate::core::sync_rules_to_dot_claude_rules(
-                            &project.directory,
-                            &rules,
-                        ) {
-                            Ok(touched) => written_files.extend(touched),
-                            Err(e) => {
-                                eprintln!("Failed to sync rules to .claude/rules/: {}", e)
-                            }
-                        }
-                        // Custom rules are still injected inline even in dot-claude mode.
-                        if !custom_contents.is_empty() {
-                            if let Ok(true) =
-                                crate::core::inject_rules_into_project_file_with_custom(
-                                    &project.directory,
-                                    pf,
-                                    &[],
-                                    &custom_contents,
-                                )
-                            {
-                                let rule_path = dir.join(pf).display().to_string();
-                                if !written_files.contains(&rule_path) {
-                                    written_files.push(rule_path);
-                                }
-                            }
-                        } else {
-                            // No custom rules — strip any legacy inline rules block from CLAUDE.md.
-                            if let Ok(path) = clean_project_file_rules_section(&dir, pf) {
-                                if let Some(p) = path {
-                                    written_files.push(p);
-                                }
-                            }
-                        }
-                    } else {
-                        // Default: inject all rules inline into the project file.
-                        if let Ok(true) = crate::core::inject_rules_into_project_file_with_custom(
-                            &project.directory,
-                            pf,
-                            &rules,
-                            &custom_contents,
-                        ) {
-                            let rule_path = dir.join(pf).display().to_string();
-                            if !written_files.contains(&rule_path) {
-                                written_files.push(rule_path);
-                            }
-                        }
-                    }
                 }
             }
             None => {
@@ -322,119 +267,218 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         }
     }
 
-    // ── Step 3: Unified mode — replicate content across all agent files ───
-    //
-    // Before blindly overwriting, check whether any file was modified
-    // externally by comparing its current on-disk hash against the hash
-    // Automatic recorded the last time it wrote the file.  If a file was
-    // externally modified, skip Step 3 entirely so drift detection can
-    // surface the conflict for the user to resolve.
-    if project.instruction_mode == "unified" && cleaned_project_files.len() > 1 {
-        // Collect user content from each existing file.
-        let mut file_contents: Vec<(String, String)> = Vec::new();
-        for f in &cleaned_project_files {
-            let path = dir.join(f);
-            if path.exists() {
-                if let Ok(raw) = fs::read_to_string(&path) {
-                    let user_content = crate::core::strip_rules_section_pub(
-                        &crate::core::strip_managed_section_pub(&raw),
-                    );
-                    file_contents.push((f.clone(), user_content));
-                }
+    Ok(instruction_targets)
+}
+
+fn sync_instruction_files_step(
+    dir: &PathBuf,
+    project: &Project,
+    instruction_targets: &[InstructionTarget],
+    written_files: &mut Vec<String>,
+) -> Result<(), String> {
+    if !project.instructions_index_mode {
+        let _ = crate::core::sync_rules_to_automatic_instructions(&project.directory, &[], &[]);
+    }
+
+    if project.instruction_mode == "unified" {
+        let shared_user_content =
+            resolve_unified_instruction_content(dir, project, instruction_targets);
+        if let Some(shared_user_content) = shared_user_content {
+            for target in instruction_targets {
+                sync_instruction_target_file(
+                    dir,
+                    project,
+                    &target.agent_id,
+                    &target.filename,
+                    &shared_user_content,
+                    true,
+                    written_files,
+                )?;
             }
         }
+    } else {
+        for target in instruction_targets {
+            let user_content = crate::core::read_project_file(&project.directory, &target.filename)
+                .unwrap_or_default();
+            sync_instruction_target_file(
+                dir,
+                project,
+                &target.agent_id,
+                &target.filename,
+                &user_content,
+                false,
+                written_files,
+            )?;
+        }
+    }
 
-        // Check if any existing file was externally modified (hash mismatch).
-        let any_externally_modified = file_contents.iter().any(|(filename, _)| {
-            if let Some(stored_hash) = project.instruction_file_hashes.get(filename) {
-                let on_disk_path = dir.join(filename);
-                if let Ok(raw) = fs::read_to_string(&on_disk_path) {
-                    let current_hash = crate::core::compute_content_hash(&raw);
-                    return &current_hash != stored_hash;
-                }
-            }
-            false
-        });
+    Ok(())
+}
 
-        // Also check if existing files have inconsistent user content — this
-        // means one was edited externally even if we have no stored hash yet
-        // (first sync after adding this feature).
-        let all_consistent = if file_contents.len() > 1 {
-            let first_content = &file_contents[0].1;
-            file_contents
-                .iter()
-                .all(|(_, c)| c.trim() == first_content.trim())
-        } else {
-            true
-        };
-
-        if any_externally_modified || !all_consistent {
-            // An instruction file was modified outside Automatic.
-            // Do NOT overwrite — leave the files as-is so drift detection
-            // can surface the conflict and the user can choose what to keep.
-            eprintln!(
-                "[automatic] Unified replication skipped: instruction file(s) were modified externally. \
-                 Drift detection will surface the conflict."
-            );
-        } else {
-            // All files are consistent (or only one exists).  Safe to replicate.
-            let source_file = cleaned_project_files
-                .iter()
-                .find(|f| dir.join(f).exists())
-                .cloned();
-
-            if let Some(source) = source_file {
-                let raw = fs::read_to_string(dir.join(&source)).unwrap_or_default();
-                let user_content = crate::core::strip_rules_section_pub(
-                    &crate::core::strip_managed_section_pub(&raw),
+fn resolve_unified_instruction_content(
+    dir: &PathBuf,
+    project: &Project,
+    instruction_targets: &[InstructionTarget],
+) -> Option<String> {
+    let mut file_contents: Vec<(String, String)> = Vec::new();
+    for target in instruction_targets {
+        let path = dir.join(&target.filename);
+        if path.exists() {
+            if let Ok(raw) = fs::read_to_string(&path) {
+                let user_content = crate::core::strip_index_section(
+                    &crate::core::strip_groups_section(&crate::core::strip_rules_section_pub(
+                        &crate::core::strip_managed_section_pub(&raw),
+                    )),
                 );
+                file_contents.push((target.filename.clone(), user_content));
+            }
+        }
+    }
 
-                let rules = project
-                    .file_rules
-                    .get("_unified")
-                    .cloned()
-                    .unwrap_or_default();
+    let any_externally_modified = file_contents.iter().any(|(filename, _)| {
+        if let Some(stored_hash) = project.instruction_file_hashes.get(filename) {
+            let on_disk_path = dir.join(filename);
+            if let Ok(raw) = fs::read_to_string(&on_disk_path) {
+                let current_hash = crate::core::compute_content_hash(&raw);
+                return &current_hash != stored_hash;
+            }
+        }
+        false
+    });
 
-                let custom_contents: Vec<String> = project
-                    .custom_rules
-                    .iter()
-                    .filter(|r| !r.content.trim().is_empty())
-                    .map(|r| r.content.clone())
-                    .collect();
+    let all_consistent = if file_contents.len() > 1 {
+        let first_content = &file_contents[0].1;
+        file_contents
+            .iter()
+            .all(|(_, c)| c.trim() == first_content.trim())
+    } else {
+        true
+    };
 
-                for target in &cleaned_project_files {
-                    if *target == source {
-                        continue;
-                    }
-                    if let Ok(()) = crate::core::save_project_file_with_rules_and_custom(
-                        &project.directory,
-                        target,
-                        &user_content,
-                        &rules,
-                        &custom_contents,
-                    ) {
-                        let p = dir.join(target).display().to_string();
-                        if !written_files.contains(&p) {
-                            written_files.push(p);
-                        }
-                    }
+    if any_externally_modified || !all_consistent {
+        eprintln!(
+            "[automatic] Unified replication skipped: instruction file(s) were modified externally. \
+             Drift detection will surface the conflict."
+        );
+        return None;
+    }
+
+    let source_file = instruction_targets
+        .iter()
+        .find(|target| dir.join(&target.filename).exists())
+        .map(|target| target.filename.clone());
+
+    if let Some(source) = source_file {
+        let raw = fs::read_to_string(dir.join(&source)).unwrap_or_default();
+        Some(crate::core::strip_index_section(
+            &crate::core::strip_groups_section(&crate::core::strip_rules_section_pub(
+                &crate::core::strip_managed_section_pub(&raw),
+            )),
+        ))
+    } else {
+        Some(String::new())
+    }
+}
+
+fn sync_instruction_target_file(
+    dir: &PathBuf,
+    project: &Project,
+    agent_id: &str,
+    filename: &str,
+    user_content: &str,
+    use_unified_rules: bool,
+    written_files: &mut Vec<String>,
+) -> Result<(), String> {
+    let Some(agent_instance) = agent::from_id(agent_id) else {
+        return Err(format!("Unknown agent '{}'", agent_id));
+    };
+
+    let user_rules: Vec<String> = project
+        .file_rules
+        .get("_project")
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            if use_unified_rules {
+                project.file_rules.get("_unified")
+            } else {
+                project.file_rules.get(filename)
+            }
+        })
+        .cloned()
+        .unwrap_or_default();
+    let rules = crate::core::ensure_mandatory_rules(&user_rules);
+    let custom_contents: Vec<String> = project
+        .custom_rules
+        .iter()
+        .filter(|r| !r.content.trim().is_empty())
+        .map(|r| r.content.clone())
+        .collect();
+    let custom_rule_structs = project.custom_rules.clone();
+    let file_path = dir.join(filename).display().to_string();
+    let project_groups = crate::core::groups_for_project(&project.name);
+    let uses_dot_claude_rules = crate::core::project_uses_dot_claude_rules(project, filename);
+
+    crate::core::save_project_file(&project.directory, filename, user_content)?;
+    let _ = crate::core::inject_groups_into_project_file(
+        &project.directory,
+        filename,
+        &project.name,
+        &project_groups,
+    );
+
+    let mut custom_rules_handled = false;
+    if uses_dot_claude_rules {
+        if let Some(touched) =
+            agent_instance.sync_instruction_rules(project, filename, &rules, &custom_contents)?
+        {
+            custom_rules_handled = true;
+            for path in touched {
+                if !written_files.contains(&path) {
+                    written_files.push(path);
                 }
             }
         }
     }
 
-    // ── Step 4: Record instruction file hashes and snapshots ────────────
-    //
-    // After all writes are complete, snapshot the current on-disk content of
-    // every instruction file so drift detection can compare against it later.
+    if project.instructions_index_mode && !uses_dot_claude_rules {
+        match crate::core::sync_rules_to_automatic_instructions(
+            &project.directory,
+            &rules,
+            &custom_rule_structs,
+        ) {
+            Ok(touched) => written_files.extend(touched),
+            Err(e) => eprintln!("Failed to sync rules to .automatic/instructions/: {}", e),
+        }
+        if let Ok(true) = crate::core::inject_index_into_project_file(
+            &project.directory,
+            filename,
+            &rules,
+            &custom_rule_structs,
+        ) {
+            if !written_files.contains(&file_path) {
+                written_files.push(file_path);
+            }
+        }
+    } else if !custom_rules_handled {
+        if let Ok(true) = crate::core::inject_rules_into_project_file_with_custom(
+            &project.directory,
+            filename,
+            &rules,
+            &custom_contents,
+        ) {
+            if !written_files.contains(&file_path) {
+                written_files.push(file_path);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn record_instruction_state_step(project: &mut Project) {
     let project_name = project.name.clone();
     crate::core::record_instruction_hashes(&project_name, project);
 
-    // Save a user-content snapshot for every instruction file that was
-    // touched during this sync so the conflict diff has something to compare
-    // against.  We read from disk (user section only) at this point because
-    // the individual write paths (rules injection, unified replication) don't
-    // all go through save_project_file_for_project.
     let mut snap_seen: HashSet<String> = HashSet::new();
     for agent_id in &project.agents {
         if let Some(a) = agent::from_id(agent_id) {
@@ -457,6 +501,211 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
             }
         }
     }
+}
 
-    Ok(written_files)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{read_project_file, save_project_file_for_project, CustomRule};
+    use tempfile::TempDir;
+
+    const USER_INSTRUCTIONS: &str = "# Instructions\n\nFollow the project conventions.";
+    const CUSTOM_RULE_NAME: &str = "Test Rule";
+    const CUSTOM_RULE_CONTENT: &str = "Always explain why the change exists.";
+    const INSTRUCTION_FILE: &str = "AGENTS.md";
+    const CUSTOM_RULE_FILE: &str = ".automatic/instructions/custom-test-rule.md";
+
+    #[derive(Clone, Copy)]
+    enum Action {
+        Save,
+        Sync,
+        ToggleSplitOn,
+        ToggleSplitOff,
+    }
+
+    fn tmp() -> TempDir {
+        tempfile::tempdir().expect("tempdir")
+    }
+
+    fn make_project(dir: &str, split_rules: bool, rules_set: bool) -> Project {
+        let mut project = Project {
+            name: "test-project".to_string(),
+            directory: dir.to_string(),
+            agents: vec!["opencode".to_string()],
+            instruction_mode: "per-agent".to_string(),
+            instructions_index_mode: split_rules,
+            ..Default::default()
+        };
+
+        if rules_set {
+            project.custom_rules = vec![CustomRule {
+                name: CUSTOM_RULE_NAME.to_string(),
+                content: CUSTOM_RULE_CONTENT.to_string(),
+            }];
+        }
+
+        project
+    }
+
+    fn apply_action(
+        action: Action,
+        project: &mut Project,
+        instructions_set: bool,
+    ) -> Result<(), String> {
+        match action {
+            Action::Save => save_project_file_for_project(
+                project,
+                INSTRUCTION_FILE,
+                if instructions_set {
+                    USER_INSTRUCTIONS
+                } else {
+                    ""
+                },
+            ),
+            Action::Sync => {
+                if instructions_set {
+                    crate::core::save_project_file(
+                        &project.directory,
+                        INSTRUCTION_FILE,
+                        USER_INSTRUCTIONS,
+                    )?;
+                }
+                sync_project_without_autodetect(project).map(|_| ())
+            }
+            Action::ToggleSplitOn => {
+                save_project_file_for_project(
+                    project,
+                    INSTRUCTION_FILE,
+                    if instructions_set {
+                        USER_INSTRUCTIONS
+                    } else {
+                        ""
+                    },
+                )?;
+                project.instructions_index_mode = true;
+                sync_project_without_autodetect(project).map(|_| ())
+            }
+            Action::ToggleSplitOff => {
+                save_project_file_for_project(
+                    project,
+                    INSTRUCTION_FILE,
+                    if instructions_set {
+                        USER_INSTRUCTIONS
+                    } else {
+                        ""
+                    },
+                )?;
+                project.instructions_index_mode = false;
+                sync_project_without_autodetect(project).map(|_| ())
+            }
+        }
+    }
+
+    fn assert_instruction_state(project: &Project, instructions_set: bool, rules_set: bool) {
+        let file_path = PathBuf::from(&project.directory).join(INSTRUCTION_FILE);
+        let on_disk = fs::read_to_string(&file_path).expect("read instruction file");
+        let read_back =
+            read_project_file(&project.directory, INSTRUCTION_FILE).expect("read user content");
+        let custom_rule_path = PathBuf::from(&project.directory).join(CUSTOM_RULE_FILE);
+
+        if instructions_set {
+            assert!(on_disk.contains(USER_INSTRUCTIONS));
+            assert_eq!(read_back.trim(), USER_INSTRUCTIONS.trim());
+        } else {
+            assert!(!on_disk.contains(USER_INSTRUCTIONS));
+            assert_eq!(read_back.trim(), "");
+        }
+
+        if project.instructions_index_mode {
+            assert!(
+                on_disk.contains("<!-- automatic:index:start -->"),
+                "expected index mode in {:?}",
+                on_disk
+            );
+            assert!(
+                !on_disk.contains(CUSTOM_RULE_CONTENT),
+                "custom rule content should move out of the main instruction file in split mode: {:?}",
+                on_disk
+            );
+            if rules_set {
+                let custom_rule =
+                    fs::read_to_string(&custom_rule_path).expect("read split custom rule");
+                assert!(custom_rule.contains(CUSTOM_RULE_CONTENT));
+            } else {
+                assert!(!custom_rule_path.exists());
+            }
+        } else {
+            assert!(!on_disk.contains("<!-- automatic:index:start -->"));
+            if rules_set {
+                assert!(
+                    on_disk.contains(CUSTOM_RULE_CONTENT),
+                    "custom rule content should stay inline when split mode is off: {:?}",
+                    on_disk
+                );
+            } else {
+                assert!(!on_disk.contains(CUSTOM_RULE_CONTENT));
+            }
+            assert!(!custom_rule_path.exists());
+        }
+    }
+
+    #[test]
+    fn save_covers_instruction_rule_and_split_combinations() {
+        for instructions_set in [false, true] {
+            for rules_set in [false, true] {
+                for split_rules in [false, true] {
+                    let dir = tmp();
+                    let mut project =
+                        make_project(dir.path().to_str().unwrap(), split_rules, rules_set);
+
+                    apply_action(Action::Save, &mut project, instructions_set).expect("save");
+                    assert_instruction_state(&project, instructions_set, rules_set);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sync_covers_instruction_rule_and_split_combinations() {
+        for instructions_set in [false, true] {
+            for rules_set in [false, true] {
+                for split_rules in [false, true] {
+                    let dir = tmp();
+                    let mut project =
+                        make_project(dir.path().to_str().unwrap(), split_rules, rules_set);
+
+                    apply_action(Action::Sync, &mut project, instructions_set).expect("sync");
+                    assert_instruction_state(&project, instructions_set, rules_set);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn toggle_split_on_covers_instruction_and_rule_combinations() {
+        for instructions_set in [false, true] {
+            for rules_set in [false, true] {
+                let dir = tmp();
+                let mut project = make_project(dir.path().to_str().unwrap(), false, rules_set);
+
+                apply_action(Action::ToggleSplitOn, &mut project, instructions_set)
+                    .expect("toggle split on");
+                assert_instruction_state(&project, instructions_set, rules_set);
+            }
+        }
+    }
+
+    #[test]
+    fn toggle_split_off_covers_instruction_and_rule_combinations() {
+        for instructions_set in [false, true] {
+            for rules_set in [false, true] {
+                let dir = tmp();
+                let mut project = make_project(dir.path().to_str().unwrap(), true, rules_set);
+
+                apply_action(Action::ToggleSplitOff, &mut project, instructions_set)
+                    .expect("toggle split off");
+                assert_instruction_state(&project, instructions_set, rules_set);
+            }
+        }
+    }
 }
