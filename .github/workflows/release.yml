@@ -279,9 +279,10 @@ jobs:
 
           BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
-          # Build updater URLs from the downloaded signature artifact names so
-          # latest.json matches the exact files each build job staged.
-          DARWIN_FILE=$(ls sigs/macos/*.app.tar.gz.sig | xargs -I{} basename {} .sig)
+          # The macOS release asset is uploaded with a stable public name.
+          # The downloaded workflow artifact keeps the local build filename,
+          # so do not derive the Darwin asset name from the .sig basename.
+          DARWIN_FILE="Automatic_universal.app.tar.gz"
           LINUX_FILE=$(ls sigs/linux/*.AppImage.sig | xargs -I{} basename {} .sig)
           WINDOWS_FILE=$(ls sigs/windows/*-setup.exe.sig | xargs -I{} basename {} .sig)
 
@@ -332,6 +333,12 @@ jobs:
           python3 -c "import json; json.load(open('latest.json')); print('JSON is valid')"
 
           # Upload to the draft release (overwrites any existing latest.json)
-          gh release upload "$TAG" latest.json --clobber
+          gh release upload "$TAG" latest.json#latest.json --clobber
+
+          if ! gh release view "$TAG" --json assets -q '.assets[].name' | grep -Fx 'latest.json' >/dev/null; then
+            echo "ERROR: latest.json was not found on release $TAG after upload" >&2
+            gh release view "$TAG" --json assets -q '.assets[].name'
+            exit 1
+          fi
 
           echo "latest.json successfully uploaded to release $TAG"
