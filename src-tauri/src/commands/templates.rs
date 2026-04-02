@@ -84,12 +84,14 @@ pub fn check_template_dependencies(name: String) -> Result<String, String> {
 }
 
 /// Merge one or more project templates into an existing project.
+/// Syncs the project to disk immediately so there is no drift.
 /// Returns the updated project and any pending unified instruction entries.
 #[tauri::command]
 pub fn apply_templates_to_project(
     project_name: &str,
     template_names: Vec<String>,
 ) -> Result<String, String> {
-    let result = core::apply_templates_to_project(project_name, &template_names)?;
+    let mut result = core::apply_templates_to_project(project_name, &template_names)?;
+    super::projects::sync_project_if_configured(project_name, &mut result.project);
     serde_json::to_string(&result).map_err(|e| e.to_string())
 }

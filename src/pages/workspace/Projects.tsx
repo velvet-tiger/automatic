@@ -3395,9 +3395,9 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
       if (result.pending_unified.length > 0) {
         pendingUnifiedInstruction.current = result.pending_unified;
+        setDirty(true);
       }
 
-      setDirty(true);
       setShowProjectTemplatePicker(false);
     } catch (err: unknown) {
       console.error("Failed to apply templates:", err);
