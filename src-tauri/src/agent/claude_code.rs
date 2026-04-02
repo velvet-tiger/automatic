@@ -40,29 +40,6 @@ impl Agent for ClaudeCode {
         vec![dir.join(".claude").join("skills")]
     }
 
-    fn capabilities(&self) -> super::AgentCapabilities {
-        super::AgentCapabilities {
-            commands: true,
-            ..Default::default()
-        }
-    }
-
-    fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
-        Some(dir.join(".claude").join("agents"))
-    }
-
-    fn commands_dir(&self, dir: &Path) -> Option<PathBuf> {
-        Some(dir.join(".claude").join("commands"))
-    }
-
-    // ── Cleanup ─────────────────────────────────────────────────────────
-
-    fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
-        vec![dir.join(".mcp.json")]
-    }
-
-    // ── Config writing ──────────────────────────────────────────────────
-
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         // Claude Code uses Automatic's JSON format directly, with one tweak:
         // strip "type" from stdio entries for Claude Desktop backward-compat.
@@ -154,7 +131,16 @@ impl Agent for ClaudeCode {
         Ok(Some(touched))
     }
 
-    // ── Discovery ───────────────────────────────────────────────────────
+    // ── Cleanup ─────────────────────────────────────────────────────────
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            commands: true,
+            ..Default::default()
+        }
+    }
+
+    // ── Config writing ──────────────────────────────────────────────────
 
     fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value> {
         let path = dir.join(".mcp.json");
@@ -189,6 +175,20 @@ impl Agent for ClaudeCode {
         // and would pollute every other project's import list if surfaced
         // globally.
         discover_claude_global_config(&home.join(".claude.json"))
+    }
+
+    // ── Discovery ───────────────────────────────────────────────────────
+
+    fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".claude").join("agents"))
+    }
+
+    fn commands_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".claude").join("commands"))
+    }
+
+    fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".mcp.json")]
     }
 }
 
