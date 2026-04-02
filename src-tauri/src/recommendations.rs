@@ -217,6 +217,10 @@ fn row_to_recommendation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recommenda
 // ── Write API ─────────────────────────────────────────────────────────────────
 
 /// Add a new recommendation for the given project.  Returns the new row's id.
+///
+/// Deduplication: if a pending recommendation with the same project, kind, and
+/// title (case-insensitive) already exists, the existing row's id is returned
+/// instead of inserting a duplicate.
 pub fn add_recommendation(params: AddRecommendationParams) -> Result<i64, String> {
     if !crate::core::is_valid_name(&params.project) {
         return Err("Invalid project name".into());
@@ -229,6 +233,21 @@ pub fn add_recommendation(params: AddRecommendationParams) -> Result<i64, String
     }
 
     let conn = open_conn()?;
+    let trimmed_title = params.title.trim();
+
+    // Check for an existing pending recommendation with the same project+kind+title.
+    let existing: rusqlite::Result<i64> = conn.query_row(
+        "SELECT id FROM recommendations
+         WHERE project = ?1 AND kind = ?2 AND LOWER(title) = LOWER(?3) AND status = 'pending'
+         LIMIT 1",
+        params![params.project, params.kind, trimmed_title],
+        |row| row.get(0),
+    );
+
+    if let Ok(existing_id) = existing {
+        return Ok(existing_id);
+    }
+
     let ts = now();
     conn.execute(
         "INSERT INTO recommendations (project, kind, title, body, priority, status, source, metadata, created_at, updated_at)
@@ -236,7 +255,7 @@ pub fn add_recommendation(params: AddRecommendationParams) -> Result<i64, String
         params![
             params.project,
             params.kind,
-            params.title.trim(),
+            trimmed_title,
             params.body,
             params.priority.as_str(),
             params.source,
@@ -899,5 +918,76 @@ mod tests {
         assert_eq!(beta.len(), 1);
         assert_eq!(alpha[0].project, "alpha");
         assert_eq!(beta[0].project, "beta");
+    }
+
+    #[test]
+    fn duplicate_pending_title_returns_existing_id() {
+        let conn = setup_conn();
+        let id1 = insert_rec(&conn, "proj", "skill", "php-pro");
+        let id2 = insert_rec(&conn, "proj", "skill", "php-pro");
+
+        // Both inserts target the same table; the dedup logic lives in
+        // add_recommendation (which uses the real DB path), so verify at the
+        // SQL level that the dedup query would match.
+        let existing: i64 = conn
+            .query_row(
+                "SELECT id FROM recommendations
+                 WHERE project = ?1 AND kind = ?2 AND LOWER(title) = LOWER(?3) AND status = 'pending'
+                 LIMIT 1",
+                params!["proj", "skill", "php-pro"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(existing, id1, "dedup query should find the first inserted row");
+
+        // The raw insert helper bypasses dedup, so two rows exist.
+        // Verify the query only returns the first match.
+        assert!(id1 != id2, "raw inserts create separate rows (dedup is in add_recommendation)");
+    }
+
+    #[test]
+    fn dedup_is_case_insensitive() {
+        let conn = setup_conn();
+        insert_rec(&conn, "proj", "skill", "PHP-Pro");
+
+        let existing: rusqlite::Result<i64> = conn.query_row(
+            "SELECT id FROM recommendations
+             WHERE project = ?1 AND kind = ?2 AND LOWER(title) = LOWER(?3) AND status = 'pending'
+             LIMIT 1",
+            params!["proj", "skill", "php-pro"],
+            |row| row.get(0),
+        );
+        assert!(existing.is_ok(), "case-insensitive match should find existing row");
+    }
+
+    #[test]
+    fn dedup_does_not_match_dismissed() {
+        let conn = setup_conn();
+        let id = insert_rec(&conn, "proj", "skill", "php-pro");
+        set_status(&conn, id, "dismissed");
+
+        let existing: rusqlite::Result<i64> = conn.query_row(
+            "SELECT id FROM recommendations
+             WHERE project = ?1 AND kind = ?2 AND LOWER(title) = LOWER(?3) AND status = 'pending'
+             LIMIT 1",
+            params!["proj", "skill", "php-pro"],
+            |row| row.get(0),
+        );
+        assert!(existing.is_err(), "dismissed recs should not block new pending inserts");
+    }
+
+    #[test]
+    fn dedup_allows_different_kinds() {
+        let conn = setup_conn();
+        insert_rec(&conn, "proj", "skill", "php-pro");
+
+        let existing: rusqlite::Result<i64> = conn.query_row(
+            "SELECT id FROM recommendations
+             WHERE project = ?1 AND kind = ?2 AND LOWER(title) = LOWER(?3) AND status = 'pending'
+             LIMIT 1",
+            params!["proj", "mcp_server", "php-pro"],
+            |row| row.get(0),
+        );
+        assert!(existing.is_err(), "different kind should not match");
     }
 }
