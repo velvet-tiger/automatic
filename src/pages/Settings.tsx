@@ -9,6 +9,7 @@ import { useUpdate } from "../contexts/UpdateContext";
 import { useTaskLog } from "../contexts/TaskLogContext";
 import { AgentSelector, type AgentInfo } from "../components/AgentSelector";
 import SettingsPlugins from "../plugins/SettingsPlugins";
+import { MarkdownPreview } from "../components/MarkdownPreview";
 import { Bot, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw } from "lucide-react";
 
 type SettingsPage = "sync" | "agents" | "appearance" | "app" | "plugins" | "support";
@@ -763,9 +764,9 @@ export default function Settings({ onOpenWizard }: SettingsProps) {
                       {updateInfo ? ` — v${updateInfo.version}` : ""}
                     </div>
                     {updateInfo?.notes && (
-                      <p className="text-[12px] text-text-muted mb-3 leading-relaxed whitespace-pre-wrap">
-                        {updateInfo.notes}
-                      </p>
+                      <div className="text-[12px] text-text-muted mb-3 leading-relaxed">
+                        <MarkdownPreview content={updateInfo.notes} className="py-1" />
+                      </div>
                     )}
                     <p className="text-[12px] text-text-muted mb-3">
                       Restart Automatic to apply the update.

@@ -5,7 +5,7 @@ import React from "react";
 // Supports: fenced code blocks, h1/h2/h3, tables, unordered/ordered lists,
 // blockquotes, horizontal rules, inline code, bold, italic, and paragraphs.
 
-export function MarkdownPreview({ content }: { content: string }) {
+export function MarkdownPreview({ content, className }: { content: string; className?: string }) {
   // Inline formatter
   function inlineFormat(text: string): React.ReactElement {
     const parts: (string | React.ReactElement)[] = [];
@@ -108,5 +108,5 @@ export function MarkdownPreview({ content }: { content: string }) {
     i++;
   }
 
-  return <div className="px-6 py-5">{elements}</div>;
+  return <div className={className ?? "px-6 py-5"}>{elements}</div>;
 }
