@@ -585,6 +585,7 @@ export default function TemplateMarketplace({ resetKey, onNavigateToTemplate, in
       try {
         const raw: string = await invoke("list_bundled_project_templates");
         const templates: BundledProjectTemplate[] = JSON.parse(raw);
+        templates.sort((a, b) => a.display_name.localeCompare(b.display_name));
         setAllTemplates(templates);
         setResults(templates);
       } catch (err) {

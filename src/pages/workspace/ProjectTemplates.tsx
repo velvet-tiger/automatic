@@ -461,6 +461,7 @@ export default function ProjectTemplates({
   const loadTemplates = async () => {
     try {
       const names: string[] = await invoke("get_project_templates");
+      names.sort((a, b) => a.localeCompare(b));
       setTemplates(names);
       setError(null);
       // Load all template data for sidebar summaries
