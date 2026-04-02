@@ -213,6 +213,11 @@ interface ProjectFileInfo {
   target_files?: string[];
 }
 
+interface TemplateProjectFile {
+  filename: string;
+  content: string;
+}
+
 interface ProjectTemplate {
   name: string;
   description: string;
@@ -220,6 +225,9 @@ interface ProjectTemplate {
   mcp_servers: string[];
   providers: string[];
   agents: string[];
+  user_agents: string[];
+  user_commands: string[];
+  project_files: TemplateProjectFile[];
   unified_instruction?: string;
   unified_rules?: string[];
 }
@@ -3370,50 +3378,30 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   /**
    * Merge all currently-selected templates into the open project and close the picker.
-   * Each template's assets are unioned in; unified instructions are concatenated.
+   * Delegates to the backend `apply_templates_to_project` command which handles
+   * all asset merging, deduplication, and project file writing.
    */
-  const applySelectedProjectTemplates = () => {
+  const applySelectedProjectTemplates = async () => {
     if (!project || selectedProjectTemplates.length === 0) return;
-    const templates = availableProjectTemplates.filter((t) => selectedProjectTemplates.includes(t.name));
 
-    let mergedAgents = [...project.agents];
-    let mergedSkills = [...project.skills];
-    let mergedMcpServers = [...project.mcp_servers];
-    let mergedProviders = [...project.providers];
-    let mergedDescription = project.description;
-    let anyUnified = false;
-    const pendingEntries: { content: string; rules: string[] }[] = [];
+    try {
+      const raw: string = await invoke("apply_templates_to_project", {
+        projectName: project.name,
+        templateNames: selectedProjectTemplates,
+      });
+      const result: { project: Project; pending_unified: { content: string; rules: string[] }[] } = JSON.parse(raw);
 
-    for (const tmpl of templates) {
-      mergedAgents = [...new Set([...mergedAgents, ...tmpl.agents])];
-      mergedSkills = [...new Set([...mergedSkills, ...tmpl.skills])];
-      mergedMcpServers = [...new Set([...mergedMcpServers, ...tmpl.mcp_servers])];
-      mergedProviders = [...new Set([...mergedProviders, ...tmpl.providers])];
-      if (!mergedDescription) mergedDescription = tmpl.description;
-      const hasContent = !!(tmpl.unified_instruction && tmpl.unified_instruction.trim());
-      const hasRules = (tmpl.unified_rules || []).length > 0;
-      if (hasContent || hasRules) {
-        anyUnified = true;
-        pendingEntries.push({ content: tmpl.unified_instruction || "", rules: tmpl.unified_rules || [] });
+      setProject(result.project);
+
+      if (result.pending_unified.length > 0) {
+        pendingUnifiedInstruction.current = result.pending_unified;
       }
+
+      setDirty(true);
+      setShowProjectTemplatePicker(false);
+    } catch (err: unknown) {
+      console.error("Failed to apply templates:", err);
     }
-
-    setProject({
-      ...project,
-      description: mergedDescription,
-      agents: mergedAgents,
-      skills: mergedSkills,
-      mcp_servers: mergedMcpServers,
-      providers: mergedProviders,
-      ...(anyUnified ? { instruction_mode: "unified" } : {}),
-    });
-
-    if (anyUnified) {
-      pendingUnifiedInstruction.current = pendingEntries;
-    }
-
-    setDirty(true);
-    setShowProjectTemplatePicker(false);
     // selectedProjectTemplates intentionally kept so the panel shows what was applied
   };
 

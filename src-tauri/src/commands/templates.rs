@@ -82,3 +82,14 @@ pub fn search_bundled_project_templates(query: &str) -> Result<String, String> {
 pub fn check_template_dependencies(name: String) -> Result<String, String> {
     core::check_template_dependencies(&name)
 }
+
+/// Merge one or more project templates into an existing project.
+/// Returns the updated project and any pending unified instruction entries.
+#[tauri::command]
+pub fn apply_templates_to_project(
+    project_name: &str,
+    template_names: Vec<String>,
+) -> Result<String, String> {
+    let result = core::apply_templates_to_project(project_name, &template_names)?;
+    serde_json::to_string(&result).map_err(|e| e.to_string())
+}

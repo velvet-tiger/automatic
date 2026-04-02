@@ -206,6 +206,7 @@ pub fn run() {
             import_bundled_project_template,
             search_bundled_project_templates,
             check_template_dependencies,
+            apply_templates_to_project,
             get_project_file_info,
             read_project_file,
             save_project_file,
