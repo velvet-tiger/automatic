@@ -118,13 +118,29 @@ jobs:
           includeUpdaterJson: false
           args: ${{ matrix.args }}
 
-      # Stash the macOS .sig content as a workflow artifact for the publish job.
-      # tauri-action already uploads the .app.tar.gz and its .sig to the release.
-      # The publish job looks up the actual asset name from the release rather than
-      # deriving it from the .sig filename, to avoid mismatches from tauri-action renames.
+      # Upload the macOS updater bundle explicitly. Depending on tauri-action to
+      # publish the universal updater archive has been unreliable.
       - name: List macOS bundle output (diagnostic)
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'macos-latest'
         run: ls -la src-tauri/target/universal-apple-darwin/release/bundle/macos/ || true
+
+      - name: Upload macOS updater bundle and signature
+        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'macos-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          BUNDLE_DIR=src-tauri/target/universal-apple-darwin/release/bundle/macos
+          APP_TAR_GZ=$(ls "$BUNDLE_DIR"/*.app.tar.gz 2>/dev/null | grep -v '\.sig' | head -1)
+          SIG_FILE="${APP_TAR_GZ}.sig"
+
+          if [ -z "$APP_TAR_GZ" ] || [ ! -f "$SIG_FILE" ]; then
+            echo "ERROR: Could not find macOS updater archive or its .sig in $BUNDLE_DIR" >&2
+            ls "$BUNDLE_DIR"/ || true
+            exit 1
+          fi
+
+          gh release upload "$TAG" "$APP_TAR_GZ" "$SIG_FILE" --clobber
 
       - name: Stash macOS signature as workflow artifact
         if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'macos-latest'
@@ -263,23 +279,11 @@ jobs:
 
           BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
-          # Updater URLs — look up the actual asset names from the GitHub release to avoid
-          # mismatches between the on-disk .sig filename and what tauri-action uploads.
-          # macOS:   find the .app.tar.gz asset on the release (tauri-action may rename it)
-          # Linux:   find the .AppImage asset on the release
-          # Windows: find the NSIS setup .exe asset on the release
-          DARWIN_FILE=$(gh release view "$TAG" --json assets -q '.assets[].name' | grep '\.app\.tar\.gz$' | grep -v '\.sig' | head -1)
-          LINUX_FILE=$(gh release view "$TAG" --json assets -q '.assets[].name' | grep '\.AppImage$' | grep -v '\.sig' | head -1)
-          WINDOWS_FILE=$(gh release view "$TAG" --json assets -q '.assets[].name' | grep '\-setup\.exe$' | grep -v '\.sig' | head -1)
-
-          if [ -z "$DARWIN_FILE" ] || [ -z "$LINUX_FILE" ] || [ -z "$WINDOWS_FILE" ]; then
-            echo "ERROR: Could not find all platform artifacts on the release."
-            echo "  DARWIN_FILE='$DARWIN_FILE'"
-            echo "  LINUX_FILE='$LINUX_FILE'"
-            echo "  WINDOWS_FILE='$WINDOWS_FILE'"
-            gh release view "$TAG" --json assets -q '.assets[].name'
-            exit 1
-          fi
+          # Build updater URLs from the downloaded signature artifact names so
+          # latest.json matches the exact files each build job staged.
+          DARWIN_FILE=$(ls sigs/macos/*.app.tar.gz.sig | xargs -I{} basename {} .sig)
+          LINUX_FILE=$(ls sigs/linux/*.AppImage.sig | xargs -I{} basename {} .sig)
+          WINDOWS_FILE=$(ls sigs/windows/*-setup.exe.sig | xargs -I{} basename {} .sig)
 
           echo "Resolved artifact filenames:"
           echo "  Darwin:  $DARWIN_FILE"
