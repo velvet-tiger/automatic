@@ -33,6 +33,7 @@ pub fn list_mcp_server_configs() -> Result<Vec<String>, String> {
         }
     }
 
+    servers.sort();
     Ok(servers)
 }
 
