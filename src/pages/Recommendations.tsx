@@ -86,12 +86,27 @@ interface RecommendationsProps {
 /** Sources whose individual records are replaced by a single rollup card. */
 const AI_SUGGESTION_SOURCES = new Set(["automatic-ai-skills", "automatic-ai-mcp"]);
 
+/** Display metadata for each recommendation kind. */
+const KIND_META: Record<string, { label: string; plural: string; icon: React.ReactNode }> = {
+  skill: { label: "Skill", plural: "Skills", icon: <Code size={13} className="text-text-muted" /> },
+  mcp_server: { label: "MCP server", plural: "MCP servers", icon: <Server size={13} className="text-text-muted" /> },
+  template: { label: "Template", plural: "Templates", icon: <FileText size={13} className="text-text-muted" /> },
+  collection: { label: "Collection", plural: "Collections", icon: <Layers size={13} className="text-text-muted" /> },
+};
+
+function kindLabel(kind: string, count: number): string {
+  const meta = KIND_META[kind];
+  if (!meta) return `${count} recommendation${count !== 1 ? "s" : ""}`;
+  return `${count} ${count !== 1 ? meta.plural : meta.label} recommendation${count !== 1 ? "s" : ""}`;
+}
+
+function kindIcon(kind: string): React.ReactNode {
+  return KIND_META[kind]?.icon ?? <AlertCircle size={13} className="text-text-muted" />;
+}
+
+
 export default function Recommendations({
   onNavigateToProject,
-  onNavigateToSkillStoreWithResult,
-  onNavigateToMcpMarketplace,
-  onNavigateToTemplateMarketplace,
-  onNavigateToCollectionMarketplace,
 }: RecommendationsProps) {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,82 +133,20 @@ export default function Recommendations({
     return () => window.removeEventListener("recommendations-updated", handler);
   }, [load]);
 
-  const handleDismiss = async (id: number) => {
-    try {
-      await invoke("dismiss_recommendation", { id });
-      setRecommendations((prev) => prev.filter((r) => r.id !== id));
-    } catch (e) {
-      console.error("Failed to dismiss recommendation:", e);
-    }
-  };
-
   const handleProjectClick = (name: string, tab?: string) => {
     localStorage.setItem("automatic.projects.selected", name);
     onNavigateToProject(name, tab);
   };
 
-  const getMarketplaceLink = (rec: Recommendation): { label: React.ReactNode; onClick: () => void } | null => {
-    let parsedMeta: Record<string, unknown> | null = null;
-    if (rec.metadata) {
-      try {
-        parsedMeta = JSON.parse(rec.metadata) as Record<string, unknown>;
-      } catch {
-        parsedMeta = null;
-      }
-    }
-
-    if (rec.kind === "skill" && onNavigateToSkillStoreWithResult && parsedMeta) {
-      const id = typeof parsedMeta.id === "string" ? parsedMeta.id : "";
-      const name = typeof parsedMeta.name === "string" ? parsedMeta.name : "";
-      const source = typeof parsedMeta.source === "string" ? parsedMeta.source : "";
-      const installs = typeof parsedMeta.installs === "number" ? parsedMeta.installs : 0;
-      if (!id || !name || !source) return null;
-
-      return {
-        label: <><Code size={10} /> View skill</>,
-        onClick: () => onNavigateToSkillStoreWithResult({ id, name, source, installs }),
-      };
-    }
-
-    if (rec.kind === "mcp_server" && onNavigateToMcpMarketplace && parsedMeta) {
-      const slug = typeof parsedMeta.slug === "string" ? parsedMeta.slug : "";
-      if (!slug) return null;
-      return {
-        label: <><Server size={10} /> View MCP</>,
-        onClick: () => onNavigateToMcpMarketplace(slug),
-      };
-    }
-
-    if (rec.kind === "template" && onNavigateToTemplateMarketplace && parsedMeta) {
-      const name = typeof parsedMeta.name === "string" ? parsedMeta.name : "";
-      if (!name) return null;
-      return {
-        label: <><FileText size={10} /> View template</>,
-        onClick: () => onNavigateToTemplateMarketplace(name),
-      };
-    }
-
-    if (rec.kind === "collection" && onNavigateToCollectionMarketplace && parsedMeta) {
-      const slug = typeof parsedMeta.slug === "string" ? parsedMeta.slug : "";
-      const name = typeof parsedMeta.name === "string" ? parsedMeta.name : "";
-      const query = slug || name;
-      if (!query) return null;
-      return {
-        label: <><Layers size={10} /> View collection</>,
-        onClick: () => onNavigateToCollectionMarketplace(query),
-      };
-    }
-
-    return null;
-  };
-
-  // Separate normal recs from AI suggestion rollup sources, grouped by project.
+  // Separate normal recs from AI suggestion rollup sources, grouped by project then kind.
   const groupedNormal = recommendations
     .filter((r) => !AI_SUGGESTION_SOURCES.has(r.source))
-    .reduce<Map<string, Recommendation[]>>((map, rec) => {
-      const list = map.get(rec.project) ?? [];
+    .reduce<Map<string, Map<string, Recommendation[]>>>((map, rec) => {
+      const projectMap = map.get(rec.project) ?? new Map<string, Recommendation[]>();
+      const list = projectMap.get(rec.kind) ?? [];
       list.push(rec);
-      map.set(rec.project, list);
+      projectMap.set(rec.kind, list);
+      map.set(rec.project, projectMap);
       return map;
     }, new Map());
 
@@ -211,8 +164,9 @@ export default function Recommendations({
   // Merge: all projects that have either normal recs or AI rollups.
   const allProjects = new Set([...groupedNormal.keys(), ...aiRollupByProject.keys()]);
 
-  // Total visible count: normal recs + one rollup card per category per project
-  const totalCount = recommendations.filter((r) => !AI_SUGGESTION_SOURCES.has(r.source)).length
+  // Total visible count: one rollup card per kind per project + one per AI category per project
+  const normalGroupCount = [...groupedNormal.values()].reduce((n, kindMap) => n + kindMap.size, 0);
+  const totalCount = normalGroupCount
     + [...aiRollupByProject.values()].reduce((n, v) => n + (v.skillCount > 0 ? 1 : 0) + (v.mcpCount > 0 ? 1 : 0), 0);
 
   return (
@@ -258,7 +212,7 @@ export default function Recommendations({
         ) : (
           <div className="space-y-6 max-w-2xl">
             {[...allProjects].map((projectName) => {
-              const normalRecs = groupedNormal.get(projectName) ?? [];
+              const normalKindGroups = groupedNormal.get(projectName) ?? new Map<string, Recommendation[]>();
               const aiRollup = aiRollupByProject.get(projectName);
 
               return (
@@ -300,23 +254,20 @@ export default function Recommendations({
                       />
                     )}
 
-                    {/* Normal recommendation cards */}
-                    {normalRecs.map((rec) => {
-                      const marketplaceLink = getMarketplaceLink(rec);
+                    {/* Normal recommendations grouped by kind */}
+                    {[...normalKindGroups.entries()].map(([kind, recs]) => {
+                      const hasHighPriority = recs.some((r) => r.priority === "high");
                       return (
                         <RecRow
-                          key={rec.id}
-                          icon={<AlertCircle size={13} className={rec.priority === "high" ? "text-warning" : "text-text-muted"} />}
-                          title={rec.title}
-                          badge={rec.priority === "high" ? (
+                          key={kind}
+                          icon={kindIcon(kind)}
+                          title={kindLabel(kind, recs.length)}
+                          badge={hasHighPriority ? (
                             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/20 leading-none shrink-0">Important</span>
                           ) : undefined}
-                          body={rec.body}
+                          body={recs.map((r) => r.title).join(", ")}
                           linkLabel={<>Open project <ArrowRight size={10} /></>}
                           onLinkClick={() => handleProjectClick(projectName, "recommendations")}
-                          secondaryLinkLabel={marketplaceLink?.label}
-                          onSecondaryLinkClick={marketplaceLink?.onClick}
-                          onDismiss={() => handleDismiss(rec.id)}
                         />
                       );
                     })}
