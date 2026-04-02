@@ -11,7 +11,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/velvet-tiger/automatic.git",
-    "directory": "src-tauri/skills/automatic-database-design"
+    "directory": "src-tauri/assets/skills/automatic-database-design"
   },
   "keywords": ["database", "schema", "sql", "migrations", "indexing"],
   "skills": [

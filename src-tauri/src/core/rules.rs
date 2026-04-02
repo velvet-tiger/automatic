@@ -247,22 +247,22 @@ const DEFAULT_RULES: &[(&str, &str, &str)] = &[
     (
         "automatic-general",
         "General",
-        include_str!("../../rules/automatic/general.md"),
+        include_str!("../../assets/rules/automatic/general.md"),
     ),
     (
         "automatic-code-style",
         "Code Style",
-        include_str!("../../rules/automatic/code-style.md"),
+        include_str!("../../assets/rules/automatic/code-style.md"),
     ),
     (
         "automatic-process",
         "Agent process",
-        include_str!("../../rules/automatic/process.md"),
+        include_str!("../../assets/rules/automatic/process.md"),
     ),
     (
         "automatic-service",
         "Automatic",
-        include_str!("../../rules/automatic/automatic-service.md"),
+        include_str!("../../assets/rules/automatic/automatic-service.md"),
     ),
 ];
 

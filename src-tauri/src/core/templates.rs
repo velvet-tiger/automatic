@@ -78,87 +78,87 @@ pub fn delete_template(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The bundled skill manifest (`src-tauri/skills/skill.json`), embedded at
+/// The bundled skill manifest (`src-tauri/assets/skills/skill.json`), embedded at
 /// compile time.  At runtime, `auto_install_skill_names()` parses this to
 /// determine which skills should be written to `~/.agents/skills/` on startup.
 /// To add a new auto-install skill: add it to `skill.json` and add its
 /// `include_str!` entry here.  No other code changes are required.
-const BUNDLED_SKILL_JSON: &str = include_str!("../../skills/skill.json");
+const BUNDLED_SKILL_JSON: &str = include_str!("../../assets/skills/skill.json");
 
 /// All skill content shipped with the binary, keyed by skill name.
 /// Skills listed in `skill.json` are auto-installed; all others are
 /// available on demand (e.g. selected via a project template).
 const BUNDLED_SKILL_CONTENTS: &[(&str, &str)] = &[
-    ("automatic", include_str!("../../skills/automatic/SKILL.md")),
+    ("automatic", include_str!("../../assets/skills/automatic/SKILL.md")),
     (
         "automatic-features",
-        include_str!("../../skills/automatic-features/SKILL.md"),
+        include_str!("../../assets/skills/automatic-features/SKILL.md"),
     ),
     (
         "automatic-api-design",
-        include_str!("../../skills/automatic-api-design/SKILL.md"),
+        include_str!("../../assets/skills/automatic-api-design/SKILL.md"),
     ),
     (
         "automatic-code-review",
-        include_str!("../../skills/automatic-code-review/SKILL.md"),
+        include_str!("../../assets/skills/automatic-code-review/SKILL.md"),
     ),
     (
         "automatic-database-design",
-        include_str!("../../skills/automatic-database-design/SKILL.md"),
+        include_str!("../../assets/skills/automatic-database-design/SKILL.md"),
     ),
     (
         "automatic-debugging",
-        include_str!("../../skills/automatic-debugging/SKILL.md"),
+        include_str!("../../assets/skills/automatic-debugging/SKILL.md"),
     ),
     (
         "automatic-documentation",
-        include_str!("../../skills/automatic-documentation/SKILL.md"),
+        include_str!("../../assets/skills/automatic-documentation/SKILL.md"),
     ),
     (
         "automatic-llms-txt",
-        include_str!("../../skills/automatic-llms-txt/SKILL.md"),
+        include_str!("../../assets/skills/automatic-llms-txt/SKILL.md"),
     ),
     (
         "automatic-performance",
-        include_str!("../../skills/automatic-performance/SKILL.md"),
+        include_str!("../../assets/skills/automatic-performance/SKILL.md"),
     ),
     (
         "automatic-refactoring",
-        include_str!("../../skills/automatic-refactoring/SKILL.md"),
+        include_str!("../../assets/skills/automatic-refactoring/SKILL.md"),
     ),
     (
         "automatic-security-review",
-        include_str!("../../skills/automatic-security-review/SKILL.md"),
+        include_str!("../../assets/skills/automatic-security-review/SKILL.md"),
     ),
     (
         "automatic-testing",
-        include_str!("../../skills/automatic-testing/SKILL.md"),
+        include_str!("../../assets/skills/automatic-testing/SKILL.md"),
     ),
     // Template-only skills (on-demand, not auto-installed)
     (
         "vercel-react-best-practices",
-        include_str!("../../skills/vercel-react-best-practices/SKILL.md"),
+        include_str!("../../assets/skills/vercel-react-best-practices/SKILL.md"),
     ),
     (
         "tailwindcss-development",
-        include_str!("../../skills/tailwindcss-development/SKILL.md"),
+        include_str!("../../assets/skills/tailwindcss-development/SKILL.md"),
     ),
     (
         "laravel-specialist",
-        include_str!("../../skills/laravel-specialist/SKILL.md"),
+        include_str!("../../assets/skills/laravel-specialist/SKILL.md"),
     ),
     (
         "pennant-development",
-        include_str!("../../skills/pennant-development/SKILL.md"),
+        include_str!("../../assets/skills/pennant-development/SKILL.md"),
     ),
     (
         "terraform-skill",
-        include_str!("../../skills/terraform-skill/SKILL.md"),
+        include_str!("../../assets/skills/terraform-skill/SKILL.md"),
     ),
-    ("php-pro", include_str!("../../skills/php-pro/SKILL.md")),
+    ("php-pro", include_str!("../../assets/skills/php-pro/SKILL.md")),
     (
         "python-pro",
-        include_str!("../../skills/python-pro/SKILL.md"),
+        include_str!("../../assets/skills/python-pro/SKILL.md"),
     ),
 ];
 
@@ -307,11 +307,11 @@ pub fn bundled_skill_names() -> Vec<&'static str> {
 const DEFAULT_TEMPLATES: &[(&str, &str)] = &[
     (
         "Agent Project Brief",
-        include_str!("../../templates/Agent Project Brief.md"),
+        include_str!("../../assets/templates/Agent Project Brief.md"),
     ),
     (
         "Session Context",
-        include_str!("../../templates/Session Context.md"),
+        include_str!("../../assets/templates/Session Context.md"),
     ),
 ];
 

@@ -11,7 +11,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/velvet-tiger/automatic.git",
-    "directory": "src-tauri/skills/automatic-llms-txt"
+    "directory": "src-tauri/assets/skills/automatic-llms-txt"
   },
   "keywords": ["llms-txt", "llmstxt", "documentation", "ai", "llm"],
   "skills": [

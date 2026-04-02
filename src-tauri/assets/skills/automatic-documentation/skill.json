@@ -11,7 +11,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/velvet-tiger/automatic.git",
-    "directory": "src-tauri/skills/automatic-documentation"
+    "directory": "src-tauri/assets/skills/automatic-documentation"
   },
   "keywords": ["documentation", "readme", "api-docs", "adr", "changelog"],
   "skills": [

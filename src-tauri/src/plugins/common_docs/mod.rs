@@ -5,7 +5,7 @@ use crate::core::{
 };
 
 /// Bundled rule content for the common-docs plugin.
-const RULE_CONTENT: &str = include_str!("../../../rules/common-docs/documentation.md");
+const RULE_CONTENT: &str = include_str!("../../../assets/rules/common-docs/documentation.md");
 
 /// Return the manifest that describes this plugin to the Automatic plugin
 /// registry.  Called by `core::app_plugins::bundled_plugins()`.

@@ -382,17 +382,17 @@ const DEFAULT_USER_AGENTS: &[(&str, &str, &str)] = &[
     (
         "automatic-code-reviewer",
         "Code Reviewer",
-        include_str!("../../agents/automatic/code-reviewer.md"),
+        include_str!("../../assets/subagents/automatic/code-reviewer.md"),
     ),
     (
         "automatic-debugger",
         "Debugger",
-        include_str!("../../agents/automatic/debugger.md"),
+        include_str!("../../assets/subagents/automatic/debugger.md"),
     ),
     (
         "automatic-planner",
         "Planner",
-        include_str!("../../agents/automatic/planner.md"),
+        include_str!("../../assets/subagents/automatic/planner.md"),
     ),
 ];
 

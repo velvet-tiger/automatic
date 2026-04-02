@@ -156,7 +156,7 @@ pub fn save_user_agent(machine_name: &str, name: &str, content: &str) -> Result<
 pub fn delete_user_agent(machine_name: &str) -> Result<(), String>
 
 pub fn install_default_user_agents() -> Result<(), String>
-    // Seeds bundled agents from src-tauri/agents/automatic/*.md on first run
+    // Seeds bundled agents from src-tauri/assets/subagents/automatic/*.md on first run
     // Only writes if the file does not yet exist (preserves user edits)
 
 pub fn is_valid_agent_machine_name(name: &str) -> bool
@@ -181,7 +181,7 @@ pub struct UserAgentEntry { pub id: String, pub name: String }
 
 ### New: Bundled Default Agents
 
-Directory: `src-tauri/agents/automatic/` (new directory)
+Directory: `src-tauri/assets/subagents/automatic/` (new directory)
 
 Files (installed to `~/.automatic/agents/` on first run, never overwritten):
 
@@ -385,9 +385,9 @@ A mini-CRUD editor, structurally similar to the Custom Rules section:
 |------|-------------|
 | `src-tauri/src/core/user_agents.rs` | CRUD business logic for `~/.automatic/agents/` |
 | `src-tauri/src/commands/user_agents.rs` | Tauri command wrappers |
-| `src-tauri/agents/automatic/code-reviewer.md` | Bundled default agent |
-| `src-tauri/agents/automatic/debugger.md` | Bundled default agent |
-| `src-tauri/agents/automatic/planner.md` | Bundled default agent |
+| `src-tauri/assets/subagents/automatic/code-reviewer.md` | Bundled default agent |
+| `src-tauri/assets/subagents/automatic/debugger.md` | Bundled default agent |
+| `src-tauri/assets/subagents/automatic/planner.md` | Bundled default agent |
 | `src/UserAgents.tsx` | Workspace Sub-Agents CRUD view |
 | `src/AgentsMarketplace.tsx` | Agents marketplace browser |
 | `src/featured-agents.json` | Curated featured agents list |

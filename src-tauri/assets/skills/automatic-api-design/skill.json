@@ -11,7 +11,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/velvet-tiger/automatic.git",
-    "directory": "src-tauri/skills/automatic-api-design"
+    "directory": "src-tauri/assets/skills/automatic-api-design"
   },
   "keywords": ["api", "rest", "design", "http", "conventions"],
   "skills": [
