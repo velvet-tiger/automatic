@@ -1,0 +1,18 @@
+# Project-level Cargo configuration
+#
+# Apple Silicon (M-series) note:
+# Homebrew installs libraries to /opt/homebrew which is not on the system
+# linker search path by default. The settings below ensure that native
+# dependencies (specifically zstd, used transitively via zip → zstd-sys)
+# are resolved via pkg-config rather than trying to build a bundled copy
+# or link a library that the linker cannot find.
+#
+# ZSTD_SYS_USE_PKG_CONFIG: tell the zstd-sys build script to use pkg-config
+# to locate the system zstd library instead of building from bundled C sources.
+#
+# These settings are harmless on Intel macOS and Linux where the libraries
+# are already on the default search path.
+
+[env]
+ZSTD_SYS_USE_PKG_CONFIG = "1"
+PKG_CONFIG_PATH = "/opt/homebrew/opt/zstd/lib/pkgconfig"
