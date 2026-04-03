@@ -2,6 +2,39 @@
 
 All notable changes to Automatic are documented here.
 
+## [Unreleased]
+
+## [1.0.0-beta.5] - 2026-04-03
+
+### Added
+
+- Warn when project MCPs conflict with Claude user-scope config (VEL-93). (26d6676)
+- Render update notes using MarkdownPreview component. (82067e0)
+- Render update notes using MarkdownPreview component. (7377c63)
+
+### Fixed
+
+- Remove dashboard what's new section (VEL-89). (726a300)
+- Read release notes from changelog in release workflow. (c6e1a9a)
+- Surface revoked MCP OAuth tokens in server UI (VEL-92). (4fac403)
+- Use theme-aware scrollbar colors for light themes (VEL-100). (eecdafb)
+- Normalise bundled assets into src-tauri/assets/ (VEL-97). (d48937d)
+- Sort template lists alphabetically in marketplace and project views (VEL-96). (f4e7d58)
+- Sort MCP server list alphabetically in backend (VEL-95). (28125bd)
+- Group recommendations by type instead of listing individually (VEL-91). (f349c37)
+- Sync project immediately after template application (VEL-90). (242acef)
+- Move template merge logic to backend with tests (VEL-90). (6267d46)
+- Deduplicate pending recommendations by project+kind+title (VEL-86). (68b98f7)
+
+### Build / CI
+
+- Verify latest.json upload and use stable macOS asset name. (d058d46)
+
+### Maintenance
+
+- Add .cargo/config.toml to fix zstd link on Apple Silicon. (be1be46)
+- Fix claude rules. (168458f)
+
 ## [1.0.0-beta.4] — 2026-04-01
 
 ### Added
