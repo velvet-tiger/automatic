@@ -287,6 +287,7 @@ pub fn run() {
             unsubscribe_newsletter,
             authorize_mcp_server,
             has_mcp_oauth_token,
+            get_mcp_oauth_token_status,
             revoke_mcp_oauth_token,
             refresh_mcp_oauth_token,
             add_recommendation,

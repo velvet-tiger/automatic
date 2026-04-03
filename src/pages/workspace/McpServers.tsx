@@ -60,6 +60,13 @@ interface McpServerConfig {
   _builtin?: boolean;
 }
 
+interface McpOAuthTokenStatus {
+  has_token: boolean;
+  valid: boolean;
+  revoked: boolean;
+  message: string | null;
+}
+
 function emptyConfig(): McpServerConfig {
   return {
     type: "stdio",
@@ -147,9 +154,11 @@ function cleanConfig(config: McpServerConfig): Record<string, unknown> {
 
 function OAuthSection({ serverName, url }: { serverName: string; url: string }) {
   const [hasToken, setHasToken] = useState(false);
+  const [tokenStatus, setTokenStatus] = useState<McpOAuthTokenStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
+  const [checkingStatus, setCheckingStatus] = useState(false);
   // Track whether the user cancelled so we can ignore the late-arriving invoke result.
   const cancelledRef = useRef(false);
 
@@ -157,11 +166,44 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
   useEffect(() => {
     if (!serverName) return;
     setChecking(true);
+    setTokenStatus(null);
     invoke<boolean>("has_mcp_oauth_token", { serverName })
       .then(setHasToken)
       .catch(() => setHasToken(false))
       .finally(() => setChecking(false));
   }, [serverName]);
+
+  useEffect(() => {
+    if (!serverName || !url || !hasToken) {
+      setCheckingStatus(false);
+      setTokenStatus(null);
+      return;
+    }
+
+    let active = true;
+    setCheckingStatus(true);
+    invoke<McpOAuthTokenStatus>("get_mcp_oauth_token_status", { serverName, mcpUrl: url })
+      .then((status) => {
+        if (!active) return;
+        setTokenStatus(status);
+      })
+      .catch((statusError) => {
+        if (!active) return;
+        setTokenStatus({
+          has_token: true,
+          valid: false,
+          revoked: false,
+          message: String(statusError),
+        });
+      })
+      .finally(() => {
+        if (active) setCheckingStatus(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [serverName, url, hasToken]);
 
   const handleAuthorize = async () => {
     if (!serverName || !url) return;
@@ -171,6 +213,7 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
     try {
       await invoke("authorize_mcp_server", { serverName, mcpUrl: url });
       if (!cancelledRef.current) setHasToken(true);
+      if (!cancelledRef.current) setTokenStatus(null);
     } catch (e) {
       if (!cancelledRef.current) setError(String(e));
     } finally {
@@ -191,6 +234,7 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
     try {
       await invoke("revoke_mcp_oauth_token", { serverName });
       setHasToken(false);
+      setTokenStatus(null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -224,6 +268,27 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
               {loading ? <Loader2 size={12} className="animate-spin" /> : "Revoke"}
             </button>
           </div>
+
+          {checkingStatus && (
+            <div className="flex items-center gap-2 rounded-lg border border-border-strong/30 bg-bg-tertiary/60 px-4 py-3 text-[11px] text-text-muted">
+              <Loader2 size={12} className="animate-spin shrink-0" />
+              Checking whether the stored token is still accepted by the MCP server...
+            </div>
+          )}
+
+          {!checkingStatus && tokenStatus?.revoked && (
+            <div className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/8 px-4 py-3">
+              <AlertTriangle size={12} className="text-warning mt-0.5 shrink-0" />
+              <p className="text-[11px] text-warning">{tokenStatus.message}</p>
+            </div>
+          )}
+
+          {!checkingStatus && tokenStatus && !tokenStatus.valid && !tokenStatus.revoked && tokenStatus.message && (
+            <div className="flex items-start gap-2 rounded-lg border border-border-strong/30 bg-bg-tertiary/60 px-4 py-3">
+              <Info size={12} className="text-text-muted mt-0.5 shrink-0" />
+              <p className="text-[11px] text-text-muted">{tokenStatus.message}</p>
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
