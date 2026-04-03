@@ -12,6 +12,140 @@ use super::helpers::{
     load_skill_contents,
 };
 
+// ── Problems types ────────────────────────────────────────────────────────────
+
+/// The category of a project problem, for UI filtering and display.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectProblemKind {
+    /// An MCP server defined in the project's local config also exists at the
+    /// user (global) scope for the same agent.  Claude Code will use the
+    /// user-scoped entry and ignore the project-local one.
+    McpUserScopeConflict,
+}
+
+/// A single actionable problem in a project's configuration.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ProjectProblem {
+    /// Machine-readable category of the problem.
+    pub kind: ProjectProblemKind,
+    /// Human-readable title for the problem.
+    pub title: String,
+    /// Human-readable explanation of what is wrong and why it matters.
+    pub description: String,
+    /// Optional reference URL with more context.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_url: Option<String>,
+    /// The agent(s) affected (e.g. `"Claude Code"`).
+    pub agents: Vec<String>,
+    /// Specific resources involved (e.g. MCP server names).
+    pub resources: Vec<String>,
+}
+
+/// Full problems report for a project.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProjectProblemsReport {
+    /// `true` if there are any problems.
+    pub has_problems: bool,
+    /// The list of detected problems (may be empty).
+    pub problems: Vec<ProjectProblem>,
+}
+
+/// Check for known configuration problems in a project.
+///
+/// Currently detects:
+/// - MCP server names in the project's `.mcp.json` that also exist at the
+///   Claude Code user scope (`~/.claude.json`).  Claude Code gives the
+///   user-scoped entry priority and silently ignores the project-local one,
+///   which can cause unexpected behaviour.
+///
+/// This is a read-only operation — nothing is written.
+pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport, String> {
+    let mut problems: Vec<ProjectProblem> = Vec::new();
+
+    if project.directory.is_empty() || project.agents.is_empty() {
+        return Ok(ProjectProblemsReport {
+            has_problems: false,
+            problems,
+        });
+    }
+
+    let dir = PathBuf::from(&project.directory);
+    if !dir.exists() {
+        return Ok(ProjectProblemsReport {
+            has_problems: false,
+            problems,
+        });
+    }
+
+    // Check each agent that supports project-local MCP config.
+    for agent_id in &project.agents {
+        let Some(agent_instance) = agent::from_id(agent_id) else {
+            continue;
+        };
+
+        // Read this agent's project-local MCP servers.
+        let project_servers = agent_instance.discover_mcp_servers(&dir);
+        if project_servers.is_empty() {
+            continue;
+        }
+
+        // Read user-scoped (global) MCP servers for the same agent.
+        let global_servers = agent_instance.discover_global_mcp_servers();
+        if global_servers.is_empty() {
+            continue;
+        }
+
+        // Find names that appear in both the project-local and user-scoped configs.
+        let conflicts: Vec<String> = project_servers
+            .keys()
+            .filter(|name| global_servers.contains_key(*name))
+            .cloned()
+            .collect();
+
+        if conflicts.is_empty() {
+            continue;
+        }
+
+        let server_list = conflicts.join(", ");
+        problems.push(ProjectProblem {
+            kind: ProjectProblemKind::McpUserScopeConflict,
+            title: format!(
+                "MCP {} also configured at user scope",
+                if conflicts.len() == 1 {
+                    "server"
+                } else {
+                    "servers"
+                }
+            ),
+            description: format!(
+                "{agent_label} prioritises user-scoped MCP servers over project-local ones. \
+                 The following {} defined in both .mcp.json and the user-scoped config \
+                 (~/.claude.json) and will be overridden: {server_list}. \
+                 Remove the user-scoped entry or rename the project-local entry to avoid \
+                 unexpected behaviour.",
+                if conflicts.len() == 1 {
+                    "server is"
+                } else {
+                    "servers are"
+                },
+                agent_label = agent_instance.label(),
+            ),
+            reference_url: Some(
+                "https://docs.anthropic.com/en/docs/claude-code/mcp#project-scope".to_string(),
+            ),
+            agents: vec![agent_instance.label().to_string()],
+            resources: conflicts,
+        });
+    }
+
+    let has_problems = !problems.is_empty();
+    Ok(ProjectProblemsReport {
+        has_problems,
+        problems,
+    })
+}
+
 // ── Drift types ───────────────────────────────────────────────────────────────
 
 /// A single file that is out of sync, with a human-readable reason.

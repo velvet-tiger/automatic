@@ -242,6 +242,7 @@ pub fn run() {
             get_agent_cleanup_preview,
             remove_agent_from_project,
             check_project_drift,
+            check_project_problems,
             adopt_stale_skill,
             remove_stale_skill,
             get_project_context,

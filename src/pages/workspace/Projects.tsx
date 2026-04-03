@@ -206,6 +206,22 @@ interface DriftReport {
   instruction_conflicts?: InstructionFileConflict[];
 }
 
+type ProjectProblemKind = "mcp_user_scope_conflict";
+
+interface ProjectProblem {
+  kind: ProjectProblemKind;
+  title: string;
+  description: string;
+  reference_url?: string;
+  agents: string[];
+  resources: string[];
+}
+
+interface ProjectProblemsReport {
+  has_problems: boolean;
+  problems: ProjectProblem[];
+}
+
 interface ProjectFileInfo {
   filename: string;
   agents: string[];
@@ -2375,6 +2391,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [driftReport, setDriftReport] = useState<DriftReport | null>(null);
   const driftCheckInFlight = useRef(false);
 
+  // Project problems state (e.g. MCP user-scope conflicts)
+  // null = unknown/not yet checked, ProjectProblemsReport = result of last check
+  const [problemsReport, setProblemsReport] = useState<ProjectProblemsReport | null>(null);
+
   // Per-project drift indicator: true = drifted, false = clean, undefined = unknown
   const [driftByProject, setDriftByProject] = useState<Record<string, boolean>>({});
 
@@ -2791,9 +2811,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     startCreate({ fromTemplates: [tmpl] });
   }, [initialCreateWithTemplate, availableProjectTemplates]);
 
-  // Reset drift + recommendations state whenever the active project changes
+  // Reset drift + problems + recommendations state whenever the active project changes
   useEffect(() => {
     setDriftReport(null);
+    setProblemsReport(null);
     setCustomRuleEditingIdx(null);
     setGlobalRuleAdding(false);
     setGlobalRuleSearch("");
@@ -2833,8 +2854,11 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       if (driftCheckInFlight.current) return;
       driftCheckInFlight.current = true;
       try {
-        const raw: string = await invoke("check_project_drift", { name });
-        const report = JSON.parse(raw) as DriftReport;
+        const [rawDrift, rawProblems] = await Promise.all([
+          invoke<string>("check_project_drift", { name }),
+          invoke<string>("check_project_problems", { name }),
+        ]);
+        const report = JSON.parse(rawDrift) as DriftReport;
         setDriftReport(report);
         setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
 
@@ -2848,8 +2872,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
             return conflicts[0]!;
           });
         }
+
+        setProblemsReport(JSON.parse(rawProblems) as ProjectProblemsReport);
       } catch {
-        // Silently ignore drift-check errors (e.g. directory gone)
+        // Silently ignore drift/problems check errors (e.g. directory gone)
       } finally {
         driftCheckInFlight.current = false;
       }
@@ -5733,6 +5759,49 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                       ))}
                     </div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Problems banner ──────────────────────────────────── */}
+            {problemsReport?.has_problems && !dirty && !isCreating && project.directory && project.agents.length > 0 && (
+              <div className="border-b border-danger/25 bg-danger/10">
+                <div className="flex items-center gap-2 px-6 py-2 text-danger text-[12px]">
+                  <AlertCircle size={13} className="shrink-0" />
+                  <span className="font-medium">
+                    {problemsReport.problems.length === 1 ? "1 configuration problem detected" : `${problemsReport.problems.length} configuration problems detected`}
+                  </span>
+                </div>
+                <div className="px-6 pb-3 space-y-2">
+                  {problemsReport.problems.map((problem, i) => (
+                    <div key={i} className="rounded-md border border-danger/20 bg-danger/5 px-3 py-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[12px] font-semibold text-danger mb-0.5">{problem.title}</div>
+                          <div className="text-[11px] text-danger/80 leading-snug">{problem.description}</div>
+                          {problem.resources.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {problem.resources.map((r) => (
+                                <span key={r} className="font-mono text-[10px] bg-danger/10 border border-danger/20 rounded px-1.5 py-0.5 text-danger/70">
+                                  {r}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {problem.reference_url && (
+                          <a
+                            href={problem.reference_url}
+                            onClick={handleExternalLinkClick(problem.reference_url)}
+                            className="shrink-0 flex items-center gap-1 text-[11px] text-danger/70 hover:text-danger underline decoration-danger/30 transition-colors mt-0.5"
+                          >
+                            <ExternalLink size={10} />
+                            Docs
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

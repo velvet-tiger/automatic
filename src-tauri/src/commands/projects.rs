@@ -889,6 +889,21 @@ pub fn check_project_drift(name: &str) -> Result<String, String> {
     serde_json::to_string(&report).map_err(|e| e.to_string())
 }
 
+/// Check for known configuration problems in a project.
+///
+/// Currently detects MCP server name collisions between the project-local
+/// `.mcp.json` and the Claude Code user-scoped config (`~/.claude.json`).
+/// Returns a JSON-serialised [`sync::ProjectProblemsReport`].
+/// This is a read-only operation.
+#[tauri::command]
+pub fn check_project_problems(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let report = sync::check_project_problems(&project)?;
+    serde_json::to_string(&report).map_err(|e| e.to_string())
+}
+
 /// Adopt a stale skill by adding it to the project's skill list and re-syncing.
 ///
 /// `skill_name` is the bare skill name (e.g. `"my-skill"`).  The skill must
