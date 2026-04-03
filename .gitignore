@@ -44,6 +44,7 @@ Thumbs.db
 /.mcp.json
 /.automatic/
 /tmp
+/.cargo/local.toml
 
 # OpenCode local config
 /opencode.json
