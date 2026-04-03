@@ -103,6 +103,9 @@
   --danger: #ef4444;
   --danger-hover: #f87171;
 
+  --scrollbar-thumb: #3A3B42;
+  --scrollbar-thumb-hover: #4A4B52;
+
   --icon-agent: var(--brand);
   --icon-skill: var(--brand);
   --icon-mcp: var(--brand);
@@ -368,6 +371,9 @@
   --warning-hover: #fbbf24;
   --danger: #ef4444;
   --danger-hover: #f87171;
+
+  --scrollbar-thumb: #c4c8d0;
+  --scrollbar-thumb-hover: #a8adb8;
 }
 
 [data-theme="corporate-light"] {
@@ -422,6 +428,9 @@
   --warning-hover: #8a8a8a;
   --danger: #3a3a3a;
   --danger-hover: #5a5a5a;
+
+  --scrollbar-thumb: #c0c0c0;
+  --scrollbar-thumb-hover: #a0a0a0;
 }
 
 [data-theme="accessible"] {
@@ -472,6 +481,9 @@
   --warning-hover: #78350f;
   --danger: #9f1239;       /* Rose-900 — 9.1:1 on white */
   --danger-hover: #881337;
+
+  --scrollbar-thumb: #9ca3af;  /* Gray-400 — visible on white */
+  --scrollbar-thumb-hover: #6b7280; /* Gray-500 */
 }
 
 /* Accessible theme: WCAG 2.2 compliance overrides.
@@ -529,6 +541,9 @@
   --warning-hover: #fbbf24;
   --danger: #ef4444;
   --danger-hover: #f87171;
+
+  --scrollbar-thumb: #c4c4c8;
+  --scrollbar-thumb-hover: #a8a8b0;
 }
 
 
@@ -589,14 +604,14 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #3A3B42;
+  background: var(--scrollbar-thumb, #3A3B42);
   border: 3px solid transparent;
   background-clip: padding-box;
   border-radius: 9999px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #4A4B52;
+  background: var(--scrollbar-thumb-hover, #4A4B52);
   border: 3px solid transparent;
   background-clip: padding-box;
 }
