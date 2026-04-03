@@ -297,11 +297,45 @@ jobs:
 
           export PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-          # Fetch release notes from the draft release
-          export RELEASE_NOTES=$(gh release view "$TAG" --json body -q '.body' 2>/dev/null || echo "")
-
           python3 - <<PYEOF
-          import json, glob, os
+          import glob
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+
+          def read_release_notes(version: str, tag: str) -> str:
+              changelog_lines = Path('CHANGELOG.md').read_text(encoding='utf-8').splitlines()
+              header_pattern = re.compile(r'^## \[(?P<version>[^\]]+)\]')
+              target_versions = {version, tag, version.removeprefix('v'), tag.removeprefix('v')}
+
+              current_version = None
+              collected = []
+
+              for line in changelog_lines:
+                  header_match = header_pattern.match(line)
+                  if header_match:
+                      if current_version in target_versions:
+                          break
+                      current_version = header_match.group('version')
+                      continue
+
+                  if current_version not in target_versions:
+                      continue
+
+                  if line.strip() == '---':
+                      break
+
+                  collected.append(line)
+
+              notes = '\n'.join(collected).strip()
+              if not notes:
+                  targets = ', '.join(sorted(target_versions))
+                  print(f'WARNING: Could not find changelog notes for release version/tag: {targets}')
+                  return ''
+
+              return notes
 
           darwin_sig_f = glob.glob('sigs/macos/*.app.tar.gz.sig')[0]
           darwin_sig  = open(darwin_sig_f).read().strip()
@@ -309,10 +343,11 @@ jobs:
           linux_sig   = open(linux_sig_f).read().strip()
           win_sig_f   = glob.glob('sigs/windows/*-setup.exe.sig')[0]
           win_sig     = open(win_sig_f).read().strip()
+          release_notes = read_release_notes(os.environ['VERSION'], os.environ['TAG'])
 
           payload = {
               "version": os.environ['VERSION'],
-              "notes": os.environ.get('RELEASE_NOTES', '').strip(),
+              "notes": release_notes,
               "pub_date": os.environ['PUB_DATE'],
               "platforms": {
                   "darwin-aarch64": {"signature": darwin_sig, "url": os.environ['DARWIN_URL']},

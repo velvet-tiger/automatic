@@ -703,15 +703,9 @@ mod tests {
         let result = merge_templates_into_project(&mut project, &[tmpl1, tmpl2])
             .expect("merge should succeed");
 
-        assert_eq!(
-            result.project.skills,
-            vec!["skill-a", "skill-b", "skill-c"]
-        );
+        assert_eq!(result.project.skills, vec!["skill-a", "skill-b", "skill-c"]);
         assert_eq!(result.project.agents, vec!["claude", "opencode"]);
-        assert_eq!(
-            result.project.user_agents,
-            vec!["agent-x", "agent-y"]
-        );
+        assert_eq!(result.project.user_agents, vec!["agent-x", "agent-y"]);
     }
 
     #[test]
@@ -928,8 +922,7 @@ mod tests {
         let mut project = empty_project();
         project.skills = vec!["skill-a".into()];
 
-        let result =
-            merge_templates_into_project(&mut project, &[]).expect("merge should succeed");
+        let result = merge_templates_into_project(&mut project, &[]).expect("merge should succeed");
 
         assert_eq!(result.project.skills, vec!["skill-a"]);
         assert!(result.pending_unified.is_empty());

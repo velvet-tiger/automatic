@@ -89,7 +89,10 @@ const BUNDLED_SKILL_JSON: &str = include_str!("../../assets/skills/skill.json");
 /// Skills listed in `skill.json` are auto-installed; all others are
 /// available on demand (e.g. selected via a project template).
 const BUNDLED_SKILL_CONTENTS: &[(&str, &str)] = &[
-    ("automatic", include_str!("../../assets/skills/automatic/SKILL.md")),
+    (
+        "automatic",
+        include_str!("../../assets/skills/automatic/SKILL.md"),
+    ),
     (
         "automatic-features",
         include_str!("../../assets/skills/automatic-features/SKILL.md"),
@@ -155,7 +158,10 @@ const BUNDLED_SKILL_CONTENTS: &[(&str, &str)] = &[
         "terraform-skill",
         include_str!("../../assets/skills/terraform-skill/SKILL.md"),
     ),
-    ("php-pro", include_str!("../../assets/skills/php-pro/SKILL.md")),
+    (
+        "php-pro",
+        include_str!("../../assets/skills/php-pro/SKILL.md"),
+    ),
     (
         "python-pro",
         include_str!("../../assets/skills/python-pro/SKILL.md"),

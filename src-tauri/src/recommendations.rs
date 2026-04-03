@@ -938,11 +938,17 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(existing, id1, "dedup query should find the first inserted row");
+        assert_eq!(
+            existing, id1,
+            "dedup query should find the first inserted row"
+        );
 
         // The raw insert helper bypasses dedup, so two rows exist.
         // Verify the query only returns the first match.
-        assert!(id1 != id2, "raw inserts create separate rows (dedup is in add_recommendation)");
+        assert!(
+            id1 != id2,
+            "raw inserts create separate rows (dedup is in add_recommendation)"
+        );
     }
 
     #[test]
@@ -957,7 +963,10 @@ mod tests {
             params!["proj", "skill", "php-pro"],
             |row| row.get(0),
         );
-        assert!(existing.is_ok(), "case-insensitive match should find existing row");
+        assert!(
+            existing.is_ok(),
+            "case-insensitive match should find existing row"
+        );
     }
 
     #[test]
@@ -973,7 +982,10 @@ mod tests {
             params!["proj", "skill", "php-pro"],
             |row| row.get(0),
         );
-        assert!(existing.is_err(), "dismissed recs should not block new pending inserts");
+        assert!(
+            existing.is_err(),
+            "dismissed recs should not block new pending inserts"
+        );
     }
 
     #[test]
