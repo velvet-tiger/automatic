@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.0.0-beta.6] - 2026-04-04
+
+### Fixed
+
+- Stop forcing zstd pkg-config in repo config so Windows and macOS cross-target release builds do not fail. (f54a9a1)
+
 ## [1.0.0-beta.5] - 2026-04-03
 
 ### Added
