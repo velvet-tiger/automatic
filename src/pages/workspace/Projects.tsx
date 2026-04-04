@@ -12,7 +12,7 @@ import { useCurrentUser } from "../../contexts/ProfileContext";
 import { useTaskLog } from "../../contexts/TaskLogContext";
 import { MemoryBrowser } from "../../components/MemoryBrowser";
 import { ClaudeMemoryPanel } from "../../components/ClaudeMemoryPanel";
-import Features, { type Feature } from "../../plugins/build/Features";
+import Features from "../../plugins/build/Features";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { handleExternalLinkClick } from "../../lib/externalLinks";
@@ -2554,8 +2554,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   // Memory state
   const [memories, setMemories] = useState<Record<string, { value: string; timestamp: string; source: string | null }>>({});
   const [loadingMemories, setLoadingMemories] = useState(false);
-  const [buildItems, setBuildItems] = useState<Feature[]>([]);
-  const [loadingBuildItems, setLoadingBuildItems] = useState(false);
+
 
   // Groups state — names of all groups this project belongs to, and the full
   // list of all available groups (for the "add to group" picker).
@@ -3901,22 +3900,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     }
   };
 
-  const loadBuildItems = async (projectName: string) => {
-    try {
-      setLoadingBuildItems(true);
-      const result = await invoke<Feature[]>("list_features", { project: projectName });
-      const recent = [...result]
-        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-        .slice(0, 4);
-      setBuildItems(recent);
-    } catch (err: any) {
-      console.error("Failed to load build items:", err);
-      setBuildItems([]);
-    } finally {
-      setLoadingBuildItems(false);
-    }
-  };
-
   const loadProjectFiles = async (name: string) => {
     try {
       const raw: string = await invoke("get_project_file_info", { name });
@@ -4141,7 +4124,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       await loadActivity(name);
       await loadRecommendations(name);
       await loadContext(name);
-      await loadBuildItems(name);
       // Reset activity tab pagination for the newly selected project
       setActivityPage(0);
       setActivityPageEntries([]);
@@ -4207,7 +4189,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       await loadGroups(name);
       await loadActivity(name);
       await loadContext(name);
-      await loadBuildItems(name);
       notifyProjectUpdated();
       // Reset activity tab pagination on project reload
       setActivityPage(0);
@@ -8285,34 +8266,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                               </div>
                             )}
                           </SummarySidebarSection>
-
-                          {(project?.tools ?? []).includes("build") && (
-                          <SummarySidebarSection title="Build">
-                            {loadingBuildItems ? (
-                              <p className="text-[12px] text-text-muted">Loading build items…</p>
-                            ) : buildItems.length === 0 ? (
-                              <p className="text-[12px] text-text-muted">No build items yet.</p>
-                            ) : (
-                              <div className="space-y-2">
-                                {buildItems.map((item) => (
-                                  <button
-                                    key={item.id}
-                                    onClick={() => selectTab("features")}
-                                    className="flex w-full items-start justify-between gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-sidebar"
-                                  >
-                                    <div className="min-w-0">
-                                      <div className="truncate text-[12px] font-medium text-text-base">{item.title}</div>
-                                      <div className="mt-0.5 text-[11px] text-text-muted">{relativeTime(item.updated_at)}</div>
-                                    </div>
-                                    <span className="shrink-0 rounded-full bg-bg-sidebar px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
-                                      {item.state.replace(/_/g, " ")}
-                                    </span>
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </SummarySidebarSection>
-                          )}
 
                           <SummarySidebarSection title="Memory">
                             {loadingMemories ? (
