@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.0.0-beta.7] - 2026-04-04
+
+### Fixed
+
+- Bump the Tauri app config version so generated `latest.json` matches the release version instead of stale beta.4 metadata. (c7f595c)
+
 ## [1.0.0-beta.6] - 2026-04-04
 
 ### Fixed
