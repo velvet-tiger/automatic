@@ -12,7 +12,7 @@ import { useCurrentUser } from "../../contexts/ProfileContext";
 import { useTaskLog } from "../../contexts/TaskLogContext";
 import { MemoryBrowser } from "../../components/MemoryBrowser";
 import { ClaudeMemoryPanel } from "../../components/ClaudeMemoryPanel";
-import Features, { type Feature } from "./Features";
+import Features, { type Feature } from "../../plugins/build/Features";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { handleExternalLinkClick } from "../../lib/externalLinks";
@@ -2487,7 +2487,9 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         { id: "activity", label: "Activity" },
       ],
     },
-    { id: "planning", label: "Build", tabs: [{ id: "features", label: "Features" }] },
+    // The Build group is only visible when the "build" tool is enabled on the
+    // selected project. Removing the tool hides the tab but does not delete data.
+    ...((project?.tools ?? []).includes("build") ? [{ id: "planning" as ProjectGroup, label: "Build", tabs: [{ id: "features" as ProjectTab, label: "Features" }] }] : []),
     { id: "insights", label: "Insights", tabs: [{ id: "recommendations", label: "Recommendations" }] },
     // "tools" group has no static tabs — sub-tabs are built dynamically from
     // registered tool entries and rendered separately in the secondary tab bar.
@@ -8284,6 +8286,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                             )}
                           </SummarySidebarSection>
 
+                          {(project?.tools ?? []).includes("build") && (
                           <SummarySidebarSection title="Build">
                             {loadingBuildItems ? (
                               <p className="text-[12px] text-text-muted">Loading build items…</p>
@@ -8309,6 +8312,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                               </div>
                             )}
                           </SummarySidebarSection>
+                          )}
 
                           <SummarySidebarSection title="Memory">
                             {loadingMemories ? (
@@ -9930,7 +9934,7 @@ interface ProjectToolEntry {
   description: string;
   url: string;
   github_repo?: string;
-  kind: "cli" | "doc_gen" | "analyser" | "other";
+  kind: "cli" | "doc_gen" | "analyser" | "planning" | "other";
   detect_binary?: string;
   detect_dir?: string;
   plugin_id?: string;
@@ -9943,6 +9947,7 @@ function projectToolKindLabel(kind: ProjectToolEntry["kind"]): string {
     case "cli":      return "CLI";
     case "doc_gen":  return "Doc Generator";
     case "analyser": return "Analyser";
+    case "planning": return "Planning";
     default:         return "Other";
   }
 }

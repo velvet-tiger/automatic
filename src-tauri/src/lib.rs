@@ -24,13 +24,15 @@ pub mod activity;
 pub mod agent;
 pub mod context;
 pub mod core;
-pub mod features;
 pub mod languages;
 pub mod mcp;
 pub mod memory;
 pub mod oauth;
 pub mod plugins;
 pub mod proxy;
+// Re-export the build plugin's features module under its previous top-level
+// path so that mcp.rs and other crates can continue to use `crate::features::`.
+pub use plugins::build::features;
 pub mod recommendations;
 pub mod sync;
 

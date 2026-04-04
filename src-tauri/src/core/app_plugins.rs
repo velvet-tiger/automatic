@@ -166,6 +166,7 @@ struct PluginState {
 /// To add a new plugin: create the plugin module and add one line here.
 fn bundled_plugins() -> Vec<PluginManifest> {
     vec![
+        crate::plugins::build::manifest(),
         crate::plugins::spec_kitty::manifest(),
         crate::plugins::common_docs::manifest(),
     ]

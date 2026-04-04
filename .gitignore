@@ -49,3 +49,9 @@ Thumbs.db
 # OpenCode local config
 /opencode.json
 /.opencode
+
+# The broad "build" ignore pattern above matches plugin directories named
+# "build". Negate them so the build plugin source is tracked.
+!/src-tauri/src/plugins/build/
+!/src/plugins/build/
+

@@ -16,6 +16,8 @@ pub enum ToolKind {
     DocGen,
     /// A code analyser or quality tool.
     Analyser,
+    /// A planning and project management tool (e.g. feature tracker, kanban).
+    Planning,
     /// Any other tool that does not fit the above categories.
     #[default]
     Other,
@@ -27,6 +29,7 @@ impl ToolKind {
             ToolKind::Cli => "CLI",
             ToolKind::DocGen => "Doc Generator",
             ToolKind::Analyser => "Analyser",
+            ToolKind::Planning => "Planning",
             ToolKind::Other => "Other",
         }
     }
