@@ -2472,22 +2472,27 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         { id: "docs_notes", label: "Notes" },
       ],
     },
-    { id: "memory", label: "Memory", tabs: [{ id: "memory", label: "Memory" }] },
-    { id: "activity", label: "Activity", tabs: [{ id: "activity", label: "Activity" }] },
-    { id: "insights", label: "Insights", tabs: [{ id: "recommendations", label: "Recommendations" }] },
   ];
 
-  // Configuration is rendered separately on the far right of the menu bar,
-  // visually separated from the primary navigation groups.
-  const CONFIGURATION_GROUP: { id: ProjectGroup; label: string; tabs: { id: ProjectTab; label: string }[] } = {
-    id: "configuration",
-    label: "Configuration",
-    tabs: [
-      { id: "agents", label: "Providers" },
-      { id: "tools", label: "Tools" },
-      { id: "groups", label: "Groups" },
-    ],
-  };
+  // Project controls — rendered in a secondary bar above the title area, right-aligned.
+  const PROJECT_CONTROLS: {
+    id: ProjectGroup;
+    label: string;
+    tabs: { id: ProjectTab; label: string }[];
+  }[] = [
+    {
+      id: "configuration",
+      label: "Configuration",
+      tabs: [
+        { id: "agents", label: "Providers" },
+        { id: "tools", label: "Tools" },
+        { id: "groups", label: "Groups" },
+      ],
+    },
+    { id: "insights", label: "Insights", tabs: [{ id: "recommendations", label: "Recommendations" }] },
+    { id: "activity", label: "Activity", tabs: [{ id: "activity", label: "Activity" }] },
+    { id: "memory", label: "Memory", tabs: [{ id: "memory", label: "Memory" }] },
+  ];
 
   /** Derive the group for a given tab id */
   function groupForTab(tab: ProjectTab): ProjectGroup {
@@ -2495,8 +2500,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       if (g.id === "summary" && tab === "summary") return "summary";
       if (g.tabs.some((t) => t.id === tab)) return g.id;
     }
-    // Also check the configuration group (rendered separately in the tab bar).
-    if (CONFIGURATION_GROUP.tabs.some((t) => t.id === tab)) return "configuration";
+    // Also check the project controls bar (rendered separately above the title).
+    for (const g of PROJECT_CONTROLS) {
+      if (g.tabs.some((t) => t.id === tab)) return g.id;
+    }
     return "summary";
   }
 
@@ -2526,11 +2533,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     if (group === "summary") {
       setProjectTab("summary");
     } else {
-      // Also check CONFIGURATION_GROUP, which is not part of PROJECT_GROUPS.
+      // Check both PROJECT_GROUPS and PROJECT_CONTROLS for the group definition.
       const g =
-        group === CONFIGURATION_GROUP.id
-          ? CONFIGURATION_GROUP
-          : PROJECT_GROUPS.find((g) => g.id === group);
+        PROJECT_GROUPS.find((g) => g.id === group) ??
+        PROJECT_CONTROLS.find((g) => g.id === group);
       if (g && g.tabs.length > 0) setProjectTab(g.tabs[0]!.id);
     }
   }
@@ -5679,6 +5685,33 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
               </div>
             )}
 
+            {/* ── Project controls bar (Configuration, Insights, Activity, Memory) ── */}
+            {!isCreating && (
+              <div className="flex items-center justify-end gap-0 px-6 border-b border-border-strong/20 bg-bg-input/20 flex-shrink-0">
+                {PROJECT_CONTROLS.map((ctrl) => (
+                  <button
+                    key={ctrl.id}
+                    onClick={() => selectGroup(ctrl.id)}
+                    className={`px-3 py-1.5 text-[12px] font-medium transition-colors relative flex items-center gap-1.5 ${
+                      activeToolName === null && projectGroup === ctrl.id
+                        ? "text-text-base"
+                        : "text-text-muted hover:text-text-base"
+                    }`}
+                  >
+                    {ctrl.label}
+                    {ctrl.id === "insights" && recsDisplayCount > 0 && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
+                        {recsDisplayCount}
+                      </span>
+                    )}
+                    {activeToolName === null && projectGroup === ctrl.id && (
+                      <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* ── Project title ───────────────────────────────────── */}
             {!isCreating && (
               <div className="px-6 pt-5 pb-4 border-b border-border-strong/40 flex-shrink-0 flex items-start justify-between gap-4">
@@ -6277,11 +6310,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   }`}
                 >
                   {group.label}
-                  {group.id === "insights" && recsDisplayCount > 0 && (
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
-                      {recsDisplayCount}
-                    </span>
-                  )}
                   {activeToolName === null && projectGroup === group.id && (
                     <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
                   )}
@@ -6306,31 +6334,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   )}
                 </button>
               ))}
-              {/* Spacer pushes Configuration to the far right */}
-              <div className="flex-1" />
-              {/* Separator + Configuration tab pinned to the far right */}
-              <div className="flex items-center border-l border-border-strong/40 ml-2 pl-2">
-                <button
-                  onClick={() => selectGroup(CONFIGURATION_GROUP.id)}
-                  className={`px-3 py-2.5 text-[13px] font-medium transition-colors relative flex items-center gap-1.5 ${
-                    activeToolName === null && projectGroup === CONFIGURATION_GROUP.id
-                      ? "text-text-base"
-                      : "text-text-muted hover:text-text-base"
-                  }`}
-                >
-                  {CONFIGURATION_GROUP.label}
-                  {activeToolName === null && projectGroup === CONFIGURATION_GROUP.id && (
-                    <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
-                  )}
-                </button>
-              </div>
+              
             </div>
             {/* Secondary sub-tabs (only shown when a static group with sub-tabs is active) */}
             {activeToolName === null && projectGroup !== "summary" && (() => {
               const activeGroup =
-                projectGroup === CONFIGURATION_GROUP.id
-                  ? CONFIGURATION_GROUP
-                  : PROJECT_GROUPS.find((g) => g.id === projectGroup);
+                PROJECT_GROUPS.find((g) => g.id === projectGroup) ??
+                PROJECT_CONTROLS.find((g) => g.id === projectGroup);
               if (!activeGroup || activeGroup.tabs.length <= 1) return null;
               return (
                 <div className="flex items-center gap-0 px-6 border-b border-border-strong/20 bg-bg-input/30 flex-shrink-0">
