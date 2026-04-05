@@ -1499,15 +1499,24 @@ function ProjectCard({
 
   const totalSkills = (project?.skills?.length ?? 0) + (project?.local_skills?.length ?? 0);
   const mcpCount = project?.mcp_servers?.length ?? 0;
-  const agentCount = project?.agents?.length ?? 0;
+  const totalRules = Object.values(project?.file_rules ?? {}).reduce((sum, arr) => sum + arr.length, 0) + (project?.custom_rules?.length ?? 0);
+  const subAgentCount = (project?.custom_agents?.length ?? 0) + (project?.user_agents?.length ?? 0);
+  const commandCount = (project?.custom_commands?.length ?? 0) + (project?.user_commands?.length ?? 0);
 
   return (
     <button
       onClick={() => onSelect(name)}
       className={`group relative w-full h-full text-left bg-bg-input border ${borderClass} rounded-xl p-3 flex flex-col gap-2.5 transition-all hover:bg-surface-hover hover:-translate-y-0.5`}
     >
-      {/* Row 1: title + status */}
-      <div className="flex items-start gap-2.5">
+      {/* Sync status — top right */}
+      {isConfigured && (
+        <div className="absolute top-2.5 right-2.5">
+          <ProjectStatusBadge drift={drift} />
+        </div>
+      )}
+
+      {/* Row 1: title */}
+      <div className="flex items-start gap-2.5 pr-20">
         <div
           className={`mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border ${
             isDrifted
@@ -1522,14 +1531,6 @@ function ProjectCard({
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-semibold text-text-base truncate">{name}</div>
-          <div className="text-[11px] text-text-muted mt-0.5">{agentCount} agent{agentCount !== 1 ? "s" : ""}</div>
-        </div>
-        <div className="flex-shrink-0 mt-0.5">
-          {isConfigured ? (
-            <ProjectStatusBadge drift={drift} />
-          ) : (
-            <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] border border-transparent invisible">-</span>
-          )}
         </div>
       </div>
 
@@ -1562,6 +1563,18 @@ function ProjectCard({
         <span className="flex items-center gap-1">
           <Server size={10} />
           {mcpCount}
+        </span>
+        <span className="flex items-center gap-1">
+          <ScrollText size={10} />
+          {totalRules}
+        </span>
+        <span className="flex items-center gap-1">
+          <Bot size={10} />
+          {subAgentCount}
+        </span>
+        <span className="flex items-center gap-1">
+          <Terminal size={10} />
+          {commandCount}
         </span>
         {project?.updated_at && (
           <span className="ml-auto whitespace-nowrap text-text-muted/70">
