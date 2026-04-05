@@ -7136,7 +7136,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   const totalActive = projectRules.length + customRules.filter(r => r.content.trim()).length;
 
                   return (
-                    <div className="space-y-8">
+                    <div className="flex gap-6">
+                    <div className="flex-1 min-w-0 space-y-8">
 
                       {/* ── Section header ── */}
                       <div className="flex items-center justify-between">
@@ -7152,38 +7153,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           </span>
                         )}
                       </div>
-
-                      {/* ── How rules are written ── */}
-                      <section className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
-                        <div className="px-4 py-3 flex items-start gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[13px] font-medium text-text-base">Write rules to separate files</div>
-                            <p className="text-[12px] text-text-muted mt-0.5">
-                              Instead of embedding rules inline, each rule is saved as its own file under{" "}
-                              <code className="text-[11px] bg-bg-sidebar px-1 rounded">.automatic/instructions/</code>.
-                              The instruction file (CLAUDE.md, AGENTS.md, etc.) becomes a short index that lists them.
-                              Keeps instruction files under 100 lines — the recommended best practice.
-                            </p>
-                          </div>
-                          <button
-                            role="switch"
-                            aria-checked={!!project.instructions_index_mode}
-                            onClick={() => {
-                              setProject({ ...project, instructions_index_mode: !project.instructions_index_mode });
-                              setDirty(true);
-                            }}
-                            className={`flex-shrink-0 mt-0.5 relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                              project.instructions_index_mode ? "bg-brand" : "bg-border-strong/60"
-                            }`}
-                          >
-                            <span
-                              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
-                                project.instructions_index_mode ? "translate-x-4.5" : "translate-x-0.5"
-                              }`}
-                            />
-                          </button>
-                        </div>
-                      </section>
 
                       {/* ── Custom Rules ── */}
                       <section>
@@ -7460,6 +7429,45 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           </button>
                         </div>
                       )}
+                    </div>
+
+                    {/* Help sidebar */}
+                    <div className="w-52 flex-shrink-0">
+                      <div className="rounded-md bg-bg-input border border-border-strong/30 px-3 py-2.5 text-[11px] text-text-muted space-y-2.5 sticky top-0">
+                        <div>
+                          <p className="font-medium text-text-base text-[12px]">Write rules to separate files</p>
+                          <p className="leading-relaxed mt-1">
+                            Instead of embedding rules inline, each rule is saved as its own file under{" "}
+                            <code className="text-[10px] bg-bg-sidebar px-1 rounded">.automatic/instructions/</code>.
+                            The instruction file becomes a short index that lists them.
+                          </p>
+                        </div>
+                        <button
+                          role="switch"
+                          aria-checked={!!project.instructions_index_mode}
+                          onClick={() => {
+                            setProject({ ...project, instructions_index_mode: !project.instructions_index_mode });
+                            setDirty(true);
+                          }}
+                          className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded transition-colors ${
+                            project.instructions_index_mode ? "bg-brand/10 text-brand" : "bg-bg-sidebar text-text-muted"
+                          }`}
+                        >
+                          <span className="text-[11px] font-medium">{project.instructions_index_mode ? "Enabled" : "Disabled"}</span>
+                          <span
+                            className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors flex-shrink-0 ${
+                              project.instructions_index_mode ? "bg-brand" : "bg-border-strong/60"
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+                                project.instructions_index_mode ? "translate-x-3.5" : "translate-x-0.5"
+                              }`}
+                            />
+                          </span>
+                        </button>
+                      </div>
+                    </div>
                     </div>
                   );
                 })()}
