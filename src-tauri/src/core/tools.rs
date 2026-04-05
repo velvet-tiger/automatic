@@ -441,6 +441,7 @@ mod tests {
             binary_path: Some(binary.to_string_lossy().into_owned()),
             detect_dir: None,
             plugin_id: Some("spec-kitty".into()),
+            provides_tab: false,
             created_at: "2026-01-01T00:00:00Z".into(),
         };
 

@@ -4,6 +4,29 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-05
+
+### Added
+
+- Convert Build to a per-project plugin with tool declaration. (`4e671a2`)
+- Redesign project nav with Configuration far-right and tools declaring provides_tab. (`559b1e9`)
+- Promote Skills, MCP, Agents, Commands to top-level project tabs. (`28100ee`)
+- Promote Instructions and Rules to top-level project tabs. (`60b86f3`)
+- Promote Memory and Activity to top-level tabs, remove Runtime group. (`8bfbf9c`)
+- Add right-aligned project controls bar with Configuration, Insights, Activity, Memory. (`0a216a7`)
+
+### Fixed
+
+- Load activity data when selecting Activity via project controls bar. (`ddb63af`)
+
+### Changed
+
+- Improve ProjectCard layout and add resource counts. (`93fd153`)
+- Move 'Write rules to separate files' into a right help sidebar on Rules tab. (`9b98468`)
+- Move Groups 'How groups work' callout into a small right help sidebar. (`5806ba3`)
+- Move Groups sub-tab from Context to Configuration. (`8550b8a`)
+- Remove Build card from project summary tab. (`42bbb04`)
+
 ## [1.0.0-beta.7] - 2026-04-04
 
 ### Fixed
