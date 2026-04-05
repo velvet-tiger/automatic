@@ -2461,7 +2461,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         { id: "project_file", label: "Project Instructions" },
         { id: "rules", label: "Rules" },
         { id: "context", label: "Context" },
-        { id: "groups", label: "Groups" },
       ],
     },
     {
@@ -2492,6 +2491,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     tabs: [
       { id: "agents", label: "Providers" },
       { id: "tools", label: "Tools" },
+      { id: "groups", label: "Groups" },
     ],
   };
 
