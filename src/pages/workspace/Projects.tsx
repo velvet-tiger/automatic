@@ -2537,7 +2537,18 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       const g =
         PROJECT_GROUPS.find((g) => g.id === group) ??
         PROJECT_CONTROLS.find((g) => g.id === group);
-      if (g && g.tabs.length > 0) setProjectTab(g.tabs[0]!.id);
+      if (g && g.tabs.length > 0) {
+        const tab = g.tabs[0]!.id;
+        setProjectTab(tab);
+        // Trigger data loading for tabs that need it.
+        if (tab === "activity" && selectedName) {
+          loadActivityPage(selectedName, 0);
+        }
+        if (tab === "tools") {
+          setToolTab(null);
+          loadToolEntries();
+        }
+      }
     }
   }
 
