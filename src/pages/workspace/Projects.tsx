@@ -2442,7 +2442,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   // Tab navigation within a project
   type ProjectTab = "summary" | "agents" | "commands" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools";
-  type ProjectGroup = "summary" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "configuration" | "instructions" | "documentation" | "runtime" | "insights";
+  type ProjectGroup = "summary" | "project_file" | "rules" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "configuration" | "instructions" | "documentation" | "runtime" | "insights";
 
   const PROJECT_GROUPS: {
     id: ProjectGroup;
@@ -2450,6 +2450,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     tabs: { id: ProjectTab; label: string }[];
   }[] = [
     { id: "summary", label: "Summary", tabs: [] },
+    { id: "project_file", label: "Instructions", tabs: [{ id: "project_file", label: "Instructions" }] },
+    { id: "rules", label: "Rules", tabs: [{ id: "rules", label: "Rules" }] },
     { id: "skills", label: "Skills", tabs: [{ id: "skills", label: "Skills" }] },
     { id: "mcp_servers", label: "MCP", tabs: [{ id: "mcp_servers", label: "MCP" }] },
     { id: "custom_agents", label: "Agents", tabs: [{ id: "custom_agents", label: "Agents" }] },
@@ -2458,8 +2460,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       id: "instructions",
       label: "Context",
       tabs: [
-        { id: "project_file", label: "Project Instructions" },
-        { id: "rules", label: "Rules" },
         { id: "context", label: "Context" },
       ],
     },
