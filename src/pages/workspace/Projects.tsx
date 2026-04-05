@@ -2442,7 +2442,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   // Tab navigation within a project
   type ProjectTab = "summary" | "agents" | "commands" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools";
-  type ProjectGroup = "summary" | "project_file" | "rules" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "configuration" | "instructions" | "documentation" | "runtime" | "insights";
+  type ProjectGroup = "summary" | "project_file" | "rules" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "configuration" | "instructions" | "documentation" | "memory" | "activity" | "insights";
 
   const PROJECT_GROUPS: {
     id: ProjectGroup;
@@ -2472,14 +2472,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         { id: "docs_notes", label: "Notes" },
       ],
     },
-    {
-      id: "runtime",
-      label: "Runtime",
-      tabs: [
-        { id: "memory", label: "Memory" },
-        { id: "activity", label: "Activity" },
-      ],
-    },
+    { id: "memory", label: "Memory", tabs: [{ id: "memory", label: "Memory" }] },
+    { id: "activity", label: "Activity", tabs: [{ id: "activity", label: "Activity" }] },
     { id: "insights", label: "Insights", tabs: [{ id: "recommendations", label: "Recommendations" }] },
   ];
 
