@@ -31,6 +31,7 @@ pub fn manifest() -> PluginManifest {
             kind: ToolKind::Planning,
             detect_binary: None,
             detect_dir: None,
+            provides_tab: true,
         }),
         skills: vec![],
         rules: vec![],

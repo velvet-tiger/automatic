@@ -13,6 +13,7 @@ import { useTaskLog } from "../../contexts/TaskLogContext";
 import { MemoryBrowser } from "../../components/MemoryBrowser";
 import { ClaudeMemoryPanel } from "../../components/ClaudeMemoryPanel";
 import Features from "../../plugins/build/Features";
+import { SpecKittyPanel } from "../../plugins/spec-kitty/SpecKittyPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { handleExternalLinkClick } from "../../lib/externalLinks";
@@ -2440,8 +2441,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "commands" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "features" | "activity" | "recommendations";
-  type ProjectGroup = "summary" | "configuration" | "instructions" | "documentation" | "runtime" | "planning" | "insights" | "tools";
+  type ProjectTab = "summary" | "agents" | "commands" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools";
+  type ProjectGroup = "summary" | "configuration" | "instructions" | "documentation" | "runtime" | "insights";
 
   const PROJECT_GROUPS: {
     id: ProjectGroup;
@@ -2449,17 +2450,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     tabs: { id: ProjectTab; label: string }[];
   }[] = [
     { id: "summary", label: "Summary", tabs: [] },
-    {
-      id: "configuration",
-      label: "Configuration",
-      tabs: [
-        { id: "agents", label: "Providers" },
-        { id: "commands", label: "Commands" },
-        { id: "custom_agents", label: "Agents" },
-        { id: "skills", label: "Skills" },
-        { id: "mcp_servers", label: "MCP Servers" },
-      ],
-    },
     {
       id: "instructions",
       label: "Context",
@@ -2487,14 +2477,23 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         { id: "activity", label: "Activity" },
       ],
     },
-    // The Build group is only visible when the "build" tool is enabled on the
-    // selected project. Removing the tool hides the tab but does not delete data.
-    ...((project?.tools ?? []).includes("build") ? [{ id: "planning" as ProjectGroup, label: "Build", tabs: [{ id: "features" as ProjectTab, label: "Features" }] }] : []),
     { id: "insights", label: "Insights", tabs: [{ id: "recommendations", label: "Recommendations" }] },
-    // "tools" group has no static tabs — sub-tabs are built dynamically from
-    // registered tool entries and rendered separately in the secondary tab bar.
-    { id: "tools", label: "Tools", tabs: [] },
   ];
+
+  // Configuration is rendered separately on the far right of the menu bar,
+  // visually separated from the primary navigation groups.
+  const CONFIGURATION_GROUP: { id: ProjectGroup; label: string; tabs: { id: ProjectTab; label: string }[] } = {
+    id: "configuration",
+    label: "Configuration",
+    tabs: [
+      { id: "agents", label: "Providers" },
+      { id: "commands", label: "Commands" },
+      { id: "custom_agents", label: "Agents" },
+      { id: "skills", label: "Skills" },
+      { id: "mcp_servers", label: "MCP Servers" },
+      { id: "tools", label: "Tools" },
+    ],
+  };
 
   /** Derive the group for a given tab id */
   function groupForTab(tab: ProjectTab): ProjectGroup {
@@ -2502,6 +2501,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       if (g.id === "summary" && tab === "summary") return "summary";
       if (g.tabs.some((t) => t.id === tab)) return g.id;
     }
+    // Also check the configuration group (rendered separately in the tab bar).
+    if (CONFIGURATION_GROUP.tabs.some((t) => t.id === tab)) return "configuration";
     return "summary";
   }
 
@@ -2510,9 +2511,12 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   // Tool sub-tab state: null = show the overview; string = tool name of the selected tool detail tab.
   const [toolTab, setToolTab] = useState<string | null>(null);
-  // Tool entries loaded for the tools group — shared by the secondary tab bar and content panel.
+  // Tool entries loaded — shared by the Configuration → Tools sub-tab and top-level tool tabs.
   const [toolEntries, setToolEntries] = useState<ProjectToolEntry[]>([]);
   const [toolEntriesLoading, setToolEntriesLoading] = useState(false);
+
+  // When non-null, a top-level tool tab is active (overrides projectGroup/projectTab indicators).
+  const [activeToolName, setActiveToolName] = useState<string | null>(null);
 
   function loadToolEntries() {
     setToolEntriesLoading(true);
@@ -2523,24 +2527,23 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   /** Switch to a group; auto-select first sub-tab (or "summary") */
   function selectGroup(group: ProjectGroup) {
+    setActiveToolName(null);
     setProjectGroup(group);
-    if (group === "tools") {
-      // Switch to tools group: reset to overview (no tool sub-tab selected).
-      setToolTab(null);
-      setProjectTab("summary");
-      loadToolEntries();
-      return;
-    }
     if (group === "summary") {
       setProjectTab("summary");
     } else {
-      const g = PROJECT_GROUPS.find((g) => g.id === group);
+      // Also check CONFIGURATION_GROUP, which is not part of PROJECT_GROUPS.
+      const g =
+        group === CONFIGURATION_GROUP.id
+          ? CONFIGURATION_GROUP
+          : PROJECT_GROUPS.find((g) => g.id === group);
       if (g && g.tabs.length > 0) setProjectTab(g.tabs[0]!.id);
     }
   }
 
   /** Switch to a specific tab and update the group accordingly */
   function selectTab(tab: ProjectTab) {
+    setActiveToolName(null);
     setProjectTab(tab);
     setProjectGroup(groupForTab(tab));
     if (tab !== "rules") setCustomRuleEditingIdx(null);
@@ -2549,6 +2552,19 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     if (tab === "activity" && selectedName) {
       loadActivityPage(selectedName, 0);
     }
+    if (tab === "tools") {
+      // Reset tool detail view and load available tool entries.
+      setToolTab(null);
+      loadToolEntries();
+    }
+  }
+
+  /** Activate a top-level enabled-tool tab directly from the primary nav bar */
+  function selectTopLevelTool(name: string) {
+    setActiveToolName(name);
+    // Deactivate static group/tab highlights.
+    setProjectGroup("summary");
+    setProjectTab("summary");
   }
 
   // Memory state
@@ -2823,6 +2839,9 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     setAiRecsLastRunAt(null);
     setAiSkillsSuggestions([]);
     setAiMcpSuggestions([]);
+    setActiveToolName(null);
+    // Load tool entries eagerly so enabled tools can appear in the top-level nav.
+    if (selectedName) loadToolEntries();
   }, [selectedName]);
 
   // Fetch plugin-locked skills/rules whenever the project's tools change.
@@ -6258,7 +6277,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   key={group.id}
                   onClick={() => selectGroup(group.id)}
                   className={`px-3 py-2.5 text-[13px] font-medium transition-colors relative flex items-center gap-1.5 ${
-                    projectGroup === group.id
+                    activeToolName === null && projectGroup === group.id
                       ? "text-text-base"
                       : "text-text-muted hover:text-text-base"
                   }`}
@@ -6269,40 +6288,55 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                       {recsDisplayCount}
                     </span>
                   )}
-                  {projectGroup === group.id && (
+                  {activeToolName === null && projectGroup === group.id && (
                     <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
                   )}
                 </button>
               ))}
+              {/* Enabled tools that declare provides_tab get a top-level tab. */}
+              {toolEntries.filter((e) =>
+                e.provides_tab && (project?.tools ?? []).includes(e.name)
+              ).map((entry) => (
+                <button
+                  key={entry.name}
+                  onClick={() => selectTopLevelTool(entry.name)}
+                  className={`px-3 py-2.5 text-[13px] font-medium transition-colors relative flex items-center gap-1.5 ${
+                    activeToolName === entry.name
+                      ? "text-text-base"
+                      : "text-text-muted hover:text-text-base"
+                  }`}
+                >
+                  {entry.display_name}
+                  {activeToolName === entry.name && (
+                    <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
+                  )}
+                </button>
+              ))}
+              {/* Spacer pushes Configuration to the far right */}
+              <div className="flex-1" />
+              {/* Separator + Configuration tab pinned to the far right */}
+              <div className="flex items-center border-l border-border-strong/40 ml-2 pl-2">
+                <button
+                  onClick={() => selectGroup(CONFIGURATION_GROUP.id)}
+                  className={`px-3 py-2.5 text-[13px] font-medium transition-colors relative flex items-center gap-1.5 ${
+                    activeToolName === null && projectGroup === CONFIGURATION_GROUP.id
+                      ? "text-text-base"
+                      : "text-text-muted hover:text-text-base"
+                  }`}
+                >
+                  {CONFIGURATION_GROUP.label}
+                  {activeToolName === null && projectGroup === CONFIGURATION_GROUP.id && (
+                    <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
+                  )}
+                </button>
+              </div>
             </div>
-            {/* Secondary sub-tabs (only shown when a group with sub-tabs is active) */}
-            {projectGroup !== "summary" && (() => {
-              // Tools group: dynamic sub-tabs from loaded tool entries.
-              if (projectGroup === "tools") {
-                if (toolEntries.length === 0) return null;
-                return (
-                  <div className="flex items-center gap-0 px-6 border-b border-border-strong/20 bg-bg-input/30 flex-shrink-0">
-                    {toolEntries.map((entry) => (
-                      <button
-                        key={entry.name}
-                        onClick={() => setToolTab(entry.name)}
-                        className={`px-3 py-2 text-[12px] font-medium transition-colors relative flex items-center gap-1.5 ${
-                          toolTab === entry.name
-                            ? "text-text-base"
-                            : "text-text-muted hover:text-text-base"
-                        }`}
-                      >
-                        {entry.display_name}
-                        {toolTab === entry.name && (
-                          <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand/60 rounded-t" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                );
-              }
-              // All other groups: static sub-tabs.
-              const activeGroup = PROJECT_GROUPS.find((g) => g.id === projectGroup);
+            {/* Secondary sub-tabs (only shown when a static group with sub-tabs is active) */}
+            {activeToolName === null && projectGroup !== "summary" && (() => {
+              const activeGroup =
+                projectGroup === CONFIGURATION_GROUP.id
+                  ? CONFIGURATION_GROUP
+                  : PROJECT_GROUPS.find((g) => g.id === projectGroup);
               if (!activeGroup || activeGroup.tabs.length <= 1) return null;
               return (
                 <div className="flex items-center gap-0 px-6 border-b border-border-strong/20 bg-bg-input/30 flex-shrink-0">
@@ -6928,15 +6962,41 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
               </div>
             )}
 
-            {/* Features tab — full-height, no padding (handles its own layout) */}
-            {projectTab === "features" && projectGroup === "planning" && selectedName && (
+            {/* ── Top-level tool tab panels ──────────────────────── */}
+            {activeToolName === "build" && selectedName && (
               <div className="flex-1 overflow-hidden">
                 <Features projectName={selectedName} />
               </div>
             )}
+            {activeToolName === "spec-kitty" && project.directory && (
+              <div className="flex-1 overflow-hidden">
+                <SpecKittyPanel
+                  projectDir={project.directory}
+                  sidebar={(() => {
+                    const entry = toolEntries.find((e) => e.name === "spec-kitty");
+                    if (!entry) return null;
+                    return (
+                      <ToolInfoSidebar
+                        entry={entry}
+                        active
+                        onAdd={() => {}}
+                        onRemove={() => {
+                          const tools = (project.tools ?? []).filter((t) => t !== "spec-kitty");
+                          const updated = { ...project, tools, updated_at: new Date().toISOString() };
+                          setProject(updated);
+                          setDirty(false);
+                          saveProjectSnapshot(updated);
+                          setActiveToolName(null);
+                        }}
+                      />
+                    );
+                  })()}
+                />
+              </div>
+            )}
 
-            {/* ── Tools group ──────────────────────────────────────────── */}
-            {projectGroup === "tools" && (
+            {/* ── Tools tab (under Configuration) ──────────────────── */}
+            {activeToolName === null && projectTab === "tools" && (
               <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
                 <div className="space-y-8">
                   {toolTab === null ? (
@@ -6987,7 +7047,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
             )}
 
             {/* Other tabs (padded container) */}
-            {projectGroup !== "tools" && projectTab !== "project_file" && projectTab !== "context" && projectTab !== "features" && (
+            {activeToolName === null && projectTab !== "tools" && projectTab !== "project_file" && projectTab !== "context" && (
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div className="space-y-8">
 
@@ -9893,6 +9953,8 @@ interface ProjectToolEntry {
   plugin_id?: string;
   /** `true` = binary on PATH, `false` = not found, `null` = no detect_binary */
   detected: boolean | null;
+  /** When `true`, this tool contributes a top-level tab in the project nav. */
+  provides_tab: boolean;
 }
 
 function projectToolKindLabel(kind: ProjectToolEntry["kind"]): string {

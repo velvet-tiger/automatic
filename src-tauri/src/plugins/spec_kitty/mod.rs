@@ -30,6 +30,7 @@ pub fn manifest() -> PluginManifest {
             kind: ToolKind::DocGen,
             detect_binary: Some("spec-kitty".to_string()),
             detect_dir: Some("kitty-specs".to_string()),
+            provides_tab: true,
         }),
         skills: vec![],
         rules: vec![],

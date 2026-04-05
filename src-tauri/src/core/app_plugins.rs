@@ -60,6 +60,11 @@ pub struct PluginToolDeclaration {
     /// checks whether `<project_dir>/<detect_dir>` exists.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detect_dir: Option<String>,
+
+    /// When `true`, this tool contributes a top-level tab in the project UI.
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub provides_tab: bool,
 }
 
 impl PluginToolDeclaration {
@@ -78,6 +83,7 @@ impl PluginToolDeclaration {
             detect_dir: self.detect_dir.clone(),
             plugin_id: Some(plugin_id.to_string()),
             created_at: chrono::Utc::now().to_rfc3339(),
+            provides_tab: self.provides_tab,
         };
 
         if let Ok(existing) = read_tool_definition(&self.name) {

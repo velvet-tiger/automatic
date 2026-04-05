@@ -30,6 +30,7 @@ pub fn manifest() -> PluginManifest {
             kind: ToolKind::DocGen,
             detect_binary: None,
             detect_dir: None,
+            provides_tab: false,
         }),
         skills: vec![
             PluginSkillDeclaration {

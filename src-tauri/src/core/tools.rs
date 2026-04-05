@@ -100,6 +100,11 @@ pub struct ToolDefinition {
     /// ISO 8601 timestamp when the tool was registered.
     #[serde(default)]
     pub created_at: String,
+
+    /// When `true`, this tool contributes a top-level tab in the project UI.
+    /// Defaults to `false` — most tools integrate via other surfaces.
+    #[serde(default)]
+    pub provides_tab: bool,
 }
 
 /// A `ToolDefinition` augmented with runtime detection state.
