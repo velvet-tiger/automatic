@@ -2442,7 +2442,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   // Tab navigation within a project
   type ProjectTab = "summary" | "agents" | "commands" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools";
-  type ProjectGroup = "summary" | "configuration" | "instructions" | "documentation" | "runtime" | "insights";
+  type ProjectGroup = "summary" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "configuration" | "instructions" | "documentation" | "runtime" | "insights";
 
   const PROJECT_GROUPS: {
     id: ProjectGroup;
@@ -2450,6 +2450,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     tabs: { id: ProjectTab; label: string }[];
   }[] = [
     { id: "summary", label: "Summary", tabs: [] },
+    { id: "skills", label: "Skills", tabs: [{ id: "skills", label: "Skills" }] },
+    { id: "mcp_servers", label: "MCP", tabs: [{ id: "mcp_servers", label: "MCP" }] },
+    { id: "custom_agents", label: "Agents", tabs: [{ id: "custom_agents", label: "Agents" }] },
+    { id: "commands", label: "Commands", tabs: [{ id: "commands", label: "Commands" }] },
     {
       id: "instructions",
       label: "Context",
@@ -2487,10 +2491,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     label: "Configuration",
     tabs: [
       { id: "agents", label: "Providers" },
-      { id: "commands", label: "Commands" },
-      { id: "custom_agents", label: "Agents" },
-      { id: "skills", label: "Skills" },
-      { id: "mcp_servers", label: "MCP Servers" },
       { id: "tools", label: "Tools" },
     ],
   };
@@ -2802,7 +2802,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   // After a project is selected via initialProject, switch to the requested tab.
   useEffect(() => {
     if (!initialProjectTab) return;
-    const validTabs = ["summary", "agents", "skills", "mcp_servers", "groups", "project_file", "rules", "context", "memory", "activity", "recommendations"] as const;
+    const validTabs = ["summary", "agents", "skills", "mcp_servers", "commands", "custom_agents", "groups", "project_file", "rules", "context", "memory", "activity", "recommendations"] as const;
     type ProjectTab = typeof validTabs[number];
     if (validTabs.includes(initialProjectTab as ProjectTab)) {
       selectTab(initialProjectTab as ProjectTab);
