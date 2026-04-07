@@ -20,7 +20,7 @@ pub fn get_project_file_info(name: &str) -> Result<String, String> {
     for agent_id in &project.agents {
         if let Some(a) = agent::from_id(agent_id) {
             let filename = a.project_file_name().to_string();
-            let exists = project_dir.join(&filename).exists();
+            let exists = project_dir.join(&filename).is_file();
 
             if !seen_filenames.contains(&filename) {
                 seen_filenames.push(filename.clone());
@@ -99,7 +99,7 @@ pub fn read_project_file(name: &str, filename: &str) -> Result<String, String> {
                 seen.insert(f.clone());
 
                 let path = project_dir.join(&f);
-                if path.exists() {
+                if path.is_file() {
                     let mtime = path
                         .metadata()
                         .and_then(|m| m.modified())

@@ -10,7 +10,7 @@ One file per supported agent. Each covers: capabilities, project instructions fi
 | [Kiro](./kiro.md) | `kiro` | `AGENTS.md` | `.kiro/settings/mcp.json` | `.kiro/skills/` | — |
 | [Gemini CLI](./gemini-cli.md) | `gemini` | `GEMINI.md` | `.gemini/settings.json` | `.agents/skills/` | `.gemini/agents/` |
 | [GitHub Copilot](./github-copilot.md) | `copilot` | `.github/copilot-instructions.md` | `.vscode/mcp.json` (`servers` key) | `.agents/skills/` | — |
-| [Cline](./cline.md) | `cline` | `.clinerules` | `.cline/mcp.json` | `.cline/skills/` | — |
+| [Cline](./cline.md) | `cline` | `.clinerules/automatic.md` | Global CLI settings only (`~/.cline/data/settings/cline_mcp_settings.json`) | `.cline/skills/` | — |
 | [Kilo Code](./kilo-code.md) | `kilo` | `AGENTS.md` | `.kilocode/mcp.json` | `.agents/skills/` | — |
 | [Junie](./junie.md) | `junie` | `.junie/guidelines.md` | `.junie/mcp.json` | `.junie/skills/` | — |
 | [Warp](./warp.md) | `warp` | `AGENTS.md` | — (UI only) | `.agents/skills/` | — |

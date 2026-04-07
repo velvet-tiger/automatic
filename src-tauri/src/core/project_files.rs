@@ -21,6 +21,9 @@ pub fn read_project_file(directory: &str, filename: &str) -> Result<String, Stri
     if !path.exists() {
         return Ok(String::new());
     }
+    if path.is_dir() {
+        return Ok(String::new());
+    }
 
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     Ok(strip_index_section(&strip_groups_section(
@@ -42,6 +45,12 @@ pub fn save_project_file(directory: &str, filename: &str, content: &str) -> Resu
     }
 
     let path = dir.join(filename);
+    if path.is_dir() {
+        return Err(format!("Instruction path '{}' is a directory", filename));
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
@@ -273,8 +282,10 @@ pub fn compute_instruction_hashes(project: &Project) -> HashMap<String, String> 
             seen.insert(filename.clone());
 
             let path = dir.join(&filename);
-            if let Ok(content) = fs::read_to_string(&path) {
-                hashes.insert(filename, compute_content_hash(&content));
+            if path.is_file() {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    hashes.insert(filename, compute_content_hash(&content));
+                }
             }
         }
     }
@@ -372,6 +383,45 @@ mod tests {
             on_disk.contains("Be helpful."),
             "User content should be written to CLAUDE.md"
         );
+    }
+
+    #[test]
+    fn read_project_file_returns_empty_for_directory_path() {
+        let dir = tmp();
+        fs::create_dir_all(dir.path().join(".clinerules")).expect("create dir");
+
+        let content = read_project_file(dir.path().to_str().unwrap(), ".clinerules").expect("read");
+
+        assert_eq!(content, "");
+    }
+
+    #[test]
+    fn compute_instruction_hashes_ignores_directory_paths() {
+        let dir = tmp();
+        fs::create_dir_all(dir.path().join(".clinerules")).expect("create dir");
+        fs::write(dir.path().join("CLAUDE.md"), "# Claude").expect("write file");
+
+        let project = make_project(dir.path().to_str().unwrap(), &["claude", "cline"]);
+        let hashes = compute_instruction_hashes(&project);
+
+        assert!(hashes.contains_key("CLAUDE.md"));
+        assert!(!hashes.contains_key(".clinerules"));
+    }
+
+    #[test]
+    fn save_project_file_creates_parent_directories() {
+        let dir = tmp();
+
+        save_project_file(
+            dir.path().to_str().unwrap(),
+            ".clinerules/automatic.md",
+            "# Instructions",
+        )
+        .expect("save");
+
+        let on_disk = fs::read_to_string(dir.path().join(".clinerules").join("automatic.md"))
+            .expect("read saved file");
+        assert_eq!(on_disk, "# Instructions");
     }
 
     // ── Bug: Unified mode should write to ALL agent files ───────────────────
