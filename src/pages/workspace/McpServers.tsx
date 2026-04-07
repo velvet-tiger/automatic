@@ -629,6 +629,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     placeholder="server-name (no spaces/slashes)"
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     autoFocus
                     className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-64"
                   />
@@ -779,6 +782,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                         type="text"
                         value={config.command || ""}
                         onChange={(e) => !isManaged && updateConfig({ command: e.target.value })}
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
                         readOnly={isManaged}
                         placeholder="e.g. npx, node, /usr/local/bin/mcp-server"
                         className={`${inputClass} ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
