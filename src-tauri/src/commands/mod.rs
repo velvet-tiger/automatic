@@ -25,12 +25,12 @@ mod user_agents;
 mod user_commands;
 mod whats_new;
 
+pub use crate::plugins::build::commands::*;
 pub use activity::*;
 pub use agents::*;
 pub use ai::*;
 pub use app_plugins::*;
 pub use credentials::*;
-pub use crate::plugins::build::commands::*;
 pub use flags::*;
 pub use groups::*;
 pub use mcp_servers::*;
