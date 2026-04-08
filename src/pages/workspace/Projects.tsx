@@ -3706,6 +3706,11 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     if (picked) setDocNewPath(picked);
   };
 
+  const handleBrowseDocFile = async (): Promise<void> => {
+    const picked: string | null = await invoke("open_file_dialog");
+    if (picked) setDocNewPath(picked);
+  };
+
   const handleAddDocPath = async (): Promise<void> => {
     if (!docNewPath.trim()) return;
     await addDocPath(docNewPath, docNewPathSummary);
@@ -9037,7 +9042,14 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                      className="w-full rounded-md border border-border-strong/40 bg-bg-sidebar px-3 py-2 text-[12px] font-medium text-text-muted transition-colors hover:bg-surface-hover hover:text-text-base flex items-center justify-center gap-1.5"
                                      title="Pick a directory"
                                    >
-                                     <FolderOpen size={12} /> Browse
+                                     <FolderOpen size={12} /> Browse Dir
+                                   </button>
+                                   <button
+                                     onClick={handleBrowseDocFile}
+                                     className="w-full rounded-md border border-border-strong/40 bg-bg-sidebar px-3 py-2 text-[12px] font-medium text-text-muted transition-colors hover:bg-surface-hover hover:text-text-base flex items-center justify-center gap-1.5"
+                                     title="Pick a file"
+                                   >
+                                     <FileText size={12} /> Browse File
                                    </button>
                                    <button
                                      onClick={handleAddDocPath}
