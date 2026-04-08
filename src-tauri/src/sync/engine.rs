@@ -587,6 +587,16 @@ mod tests {
         project
     }
 
+    fn make_cline_project(dir: &str) -> Project {
+        Project {
+            name: "test-project".to_string(),
+            directory: dir.to_string(),
+            agents: vec!["cline".to_string()],
+            instruction_mode: "per-agent".to_string(),
+            ..Default::default()
+        }
+    }
+
     fn apply_action(
         action: Action,
         project: &mut Project,
@@ -747,5 +757,33 @@ mod tests {
                 assert_instruction_state(&project, instructions_set, rules_set);
             }
         }
+    }
+
+    #[test]
+    fn sync_migrates_legacy_clinerules_file_to_directory() {
+        let dir = tmp();
+        let legacy_content = "# Legacy Cline Instructions\n\nKeep this during upgrade.";
+        fs::write(dir.path().join(".clinerules"), legacy_content).expect("write legacy file");
+        let mut project = make_cline_project(dir.path().to_str().unwrap());
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        let clinerules_dir = dir.path().join(".clinerules");
+        assert!(
+            clinerules_dir.is_dir(),
+            "legacy .clinerules should become a directory"
+        );
+
+        let migrated_path = clinerules_dir.join("automatic.md");
+        let on_disk = fs::read_to_string(&migrated_path).expect("read migrated file");
+        assert!(
+            on_disk.contains(legacy_content),
+            "sync should preserve legacy user instructions during migration"
+        );
+
+        let user_content =
+            read_project_file(dir.path().to_str().unwrap(), ".clinerules/automatic.md")
+                .expect("read migrated project file");
+        assert_eq!(user_content.trim(), legacy_content.trim());
     }
 }

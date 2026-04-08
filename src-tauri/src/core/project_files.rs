@@ -9,6 +9,15 @@ use super::*;
 
 // ── Project Files ────────────────────────────────────────────────────────────
 
+fn legacy_clinerules_file_path(project_dir: &std::path::Path, filename: &str) -> Option<PathBuf> {
+    if !filename.starts_with(".clinerules/") {
+        return None;
+    }
+
+    let legacy_path = project_dir.join(".clinerules");
+    legacy_path.is_file().then_some(legacy_path)
+}
+
 /// Read a project file from the project's directory, stripping any
 /// Automatic-managed sections (skills markers) and rules sections.  Returns
 /// the user-authored content only.
@@ -17,7 +26,16 @@ pub fn read_project_file(directory: &str, filename: &str) -> Result<String, Stri
         return Err("Project has no directory configured".into());
     }
 
-    let path = PathBuf::from(directory).join(filename);
+    let project_dir = PathBuf::from(directory);
+    let requested_path = project_dir.join(filename);
+    let path = if requested_path.exists() {
+        requested_path
+    } else if let Some(legacy_path) = legacy_clinerules_file_path(&project_dir, filename) {
+        legacy_path
+    } else {
+        return Ok(String::new());
+    };
+
     if !path.exists() {
         return Ok(String::new());
     }
@@ -45,6 +63,15 @@ pub fn save_project_file(directory: &str, filename: &str, content: &str) -> Resu
     }
 
     let path = dir.join(filename);
+    if let Some(legacy_path) = legacy_clinerules_file_path(&dir, filename) {
+        fs::remove_file(&legacy_path).map_err(|e| {
+            format!(
+                "Failed to remove legacy Cline instruction file '{}': {}",
+                legacy_path.display(),
+                e
+            )
+        })?;
+    }
     if path.is_dir() {
         return Err(format!("Instruction path '{}' is a directory", filename));
     }
@@ -428,6 +455,46 @@ mod tests {
         let on_disk = fs::read_to_string(dir.path().join(".clinerules").join("automatic.md"))
             .expect("read saved file");
         assert_eq!(on_disk, "# Instructions");
+    }
+
+    #[test]
+    fn read_project_file_falls_back_to_legacy_clinerules_file() {
+        let dir = tmp();
+        fs::write(
+            dir.path().join(".clinerules"),
+            "# Legacy Cline Instructions\n\nKeep existing rules.",
+        )
+        .expect("write legacy file");
+
+        let content = read_project_file(dir.path().to_str().unwrap(), ".clinerules/automatic.md")
+            .expect("read legacy content");
+
+        assert_eq!(
+            content,
+            "# Legacy Cline Instructions\n\nKeep existing rules."
+        );
+    }
+
+    #[test]
+    fn save_project_file_migrates_legacy_clinerules_file_to_directory() {
+        let dir = tmp();
+        fs::write(dir.path().join(".clinerules"), "# Legacy").expect("write legacy file");
+
+        save_project_file(
+            dir.path().to_str().unwrap(),
+            ".clinerules/automatic.md",
+            "# Updated Instructions",
+        )
+        .expect("save");
+
+        let clinerules_path = dir.path().join(".clinerules");
+        assert!(
+            clinerules_path.is_dir(),
+            "legacy file should become a directory"
+        );
+        let on_disk = fs::read_to_string(clinerules_path.join("automatic.md"))
+            .expect("read migrated instruction file");
+        assert_eq!(on_disk, "# Updated Instructions");
     }
 
     // ── Bug: Unified mode should write to ALL agent files ───────────────────
