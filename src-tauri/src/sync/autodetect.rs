@@ -36,10 +36,26 @@ pub(super) fn autodetect_inner(
     let mut updated_project = project.clone();
     let mut discovered_servers: Vec<(String, String)> = Vec::new();
 
-    // Detect which agents are present by asking each agent to check
+    // Detect which agents are present by asking each agent to check.
+    //
+    // If the project already has an explicit agent list (set by the user in the
+    // UI), restrict additions to agents that are both (a) detected in the
+    // directory and (b) already in the user's selection.  This prevents
+    // autodetect from silently adding agents the user never chose.
+    //
+    // For a truly blank project (agents list is empty) we fall back to adding
+    // everything that is detected, giving a useful starting point.
+    let user_agents: std::collections::HashSet<&str> =
+        project.agents.iter().map(|s| s.as_str()).collect();
+    let has_explicit_agents = !user_agents.is_empty();
+
     for a in agent::all() {
         if a.detect_in(&dir) {
-            add_unique(&mut updated_project.agents, a.id());
+            // Only add if the user has no preference yet, or if this agent
+            // is already in the user's explicit selection.
+            if !has_explicit_agents || user_agents.contains(a.id()) {
+                add_unique(&mut updated_project.agents, a.id());
+            }
         }
     }
 

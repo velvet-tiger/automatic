@@ -31,9 +31,11 @@ impl Agent for OpenCode {
     // ── Detection ───────────────────────────────────────────────────────
 
     fn detect_in(&self, dir: &Path) -> bool {
+        // NOTE: `.agents/skills/` is intentionally excluded — Automatic itself
+        // creates that directory when syncing *any* agent, so it is not a
+        // reliable signal that OpenCode is actually in use in this project.
         dir.join("opencode.json").exists()
             || dir.join(".opencode.json").exists()
-            || dir.join(".agents").join("skills").exists()
             || dir.join(".opencode").join("commands").exists()
     }
 
