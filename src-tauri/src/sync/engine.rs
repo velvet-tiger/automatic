@@ -128,10 +128,17 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         &all_selected_skill_names,
         &mut written_files,
     )?;
+    let project_commands_dir = sync_project_commands_step(
+        &dir,
+        project,
+        &workspace_command_contents,
+        &mut written_files,
+    )?;
     let instruction_targets = sync_agent_configs_step(
         &dir,
         project,
         &project_skills_dir,
+        &project_commands_dir,
         &skill_contents,
         &all_selected_skill_names,
         &workspace_command_contents,
@@ -164,10 +171,28 @@ fn sync_project_skills_step(
     Ok(project_skills_dir)
 }
 
+fn sync_project_commands_step(
+    dir: &PathBuf,
+    project: &Project,
+    workspace_command_contents: &[(String, String)],
+    written_files: &mut Vec<String>,
+) -> Result<PathBuf, String> {
+    let project_commands_dir = dir.join(".agents").join("commands");
+    let custom_commands = project.custom_commands.as_deref().unwrap_or(&[]);
+    written_files.extend(agent::copy_commands_to_project(
+        &project_commands_dir,
+        workspace_command_contents,
+        custom_commands,
+    )?);
+
+    Ok(project_commands_dir)
+}
+
 fn sync_agent_configs_step(
     dir: &PathBuf,
     project: &Project,
     project_skills_dir: &PathBuf,
+    project_commands_dir: &PathBuf,
     skill_contents: &[(String, String)],
     all_selected_skill_names: &[String],
     workspace_command_contents: &[(String, String)],
@@ -225,12 +250,22 @@ fn sync_agent_configs_step(
 
                 if let Some(commands_dir) = agent_instance.commands_dir(dir) {
                     let custom_commands = project.custom_commands.as_deref().unwrap_or(&[]);
-                    let command_files = agent::sync_commands_to_dir(
-                        &commands_dir,
-                        workspace_command_contents,
-                        custom_commands,
-                        agent_instance,
-                    )?;
+                    let command_files = if agent_instance.commands_file_ext() == "md" {
+                        agent::symlink_commands_from_project(
+                            &commands_dir,
+                            project_commands_dir,
+                            workspace_command_contents,
+                            custom_commands,
+                            agent_instance,
+                        )?
+                    } else {
+                        agent::sync_commands_to_dir(
+                            &commands_dir,
+                            workspace_command_contents,
+                            custom_commands,
+                            agent_instance,
+                        )?
+                    };
                     written_files.extend(command_files);
                 }
 

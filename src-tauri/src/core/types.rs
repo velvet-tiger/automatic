@@ -296,8 +296,9 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub user_agents: Vec<String>,
     /// Workspace command names selected for this project. These reference files
-    /// in `~/.automatic/commands/` and are written to agent-specific command
-    /// directories for providers that support custom commands.
+    /// in `~/.automatic/commands/`, are copied into the project's canonical
+    /// `.agents/commands/` directory, and may then be linked or transformed
+    /// into agent-specific command directories for providers that support them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub user_commands: Vec<String>,
     /// Inline custom sub-agents stored directly in the project configuration.
@@ -307,7 +308,9 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_agents: Option<Vec<CustomAgent>>,
     /// Inline custom commands stored directly in the project configuration.
-    /// These are written to each agent's command directory during sync.
+    /// These are written to the project's canonical `.agents/commands/`
+    /// directory during sync and may then be linked or transformed into
+    /// agent-specific command directories.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_commands: Option<Vec<CustomCommand>>,
     /// Inline custom skills stored directly in the project configuration.

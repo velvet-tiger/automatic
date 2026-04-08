@@ -55,8 +55,8 @@ pub struct ProjectTemplate {
     pub user_agents: Vec<String>,
     /// Workspace command names (from `~/.automatic/commands/`) to include when
     /// this template is applied to a project.  These map to the project's
-    /// `user_commands` field and are written to each agent's command directory
-    /// during sync.
+    /// `user_commands` field and are first written to `.agents/commands/`
+    /// during sync before any agent-specific linking or conversion happens.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub user_commands: Vec<String>,
     /// Author/provider metadata.  Mirrors the `_author` convention used by

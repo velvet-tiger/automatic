@@ -695,6 +695,94 @@ pub(crate) fn is_managed_command_file(path: &Path) -> bool {
     }
 }
 
+pub(crate) fn copy_commands_to_project(
+    project_commands_dir: &Path,
+    workspace_commands: &[(String, String)],
+    custom_commands: &[crate::core::CustomCommand],
+) -> Result<Vec<String>, String> {
+    let mut written = Vec::new();
+    let mut expected: HashSet<String> = HashSet::new();
+
+    let total_commands = workspace_commands.len() + custom_commands.len();
+    if total_commands > 0 && !project_commands_dir.exists() {
+        fs::create_dir_all(project_commands_dir).map_err(|e| {
+            format!(
+                "Failed to create commands dir '{}': {}",
+                project_commands_dir.display(),
+                e
+            )
+        })?;
+    }
+
+    for (name, content) in workspace_commands {
+        let file_name = format!("{name}.md");
+        expected.insert(file_name.clone());
+        let path = project_commands_dir.join(&file_name);
+        fs::write(&path, render_markdown_command(content))
+            .map_err(|e| format!("Failed to write command '{}': {}", name, e))?;
+        written.push(path.display().to_string());
+    }
+
+    for command in custom_commands {
+        let file_name = format!("{}.md", command.name);
+        expected.insert(file_name.clone());
+        let path = project_commands_dir.join(&file_name);
+        fs::write(&path, render_markdown_command(&command.content))
+            .map_err(|e| format!("Failed to write command '{}': {}", command.name, e))?;
+        written.push(path.display().to_string());
+    }
+
+    cleanup_stale_managed_command_files(project_commands_dir, &expected, &mut written)?;
+
+    Ok(written)
+}
+
+pub(crate) fn symlink_commands_from_project(
+    agent_commands_dir: &Path,
+    project_commands_dir: &Path,
+    workspace_commands: &[(String, String)],
+    custom_commands: &[crate::core::CustomCommand],
+    agent_instance: &dyn Agent,
+) -> Result<Vec<String>, String> {
+    let mut written = Vec::new();
+    let mut expected: HashSet<String> = HashSet::new();
+    let settings = crate::core::read_settings().unwrap_or_default();
+    let use_symlink = settings.sync_mode == "symlink";
+
+    let total_commands = workspace_commands.len() + custom_commands.len();
+    if total_commands > 0 && !agent_commands_dir.exists() {
+        fs::create_dir_all(agent_commands_dir).map_err(|e| {
+            format!(
+                "Failed to create commands dir '{}': {}",
+                agent_commands_dir.display(),
+                e
+            )
+        })?;
+    }
+
+    for (name, _) in workspace_commands {
+        let file_name = agent_instance.command_file_name(name);
+        expected.insert(file_name.clone());
+        let link_path = agent_commands_dir.join(&file_name);
+        let target_path = project_commands_dir.join(format!("{name}.md"));
+        sync_command_link(&link_path, &target_path, use_symlink)?;
+        written.push(link_path.display().to_string());
+    }
+
+    for command in custom_commands {
+        let file_name = agent_instance.command_file_name(&command.name);
+        expected.insert(file_name.clone());
+        let link_path = agent_commands_dir.join(&file_name);
+        let target_path = project_commands_dir.join(format!("{}.md", command.name));
+        sync_command_link(&link_path, &target_path, use_symlink)?;
+        written.push(link_path.display().to_string());
+    }
+
+    cleanup_stale_managed_command_files(agent_commands_dir, &expected, &mut written)?;
+
+    Ok(written)
+}
+
 pub(crate) fn sync_commands_to_dir(
     commands_dir: &Path,
     workspace_commands: &[(String, String)],
@@ -735,6 +823,70 @@ pub(crate) fn sync_commands_to_dir(
         written.push(path.display().to_string());
     }
 
+    cleanup_stale_managed_command_files(commands_dir, &expected, &mut written)?;
+
+    Ok(written)
+}
+
+fn sync_command_link(
+    link_path: &Path,
+    target_path: &Path,
+    use_symlink: bool,
+) -> Result<(), String> {
+    if let Ok(meta) = link_path.symlink_metadata() {
+        if meta.file_type().is_symlink() || meta.is_file() {
+            fs::remove_file(link_path).map_err(|e| {
+                format!(
+                    "Failed to replace command file '{}': {}",
+                    link_path.display(),
+                    e
+                )
+            })?;
+        }
+    }
+
+    if use_symlink {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target_path, link_path).map_err(|e| {
+                format!(
+                    "Failed to symlink command '{}' -> '{}': {}",
+                    link_path.display(),
+                    target_path.display(),
+                    e
+                )
+            })?;
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target_path, link_path).map_err(|e| {
+                format!(
+                    "Failed to symlink command '{}' -> '{}': {}",
+                    link_path.display(),
+                    target_path.display(),
+                    e
+                )
+            })?;
+        }
+    } else {
+        fs::copy(target_path, link_path).map_err(|e| {
+            format!(
+                "Failed to copy command '{}' -> '{}': {}",
+                target_path.display(),
+                link_path.display(),
+                e
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+fn cleanup_stale_managed_command_files(
+    commands_dir: &Path,
+    expected: &HashSet<String>,
+    written: &mut Vec<String>,
+) -> Result<(), String> {
     if commands_dir.exists() {
         for entry in fs::read_dir(commands_dir)
             .map_err(|e| format!("Failed to read {}: {}", commands_dir.display(), e))?
@@ -768,7 +920,7 @@ pub(crate) fn sync_commands_to_dir(
         }
     }
 
-    Ok(written)
+    Ok(())
 }
 
 fn cleanup_command_files(agent_instance: &dyn Agent, dir: &Path) -> Vec<String> {
@@ -1104,6 +1256,125 @@ mod tests {
         assert!(commands_dir.join("keep.md").exists());
         assert!(is_managed_command_file(&workspace_path));
         assert!(is_managed_command_file(&custom_path));
+    }
+
+    #[test]
+    fn copy_commands_to_project_writes_selected_and_removes_stale_managed_files() {
+        let dir = tempdir().expect("tempdir");
+        let commands_dir = dir.path().join("commands");
+        fs::create_dir_all(&commands_dir).expect("create commands dir");
+
+        fs::write(
+            commands_dir.join("stale.md"),
+            "---\nautomatic-managed: true\n---\nStale command.\n",
+        )
+        .expect("write stale command");
+        fs::write(
+            commands_dir.join("keep.md"),
+            "---\ndescription: user command\n---\nDo not remove.\n",
+        )
+        .expect("write unmanaged command");
+
+        let written = copy_commands_to_project(
+            &commands_dir,
+            &[(
+                "workspace-cmd".to_string(),
+                "---\ndescription: workspace\n---\nRun workspace.\n".to_string(),
+            )],
+            &[CustomCommand {
+                name: "custom-cmd".to_string(),
+                content: "Run custom.\n".to_string(),
+            }],
+        )
+        .expect("copy commands");
+
+        let workspace_path = commands_dir.join("workspace-cmd.md");
+        let custom_path = commands_dir.join("custom-cmd.md");
+        assert!(written.iter().any(|p| p.ends_with("workspace-cmd.md")));
+        assert!(written.iter().any(|p| p.ends_with("custom-cmd.md")));
+        assert!(written.iter().any(|p| p.ends_with("stale.md")));
+        assert!(workspace_path.exists());
+        assert!(custom_path.exists());
+        assert!(!commands_dir.join("stale.md").exists());
+        assert!(commands_dir.join("keep.md").exists());
+        assert!(is_managed_command_file(&workspace_path));
+        assert!(is_managed_command_file(&custom_path));
+    }
+
+    #[test]
+    fn symlink_commands_from_project_reuses_canonical_markdown_commands() {
+        let dir = tempdir().expect("tempdir");
+        let project_commands_dir = dir.path().join(".agents").join("commands");
+        fs::create_dir_all(&project_commands_dir).expect("create project commands dir");
+
+        copy_commands_to_project(
+            &project_commands_dir,
+            &[(
+                "workspace-cmd".to_string(),
+                "---\ndescription: workspace\n---\nRun workspace.\n".to_string(),
+            )],
+            &[CustomCommand {
+                name: "custom-cmd".to_string(),
+                content: "Run custom.\n".to_string(),
+            }],
+        )
+        .expect("copy commands");
+
+        let agent_commands_dir = dir.path().join(".claude").join("commands");
+        fs::create_dir_all(&agent_commands_dir).expect("create agent commands dir");
+        fs::write(
+            agent_commands_dir.join("stale.md"),
+            "---\nautomatic-managed: true\n---\nStale command.\n",
+        )
+        .expect("write stale command");
+        fs::write(
+            agent_commands_dir.join("keep.md"),
+            "---\ndescription: user command\n---\nDo not remove.\n",
+        )
+        .expect("write unmanaged command");
+
+        let written = symlink_commands_from_project(
+            &agent_commands_dir,
+            &project_commands_dir,
+            &[("workspace-cmd".to_string(), String::new())],
+            &[CustomCommand {
+                name: "custom-cmd".to_string(),
+                content: String::new(),
+            }],
+            &ClaudeCode,
+        )
+        .expect("symlink commands");
+
+        let workspace_path = agent_commands_dir.join("workspace-cmd.md");
+        let custom_path = agent_commands_dir.join("custom-cmd.md");
+        assert!(written.iter().any(|p| p.ends_with("workspace-cmd.md")));
+        assert!(written.iter().any(|p| p.ends_with("custom-cmd.md")));
+        assert!(written.iter().any(|p| p.ends_with("stale.md")));
+        assert_eq!(
+            fs::read_to_string(&workspace_path).expect("read workspace command"),
+            fs::read_to_string(project_commands_dir.join("workspace-cmd.md"))
+                .expect("read canonical workspace command")
+        );
+        assert_eq!(
+            fs::read_to_string(&custom_path).expect("read custom command"),
+            fs::read_to_string(project_commands_dir.join("custom-cmd.md"))
+                .expect("read canonical custom command")
+        );
+        assert!(!agent_commands_dir.join("stale.md").exists());
+        assert!(agent_commands_dir.join("keep.md").exists());
+
+        if crate::core::read_settings()
+            .map(|settings| settings.sync_mode == "symlink")
+            .unwrap_or(true)
+        {
+            let workspace_meta = workspace_path
+                .symlink_metadata()
+                .expect("workspace command metadata");
+            assert!(
+                workspace_meta.file_type().is_symlink(),
+                "expected workspace command to be symlinked in symlink mode"
+            );
+        }
     }
 
     #[test]

@@ -133,7 +133,7 @@ interface Project {
   tools?: string[];
   /** Workspace agent names selected for this project. Written to agent's sub-agent directory on sync. */
   user_agents?: string[];
-  /** Workspace command names selected for this project. Written to provider command directories on sync. */
+  /** Workspace command names selected for this project. Written to .agents/commands and then synced into provider command directories. */
   user_commands?: string[];
   /** Inline custom commands stored directly in this project. */
   custom_commands?: CustomCommand[];
