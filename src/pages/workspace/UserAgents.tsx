@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, Check, MessagesSquare, Copy, Lock, FolderGit2 } from "lucide-react";
 import { AuthorSection } from "../../components/AuthorPanel";
@@ -369,12 +370,11 @@ export default function UserAgents() {
             {/* Editor Body */}
             <div className="flex-1 min-h-0 flex flex-col">
               {isEditing ? (
-                <textarea
+                <LineNumberedTextarea
                   value={agentContent}
-                  onChange={(e) => setAgentContent(e.target.value)}
-                  className="flex-1 w-full p-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30"
+                  onChange={setAgentContent}
+                  className="flex-1"
                   placeholder="Write your agent content here as Markdown with YAML frontmatter..."
-                  spellCheck={false}
                 />
               ) : (
                 <>

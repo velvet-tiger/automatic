@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, FileText, Check, ScrollText, RefreshCw, FolderGit2, Copy, Lock } from "lucide-react";
 import { ICONS } from "../../lib/icons";
@@ -442,12 +443,11 @@ export default function Rules() {
             {/* Editor Body — flex column so the projects panel is always pinned at the bottom */}
             <div className="flex-1 min-h-0 flex flex-col">
               {isEditing ? (
-                <textarea
+                <LineNumberedTextarea
                   value={ruleContent}
-                  onChange={(e) => setRuleContent(e.target.value)}
-                  className="flex-1 w-full p-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30"
+                  onChange={setRuleContent}
+                  className="flex-1"
                   placeholder="Write your rule content here in Markdown. Rules are reusable content blocks that can be appended to project instruction files..."
-                  spellCheck={false}
                 />
               ) : (
                 <>

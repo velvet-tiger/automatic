@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, FileText, Check, ClipboardList } from "lucide-react";
 import { ICONS } from "../../lib/icons";
@@ -214,12 +215,11 @@ export default function Templates() {
             {/* Editor Body */}
             <div className="flex-1 flex flex-col relative min-h-0">
               {isEditing ? (
-                <textarea
+                <LineNumberedTextarea
                   value={templateContent}
-                  onChange={(e) => setTemplateContent(e.target.value)}
-                  className="flex-1 w-full h-full p-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30"
+                  onChange={setTemplateContent}
+                  className="flex-1"
                   placeholder="Write your instruction content here in Markdown..."
-                  spellCheck={false}
                 />
               ) : (
                 <>

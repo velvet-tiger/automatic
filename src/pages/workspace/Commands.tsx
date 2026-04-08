@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, Terminal, Trash2, Check, Edit2, X } from "lucide-react";
 import { TokenPill } from "../../components/TokenPill";
@@ -372,11 +373,10 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
                       </label>
                       <TokenPill text={buildCommandContent(editDescription, editBody)} />
                     </div>
-                    <textarea
+                    <LineNumberedTextarea
                       value={editBody}
-                      onChange={(e) => setEditBody(e.target.value)}
-                      className="flex-1 px-6 pb-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar"
-                      spellCheck={false}
+                      onChange={setEditBody}
+                      className="flex-1"
                     />
                   </div>
                 </>

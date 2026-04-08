@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { MarkdownPreview } from "../../components/MarkdownPreview";
+import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
 import { handleExternalLinkClick } from "../../lib/externalLinks";
 import { invoke } from "@tauri-apps/api/core";
@@ -1038,11 +1039,10 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                   Body
                 </label>
               </div>
-              <textarea
+              <LineNumberedTextarea
                 value={editBody}
-                onChange={(e) => setEditBody(e.target.value)}
-                className="flex-1 px-6 pb-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar"
-                spellCheck={false}
+                onChange={setEditBody}
+                className="flex-1"
               />
             </div>
           </div>
@@ -1210,11 +1210,10 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                         Body
                       </label>
                     </div>
-                    <textarea
+                    <LineNumberedTextarea
                       value={editBody}
-                      onChange={(e) => setEditBody(e.target.value)}
-                      className="flex-1 px-6 pb-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar"
-                      spellCheck={false}
+                      onChange={setEditBody}
+                      className="flex-1"
                     />
                   </div>
                 </>
