@@ -4,6 +4,14 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-04-08
+
+### Fixed
+
+- Only add detected agents the user explicitly selected during autodetect. (`3a5eeab`)
+- Handle directory paths and update Cline agent adapter. (`e115130`)
+- Preserve exact MCP server inputs. (`85bcb6d`)
+
 ## [1.0.0] - 2026-04-05
 
 ### Added
