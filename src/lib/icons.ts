@@ -113,4 +113,15 @@ export const ICONS = {
     iconColor: "text-icon-rule",
     text: "text-icon-rule",
   },
+  /**
+   * Commands (reusable prompts triggered by name)
+   * Colour: indigo  var(--icon-agent)  — commands are agent-level utilities
+   * Icon:   Terminal
+   */
+  command: {
+    hex: "var(--icon-agent)",
+    iconBox: "w-8 h-8 rounded-md bg-icon-agent/15 flex items-center justify-center flex-shrink-0",
+    iconColor: "text-icon-agent",
+    text: "text-icon-agent",
+  },
 } as const;
