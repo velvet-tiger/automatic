@@ -1,0 +1,43 @@
+{
+  "name": "automatic",
+  "version": "1.0.1",
+  "description": "Expose Automatic's MCP server and workflow guidance through the Codex plugin system.",
+  "author": {
+    "name": "Automatic",
+    "url": "https://tryautomatic.app"
+  },
+  "homepage": "https://tryautomatic.app",
+  "repository": "https://github.com/velvet-tiger/automatic",
+  "license": "BUSL-1.1",
+  "keywords": [
+    "automatic",
+    "mcp",
+    "skills",
+    "memory",
+    "project-context",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Automatic",
+    "shortDescription": "Project context, skills, memory, and feature tools from Automatic.",
+    "longDescription": "Connect Codex to the Automatic desktop app so it can read project configuration, reuse skills, search memory, and manage project features over MCP.",
+    "developerName": "Automatic",
+    "category": "Productivity",
+    "capabilities": [
+      "MCP",
+      "Skills",
+      "Project Context",
+      "Memory",
+      "Features"
+    ],
+    "websiteURL": "https://tryautomatic.app",
+    "defaultPrompt": [
+      "List my Automatic projects and summarize this one.",
+      "Search Automatic memories for this project.",
+      "Show my Automatic features and move one to review."
+    ],
+    "brandColor": "#0f766e"
+  }
+}

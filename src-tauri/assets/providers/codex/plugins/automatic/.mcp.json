@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "automatic": {
+      "command": "automatic",
+      "args": [
+        "mcp-serve"
+      ]
+    }
+  }
+}
