@@ -76,18 +76,24 @@ pub fn save_project_file_for_project(
     // Resolve rules: project-level key ("_project") takes precedence over the
     // legacy per-file / unified keys so that saves are consistent with sync.
     // Mandatory rules (e.g. automatic-service) are always included.
-    let rules: Vec<String> = ensure_mandatory_rules(&if let Some(r) =
-        project.file_rules.get("_project").filter(|v| !v.is_empty())
-    {
-        r.clone()
-    } else {
-        let rule_key = if is_unified { "_unified" } else { filename };
-        project
-            .file_rules
-            .get(rule_key)
-            .cloned()
-            .unwrap_or_default()
-    });
+    let has_commands = !project.user_commands.is_empty()
+        || project
+            .custom_commands
+            .as_ref()
+            .is_some_and(|commands| !commands.is_empty());
+    let rules: Vec<String> = ensure_automatic_rules(
+        &if let Some(r) = project.file_rules.get("_project").filter(|v| !v.is_empty()) {
+            r.clone()
+        } else {
+            let rule_key = if is_unified { "_unified" } else { filename };
+            project
+                .file_rules
+                .get(rule_key)
+                .cloned()
+                .unwrap_or_default()
+        },
+        has_commands,
+    );
 
     // Collect inline custom rule content strings from the project.
     // These are project-scoped rules that don't live in the global registry.

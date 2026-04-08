@@ -16,6 +16,7 @@ use super::paths::get_automatic_dir;
 /// Automatic.  It tells agents how to use the Automatic MCP tools (skills,
 /// memory, features, project context).
 pub const MANDATORY_RULE: &str = "automatic-service";
+pub const COMMANDS_RULE: &str = "automatic-commands";
 
 /// Returns `true` if the given rule machine name is mandatory and cannot be
 /// removed from a project.
@@ -31,6 +32,26 @@ pub fn ensure_mandatory_rules(rules: &[String]) -> Vec<String> {
     if !result.iter().any(|r| r == MANDATORY_RULE) {
         result.insert(0, MANDATORY_RULE.to_string());
     }
+    result
+}
+
+/// Ensure the standard Automatic rules are present for a project.
+///
+/// This always includes the Automatic service rule. When the project has
+/// repo-local commands configured, it also includes the commands discovery
+/// rule so agents know to consult `.agents/commands-index.md`.
+pub fn ensure_automatic_rules(rules: &[String], has_commands: bool) -> Vec<String> {
+    let mut result = ensure_mandatory_rules(rules);
+
+    if has_commands && !result.iter().any(|r| r == COMMANDS_RULE) {
+        let insert_at = if result.first().is_some_and(|r| r == MANDATORY_RULE) {
+            1
+        } else {
+            0
+        };
+        result.insert(insert_at, COMMANDS_RULE.to_string());
+    }
+
     result
 }
 
@@ -263,6 +284,11 @@ const DEFAULT_RULES: &[(&str, &str, &str)] = &[
         "automatic-service",
         "Automatic",
         include_str!("../../assets/rules/automatic/automatic-service.md"),
+    ),
+    (
+        "automatic-commands",
+        "Commands",
+        include_str!("../../assets/rules/automatic/commands.md"),
     ),
 ];
 
@@ -681,6 +707,7 @@ mod tests {
     #[test]
     fn non_automatic_rules_are_not_mandatory() {
         assert!(!is_mandatory_rule("automatic-general"));
+        assert!(!is_mandatory_rule("automatic-commands"));
         assert!(!is_mandatory_rule("my-custom-rule"));
         assert!(!is_mandatory_rule(""));
     }
@@ -719,5 +746,36 @@ mod tests {
         let rules = vec![MANDATORY_RULE.to_string()];
         let result = ensure_mandatory_rules(&rules);
         assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn ensure_automatic_rules_adds_commands_rule_when_project_has_commands() {
+        let rules = vec!["my-rule".to_string()];
+        let result = ensure_automatic_rules(&rules, true);
+        assert_eq!(
+            result,
+            vec![
+                MANDATORY_RULE.to_string(),
+                COMMANDS_RULE.to_string(),
+                "my-rule".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn ensure_automatic_rules_skips_commands_rule_when_project_has_no_commands() {
+        let rules = vec!["my-rule".to_string()];
+        let result = ensure_automatic_rules(&rules, false);
+        assert_eq!(
+            result,
+            vec![MANDATORY_RULE.to_string(), "my-rule".to_string()]
+        );
+    }
+
+    #[test]
+    fn ensure_automatic_rules_does_not_duplicate_commands_rule() {
+        let rules = vec![MANDATORY_RULE.to_string(), COMMANDS_RULE.to_string()];
+        let result = ensure_automatic_rules(&rules, true);
+        assert_eq!(result, rules);
     }
 }
