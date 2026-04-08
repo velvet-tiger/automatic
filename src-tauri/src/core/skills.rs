@@ -3,6 +3,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+use super::asset_security::{
+    enforce_text_asset, resolve_path_within_root, should_scan_text_file,
+    validate_relative_asset_path, AssetKind, MAX_ARCHIVE_ENTRIES, MAX_ARCHIVE_ENTRY_BYTES,
+    MAX_ARCHIVE_TOTAL_BYTES,
+};
 use super::types::SkillsJson;
 use super::*;
 
@@ -496,6 +501,7 @@ pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
+    enforce_text_asset(AssetKind::Skill, &format!("skill '{}'", name), content)?;
     let agents_dir = get_agents_skills_dir()?;
     let skill_dir = agents_dir.join(name);
 
@@ -635,6 +641,11 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
 
         let content =
             fs::read_to_string(&source_path).map_err(|e| format!("Failed to read file: {}", e))?;
+        enforce_text_asset(
+            AssetKind::Skill,
+            &format!("imported skill '{}'", skill_name),
+            &content,
+        )?;
 
         let skill_dir = agents_dir.join(skill_name);
         fs::create_dir_all(&skill_dir)
@@ -661,6 +672,7 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
     if skill_json_path.exists() {
         let raw = fs::read_to_string(&skill_json_path)
             .map_err(|e| format!("Failed to read skill.json: {}", e))?;
+        enforce_text_asset(AssetKind::SkillManifest, "skill manifest", &raw)?;
 
         let manifest: SkillsJson =
             serde_json::from_str(&raw).map_err(|e| format!("Invalid skill.json format: {}", e))?;
@@ -671,14 +683,19 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
             }
 
             let skill_base = if skill_entry.path == "." || skill_entry.path.is_empty() {
-                source_path.clone()
+                fs::canonicalize(&source_path)
+                    .map_err(|e| format!("Failed to resolve package root: {}", e))?
             } else {
-                let p = skill_entry.path.trim_start_matches("./");
-                source_path.join(p)
+                resolve_path_within_root(
+                    &source_path,
+                    skill_entry.path.trim_start_matches("./"),
+                    "skill.json path",
+                )?
             };
 
-            let entrypoint = skill_entry.entrypoint_file();
-            let entry_path = skill_base.join(&entrypoint);
+            let entrypoint = skill_entry.entrypoint_file().trim_start_matches("./");
+            validate_relative_asset_path(entrypoint, "skill.json entrypoint")?;
+            let entry_path = resolve_path_within_root(&skill_base, entrypoint, "skill entrypoint")?;
 
             if !entry_path.exists() {
                 continue;
@@ -686,6 +703,11 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
 
             let content = fs::read_to_string(&entry_path)
                 .map_err(|e| format!("Failed to read {}: {}", entrypoint, e))?;
+            enforce_text_asset(
+                AssetKind::Skill,
+                &format!("imported skill '{}'", skill_entry.name),
+                &content,
+            )?;
 
             let skill_dir = agents_dir.join(&skill_entry.name);
             fs::create_dir_all(&skill_dir)
@@ -760,6 +782,11 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
 
         let content = fs::read_to_string(&skill_file)
             .map_err(|e| format!("Failed to read {}: {}", skill_file.display(), e))?;
+        enforce_text_asset(
+            AssetKind::Skill,
+            &format!("imported skill '{}'", skill_name),
+            &content,
+        )?;
 
         let skill_dir = agents_dir.join(skill_name);
         fs::create_dir_all(&skill_dir)
@@ -805,7 +832,33 @@ fn copy_companion_files(source: &std::path::Path, dest: &std::path::Path) -> Res
                 for entry in entries.filter_map(|e| e.ok()) {
                     let src_file = entry.path();
                     let dest_file = dest_dir.join(entry.file_name());
-                    if src_file.is_file() {
+                    let file_type = entry
+                        .file_type()
+                        .map_err(|e| format!("Failed to inspect companion file: {}", e))?;
+                    if file_type.is_symlink() {
+                        return Err(format!(
+                            "Blocked unsafe companion file {}: symlinks are not allowed",
+                            src_file.display()
+                        ));
+                    }
+                    if file_type.is_file() {
+                        let rel_path =
+                            format!("{}/{}", dir_name, entry.file_name().to_string_lossy());
+                        validate_relative_asset_path(&rel_path, "companion file")?;
+                        if should_scan_text_file(&src_file) {
+                            let content = fs::read_to_string(&src_file).map_err(|e| {
+                                format!(
+                                    "Failed to read companion file {}: {}",
+                                    src_file.display(),
+                                    e
+                                )
+                            })?;
+                            enforce_text_asset(
+                                AssetKind::CompanionFile,
+                                &format!("companion file '{}'", rel_path),
+                                &content,
+                            )?;
+                        }
                         fs::copy(&src_file, &dest_file)
                             .map_err(|e| format!("Failed to copy file: {}", e))?;
                     }
@@ -818,7 +871,26 @@ fn copy_companion_files(source: &std::path::Path, dest: &std::path::Path) -> Res
     let root_files = ["LICENSE", "LICENSE.md", "LICENSE.txt", "README.md"];
     for file_name in &root_files {
         let src_file = source.join(file_name);
-        if src_file.is_file() {
+        let metadata = match fs::symlink_metadata(&src_file) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "Blocked unsafe companion file {}: symlinks are not allowed",
+                src_file.display()
+            ));
+        }
+        if metadata.is_file() {
+            if should_scan_text_file(&src_file) {
+                let content = fs::read_to_string(&src_file)
+                    .map_err(|e| format!("Failed to read {}: {}", src_file.display(), e))?;
+                enforce_text_asset(
+                    AssetKind::CompanionFile,
+                    &format!("companion file '{}'", file_name),
+                    &content,
+                )?;
+            }
             let dest_file = dest.join(file_name);
             fs::copy(&src_file, &dest_file)
                 .map_err(|e| format!("Failed to copy {}: {}", file_name, e))?;
@@ -857,10 +929,18 @@ pub fn import_skill_from_package(path: &str) -> Result<Vec<ImportedSkill>, Strin
     let temp_dir =
         tempfile::TempDir::new().map_err(|e| format!("Failed to create temp directory: {}", e))?;
     let temp_path = temp_dir.path();
+    let mut total_uncompressed_size = 0_u64;
 
     // Extract all files from the archive
     {
         let mut zip = archive;
+        if zip.len() > MAX_ARCHIVE_ENTRIES {
+            return Err(format!(
+                "Blocked unsafe skill package: archive contains too many files ({} > {})",
+                zip.len(),
+                MAX_ARCHIVE_ENTRIES
+            ));
+        }
         for i in 0..zip.len() {
             let mut file = zip
                 .by_index(i)
@@ -872,7 +952,31 @@ pub fn import_skill_from_package(path: &str) -> Result<Vec<ImportedSkill>, Strin
                 continue;
             }
 
-            let out_path = temp_path.join(&name);
+            let enclosed_name = file.enclosed_name().ok_or_else(|| {
+                format!(
+                    "Blocked unsafe skill package: archive entry '{}' is not safely enclosed",
+                    name
+                )
+            })?;
+            let safe_name = enclosed_name.to_string_lossy().replace('\\', "/");
+            validate_relative_asset_path(&safe_name, "archive entry")?;
+
+            let entry_size = file.size();
+            if entry_size > MAX_ARCHIVE_ENTRY_BYTES {
+                return Err(format!(
+                    "Blocked unsafe skill package: archive entry '{}' is too large ({} bytes > {} bytes)",
+                    safe_name, entry_size, MAX_ARCHIVE_ENTRY_BYTES
+                ));
+            }
+            total_uncompressed_size += entry_size;
+            if total_uncompressed_size > MAX_ARCHIVE_TOTAL_BYTES {
+                return Err(format!(
+                    "Blocked unsafe skill package: archive is too large after extraction ({} bytes > {} bytes)",
+                    total_uncompressed_size, MAX_ARCHIVE_TOTAL_BYTES
+                ));
+            }
+
+            let out_path = temp_path.join(enclosed_name);
 
             // Create parent directories if needed
             if let Some(parent) = out_path.parent() {
@@ -992,6 +1096,7 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+    use zip::write::SimpleFileOptions;
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -1385,5 +1490,21 @@ mod tests {
         // Empty companions list → still appends the section header.
         // What matters is that the original content is preserved.
         assert!(result.starts_with("# My Skill"));
+    }
+
+    #[test]
+    fn package_import_rejects_path_traversal_entries() {
+        let tmp = tmp();
+        let package_path = tmp.path().join("bad.skill");
+        let file = fs::File::create(&package_path).expect("create package");
+        let mut zip = zip::ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+        zip.start_file("../escape.txt", options)
+            .expect("start malicious file");
+        std::io::Write::write_all(&mut zip, b"escape").expect("write malicious file");
+        zip.finish().expect("finish package");
+
+        let result = import_skill_from_package(&package_path.to_string_lossy());
+        assert!(result.is_err());
     }
 }

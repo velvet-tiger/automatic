@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 
+use super::asset_security::{enforce_text_asset, AssetKind};
 use super::paths::get_commands_dir;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -91,6 +92,12 @@ pub fn save_user_command(machine_name: &str, content: &str) -> Result<(), String
             "Invalid command name. Use lowercase letters, digits, and hyphens only.".into(),
         );
     }
+
+    enforce_text_asset(
+        AssetKind::UserCommand,
+        &format!("command '{}'", machine_name),
+        content,
+    )?;
 
     let dir = get_commands_dir()?;
     if !dir.exists() {

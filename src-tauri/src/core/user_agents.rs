@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use super::asset_security::{enforce_text_asset, AssetKind};
 use super::paths::get_automatic_dir;
 // ── User Agents ──────────────────────────────────────────────────────────────
 
@@ -349,6 +350,12 @@ pub fn save_user_agent(machine_name: &str, name: &str, content: &str) -> Result<
         return Err("Agent display name cannot be empty".into());
     }
 
+    enforce_text_asset(
+        AssetKind::UserAgent,
+        &format!("user agent '{}'", machine_name),
+        content,
+    )?;
+
     let dir = get_user_agents_dir()?;
     if !dir.exists() {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -410,6 +417,11 @@ pub fn install_default_user_agents_inner(force: bool) -> Result<(), String> {
     for (machine_name, _display_name, content) in DEFAULT_USER_AGENTS {
         let path = dir.join(format!("{}.md", machine_name));
         if force || !path.exists() {
+            enforce_text_asset(
+                AssetKind::UserAgent,
+                &format!("bundled user agent '{}'", machine_name),
+                content,
+            )?;
             fs::write(&path, content).map_err(|e| e.to_string())?;
         }
     }
@@ -433,6 +445,7 @@ pub fn is_bundled_agent(machine_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::asset_security::{enforce_text_asset, AssetKind};
     use std::fs;
     use tempfile::TempDir;
 
@@ -568,5 +581,22 @@ mod tests {
         assert!(is_bundled_agent("automatic-debugger"));
         assert!(is_bundled_agent("automatic-planner"));
         assert!(!is_bundled_agent("custom-agent"));
+    }
+
+    #[test]
+    fn bundled_agents_pass_security_scan() {
+        for (machine_name, _display_name, content) in DEFAULT_USER_AGENTS {
+            let result = enforce_text_asset(
+                AssetKind::UserAgent,
+                &format!("bundled user agent '{}'", machine_name),
+                content,
+            );
+            assert!(
+                result.is_ok(),
+                "expected bundled user agent {} to pass: {:?}",
+                machine_name,
+                result
+            );
+        }
     }
 }

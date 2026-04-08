@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use super::asset_security::{enforce_text_asset, validate_relative_asset_path, AssetKind};
 use super::paths::{get_agents_skills_dir, get_automatic_dir, is_valid_name};
 use super::skill_store::record_skill_source;
 
@@ -54,6 +55,12 @@ pub fn save_template(name: &str, content: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid template name".into());
     }
+
+    enforce_text_asset(
+        AssetKind::Template,
+        &format!("template '{}'", name),
+        content,
+    )?;
 
     let dir = get_templates_dir()?;
     if !dir.exists() {
@@ -229,6 +236,11 @@ pub fn install_default_skills_inner(force: bool) -> Result<(), String> {
         let Some((_, content)) = BUNDLED_SKILL_CONTENTS.iter().find(|(n, _)| n == name) else {
             continue;
         };
+        enforce_text_asset(
+            AssetKind::Skill,
+            &format!("bundled skill '{}'", name),
+            content,
+        )?;
         let skill_dir = agents_dir.join(name);
         if !skill_dir.exists() {
             fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
@@ -269,6 +281,11 @@ pub fn install_skills_from_bundle(skill_names: &[String]) -> Result<(), String> 
         else {
             continue;
         };
+        enforce_text_asset(
+            AssetKind::Skill,
+            &format!("bundled skill '{}'", name),
+            content,
+        )?;
         let skill_dir = agents_dir.join(name);
         if !skill_dir.exists() {
             fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
@@ -283,6 +300,12 @@ pub fn install_skills_from_bundle(skill_names: &[String]) -> Result<(), String> 
             if *res_skill != name.as_str() {
                 continue;
             }
+            validate_relative_asset_path(rel_path, "bundled skill resource")?;
+            enforce_text_asset(
+                AssetKind::CompanionFile,
+                &format!("bundled companion file '{}:{}'", name, rel_path),
+                res_content,
+            )?;
             let res_path = skill_dir.join(rel_path);
             if let Some(parent) = res_path.parent() {
                 if !parent.exists() {
@@ -335,6 +358,11 @@ pub fn install_default_templates_inner(force: bool) -> Result<(), String> {
     for (name, content) in DEFAULT_TEMPLATES {
         let path = dir.join(format!("{}.md", name));
         if force || !path.exists() {
+            enforce_text_asset(
+                AssetKind::Template,
+                &format!("bundled template '{}'", name),
+                content,
+            )?;
             fs::write(&path, content).map_err(|e| e.to_string())?;
         }
     }
@@ -346,4 +374,63 @@ pub fn install_default_templates_inner(force: bool) -> Result<(), String> {
 /// Existing files are left untouched, so user edits are always preserved.
 pub fn install_default_templates() -> Result<(), String> {
     install_default_templates_inner(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::asset_security::{
+        enforce_text_asset, validate_relative_asset_path, AssetKind,
+    };
+    use crate::core::types::SkillsJson;
+
+    #[test]
+    fn bundled_skill_manifest_paths_are_safe() {
+        let manifest: SkillsJson =
+            serde_json::from_str(BUNDLED_SKILL_JSON).expect("bundled skill.json should parse");
+
+        for skill in manifest.skills {
+            if skill.path != "." && !skill.path.is_empty() {
+                validate_relative_asset_path(&skill.path, "bundled skill path")
+                    .expect("bundled skill path should be safe");
+            }
+
+            validate_relative_asset_path(skill.entrypoint_file(), "bundled skill entrypoint")
+                .expect("bundled skill entrypoint should be safe");
+        }
+    }
+
+    #[test]
+    fn bundled_skill_contents_pass_security_scan() {
+        for (name, content) in BUNDLED_SKILL_CONTENTS {
+            let result = enforce_text_asset(
+                AssetKind::Skill,
+                &format!("bundled skill '{}'", name),
+                content,
+            );
+            assert!(
+                result.is_ok(),
+                "expected bundled skill {} to pass: {:?}",
+                name,
+                result
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_templates_pass_security_scan() {
+        for (name, content) in DEFAULT_TEMPLATES {
+            let result = enforce_text_asset(
+                AssetKind::Template,
+                &format!("bundled template '{}'", name),
+                content,
+            );
+            assert!(
+                result.is_ok(),
+                "expected bundled template {} to pass: {:?}",
+                name,
+                result
+            );
+        }
+    }
 }

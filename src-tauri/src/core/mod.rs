@@ -8,6 +8,7 @@ pub const KEYCHAIN_SERVICE: &str = "automatic_desktop";
 
 pub mod ai;
 mod app_plugins;
+mod asset_security;
 mod author;
 mod commands;
 mod credentials;
@@ -38,6 +39,7 @@ mod user_agents;
 mod whats_new;
 
 pub use app_plugins::*;
+pub use asset_security::*;
 pub use author::*;
 pub use commands::*;
 pub use credentials::*;
