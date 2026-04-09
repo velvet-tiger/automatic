@@ -182,6 +182,12 @@ Use the memory tools to persist and retrieve project-specific context across ses
 
 Before finishing a session, call `automatic_store_memory` to capture any new project-specific rules, pitfalls, setup steps, or decisions discovered during the session. This prevents knowledge loss across sessions.
 
+When repo-local commands are present in this project, check `.agents/commands-index.md` before starting work that may match a reusable workflow.
+
+If the index lists a relevant command, read the referenced file in `.agents/commands/` and follow it.
+
+Treat these files as reusable workflow instructions, not as native slash commands.
+
 # Agent Problem-Solving Process
 
 A framework for structured, honest, and traceable software development work. Apply judgement at each stage. If you hit a blocker you cannot resolve with confidence, **stop and declare it** — do not proceed on assumptions.
