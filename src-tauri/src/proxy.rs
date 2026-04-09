@@ -93,6 +93,71 @@ fn read_server_url(server_name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("server config '{}' has no 'url' field", server_name))
 }
 
+// ── Request helper ───────────────────────────────────────────────────────────
+
+/// Send a single JSON-RPC request to the remote MCP server and return the response.
+async fn send_request(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+    session_id: &Arc<Mutex<Option<String>>>,
+    body: &str,
+) -> Result<reqwest::Response, Box<dyn std::error::Error>> {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("application/json, text/event-stream"),
+    );
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", token))
+            .map_err(|e| format!("invalid token: {}", e))?,
+    );
+    headers.insert(
+        HeaderName::from_static(MCP_PROTOCOL_VERSION_HEADER),
+        HeaderValue::from_static(MCP_PROTOCOL_VERSION),
+    );
+
+    if let Some(ref sid) = *session_id.lock().unwrap() {
+        if let Ok(val) = HeaderValue::from_str(sid) {
+            headers.insert(HeaderName::from_static(SESSION_HEADER), val);
+        }
+    }
+
+    Ok(client
+        .post(url)
+        .headers(headers)
+        .body(body.to_string())
+        .send()
+        .await?)
+}
+
+/// Write a successful response (JSON or SSE) to a writer.
+fn write_response<W: io::Write>(
+    response_body: &str,
+    content_type: &str,
+    out: &mut W,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if content_type.contains("text/event-stream") {
+        for event_data in parse_sse_events(response_body) {
+            if !event_data.trim().is_empty() {
+                writeln!(out, "{}", event_data)?;
+            }
+        }
+    } else if !response_body.trim().is_empty() {
+        writeln!(out, "{}", response_body.trim())?;
+    }
+    out.flush()?;
+    Ok(())
+}
+
+/// Check whether an HTTP status code indicates an expired/revoked token
+/// that should trigger a refresh attempt.
+fn is_token_expired(status_code: u16) -> bool {
+    status_code == 401 || status_code == 403
+}
+
 // ── Proxy entry point ────────────────────────────────────────────────────────
 
 /// Run the MCP proxy for `server_name`.
@@ -100,9 +165,12 @@ fn read_server_url(server_name: &str) -> Result<String, String> {
 /// Reads JSON-RPC from stdin, relays to the remote server over HTTP with the
 /// stored bearer token, and writes responses to stdout.  Runs until stdin is
 /// closed or the remote connection fails.
+///
+/// When the remote server returns 401/403 (expired token), the proxy
+/// automatically attempts a token refresh and retries the request once.
 pub async fn run_proxy(server_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let url = read_server_url(server_name)?;
-    let token = load_oauth_token(server_name).map_err(|e| {
+    let mut token = load_oauth_token(server_name).map_err(|e| {
         format!(
             "No OAuth token found for '{}'. Authenticate first in the Automatic app. ({})",
             server_name, e
@@ -113,10 +181,8 @@ pub async fn run_proxy(server_name: &str) -> Result<(), Box<dyn std::error::Erro
         .timeout(std::time::Duration::from_secs(120))
         .build()?;
 
-    // Shared session ID — set after the first server response.
     let session_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
-    // Read JSON-RPC messages from stdin (one per line) and relay.
     let stdin = io::stdin();
     let stdout = io::stdout();
 
@@ -131,36 +197,17 @@ pub async fn run_proxy(server_name: &str) -> Result<(), Box<dyn std::error::Erro
         let _: Value =
             serde_json::from_str(trimmed).map_err(|e| format!("invalid JSON on stdin: {}", e))?;
 
-        // Build request headers.
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert(
-            ACCEPT,
-            HeaderValue::from_static("application/json, text/event-stream"),
-        );
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", token))
-                .map_err(|e| format!("invalid token: {}", e))?,
-        );
-        headers.insert(
-            HeaderName::from_static(MCP_PROTOCOL_VERSION_HEADER),
-            HeaderValue::from_static(MCP_PROTOCOL_VERSION),
-        );
+        let mut response =
+            send_request(&client, &url, &token, &session_id, trimmed).await?;
 
-        // Include session ID if we have one.
-        if let Some(ref sid) = *session_id.lock().unwrap() {
-            if let Ok(val) = HeaderValue::from_str(sid) {
-                headers.insert(HeaderName::from_static(SESSION_HEADER), val);
+        // On 401/403, attempt a silent token refresh and retry once.
+        if is_token_expired(response.status().as_u16()) {
+            if let Ok(new_token) = crate::oauth::refresh_token(server_name).await {
+                token = new_token;
+                response =
+                    send_request(&client, &url, &token, &session_id, trimmed).await?;
             }
         }
-
-        let response = client
-            .post(&url)
-            .headers(headers)
-            .body(trimmed.to_string())
-            .send()
-            .await?;
 
         // Capture session ID from response headers.
         if let Some(sid) = response.headers().get(SESSION_HEADER) {
@@ -178,10 +225,8 @@ pub async fn run_proxy(server_name: &str) -> Result<(), Box<dyn std::error::Erro
             .to_string();
 
         if !status.is_success() {
-            // Return a JSON-RPC error for non-2xx responses.
             let body = response.text().await.unwrap_or_default();
             let error_msg = format!("HTTP {} from remote: {}", status.as_u16(), body);
-            // Try to extract the request id from the original message for a proper error response.
             let id = serde_json::from_str::<Value>(trimmed)
                 .ok()
                 .and_then(|v| v.get("id").cloned())
@@ -200,25 +245,9 @@ pub async fn run_proxy(server_name: &str) -> Result<(), Box<dyn std::error::Erro
             continue;
         }
 
-        if content_type.contains("text/event-stream") {
-            // SSE response — read events and emit each data payload as a line.
-            let body = response.text().await?;
-            for event_data in parse_sse_events(&body) {
-                if !event_data.trim().is_empty() {
-                    let mut out = stdout.lock();
-                    writeln!(out, "{}", event_data)?;
-                    out.flush()?;
-                }
-            }
-        } else {
-            // Plain JSON response.
-            let body = response.text().await?;
-            if !body.trim().is_empty() {
-                let mut out = stdout.lock();
-                writeln!(out, "{}", body.trim())?;
-                out.flush()?;
-            }
-        }
+        let body = response.text().await?;
+        let mut out = stdout.lock();
+        write_response(&body, &content_type, &mut out)?;
     }
 
     Ok(())
@@ -307,5 +336,78 @@ mod tests {
             oauth_creds_user("amplitude-eu"),
             "mcp_oauth_creds_amplitude-eu"
         );
+    }
+
+    #[test]
+    fn test_is_token_expired_401() {
+        assert!(is_token_expired(401));
+    }
+
+    #[test]
+    fn test_is_token_expired_403() {
+        assert!(is_token_expired(403));
+    }
+
+    #[test]
+    fn test_is_token_expired_200_not_expired() {
+        assert!(!is_token_expired(200));
+    }
+
+    #[test]
+    fn test_is_token_expired_500_not_expired() {
+        assert!(!is_token_expired(500));
+    }
+
+    #[test]
+    fn test_write_response_json() {
+        let mut buf = Vec::new();
+        write_response(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}",
+            "application/json",
+            &mut buf,
+        )
+        .unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert_eq!(
+            output.trim(),
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}"
+        );
+    }
+
+    #[test]
+    fn test_write_response_json_trims_whitespace() {
+        let mut buf = Vec::new();
+        write_response("  {\"a\":1}  \n", "application/json", &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert_eq!(output.trim(), "{\"a\":1}");
+    }
+
+    #[test]
+    fn test_write_response_empty_body_writes_nothing() {
+        let mut buf = Vec::new();
+        write_response("   ", "application/json", &mut buf).unwrap();
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_write_response_sse() {
+        let mut buf = Vec::new();
+        let sse_body = "data: {\"a\":1}\n\ndata: {\"b\":2}\n\n";
+        write_response(sse_body, "text/event-stream", &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "{\"a\":1}");
+        assert_eq!(lines[1], "{\"b\":2}");
+    }
+
+    #[test]
+    fn test_write_response_sse_skips_empty_events() {
+        let mut buf = Vec::new();
+        let sse_body = "data: {\"a\":1}\n\ndata:   \n\ndata: {\"b\":2}\n\n";
+        write_response(sse_body, "text/event-stream", &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 2);
     }
 }

@@ -286,6 +286,7 @@ pub fn run() {
             track_event,
             restart_app,
             open_directory_dialog,
+            open_file_dialog,
             subscribe_newsletter,
             unsubscribe_newsletter,
             authorize_mcp_server,

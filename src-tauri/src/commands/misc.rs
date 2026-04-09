@@ -86,7 +86,34 @@ pub fn restart_app(app: tauri::AppHandle) {
     app.restart();
 }
 
-// ── Directory Picker ──────────────────────────────────────────────────────────
+// ── Directory / File Pickers ──────────────────────────────────────────────────
+
+/// Run an osascript command and return the trimmed stdout path, or `None` on
+/// user cancellation.  Any other failure is returned as `Err`.
+#[cfg(target_os = "macos")]
+fn run_osascript_picker(script: &str) -> Result<Option<String>, String> {
+    let output = std::process::Command::new("osascript")
+        .args(["-e", script])
+        .output()
+        .map_err(|e| format!("Failed to launch osascript: {e}"))?;
+
+    if output.status.success() {
+        let raw = String::from_utf8_lossy(&output.stdout);
+        let path = raw.trim().trim_end_matches('/').to_string();
+        if path.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(path))
+        }
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("User canceled") || stderr.contains("user canceled") {
+            Ok(None)
+        } else {
+            Err(format!("osascript error: {}", stderr.trim()))
+        }
+    }
+}
 
 /// Open a native folder-picker dialog and return the selected path.
 ///
@@ -100,42 +127,37 @@ pub fn restart_app(app: tauri::AppHandle) {
 pub async fn open_directory_dialog() -> Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
     {
-        // Use `osascript` to show a choose-folder dialog.  This is reliable
-        // on all Apple-Silicon (M-series) Macs and avoids the rfd/NSOpenPanel
-        // NULL-pointer panic.
-        let output = std::process::Command::new("osascript")
-            .args([
-                "-e",
-                "set result to choose folder with prompt \"Select project directory\"\n\
-                 POSIX path of result",
-            ])
-            .output()
-            .map_err(|e| format!("Failed to launch osascript: {e}"))?;
-
-        if output.status.success() {
-            let raw = String::from_utf8_lossy(&output.stdout);
-            let path = raw.trim().trim_end_matches('/').to_string();
-            if path.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(path))
-            }
-        } else {
-            // Exit code 1 with "User canceled" in stderr means the user
-            // dismissed the dialog — treat that as a normal cancellation.
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("User canceled") || stderr.contains("user canceled") {
-                Ok(None)
-            } else {
-                Err(format!("osascript error: {}", stderr.trim()))
-            }
-        }
+        run_osascript_picker(
+            "set result to choose folder with prompt \"Select project directory\"\n\
+             POSIX path of result",
+        )
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        // On non-macOS platforms the rfd panic does not occur; use the
-        // tauri-plugin-dialog blocking API from a background thread.
         Err("open_directory_dialog: not implemented on this platform".to_string())
+    }
+}
+
+/// Open a native file-picker dialog and return the selected path.
+///
+/// Uses the same osascript strategy as `open_directory_dialog` to avoid the
+/// rfd/NSOpenPanel NULL-pointer panic on Apple-Silicon Macs.
+///
+/// Returns `Ok(Some(path))` when a file is chosen, `Ok(None)` when the
+/// user cancels, or `Err(message)` if the picker itself fails.
+#[tauri::command]
+pub async fn open_file_dialog() -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        run_osascript_picker(
+            "set result to choose file with prompt \"Select a file\"\n\
+             POSIX path of result",
+        )
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("open_file_dialog: not implemented on this platform".to_string())
     }
 }

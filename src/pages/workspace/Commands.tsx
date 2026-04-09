@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, Terminal, Trash2, Check, Edit2, X } from "lucide-react";
+import { ICONS } from "../../lib/icons";
 import { TokenPill } from "../../components/TokenPill";
 
 interface UserCommandEntry {
@@ -372,11 +374,10 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
                       </label>
                       <TokenPill text={buildCommandContent(editDescription, editBody)} />
                     </div>
-                    <textarea
+                    <LineNumberedTextarea
                       value={editBody}
-                      onChange={(e) => setEditBody(e.target.value)}
-                      className="flex-1 px-6 pb-6 resize-none outline-none font-mono text-[13px] bg-bg-base text-text-base leading-relaxed custom-scrollbar"
-                      spellCheck={false}
+                      onChange={setEditBody}
+                      className="flex-1"
                     />
                   </div>
                 </>
@@ -407,8 +408,24 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-text-muted text-[13px]">
-            Select a command or create a new one.
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-icon-agent/12 border border-icon-agent/20 flex items-center justify-center">
+              <Terminal size={24} className={ICONS.command.iconColor} strokeWidth={1.5} />
+            </div>
+            <h2 className="text-lg font-medium text-text-base mb-2">
+              {commands.length === 0 ? "No commands yet" : "No command selected"}
+            </h2>
+            <p className="text-[14px] text-text-muted mb-8 leading-relaxed max-w-sm">
+              {commands.length === 0
+                ? "Commands are reusable prompts that agents can trigger by name. Create your first command to build a library of common workflows."
+                : "Select a command from the list to view or edit it, or create a new one."}
+            </p>
+            <button
+              onClick={startCreateNew}
+              className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+            >
+              Create Command
+            </button>
           </div>
         )}
 

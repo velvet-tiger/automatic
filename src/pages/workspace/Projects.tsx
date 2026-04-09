@@ -7,6 +7,7 @@ import type { AgentOptions } from "../../components/AgentSelector";
 import { AgentIcon } from "../../components/AgentIcon";
 import { McpSelector } from "../../components/McpSelector";
 import { MarkdownPreview } from "../../components/MarkdownPreview";
+import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { TokenPill } from "../../components/TokenPill";
 import { useCurrentUser } from "../../contexts/ProfileContext";
 import { useTaskLog } from "../../contexts/TaskLogContext";
@@ -3706,6 +3707,11 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     if (picked) setDocNewPath(picked);
   };
 
+  const handleBrowseDocFile = async (): Promise<void> => {
+    const picked: string | null = await invoke("open_file_dialog");
+    if (picked) setDocNewPath(picked);
+  };
+
   const handleAddDocPath = async (): Promise<void> => {
     if (!docNewPath.trim()) return;
     await addDocPath(docNewPath, docNewPathSummary);
@@ -6674,15 +6680,14 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
                             {/* Content area */}
                             {projectFileEditing ? (
-                              <textarea
+                              <LineNumberedTextarea
                                 value={projectFileContent}
-                                onChange={(e) => {
-                                  setProjectFileContent(e.target.value);
+                                onChange={(v) => {
+                                  setProjectFileContent(v);
                                   setProjectFileDirty(true);
                                 }}
-                                className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30 min-h-0"
+                                className="flex-1 min-h-0"
                                 placeholder="Write your project instructions here..."
-                                spellCheck={false}
                               />
                             ) : (
                               <div className="flex-1 overflow-y-auto custom-scrollbar bg-bg-base min-h-0">
@@ -6863,16 +6868,15 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
                     {/* Content: raw JSON editor or structured read-only view */}
                     {contextEditing ? (
-                      <textarea
+                      <LineNumberedTextarea
                         value={contextRaw}
-                        onChange={(e) => {
-                          setContextRaw(e.target.value);
+                        onChange={(v) => {
+                          setContextRaw(v);
                           setContextDirty(true);
                           setContextJsonError(null);
                         }}
-                        className="flex-1 w-full p-4 resize-none outline-none font-mono text-[12px] bg-bg-base text-text-base leading-relaxed custom-scrollbar placeholder-text-muted/30 min-h-0"
+                        className="flex-1 min-h-0"
                         placeholder={`{\n  "commands": {},\n  "concepts": {},\n  "conventions": {},\n  "gotchas": {}\n}`}
-                        spellCheck={false}
                       />
                     ) : (
                       <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-5">
@@ -7220,12 +7224,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                         placeholder="Rule name"
                                         className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/50 outline-none transition-colors font-medium"
                                       />
-                                      <textarea
+                                      <LineNumberedTextarea
                                         value={customRuleEditContent}
-                                        onChange={(e) => setCustomRuleEditContent(e.target.value)}
+                                        onChange={setCustomRuleEditContent}
                                         placeholder="Write the rule content in Markdown…"
+                                        variant="inline"
                                         rows={8}
-                                        className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-2 text-[12px] font-mono text-text-base placeholder-text-muted/50 outline-none resize-y transition-colors leading-relaxed"
+                                        className="w-full"
                                       />
                                       <div className="flex items-center justify-end gap-2 pt-1">
                                         <button
@@ -7594,12 +7599,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                         placeholder="command-name"
                                         className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/50 outline-none transition-colors font-medium"
                                       />
-                                      <textarea
+                                      <LineNumberedTextarea
                                         value={customCommandEditContent}
-                                        onChange={(e) => setCustomCommandEditContent(e.target.value)}
+                                        onChange={setCustomCommandEditContent}
                                         placeholder="Write the command as Markdown with optional YAML frontmatter..."
+                                        variant="inline"
                                         rows={12}
-                                        className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-2 text-[12px] font-mono text-text-base placeholder-text-muted/50 outline-none resize-y transition-colors leading-relaxed"
+                                        className="w-full"
                                       />
                                       <div className="flex items-center justify-end gap-2 pt-1">
                                         <button
@@ -7982,12 +7988,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                         placeholder="Agent display name"
                                         className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/50 outline-none transition-colors font-medium"
                                       />
-                                      <textarea
+                                      <LineNumberedTextarea
                                         value={customAgentEditContent}
-                                        onChange={(e) => setCustomAgentEditContent(e.target.value)}
+                                        onChange={setCustomAgentEditContent}
                                         placeholder="Write the agent content as Markdown with YAML frontmatter..."
+                                        variant="inline"
                                         rows={12}
-                                        className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-2 text-[12px] font-mono text-text-base placeholder-text-muted/50 outline-none resize-y transition-colors leading-relaxed"
+                                        className="w-full"
                                       />
                                       <div className="flex items-center justify-end gap-2 pt-1">
                                         <button
@@ -8542,12 +8549,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                           placeholder="skill-name (lowercase, hyphens)"
                                           className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-1.5 text-[13px] text-text-base placeholder-text-muted/50 outline-none transition-colors font-mono"
                                         />
-                                        <textarea
+                                        <LineNumberedTextarea
                                           value={customSkillEditContent}
-                                          onChange={(e) => setCustomSkillEditContent(e.target.value)}
+                                          onChange={setCustomSkillEditContent}
                                           placeholder="Write the skill content as Markdown with YAML frontmatter..."
+                                          variant="inline"
                                           rows={12}
-                                          className="w-full bg-bg-sidebar border border-border-strong/40 focus:border-brand rounded-md px-3 py-2 text-[12px] font-mono text-text-base placeholder-text-muted/50 outline-none resize-y transition-colors leading-relaxed"
+                                          className="w-full"
                                         />
                                         <div className="flex items-center justify-end gap-2 pt-1">
                                           <button
@@ -9037,7 +9045,14 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                      className="w-full rounded-md border border-border-strong/40 bg-bg-sidebar px-3 py-2 text-[12px] font-medium text-text-muted transition-colors hover:bg-surface-hover hover:text-text-base flex items-center justify-center gap-1.5"
                                      title="Pick a directory"
                                    >
-                                     <FolderOpen size={12} /> Browse
+                                     <FolderOpen size={12} /> Browse Dir
+                                   </button>
+                                   <button
+                                     onClick={handleBrowseDocFile}
+                                     className="w-full rounded-md border border-border-strong/40 bg-bg-sidebar px-3 py-2 text-[12px] font-medium text-text-muted transition-colors hover:bg-surface-hover hover:text-text-base flex items-center justify-center gap-1.5"
+                                     title="Pick a file"
+                                   >
+                                     <FileText size={12} /> Browse File
                                    </button>
                                    <button
                                      onClick={handleAddDocPath}
@@ -9403,14 +9418,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                 </button>
                               </div>
                               {/* Markdown textarea */}
-                              <textarea
+                              <LineNumberedTextarea
                                 value={docNoteContent}
-                                onChange={(e) => {
-                                  setDocNoteContent(e.target.value);
+                                onChange={(v) => {
+                                  setDocNoteContent(v);
                                   setDocNoteDirty(true);
                                 }}
-                                spellCheck={false}
-                                className="flex-1 p-4 text-[13px] font-mono text-text-base bg-bg-base resize-none focus:outline-none leading-relaxed"
+                                className="flex-1 min-h-0"
                                 placeholder="Write Markdown here…"
                               />
                             </>
