@@ -34,6 +34,13 @@ import { ICONS } from "../../lib/icons";
 import { SkillAvatar } from "../../components/SkillAvatar";
 import { TokenPill } from "../../components/TokenPill";
 import SkillImportDialog from "../../components/SkillImportDialog";
+import {
+  type AssetSecurityScanRecord,
+  formatAssetScanResult,
+  getSkillScanState,
+  scanAssetContent,
+  warningFindings,
+} from "../../lib/assetSecurity";
 
 interface SkillSource {
   source: string; // "owner/repo"
@@ -458,6 +465,8 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   const [filter, setFilter] = useState<"all" | "remote" | "local">("all");
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [securityNotice, setSecurityNotice] = useState<string | null>(null);
+  const [lastScan, setLastScan] = useState<AssetSecurityScanRecord | null>(null);
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
   const [collections, setCollections] = useState<SkillCollection[]>([]);
 
@@ -536,11 +545,12 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
   const loadSkillContent = async (name: string) => {
     try {
-      const [content, resources, projectNames, templateNames] = await Promise.all([
+      const [content, resources, projectNames, templateNames, skillScanState] = await Promise.all([
         invoke<string>("read_skill", { name }),
         invoke<SkillResources>("get_skill_resources", { name }),
         invoke<string[]>("get_projects"),
         invoke<string[]>("get_project_templates"),
+        getSkillScanState(name),
       ]);
       setSelectedSkill(name);
       setSkillContent(content);
@@ -574,6 +584,12 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
+      setLastScan(skillScanState);
+      setSecurityNotice(
+        skillScanState && skillScanState.findings.length > 0
+          ? formatAssetScanResult(skillScanState, "skill")
+          : null,
+      );
     } catch (err: any) {
       setError(`Failed to read skill ${name}: ${err}`);
     }
@@ -589,6 +605,13 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
       const content = buildFrontmatter(newSkillName, newSkillDescription) + "\n" + editBody;
       try {
+        const scan = await scanAssetContent("skill", content);
+        if (scan.blocked) {
+          setError(formatAssetScanResult(scan, "skill"));
+          setSecurityNotice(null);
+          return;
+        }
+        const warnings = warningFindings(scan);
         await invoke("save_skill", { name: newSkillName, content });
         trackSkillCreated(newSkillName, "local");
         setIsCreating(false);
@@ -596,6 +619,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
         await loadSkills();
         await loadSkillContent(newSkillName);
         setError(null);
+        setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "skill") : null);
       } catch (err: any) {
         setError(`Failed to save skill: ${err}`);
       }
@@ -608,11 +632,19 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
       const finalContent = buildFrontmatter(editName, editDescription) + "\n" + editBody;
       try {
+        const scan = await scanAssetContent("skill", finalContent);
+        if (scan.blocked) {
+          setError(formatAssetScanResult(scan, "skill"));
+          setSecurityNotice(null);
+          return;
+        }
+        const warnings = warningFindings(scan);
         await invoke("save_skill", { name: selectedSkill!, content: finalContent });
         trackSkillUpdated(selectedSkill!);
         setSkillContent(finalContent);
         setIsEditing(false);
         setError(null);
+        setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "skill") : null);
       } catch (err: any) {
         setError(`Failed to save skill: ${err}`);
       }
@@ -626,9 +658,10 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
     try {
       await invoke("delete_skill", { name });
       trackSkillDeleted(name);
-      if (selectedSkill === name) { setSelectedSkill(null); setSkillContent(""); setSkillUsedBy(null); setIsEditing(false); }
+      if (selectedSkill === name) { setSelectedSkill(null); setSkillContent(""); setSkillUsedBy(null); setIsEditing(false); setLastScan(null); }
       await loadSkills();
       setError(null);
+      setSecurityNotice(null);
     } catch (err: any) {
       setError(`Failed to delete skill: ${err}`);
     }
@@ -657,6 +690,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
       await loadSkills();
       await loadSkillContent(dupName);
       setError(null);
+      setSecurityNotice(null);
     } catch (err: any) {
       setError(`Failed to duplicate skill: ${err}`);
     }
@@ -670,9 +704,11 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
     setSkillContent("");
     setSkillResources(null);
     setSkillUsedBy(null);
+    setLastScan(null);
     setFieldErrors({ name: null, description: null });
     setIsCreating(true);
     setIsEditing(true);
+    setSecurityNotice(null);
   };
 
   // ── Derived ───────────────────────────────────────────────────────────────
@@ -690,6 +726,23 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   });
 
   const selectedEntry = skills.find(s => s.name === selectedSkill);
+  const scanStatusLabel = lastScan
+    ? lastScan.blocked
+      ? "Blocked"
+      : lastScan.findings.length > 0
+        ? "Warnings"
+        : "Clean"
+    : "Unknown";
+  const scanStatusClass = lastScan
+    ? lastScan.blocked
+      ? "bg-red-100 border-red-300/70 text-red-900"
+      : lastScan.findings.length > 0
+        ? "bg-amber-100 border-amber-400/70 text-amber-950"
+        : "bg-emerald-100 border-emerald-300/70 text-emerald-900"
+    : "bg-bg-sidebar border-border-strong/40 text-text-muted";
+  const scanTimestamp = lastScan
+    ? new Date(lastScan.scanned_at).toLocaleString()
+    : null;
 
   return (
     <div className="flex h-full w-full bg-bg-base">
@@ -924,8 +977,19 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
       <div className="flex-1 flex flex-col min-w-0">
         {error && (
           <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between shrink-0">
-            {error}
+            <div className="whitespace-pre-wrap">{error}</div>
             <button onClick={() => setError(null)}><X size={14} /></button>
+          </div>
+        )}
+        {securityNotice && (
+          <div className="bg-amber-100/85 text-text-base p-3 text-[13px] border-b border-amber-400/60 flex items-center justify-between shrink-0">
+            <div className="whitespace-pre-wrap">{securityNotice}</div>
+            <button
+              onClick={() => setSecurityNotice(null)}
+              className="text-amber-900/70 hover:text-amber-950 transition-colors"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
 
@@ -1134,6 +1198,20 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                 collections={collections}
                 onChanged={loadSkills}
               />
+            )}
+
+            {!isEditing && (
+              <div className="px-5 py-2.5 border-b border-border-strong/40 flex items-center gap-2 shrink-0 bg-bg-input/20">
+                <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">
+                  Last Security Scan
+                </span>
+                <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium ${scanStatusClass}`}>
+                  {scanStatusLabel}
+                </span>
+                <span className="text-[11px] text-text-muted">
+                  {scanTimestamp ? scanTimestamp : "No recorded scan yet"}
+                </span>
+              </div>
             )}
 
             {/* Body */}

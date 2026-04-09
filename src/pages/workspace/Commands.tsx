@@ -5,6 +5,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, Terminal, Trash2, Check, Edit2, X } from "lucide-react";
 import { ICONS } from "../../lib/icons";
 import { TokenPill } from "../../components/TokenPill";
+import { formatAssetScanResult, scanAssetContent, warningFindings } from "../../lib/assetSecurity";
 
 interface UserCommandEntry {
   id: string;
@@ -67,6 +68,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
   const [isCreating, setIsCreating] = useState(false);
   const [newMachineName, setNewMachineName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [securityNotice, setSecurityNotice] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameName, setRenameName] = useState("");
 
@@ -106,6 +108,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
+      setSecurityNotice(null);
     } catch (err: any) {
       setError(`Failed to read command: ${err}`);
     }
@@ -123,6 +126,13 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
 
     try {
       const content = buildCommandContent(editDescription.trim(), editBody);
+      const scan = await scanAssetContent("user_command", content);
+      if (scan.blocked) {
+        setError(formatAssetScanResult(scan, "command"));
+        setSecurityNotice(null);
+        return;
+      }
+      const warnings = warningFindings(scan);
       await invoke("save_user_command", { machineName: id, content });
       await loadCommands();
       setSelectedId(id);
@@ -130,6 +140,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
       setIsEditing(false);
       setDescriptionError(null);
       setError(null);
+      setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "command") : null);
     } catch (err: any) {
       setError(`Failed to save command: ${err}`);
     }
@@ -150,6 +161,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
       }
       await loadCommands();
       setError(null);
+      setSecurityNotice(null);
     } catch (err: any) {
       setError(`Failed to delete command: ${err}`);
     }
@@ -164,6 +176,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
     setIsEditing(true);
     setNewMachineName("");
     setError(null);
+    setSecurityNotice(null);
   };
 
   const startRename = () => {
@@ -184,6 +197,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
       setSelectedId(trimmed);
       setIsRenaming(false);
       setError(null);
+      setSecurityNotice(null);
     } catch (err: any) {
       setError(`Failed to rename command: ${err}`);
     }
@@ -431,7 +445,13 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
 
         {error && (
           <div className="mx-5 mb-5 mt-0 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-[12px] text-danger">
-            {error}
+            <div className="whitespace-pre-wrap">{error}</div>
+          </div>
+        )}
+
+        {securityNotice && (
+          <div className="mx-5 mb-5 mt-0 rounded-lg border border-amber-400/60 bg-amber-100/85 px-4 py-3 text-[12px] text-text-base">
+            <div className="whitespace-pre-wrap">{securityNotice}</div>
           </div>
         )}
       </div>

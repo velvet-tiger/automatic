@@ -6,6 +6,7 @@ import { Plus, X, Edit2, FileText, Check, ClipboardList } from "lucide-react";
 import { ICONS } from "../../lib/icons";
 import { AuthorSection } from "../../components/AuthorPanel";
 import { TokenPill } from "../../components/TokenPill";
+import { formatAssetScanResult, scanAssetContent, warningFindings } from "../../lib/assetSecurity";
 
 export default function Templates() {
   const [templates, setTemplates] = useState<string[]>([]);
@@ -15,6 +16,7 @@ export default function Templates() {
   const [newTemplateName, setNewTemplateName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [securityNotice, setSecurityNotice] = useState<string | null>(null);
 
   useEffect(() => {
     loadTemplates();
@@ -38,6 +40,7 @@ export default function Templates() {
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
+      setSecurityNotice(null);
     } catch (err: any) {
       setError(`Failed to read template ${name}: ${err}`);
     }
@@ -48,6 +51,13 @@ export default function Templates() {
     const name = isCreating ? newTemplateName.trim() : selectedTemplate!;
     if (!name) return;
     try {
+      const scan = await scanAssetContent("template", templateContent);
+      if (scan.blocked) {
+        setError(formatAssetScanResult(scan, "template"));
+        setSecurityNotice(null);
+        return;
+      }
+      const warnings = warningFindings(scan);
       await invoke("save_template", { name, content: templateContent });
       setIsEditing(false);
       setSelectedTemplate(name);
@@ -56,6 +66,7 @@ export default function Templates() {
         await loadTemplates();
       }
       setError(null);
+      setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "template") : null);
     } catch (err: any) {
       setError(`Failed to save template: ${err}`);
     }
@@ -74,6 +85,7 @@ export default function Templates() {
       }
       await loadTemplates();
       setError(null);
+      setSecurityNotice(null);
     } catch (err: any) {
       setError(`Failed to delete template: ${err}`);
     }
@@ -85,6 +97,7 @@ export default function Templates() {
     setIsCreating(true);
     setIsEditing(true);
     setNewTemplateName("");
+    setSecurityNotice(null);
   };
 
   return (
@@ -153,8 +166,19 @@ export default function Templates() {
       <div className="flex-1 flex flex-col min-w-0 bg-bg-base">
         {error && (
           <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between">
-            {error}
+            <div className="whitespace-pre-wrap">{error}</div>
             <button onClick={() => setError(null)}><X size={14} /></button>
+          </div>
+        )}
+        {securityNotice && (
+          <div className="bg-amber-100/85 text-text-base p-3 text-[13px] border-b border-amber-400/60 flex items-center justify-between">
+            <div className="whitespace-pre-wrap">{securityNotice}</div>
+            <button
+              onClick={() => setSecurityNotice(null)}
+              className="text-amber-900/70 hover:text-amber-950 transition-colors"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
 

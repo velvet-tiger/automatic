@@ -1,8 +1,10 @@
+use chrono::Utc;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
 use unicode_normalization::UnicodeNormalization;
 
 const MAX_TEXT_ASSET_BYTES: usize = 512 * 1024;
@@ -111,6 +113,22 @@ impl AssetKind {
     }
 }
 
+impl FromStr for AssetKind {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "skill" => Ok(Self::Skill),
+            "skill_manifest" | "skill-manifest" => Ok(Self::SkillManifest),
+            "companion_file" | "companion-file" => Ok(Self::CompanionFile),
+            "user_command" | "user-command" | "command" => Ok(Self::UserCommand),
+            "user_agent" | "user-agent" | "agent" => Ok(Self::UserAgent),
+            "template" => Ok(Self::Template),
+            _ => Err(format!("Unknown asset kind '{}'", value)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingSeverity {
@@ -127,6 +145,19 @@ pub struct Finding {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AssetSecurityReport {
+    pub findings: Vec<Finding>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct AssetSecurityScanResult {
+    pub blocked: bool,
+    pub findings: Vec<Finding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetSecurityScanRecord {
+    pub scanned_at: String,
+    pub blocked: bool,
     pub findings: Vec<Finding>,
 }
 
@@ -187,6 +218,14 @@ impl AssetSecurityReport {
 
         Err(self.to_display_message(label))
     }
+
+    pub fn to_record(&self) -> AssetSecurityScanRecord {
+        AssetSecurityScanRecord {
+            scanned_at: Utc::now().to_rfc3339(),
+            blocked: self.blocked(),
+            findings: self.findings.clone(),
+        }
+    }
 }
 
 pub fn enforce_text_asset(kind: AssetKind, label: &str, content: &str) -> Result<(), String> {
@@ -195,6 +234,14 @@ pub fn enforce_text_asset(kind: AssetKind, label: &str, content: &str) -> Result
 
 pub fn scan_text_asset_report(kind: AssetKind, content: &str) -> AssetSecurityReport {
     scan_text_asset(kind, content)
+}
+
+pub fn scan_text_asset_result(kind: AssetKind, content: &str) -> AssetSecurityScanResult {
+    let report = scan_text_asset(kind, content);
+    AssetSecurityScanResult {
+        blocked: report.blocked(),
+        findings: report.findings,
+    }
 }
 
 pub fn validate_relative_asset_path(path: &str, label: &str) -> Result<(), String> {

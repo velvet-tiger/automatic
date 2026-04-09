@@ -30,6 +30,11 @@ import {
   trackProjectMcpServerAdded,
   trackProjectMcpServerRemoved,
 } from "../../lib/analytics";
+import {
+  formatAssetScanResult,
+  scanAssetContent,
+  warningFindings,
+} from "../../lib/assetSecurity";
 
 import {
   Plus,
@@ -2011,10 +2016,12 @@ function SkillAddButton({
 }) {
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [noticeMsg, setNoticeMsg] = useState<string | null>(null);
 
   const handleAdd = async () => {
     setState("loading");
     setErrorMsg(null);
+    setNoticeMsg(null);
 
     // 1. Resolve skill metadata from the stored blob or by searching.
     let meta: { id: string; name: string; source: string } | null = null;
@@ -2052,7 +2059,15 @@ function SkillAddButton({
 
     // 3. Install it locally.
     try {
+      const scan = await scanAssetContent("skill", content);
+      if (scan.blocked) {
+        setState("error");
+        setErrorMsg(formatAssetScanResult(scan, "skill"));
+        return;
+      }
       await invoke("import_remote_skill", { name: meta.name, content, source: meta.source, id: meta.id });
+      const warnings = warningFindings(scan);
+      setNoticeMsg(warnings.length > 0 ? formatAssetScanResult(scan, "skill") : null);
     } catch (err: any) {
       setState("error");
       setErrorMsg(`Failed to install skill: ${err}`);
@@ -2071,8 +2086,16 @@ function SkillAddButton({
 
   if (errorMsg) {
     return (
-      <span className="text-[11px] text-error flex items-center gap-1">
-        <AlertCircle size={10} /> {errorMsg}
+      <span className="text-[11px] text-error flex items-center gap-1 whitespace-pre-wrap">
+        <AlertCircle size={10} className="mt-0.5 flex-shrink-0" /> {errorMsg}
+      </span>
+    );
+  }
+
+  if (noticeMsg) {
+    return (
+      <span className="text-[11px] text-amber-950 flex items-center gap-1 whitespace-pre-wrap">
+        <AlertCircle size={10} className="mt-0.5 flex-shrink-0" /> {noticeMsg}
       </span>
     );
   }

@@ -18,6 +18,11 @@ import {
   Layers,
   X,
 } from "lucide-react";
+import {
+  formatAssetScanResult,
+  scanAssetContent,
+  warningFindings,
+} from "../../lib/assetSecurity";
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface CollectionSkill {
@@ -192,10 +197,12 @@ function CollectionDetail({
   // Per-skill import state
   const [importingSkills, setImportingSkills] = useState<Set<string>>(new Set());
   const [skillErrors, setSkillErrors] = useState<Record<string, string>>({});
+  const [skillWarnings, setSkillWarnings] = useState<Record<string, string>>({});
 
   // Import-all state
   const [importingAll, setImportingAll] = useState(false);
   const [importAllError, setImportAllError] = useState<string | null>(null);
+  const [importAllNotice, setImportAllNotice] = useState<string | null>(null);
   const [importAllDone, setImportAllDone] = useState(false);
 
   const isSkillInstalled = useCallback(
@@ -213,6 +220,7 @@ function CollectionDetail({
     async (skill: CollectionSkill) => {
       setImportingSkills((prev) => new Set([...prev, skill.name]));
       setSkillErrors((prev) => { const n = { ...prev }; delete n[skill.name]; return n; });
+      setSkillWarnings((prev) => { const n = { ...prev }; delete n[skill.name]; return n; });
 
       try {
         if (skill.kind === "bundled") {
@@ -226,24 +234,54 @@ function CollectionDetail({
             source: skill.source,
             name: skill.name,
           });
+          const scan = await scanAssetContent("skill", content);
+          if (scan.blocked) {
+            setSkillErrors((prev) => ({
+              ...prev,
+              [skill.name]: formatAssetScanResult(scan, "skill"),
+            }));
+            return;
+          }
           await invoke("import_remote_skill", {
             name: skill.name,
             content,
             source: skill.source,
             id: skill.id,
           });
+          const warnings = warningFindings(scan);
+          if (warnings.length > 0) {
+            setSkillWarnings((prev) => ({
+              ...prev,
+              [skill.name]: formatAssetScanResult(scan, "skill"),
+            }));
+          }
         } else {
           // GitHub-hosted skill
           const content: string = await invoke("fetch_remote_skill_content", {
             source: skill.source,
             name: skill.name,
           });
+          const scan = await scanAssetContent("skill", content);
+          if (scan.blocked) {
+            setSkillErrors((prev) => ({
+              ...prev,
+              [skill.name]: formatAssetScanResult(scan, "skill"),
+            }));
+            return;
+          }
           await invoke("import_remote_skill", {
             name: skill.name,
             content,
             source: skill.source,
             id: skill.id,
           });
+          const warnings = warningFindings(scan);
+          if (warnings.length > 0) {
+            setSkillWarnings((prev) => ({
+              ...prev,
+              [skill.name]: formatAssetScanResult(scan, "skill"),
+            }));
+          }
         }
         onRegistryUpdate(skill.name, skill.source, skill.id);
       } catch (err: any) {
@@ -262,10 +300,12 @@ function CollectionDetail({
   const importAll = useCallback(async () => {
     setImportingAll(true);
     setImportAllError(null);
+    setImportAllNotice(null);
     setImportAllDone(false);
 
     const notInstalled = collection.skills.filter((s) => !isSkillInstalled(s));
     let failed = 0;
+    const warnedSkills: string[] = [];
 
     for (const skill of notInstalled) {
       try {
@@ -273,12 +313,29 @@ function CollectionDetail({
           source: skill.source,
           name: skill.name,
         });
+        const scan = await scanAssetContent("skill", content);
+        if (scan.blocked) {
+          failed++;
+          setSkillErrors((prev) => ({
+            ...prev,
+            [skill.name]: formatAssetScanResult(scan, "skill"),
+          }));
+          continue;
+        }
         await invoke("import_remote_skill", {
           name: skill.name,
           content,
           source: skill.source,
           id: skill.id,
         });
+        const warnings = warningFindings(scan);
+        if (warnings.length > 0) {
+          warnedSkills.push(skill.name);
+          setSkillWarnings((prev) => ({
+            ...prev,
+            [skill.name]: formatAssetScanResult(scan, "skill"),
+          }));
+        }
         onRegistryUpdate(skill.name, skill.source, skill.id);
       } catch {
         failed++;
@@ -286,6 +343,11 @@ function CollectionDetail({
     }
 
     setImportingAll(false);
+    if (warnedSkills.length > 0) {
+      setImportAllNotice(
+        `${warnedSkills.length} imported skill${warnedSkills.length !== 1 ? "s" : ""} had security warnings: ${warnedSkills.join(", ")}.`,
+      );
+    }
     if (failed > 0) {
       setImportAllError(`${failed} skill${failed !== 1 ? "s" : ""} could not be imported.`);
     } else {
@@ -323,6 +385,9 @@ function CollectionDetail({
         <div className="flex items-center gap-2">
           {importAllError && (
             <span className="text-[12px] text-red-400">{importAllError}</span>
+          )}
+          {importAllNotice && (
+            <span className="max-w-md text-[12px] text-amber-950">{importAllNotice}</span>
           )}
           {allSkillsInstalled || importAllDone ? (
             <div className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-icon-skill">
@@ -381,8 +446,13 @@ function CollectionDetail({
                           onImport={() => importSingleSkill(skill)}
                         />
                         {skillErrors[skill.name] && (
-                          <p className="mt-1 text-[11px] text-red-400 px-1">
+                          <p className="mt-1 text-[11px] text-red-400 px-1 whitespace-pre-wrap">
                             {skillErrors[skill.name]}
+                          </p>
+                        )}
+                        {skillWarnings[skill.name] && (
+                          <p className="mt-1 text-[11px] text-amber-950 px-1 whitespace-pre-wrap">
+                            {skillWarnings[skill.name]}
                           </p>
                         )}
                       </div>

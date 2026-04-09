@@ -16,6 +16,11 @@ import {
 } from "lucide-react";
 import featuredSkillsData from "../../../src-tauri/assets/marketplace/featured-skills.json";
 import { SkillAvatar } from "../../components/SkillAvatar";
+import {
+  formatAssetScanResult,
+  scanAssetContent,
+  warningFindings,
+} from "../../lib/assetSecurity";
 
 interface RemoteSkillResult {
   id: string;
@@ -336,6 +341,8 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
   const [updating, setUpdating] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [previewNotice, setPreviewNotice] = useState<string | null>(null);
   const [showDuplicates, setShowDuplicates] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -347,6 +354,8 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
       setQuery("");
       setResults([]);
       setPreviewError(null);
+      setActionError(null);
+      setPreviewNotice(null);
       setSearchError(null);
     }
   }, [resetKey]);
@@ -402,12 +411,16 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
         setSelected(null);
         setRawContent("");
         setPreviewError(null);
+        setActionError(null);
+        setPreviewNotice(null);
         return;
       }
 
       setSelected(skill);
       setRawContent("");
       setPreviewError(null);
+      setActionError(null);
+      setPreviewNotice(null);
       setLoadingPreview(true);
       try {
         const content: string = await invoke("fetch_remote_skill_content", {
@@ -456,7 +469,15 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
   const importSkill = useCallback(async () => {
     if (!selected || !rawContent) return;
     setImporting(true);
+    setActionError(null);
+    setPreviewNotice(null);
     try {
+      const scan = await scanAssetContent("skill", rawContent);
+      if (scan.blocked) {
+        setActionError(formatAssetScanResult(scan, "skill"));
+        return;
+      }
+      const warnings = warningFindings(scan);
       await invoke("import_remote_skill", {
         name: selected.name,
         content: rawContent,
@@ -469,8 +490,11 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
         ...prev,
         [selected.name]: { source: selected.source, id: selected.id },
       }));
+      setPreviewNotice(
+        warnings.length > 0 ? formatAssetScanResult(scan, "skill") : null,
+      );
     } catch (err: any) {
-      setPreviewError(`Import failed: ${err}`);
+      setActionError(`Import failed: ${err}`);
     } finally {
       setImporting(false);
     }
@@ -482,13 +506,20 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
   const updateSkill = useCallback(async () => {
     if (!selected || !rawContent) return;
     setUpdating(true);
-    setPreviewError(null);
+    setActionError(null);
+    setPreviewNotice(null);
     try {
       // Re-fetch latest content first
       const fresh: string = await invoke("fetch_remote_skill_content", {
         source: selected.source,
         name: selected.name,
       });
+      const scan = await scanAssetContent("skill", fresh);
+      if (scan.blocked) {
+        setActionError(formatAssetScanResult(scan, "skill"));
+        return;
+      }
+      const warnings = warningFindings(scan);
       await invoke("import_remote_skill", {
         name: selected.name,
         content: fresh,
@@ -497,8 +528,11 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
       });
       trackSkillUpdated(selected.name);
       setRawContent(fresh);
+      setPreviewNotice(
+        warnings.length > 0 ? formatAssetScanResult(scan, "skill") : null,
+      );
     } catch (err: any) {
-      setPreviewError(`Update failed: ${err}`);
+      setActionError(`Update failed: ${err}`);
     } finally {
       setUpdating(false);
     }
@@ -815,7 +849,13 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
               <div className="p-8 max-w-lg">
                 {/* Back button */}
                 <button
-                  onClick={() => { setSelected(null); setRawContent(""); setPreviewError(null); }}
+                  onClick={() => {
+                    setSelected(null);
+                    setRawContent("");
+                    setPreviewError(null);
+                    setActionError(null);
+                    setPreviewNotice(null);
+                  }}
                   className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-base transition-colors mb-6"
                 >
                   <ArrowLeft size={11} />
@@ -882,7 +922,13 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
                   {/* Breadcrumb */}
                   <div className="flex items-center gap-1.5 text-[11px] text-text-muted mb-4">
                     <button
-                      onClick={() => { setSelected(null); setRawContent(""); setPreviewError(null); }}
+                      onClick={() => {
+                        setSelected(null);
+                        setRawContent("");
+                        setPreviewError(null);
+                        setActionError(null);
+                        setPreviewNotice(null);
+                      }}
                       className="flex items-center gap-1 hover:text-text-base transition-colors"
                     >
                       <ArrowLeft size={11} />
@@ -919,6 +965,17 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
                   <div className="mb-5 pb-5 border-b border-border-strong/40">
                     <AuthorSection descriptor={{ type: "github", repo: selected.source }} />
                   </div>
+
+                  {actionError && (
+                    <div className="mb-5 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-[12px] text-red-400 whitespace-pre-wrap">
+                      {actionError}
+                    </div>
+                  )}
+                  {previewNotice && (
+                    <div className="mb-5 rounded-lg border border-amber-400/60 bg-amber-100/85 p-3 text-[12px] text-text-base whitespace-pre-wrap">
+                      {previewNotice}
+                    </div>
+                  )}
 
                   <div className="flex items-center gap-2 mb-5">
                     <code className="flex-1 bg-bg-input border border-border-strong/40 rounded-md px-3 py-2 font-mono text-[11px] text-text-muted truncate">

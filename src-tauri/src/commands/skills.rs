@@ -21,6 +21,11 @@ pub fn read_skill(name: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn get_skill_scan_state(name: &str) -> Result<Option<core::AssetSecurityScanRecord>, String> {
+    core::get_skill_scan_state(name)
+}
+
+#[tauri::command]
 pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
     core::save_skill(name, content)?;
     sync_projects_referencing_skill(name);

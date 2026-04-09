@@ -5,6 +5,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, Check, MessagesSquare, Copy, Lock, FolderGit2 } from "lucide-react";
 import { AuthorSection } from "../../components/AuthorPanel";
 import { TokenPill } from "../../components/TokenPill";
+import { formatAssetScanResult, scanAssetContent, warningFindings } from "../../lib/assetSecurity";
 
 interface UserAgentEntry {
   id: string;
@@ -54,6 +55,7 @@ export default function UserAgents() {
   const [newMachineName, setNewMachineName] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [securityNotice, setSecurityNotice] = useState<string | null>(null);
   const [referencingProjects, setReferencingProjects] = useState<ProjectRef[]>([]);
 
   useEffect(() => {
@@ -90,6 +92,7 @@ export default function UserAgents() {
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
+      setSecurityNotice(null);
       await loadReferencingProjects(id);
     } catch (err: any) {
       setError(`Failed to read agent: ${err}`);
@@ -102,6 +105,13 @@ export default function UserAgents() {
       const name = newDisplayName.trim();
       if (!id || !name) return;
       try {
+        const scan = await scanAssetContent("user_agent", agentContent);
+        if (scan.blocked) {
+          setError(formatAssetScanResult(scan, "user agent"));
+          setSecurityNotice(null);
+          return;
+        }
+        const warnings = warningFindings(scan);
         await invoke("save_user_agent", { machineName: id, name, content: agentContent });
         const newEntry: UserAgentEntry = { id, name };
         setAgents(prev => [...prev.filter(a => a.id !== id), newEntry].sort((a, b) => a.name.localeCompare(b.name)));
@@ -111,15 +121,24 @@ export default function UserAgents() {
         setDisplayName(name);
         setReferencingProjects([]);
         setError(null);
+        setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "user agent") : null);
       } catch (err: any) {
         setError(`Failed to save agent: ${err}`);
       }
     } else if (selectedId) {
       try {
+        const scan = await scanAssetContent("user_agent", agentContent);
+        if (scan.blocked) {
+          setError(formatAssetScanResult(scan, "user agent"));
+          setSecurityNotice(null);
+          return;
+        }
+        const warnings = warningFindings(scan);
         await invoke("save_user_agent", { machineName: selectedId, name: displayName, content: agentContent });
         setIsEditing(false);
         setAgents(prev => prev.map(a => a.id === selectedId ? { ...a, name: displayName } : a).sort((a, b) => a.name.localeCompare(b.name)));
         setError(null);
+        setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "user agent") : null);
       } catch (err: any) {
         setError(`Failed to save agent: ${err}`);
       }
@@ -141,6 +160,7 @@ export default function UserAgents() {
       }
       await loadAgents();
       setError(null);
+      setSecurityNotice(null);
     } catch (err: any) {
       setError(`Failed to delete agent: ${err}`);
     }
@@ -155,6 +175,7 @@ export default function UserAgents() {
     setNewMachineName("");
     setNewDisplayName("");
     setReferencingProjects([]);
+    setSecurityNotice(null);
   };
 
   const handleDuplicate = async (id: string) => {
@@ -176,6 +197,7 @@ export default function UserAgents() {
       await loadAgent(candidate);
       setIsEditing(true);
       setError(null);
+      setSecurityNotice(null);
     } catch (err: any) {
       setError(`Failed to duplicate agent: ${err}`);
     }
@@ -254,8 +276,19 @@ export default function UserAgents() {
       <div className="flex-1 flex flex-col min-w-0 bg-bg-base">
         {error && (
           <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between">
-            {error}
+            <div className="whitespace-pre-wrap">{error}</div>
             <button onClick={() => setError(null)}><X size={14} /></button>
+          </div>
+        )}
+        {securityNotice && (
+          <div className="bg-amber-100/85 text-text-base p-3 text-[13px] border-b border-amber-400/60 flex items-center justify-between">
+            <div className="whitespace-pre-wrap">{securityNotice}</div>
+            <button
+              onClick={() => setSecurityNotice(null)}
+              className="text-amber-900/70 hover:text-amber-950 transition-colors"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
 

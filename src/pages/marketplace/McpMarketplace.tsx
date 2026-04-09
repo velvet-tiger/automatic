@@ -25,6 +25,11 @@ import {
   BookOpen,
   Sparkles,
 } from "lucide-react";
+import {
+  formatAssetScanResult,
+  scanAssetContent,
+  warningFindings,
+} from "../../lib/assetSecurity";
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface EnvVar {
@@ -269,6 +274,7 @@ export default function McpMarketplace({
   const [installedSkills, setInstalledSkills] = useState<Set<string>>(new Set());
   const [installingSkill, setInstallingSkill] = useState(false);
   const [skillInstallError, setSkillInstallError] = useState<string | null>(null);
+  const [skillInstallNotice, setSkillInstallNotice] = useState<string | null>(null);
 
   // Load marketplace catalogue from ~/.automatic/marketplace/mcp-servers.json
   const loadServers = useCallback(async () => {
@@ -310,10 +316,16 @@ export default function McpMarketplace({
   const handleInstallSkill = useCallback(async (skill: CompanionSkill) => {
     setInstallingSkill(true);
     setSkillInstallError(null);
+    setSkillInstallNotice(null);
     try {
       const response = await fetch(skill.url);
       if (!response.ok) throw new Error(`Failed to fetch skill: ${response.status}`);
       const content = await response.text();
+      const scan = await scanAssetContent("skill", content);
+      if (scan.blocked) {
+        setSkillInstallError(formatAssetScanResult(scan, "skill"));
+        return;
+      }
       // Use import_remote_skill so the skill source is recorded (shows as
       // managed by the provider rather than "local" in the Skills view).
       await invoke("import_remote_skill", {
@@ -323,6 +335,10 @@ export default function McpMarketplace({
         id: `${skill.github_source}/${skill.name}`,
       });
       setInstalledSkills((prev) => new Set([...prev, skill.name]));
+      const warnings = warningFindings(scan);
+      setSkillInstallNotice(
+        warnings.length > 0 ? formatAssetScanResult(scan, "skill") : null,
+      );
     } catch (err: unknown) {
       setSkillInstallError(`Failed to install skill: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -339,6 +355,7 @@ export default function McpMarketplace({
       setTransportFilter(null);
       setInstallError(null);
       setSkillInstallError(null);
+      setSkillInstallNotice(null);
     }
   }, [resetKey]);
 
@@ -572,7 +589,10 @@ export default function McpMarketplace({
                             )}
                           </button>
                           {skillInstallError && (
-                            <p className="text-[11px] text-red-400">{skillInstallError}</p>
+                            <p className="text-[11px] text-red-400 whitespace-pre-wrap">{skillInstallError}</p>
+                          )}
+                          {skillInstallNotice && (
+                            <p className="text-[11px] text-amber-950 whitespace-pre-wrap">{skillInstallNotice}</p>
                           )}
                         </div>
                       )}

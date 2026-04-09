@@ -197,15 +197,13 @@ pub async fn run_proxy(server_name: &str) -> Result<(), Box<dyn std::error::Erro
         let _: Value =
             serde_json::from_str(trimmed).map_err(|e| format!("invalid JSON on stdin: {}", e))?;
 
-        let mut response =
-            send_request(&client, &url, &token, &session_id, trimmed).await?;
+        let mut response = send_request(&client, &url, &token, &session_id, trimmed).await?;
 
         // On 401/403, attempt a silent token refresh and retry once.
         if is_token_expired(response.status().as_u16()) {
             if let Ok(new_token) = crate::oauth::refresh_token(server_name).await {
                 token = new_token;
-                response =
-                    send_request(&client, &url, &token, &session_id, trimmed).await?;
+                response = send_request(&client, &url, &token, &session_id, trimmed).await?;
             }
         }
 
