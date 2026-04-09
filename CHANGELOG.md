@@ -4,6 +4,27 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-04-09
+
+### Added
+
+- Add an empty state to Commands in the library. (`4ccd8e2`)
+- Add line numbers to text areas and normalise across the application. (`b81880c`)
+- Allow selecting file paths in the docs tool. (`f38109d`)
+- Add command discovery rule. (`2684a28`)
+- Add a commands index.md file. (`41367a9`)
+- Commands now live in .agents/commands. (`53143e6`)
+- Add Codex plugin scaffold (hidden for now). (`080d3d8`)
+
+### Fixed
+
+- Auto-refresh expired OAuth tokens on 401/403 in proxy. (`da1a6ff`)
+- Migrate legacy .clinerules files for Cline agent. (`7319437`)
+
+### Documentation
+
+- Update readme. (`7266410`)
+
 ## [1.0.1] - 2026-04-08
 
 ### Fixed
