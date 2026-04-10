@@ -4,6 +4,32 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-10
+
+### Added
+
+- Redesign navigation into multi-panel tab layout. (`e567c35`)
+- Add collapsible sidebar with toggle icon in top bar. (`3414e5b`)
+- Basic security scanning for skills, commands, agents, and templates. (`049fc16`)
+- Refine security scanning with context-aware checks and reduced false positives. (`fbf7776`)
+- Add security scan status badges and notices to workspace pages. (`c985d7e`)
+
+### Fixed
+
+- Record instruction hashes only for files actually written, preserving unresolved drift conflicts. (`a1f3294`)
+
+### Changed
+
+- Polish ProjectsOverview cards to match GettingStarted style. (`b4c6f69`)
+- Merge section tabs and actions into single top bar. (`fd05785`)
+- Tidy workspace sidebar spacing and remove Other group. (`05c9c03`)
+- Center section toggle pill in top bar. (`85bfbf0`)
+- Make health bar flush full-width at top of projects panel. (`9b3c479`)
+
+### Maintenance
+
+- AI docs. (`c62ff80`)
+
 ## [1.1.0] - 2026-04-09
 
 ### Added
