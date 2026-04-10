@@ -1608,7 +1608,7 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject }: Project
   const checkingPct = total > 0 ? Math.max(0, 100 - syncedPct - driftedPct) : 0;
 
   return (
-    <div className="rounded-xl border border-border-strong/40 bg-bg-input overflow-hidden">
+    <div className="border-b border-border-strong/40 bg-bg-input overflow-hidden">
       {/* Stat strip */}
       <div className="flex items-stretch divide-x divide-border-strong/30">
         {/* Projects */}
@@ -1883,16 +1883,16 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
         </div>
       </div>
 
-      <div className="p-6 space-y-5">
-        {/* Health overview bar */}
-        {!projectsLoading && baseProjects.length > 0 && (
-          <ProjectsHealthBar
-            projects={baseProjects}
-            projectDetails={projectDetails}
-            driftByProject={driftByProject}
-          />
-        )}
+      {/* Health overview bar — flush full-width */}
+      {!projectsLoading && baseProjects.length > 0 && (
+        <ProjectsHealthBar
+          projects={baseProjects}
+          projectDetails={projectDetails}
+          driftByProject={driftByProject}
+        />
+      )}
 
+      <div className="p-6 space-y-5">
         {/* Empty state */}
         {!projectsLoading && baseProjects.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
