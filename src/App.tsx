@@ -30,7 +30,7 @@ import TaskLog from "./components/TaskLog";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import UpdateToast from "./components/UpdateToast";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
-import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal } from "lucide-react";
+import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, PanelLeft } from "lucide-react";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
 
@@ -142,6 +142,14 @@ function App() {
     }
     return sectionForTab(activeTab);
   });
+
+  // ── Sidebar collapsed state ───────────────────────────────────────────────
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return localStorage.getItem("automatic.sidebarCollapsed") === "true";
+  });
+  useEffect(() => {
+    localStorage.setItem("automatic.sidebarCollapsed", String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
 
   // ── Group filter for Projects page ────────────────────────────────────────
   const [activeGroupFilter, setActiveGroupFilter] = useState<string | null>(null);
@@ -376,6 +384,22 @@ function App() {
         data-tauri-drag-region
         className="h-11 flex-shrink-0 flex items-center border-b border-border-strong/40 bg-bg-base select-none relative"
       >
+        {/* Left: sidebar toggle (after traffic-light clearance) */}
+        <div className="pl-20 relative z-10">
+          <button
+            onClick={() => setSidebarCollapsed((c) => !c)}
+            className={`flex items-center justify-center w-[26px] h-[26px] rounded-md transition-colors ${
+              sidebarCollapsed
+                ? "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
+                : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
+            }`}
+            aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+            title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+          >
+            <PanelLeft size={14} />
+          </button>
+        </div>
+
         {/* Center: section toggle pill */}
         <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-0">
           <div className="flex items-center bg-bg-input border border-border-strong/40 rounded-lg p-0.5 pointer-events-auto">
@@ -446,7 +470,7 @@ function App() {
       {/* ── Sidebar + Main content ────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-      <aside className="w-[180px] flex-shrink-0 bg-bg-input border-r border-border-strong/40 flex flex-col">
+      <aside className={`flex-shrink-0 bg-bg-input border-r border-border-strong/40 flex flex-col transition-all duration-200 overflow-hidden ${sidebarCollapsed ? "w-0 border-r-0" : "w-[180px]"}`}>
 
         {/* Section-specific navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-3 custom-scrollbar">
