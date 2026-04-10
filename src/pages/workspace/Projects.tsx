@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { getToolPanel } from "../../plugins";
 import mcpServersData from "../../../src-tauri/assets/marketplace/featured-mcp-servers.json";
 import { SkillSelector } from "../../components/SkillSelector";
@@ -41,7 +41,6 @@ import {
   X,
   FolderOpen,
   FolderPlus,
-  Folder,
   Check,
   Code,
   Server,
@@ -52,7 +51,6 @@ import {
   LayoutTemplate,
   Edit2,
   Upload,
-  GripVertical,
   Package,
   AlertCircle,
   ArrowRight,
@@ -69,8 +67,6 @@ import {
   Search,
   Sparkles,
   Lightbulb,
-  Pin,
-  PinOff,
   Link as LinkIcon,
   ExternalLink,
   Wrench,
@@ -253,19 +249,6 @@ interface ProjectTemplate {
   project_files: TemplateProjectFile[];
   unified_instruction?: string;
   unified_rules?: string[];
-}
-
-const SIDEBAR_MIN = 160;
-const SIDEBAR_MAX = 400;
-const SIDEBAR_DEFAULT = 192; // w-48 equivalent
-
-// ── Project Folder types ──────────────────────────────────────────────────────
-
-interface ProjectFolder {
-  id: string;
-  name: string;
-  collapsed: boolean;
-  projectNames: string[];
 }
 
 // ── Activity ──────────────────────────────────────────────────────────────────
@@ -483,6 +466,8 @@ interface ProjectsProps {
   /** When set, opens the new project wizard at step 3 with this template pre-selected. */
   initialCreateWithTemplate?: string | null;
   onInitialCreateWithTemplateConsumed?: () => void;
+  /** When set, filters the overview to show only projects in this group. */
+  filterGroup?: string | null;
 }
 
 /**
@@ -1451,15 +1436,12 @@ interface ProjectsOverviewProps {
   projectsLoading: boolean;
   projectDetails: Map<string, Project>;
   driftByProject: Record<string, boolean>;
-  folders: ProjectFolder[];
   onSelect: (name: string) => void;
   onCreate: () => void;
   onSyncAll?: () => void;
   syncAllStatus?: "idle" | "syncing";
-  /** When set, the overview scopes its card grid and health bar to this folder only. */
-  selectedFolder?: ProjectFolder | null;
-  /** Called when the user dismisses the active folder filter. */
-  onClearFolder?: () => void;
+  /** When set, only show projects belonging to this group. */
+  filterGroup?: string | null;
 }
 
 function ProjectStatusBadge({ drift }: { drift: boolean | undefined }) {
@@ -1512,41 +1494,41 @@ function ProjectCard({
   return (
     <button
       onClick={() => onSelect(name)}
-      className={`group relative w-full h-full text-left bg-bg-input border ${borderClass} rounded-xl p-3 flex flex-col gap-2.5 transition-all hover:bg-surface-hover hover:-translate-y-0.5`}
+      className={`group relative w-full h-full text-left bg-bg-input border ${borderClass} rounded-xl p-5 flex flex-col gap-3 transition-all hover:bg-surface-hover hover:-translate-y-0.5`}
     >
       {/* Sync status — top right */}
       {isConfigured && (
-        <div className="absolute top-2.5 right-2.5">
+        <div className="absolute top-4 right-4">
           <ProjectStatusBadge drift={drift} />
         </div>
       )}
 
-      {/* Row 1: title */}
-      <div className="flex items-start gap-2.5 pr-20">
+      {/* Row 1: icon + title + directory */}
+      <div className="flex items-start gap-3 pr-20">
         <div
-          className={`mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border ${
+          className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border ${
             isDrifted
               ? "border-warning/30 bg-warning/10"
-              : "border-border-strong/40 bg-bg-sidebar"
+              : "border-brand/20 bg-brand/10"
           }`}
         >
           <FolderOpen
-            size={12}
-            className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-icon-agent"}`}
+            size={16}
+            className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-brand"}`}
           />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-semibold text-text-base truncate">{name}</div>
+          <div className="text-[14px] font-semibold text-text-base leading-snug truncate">{name}</div>
         </div>
       </div>
 
       {/* Row 2: agent chips */}
       {(project?.agents?.length ?? 0) > 0 ? (
-        <div className="flex items-center gap-1 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
           {(project?.agents ?? []).map((agentId) => (
             <span
               key={agentId}
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] text-text-muted"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] text-text-muted"
             >
               <AgentIcon agentId={agentId} size={9} />
               {agentId}
@@ -1554,14 +1536,14 @@ function ProjectCard({
           ))}
         </div>
       ) : (
-        <div className="flex items-center gap-1 text-[11px] text-warning/70">
+        <div className="flex items-center gap-1.5 text-[11px] text-warning/70">
           <AlertCircle size={10} className="flex-shrink-0" />
           <span>No agents configured</span>
         </div>
       )}
 
       {/* Row 3: stats footer */}
-      <div className="mt-auto flex w-full items-center gap-3 pt-2 border-t border-border-strong/30 text-[11px] text-text-muted">
+      <div className="mt-auto flex w-full items-center gap-3 pt-3 border-t border-border-strong/30 text-[11px] text-text-muted">
         <span className="flex items-center gap-1">
           <Code size={10} />
           {totalSkills}
@@ -1631,7 +1613,7 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject }: Project
   const checkingPct = total > 0 ? Math.max(0, 100 - syncedPct - driftedPct) : 0;
 
   return (
-    <div className="rounded-xl border border-border-strong/40 bg-bg-input overflow-hidden">
+    <div className="border-b border-border-strong/40 bg-bg-input overflow-hidden">
       {/* Stat strip */}
       <div className="flex items-stretch divide-x divide-border-strong/30">
         {/* Projects */}
@@ -1742,20 +1724,67 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject }: Project
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, folders, onSelect, onCreate, onSyncAll, syncAllStatus, selectedFolder, onClearFolder }: ProjectsOverviewProps) {
+function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, onSelect, onCreate, onSyncAll, syncAllStatus, filterGroup = null }: ProjectsOverviewProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortOrder, setSortOrder] = useState<"sidebar" | "alphabetical" | "created" | "updated" | "last_activity">("sidebar");
-  // Track which folder groups are collapsed in the overview (independent of sidebar state)
-  // Persisted so the user's collapse preferences survive page reloads.
-  const OVERVIEW_COLLAPSED_KEY = "automatic.projects.overview.collapsed";
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => {
+  const [sortOrder, setSortOrder] = useState<"alphabetical" | "created" | "updated" | "last_activity">("alphabetical");
+  const [groupProjectNames, setGroupProjectNames] = useState<Set<string> | null>(null);
+  /** For "__ungrouped__" filter: set of all projects that ARE in some group. */
+  const [allGroupedNames, setAllGroupedNames] = useState<Set<string> | null>(null);
+
+  /** Load all grouped project names (union of every group's members). */
+  const loadAllGroupedNames = async (): Promise<Set<string>> => {
+    const grouped = new Set<string>();
     try {
-      const stored = localStorage.getItem("automatic.projects.overview.collapsed");
-      return stored ? (JSON.parse(stored) as Record<string, boolean>) : {};
-    } catch {
-      return {};
+      const groupNames: string[] = await invoke("list_groups");
+      for (const name of groupNames) {
+        try {
+          const raw: string = await invoke("read_group", { name });
+          const g = JSON.parse(raw);
+          for (const p of (g.projects ?? [])) grouped.add(p);
+        } catch { /* skip */ }
+      }
+    } catch { /* skip */ }
+    return grouped;
+  };
+
+  // Load group members when filterGroup changes
+  useEffect(() => {
+    if (!filterGroup) { setGroupProjectNames(null); setAllGroupedNames(null); return; }
+    let cancelled = false;
+    if (filterGroup === "__ungrouped__") {
+      loadAllGroupedNames().then((grouped) => {
+        if (!cancelled) setAllGroupedNames(grouped);
+      });
+    } else {
+      (async () => {
+        try {
+          const raw: string = await invoke("read_group", { name: filterGroup });
+          const g = JSON.parse(raw);
+          if (!cancelled) setGroupProjectNames(new Set(g.projects ?? []));
+        } catch {
+          if (!cancelled) setGroupProjectNames(new Set());
+        }
+      })();
     }
-  });
+    return () => { cancelled = true; };
+  }, [filterGroup]);
+
+  // Re-load group members when groups change externally
+  useEffect(() => {
+    if (!filterGroup) return;
+    const handler = () => {
+      if (filterGroup === "__ungrouped__") {
+        loadAllGroupedNames().then(setAllGroupedNames);
+      } else {
+        invoke<string>("read_group", { name: filterGroup }).then((raw) => {
+          const g = JSON.parse(raw);
+          setGroupProjectNames(new Set(g.projects ?? []));
+        }).catch(() => setGroupProjectNames(new Set()));
+      }
+    };
+    window.addEventListener("groups-updated", handler);
+    return () => window.removeEventListener("groups-updated", handler);
+  }, [filterGroup]);
 
   const getSortTimestamp = (project: Project | undefined, key: "created" | "updated" | "last_activity"): number => {
     if (!project) return 0;
@@ -1765,7 +1794,6 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
   };
 
   const sortNames = (names: string[]) => {
-    if (sortOrder === "sidebar") return names;
     return [...names].sort((a, b) => {
       if (sortOrder === "alphabetical") return a.localeCompare(b);
       const aTime = getSortTimestamp(projectDetails.get(a), sortOrder);
@@ -1785,46 +1813,16 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
     );
   };
 
-  // When a folder filter is active, restrict the universe of projects to that
-  // folder only. This feeds both the card grid and the health bar.
-  const visibleProjects = selectedFolder
-    ? selectedFolder.projectNames.filter((n) => projects.includes(n))
-    : projects;
-
-  // Build grouped structure. Folders that have at least one visible project are
-  // rendered as groups; the remainder form the ungrouped section.
-  const projectsInFolders = new Set(folders.flatMap((f) => f.projectNames));
-  const ungroupedNames = visibleProjects.filter((n) => !projectsInFolders.has(n));
-  // Only show folder grouping in the grid when there is no active folder filter
-  const hasFolders = !selectedFolder && folders.some((f) => f.projectNames.some((n) => projects.includes(n)));
-
-  // Filtered + sorted per section
-  const filteredFolders = folders
-    .map((folder) => ({
-      folder,
-      visibleNames: sortNames(
-        folder.projectNames.filter((n) => projects.includes(n) && matchesSearch(n))
-      ),
-    }))
-    .filter(({ visibleNames }) => visibleNames.length > 0);
-
-  const filteredUngrouped = selectedFolder
-    ? sortNames(visibleProjects.filter(matchesSearch))
-    : sortNames(ungroupedNames.filter(matchesSearch));
-
-  const totalVisible =
-    filteredFolders.reduce((s, { visibleNames }) => s + visibleNames.length, 0) +
-    filteredUngrouped.length;
-
-  const toggleGroup = (id: string) =>
-    setCollapsedGroups((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
-      try { localStorage.setItem(OVERVIEW_COLLAPSED_KEY, JSON.stringify(next)); } catch {}
-      return next;
-    });
+  // Apply group filter then search filter
+  const baseProjects = filterGroup === "__ungrouped__" && allGroupedNames
+    ? projects.filter((n) => !allGroupedNames.has(n))
+    : groupProjectNames
+      ? projects.filter((n) => groupProjectNames.has(n))
+      : projects;
+  const filteredProjects = sortNames(baseProjects.filter(matchesSearch));
 
   const renderCardGrid = (names: string[]) => (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       {names.map((name) => (
         <ProjectCard
           key={name}
@@ -1840,34 +1838,10 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
   return (
     <div className="flex-1 h-full overflow-y-auto custom-scrollbar bg-bg-base">
       {/* Top bar */}
-      <div className="h-11 px-6 border-b border-border-strong/40 flex items-center justify-between bg-bg-base/50 flex-shrink-0">
-        {/* Title / active folder breadcrumb */}
-        {selectedFolder ? (
-          <div className="flex items-center gap-1.5 min-w-0">
-            <button
-              onClick={onClearFolder}
-              className="text-[11px] font-semibold text-text-muted tracking-wider uppercase hover:text-text-base transition-colors"
-            >
-              Projects
-            </button>
-            <ChevronRight size={11} className="text-text-muted flex-shrink-0" />
-            <span className="flex items-center gap-1 text-[11px] font-semibold text-text-base tracking-wider uppercase truncate">
-              <Folder size={11} className="flex-shrink-0" />
-              {selectedFolder.name}
-            </span>
-            <button
-              onClick={onClearFolder}
-              className="ml-1 p-0.5 rounded text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors flex-shrink-0"
-              title="Clear folder filter"
-            >
-              <X size={11} />
-            </button>
-          </div>
-        ) : (
-          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
-            Projects
-          </span>
-        )}
+      <div className="px-6 py-3 border-b border-border-strong/40 flex items-center justify-between bg-bg-base/50 flex-shrink-0">
+        <span className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">
+          {filterGroup === "__ungrouped__" ? "Other Projects" : filterGroup ? filterGroup : "Projects"}
+        </span>
         <div className="flex items-center gap-2">
           <div className="relative">
             <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -1881,11 +1855,10 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
           <div className="relative">
             <select
               value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value as "sidebar" | "alphabetical" | "created" | "updated" | "last_activity")}
+              onChange={(e) => setSortOrder(e.target.value as "alphabetical" | "created" | "updated" | "last_activity")}
               className="h-7 min-w-[120px] appearance-none rounded-md border border-border-strong/50 bg-bg-input px-2.5 pr-7 text-[12px] text-text-base shadow-none focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60"
               aria-label="Sort projects"
             >
-              <option value="sidebar">Sidebar order</option>
               <option value="alphabetical">Alphabetical</option>
               <option value="created">Created</option>
               <option value="updated">Updated</option>
@@ -1896,7 +1869,7 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
               className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-muted"
             />
           </div>
-          {onSyncAll && visibleProjects.some((n) => driftByProject[n] === true) && (
+          {onSyncAll && projects.some((n) => driftByProject[n] === true) && (
             <button
               onClick={onSyncAll}
               disabled={syncAllStatus === "syncing"}
@@ -1915,21 +1888,21 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
         </div>
       </div>
 
-      <div className="p-6 space-y-6">
-        {/* Health overview bar — scoped to visibleProjects when a folder is active */}
-        {!projectsLoading && visibleProjects.length > 0 && (
-          <ProjectsHealthBar
-            projects={visibleProjects}
-            projectDetails={projectDetails}
-            driftByProject={driftByProject}
-          />
-        )}
+      {/* Health overview bar — flush full-width */}
+      {!projectsLoading && baseProjects.length > 0 && (
+        <ProjectsHealthBar
+          projects={baseProjects}
+          projectDetails={projectDetails}
+          driftByProject={driftByProject}
+        />
+      )}
 
+      <div className="p-6 space-y-5">
         {/* Empty state */}
-        {!projectsLoading && projects.length === 0 ? (
+        {!projectsLoading && baseProjects.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-16 h-16 rounded-2xl border border-dashed border-border-strong flex items-center justify-center mb-5">
-              <FolderOpen size={24} className="text-text-muted" />
+            <div className="w-16 h-16 rounded-2xl border border-brand/20 bg-brand/10 flex items-center justify-center mb-5">
+              <FolderOpen size={24} className="text-brand" />
             </div>
             <h2 className="text-[16px] font-semibold text-text-base mb-2">No projects yet</h2>
             <p className="text-[13px] text-text-muted mb-6 leading-relaxed max-w-xs">
@@ -1942,54 +1915,13 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
               Create Project
             </button>
           </div>
-        ) : totalVisible === 0 ? (
+        ) : filteredProjects.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center border border-border-strong/30 rounded-lg bg-bg-input/40">
             <p className="text-[13px] text-text-base mb-1">No matching projects</p>
             <p className="text-[12px] text-text-muted">Try another search term.</p>
           </div>
-        ) : hasFolders ? (
-          /* ── Grouped layout ── */
-          <div className="space-y-6">
-            {filteredFolders.map(({ folder, visibleNames }) => {
-              const isCollapsed = collapsedGroups[folder.id] ?? false;
-              return (
-                <div key={folder.id}>
-                  {/* Group header */}
-                  <button
-                    onClick={() => toggleGroup(folder.id)}
-                    className="flex items-center gap-2 mb-3 group/gh w-full text-left"
-                  >
-                    <ChevronDown
-                      size={13}
-                      className={`text-text-muted transition-transform flex-shrink-0 ${isCollapsed ? "-rotate-90" : ""}`}
-                    />
-                    <Folder size={13} className="text-text-muted flex-shrink-0" />
-                    <span className="text-[12px] font-semibold text-text-muted tracking-wide">
-                      {folder.name}
-                    </span>
-                    <span className="text-[11px] text-text-muted/60 ml-0.5">
-                      {visibleNames.length}
-                    </span>
-                  </button>
-                  {!isCollapsed && renderCardGrid(visibleNames)}
-                </div>
-              );
-            })}
-
-            {/* Ungrouped projects at the bottom */}
-            {filteredUngrouped.length > 0 && (
-              <div>
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="text-[12px] font-semibold text-text-muted/60 tracking-wide">Other</span>
-                  <span className="text-[11px] text-text-muted/40">{filteredUngrouped.length}</span>
-                </div>
-                {renderCardGrid(filteredUngrouped)}
-              </div>
-            )}
-          </div>
         ) : (
-          /* ── Flat layout (no folders / folder filter active) ── */
-          renderCardGrid(filteredUngrouped)
+          renderCardGrid(filteredProjects)
         )}
       </div>
     </div>
@@ -2251,12 +2183,11 @@ function getProjectRelativeDocPath(projectDirectory: string | undefined, path: s
   return normalizedPath.slice(prefix.length);
 }
 
-export default function Projects({ resetKey, initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToMcpMarketplace, onNavigateToGroup, onNavigateToCommand, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed }: ProjectsProps = {}) {
+export default function Projects({ resetKey, initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToMcpMarketplace, onNavigateToGroup, onNavigateToCommand, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed, filterGroup = null }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const { log, update } = useTaskLog();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
   const PROJECT_ORDER_KEY = "automatic.projects.order";
-  const PROJECT_FOLDERS_KEY = "automatic.projects.folders";
 
   // Migrate legacy "nexus." localStorage keys on first load
   useEffect(() => {
@@ -2277,122 +2208,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   // Always start on the overview — do not restore a previously selected project.
   const [selectedName, setSelectedName] = useState<string | null>(null);
 
-  // ── Folder state ────────────────────────────────────────────────────────────
-  const [folders, setFolders] = useState<ProjectFolder[]>(() => {
-    try {
-      const stored = localStorage.getItem("automatic.projects.folders");
-      if (!stored) return [];
-      return JSON.parse(stored) as ProjectFolder[];
-    } catch {
-      return [];
-    }
-  });
-  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
-  const [editingFolderName, setEditingFolderName] = useState("");
-
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
-  const isSidebarDragging = useRef(false);
-
-  // ── Folder context filter (overview page only) ─────────────────────────────
-  // When a folder header is clicked in the sidebar while on the overview, the
-  // card grid and health bar scope down to only that folder's projects.
-  // null = show all projects (no folder filter active).
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
-
-  // ── Sidebar pin / open state ────────────────────────────────────────────────
-  const SIDEBAR_PINNED_KEY = "automatic.projects.sidebar.pinned";
-  const [sidebarPinned, setSidebarPinned] = useState<boolean>(() => {
-    try { return localStorage.getItem(SIDEBAR_PINNED_KEY) === "true"; } catch { return false; }
-  });
-  const [sidebarExpanded, setSidebarExpanded] = useState(false);
-  const sidebarPanelRef = useRef<HTMLDivElement>(null);
-  const sidebarTriggerRef = useRef<HTMLDivElement>(null);
-  const sidebarOpen = sidebarPinned || sidebarExpanded;
-
-  const openSidebar = useCallback(() => {
-    setSidebarExpanded(true);
-  }, []);
-
-  const closeSidebar = useCallback(() => {
-    setSidebarExpanded(false);
-  }, []);
-
-  const toggleSidebarOpen = useCallback(() => {
-    setSidebarExpanded((prev) => !prev);
-  }, []);
-
-  const toggleSidebarPin = useCallback(() => {
-    setSidebarPinned((prev) => {
-      const next = !prev;
-      try { localStorage.setItem(SIDEBAR_PINNED_KEY, String(next)); } catch {}
-      return next;
-    });
-    setSidebarExpanded(true);
-  }, []);
-
-  useEffect(() => {
-    if (!sidebarOpen || sidebarPinned) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (sidebarPanelRef.current?.contains(target) || sidebarTriggerRef.current?.contains(target)) {
-        return;
-      }
-      setSidebarExpanded(false);
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSidebarExpanded(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [sidebarOpen, sidebarPinned]);
-
-  const onSidebarMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isSidebarDragging.current = true;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, []);
-
-  useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isSidebarDragging.current) return;
-      // 180px is the global sidebar width in App.tsx
-      const newWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, e.clientX - 180));
-      setSidebarWidth(newWidth);
-    };
-    const onMouseUp = () => {
-      if (isSidebarDragging.current) {
-        isSidebarDragging.current = false;
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-      }
-    };
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
-  }, []);
-
-  // Drag-and-drop reorder state (pointer-events based)
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const [dropIdx, setDropIdx] = useState<number | null>(null);
-  const dragIdxRef = useRef<number | null>(null);
-  const dropIdxRef = useRef<number | null>(null);
-  const listRef = useRef<HTMLUListElement>(null);
-  // Ghost label that follows the cursor while dragging
-  const [dragGhost, setDragGhost] = useState<{ name: string; x: number; y: number } | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [dirty, setDirty] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -3018,344 +2833,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     }
   };
 
-  const saveProjectOrder = (ordered: string[]) => {
-    localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(ordered));
-  };
-
-  // ── Folder helpers ──────────────────────────────────────────────────────────
-
-  const saveFolders = (updated: ProjectFolder[]) => {
-    localStorage.setItem(PROJECT_FOLDERS_KEY, JSON.stringify(updated));
-    setFolders(updated);
-  };
-
-  const createFolder = () => {
-    const id = `folder-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const name = "New Folder";
-    const newFolder: ProjectFolder = { id, name, collapsed: false, projectNames: [] };
-    const updated = [...folders, newFolder];
-    saveFolders(updated);
-    // Immediately start editing the name
-    setEditingFolderId(id);
-    setEditingFolderName(name);
-  };
-
-  const renameFolder = (id: string, name: string) => {
-    saveFolders(folders.map((f) => (f.id === id ? { ...f, name } : f)));
-  };
-
-  const deleteFolder = (id: string) => {
-    // Remove folder but keep its projects (they become ungrouped)
-    saveFolders(folders.filter((f) => f.id !== id));
-    // Clear the folder filter if the deleted folder was active
-    setSelectedFolderId((prev) => (prev === id ? null : prev));
-  };
-
-  const toggleFolderCollapsed = (id: string) => {
-    saveFolders(folders.map((f) => (f.id === id ? { ...f, collapsed: !f.collapsed } : f)));
-  };
-
-  const moveProjectToFolder = (projectName: string, folderId: string | null) => {
-    // Remove from all folders first
-    const cleaned = folders.map((f) => ({
-      ...f,
-      projectNames: f.projectNames.filter((n) => n !== projectName),
-    }));
-    if (folderId === null) {
-      saveFolders(cleaned);
-      return;
-    }
-    saveFolders(cleaned.map((f) => (f.id === folderId ? { ...f, projectNames: [...f.projectNames, projectName] } : f)));
-  };
-
-  /** Returns project names not assigned to any folder, in current display order. */
-  const ungroupedProjects = projects.filter((n) => !folders.some((f) => f.projectNames.includes(n)));
-
-  // ── Folder drag-onto state ──────────────────────────────────────────────────
-  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
-  /** Within-folder drop target: folderId + insertion index within that folder's projectNames. */
-  const [folderDropTarget, setFolderDropTarget] = useState<{ folderId: string; itemIdx: number } | null>(null);
-  /** Ref to the sidebar scroll container, used for drop-to-ungrouped zone detection. */
-  const sidebarListRef = useRef<HTMLDivElement>(null);
-  /** Non-null when a folder header is being dragged for reordering. */
-  const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
-  /** Insertion index among folders while a folder is being dragged. */
-  const [folderReorderDropIdx, setFolderReorderDropIdx] = useState<number | null>(null);
-  const folderReorderDropIdxRef = useRef<number | null>(null);
-
-  // Compute which ungrouped-project drop index the pointer is over.
-  // Uses [data-ungrouped-idx] attributes so folder <li> elements are ignored.
-  const getDropIndex = (clientY: number): number | null => {
-    if (!listRef.current) return null;
-    const items = Array.from(
-      listRef.current.querySelectorAll<HTMLElement>("[data-ungrouped-idx]")
-    );
-    for (let i = 0; i < items.length; i++) {
-      const rect = items[i]!.getBoundingClientRect();
-      const midY = rect.top + rect.height / 2;
-      if (clientY < midY) return i;
-    }
-    return items.length;
-  };
-
-  // ── Drag destination resolver ────────────────────────────────────────────────
-  // Walk up the DOM from a point element to determine which drag zone the pointer
-  // is over: a folder header, a folder item row, an ungrouped item, or the
-  // generic ungrouped zone (sidebar background).
-  type DragDest =
-    | { kind: "folder-header"; folderId: string }
-    | { kind: "folder-item"; folderId: string; itemIdx: number }
-    | { kind: "ungrouped"; ungroupedIdx: number }
-    | { kind: "ungrouped-zone" }
-    | { kind: "folder-reorder"; folderIdx: number }
-    | null;
-
-  const resolveDragDest = (clientX: number, clientY: number): DragDest => {
-    const el = document.elementFromPoint(clientX, clientY);
-    if (!el) return null;
-    // Walk up from the hit element looking for data attributes
-    let cur: HTMLElement | null = el as HTMLElement;
-    while (cur) {
-      const ds = cur.dataset;
-      // Folder reorder zone (on folder <li> with data-folder-reorder-idx)
-      if (ds.folderReorderIdx !== undefined) {
-        const idx = parseInt(ds.folderReorderIdx, 10);
-        if (!isNaN(idx)) return { kind: "folder-reorder", folderIdx: idx };
-      }
-      // Folder item row inside a folder
-      if (ds.folderItemFid && ds.folderItemIdx !== undefined) {
-        const itemIdx = parseInt(ds.folderItemIdx, 10);
-        if (!isNaN(itemIdx)) {
-          // Decide above/below based on pointer Y vs midpoint
-          const rect = cur.getBoundingClientRect();
-          const mid = rect.top + rect.height / 2;
-          return { kind: "folder-item", folderId: ds.folderItemFid, itemIdx: clientY < mid ? itemIdx : itemIdx + 1 };
-        }
-      }
-      // Folder header (drop onto folder)
-      if (ds.folderId) {
-        return { kind: "folder-header", folderId: ds.folderId };
-      }
-      // Ungrouped item
-      if (ds.ungroupedIdx !== undefined) {
-        const idx = parseInt(ds.ungroupedIdx, 10);
-        if (!isNaN(idx)) {
-          const rect = cur.getBoundingClientRect();
-          const mid = rect.top + rect.height / 2;
-          return { kind: "ungrouped", ungroupedIdx: clientY < mid ? idx : idx + 1 };
-        }
-      }
-      // Ungrouped zone (sidebar scroll container or the <ul>)
-      if (ds.ungroupedZone !== undefined) {
-        return { kind: "ungrouped-zone" };
-      }
-      cur = cur.parentElement;
-    }
-    return null;
-  };
-
-  /**
-   * Pointer-events drag handler for project items.
-   * @param projectName - Name of the project being dragged
-   * @param sourceFolderId - Folder ID the project lives in, or null if ungrouped
-   */
-  const handleGripDown = (projectName: string, sourceFolderId: string | null, e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // For ungrouped items we still track dragIdx/dropIdx for backward compat
-    const ungroupedIdx = sourceFolderId === null ? ungroupedProjects.indexOf(projectName) : null;
-    if (ungroupedIdx !== null) {
-      dragIdxRef.current = ungroupedIdx;
-      dropIdxRef.current = ungroupedIdx;
-      setDragIdx(ungroupedIdx);
-      setDropIdx(ungroupedIdx);
-    } else {
-      dragIdxRef.current = null;
-      dropIdxRef.current = null;
-      setDragIdx(null);
-      setDropIdx(null);
-    }
-    setDragGhost({ name: projectName, x: e.clientX, y: e.clientY });
-
-    const onMove = (ev: PointerEvent) => {
-      // Update ghost position
-      setDragGhost({ name: projectName, x: ev.clientX, y: ev.clientY });
-
-      const dest = resolveDragDest(ev.clientX, ev.clientY);
-
-      // Reset all indicators, then set the relevant ones
-      setDragOverFolderId(null);
-      setFolderDropTarget(null);
-
-      if (!dest) {
-        // No recognized zone — keep previous ungrouped drop idx
-        const target = getDropIndex(ev.clientY);
-        dropIdxRef.current = target;
-        setDropIdx(target);
-        return;
-      }
-
-      switch (dest.kind) {
-        case "folder-header":
-          setDragOverFolderId(dest.folderId);
-          break;
-        case "folder-item":
-          setFolderDropTarget({ folderId: dest.folderId, itemIdx: dest.itemIdx });
-          break;
-        case "ungrouped": {
-          const target = dest.ungroupedIdx;
-          dropIdxRef.current = target;
-          setDropIdx(target);
-          break;
-        }
-        case "ungrouped-zone": {
-          // Drop to end of ungrouped list
-          const target = ungroupedProjects.length;
-          dropIdxRef.current = target;
-          setDropIdx(target);
-          break;
-        }
-      }
-    };
-
-    const onUp = (ev: PointerEvent) => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-
-      setDragGhost(null);
-      setDragOverFolderId(null);
-      setFolderDropTarget(null);
-
-      const dest = resolveDragDest(ev.clientX, ev.clientY);
-
-      const fromUngroupedIdx = dragIdxRef.current;
-      const toUngroupedIdx = dropIdxRef.current;
-      dragIdxRef.current = null;
-      dropIdxRef.current = null;
-      setDragIdx(null);
-      setDropIdx(null);
-
-      if (!dest) return;
-
-      switch (dest.kind) {
-        case "folder-header":
-          // Move project into this folder (appended at end)
-          moveProjectToFolder(projectName, dest.folderId);
-          return;
-
-        case "folder-item": {
-          // Move project into the folder at a specific position
-          // First remove from all folders
-          const cleaned = folders.map((f) => ({
-            ...f,
-            projectNames: f.projectNames.filter((n) => n !== projectName),
-          }));
-          // Insert at the correct position
-          const updated = cleaned.map((f) => {
-            if (f.id !== dest.folderId) return f;
-            const names = [...f.projectNames];
-            names.splice(dest.itemIdx, 0, projectName);
-            return { ...f, projectNames: names };
-          });
-          saveFolders(updated);
-          return;
-        }
-
-        case "ungrouped":
-        case "ungrouped-zone": {
-          // If it was in a folder, remove from folder first
-          if (sourceFolderId) {
-            moveProjectToFolder(projectName, null);
-          }
-          // Reorder within ungrouped list
-          if (sourceFolderId === null && fromUngroupedIdx !== null && toUngroupedIdx !== null && fromUngroupedIdx !== toUngroupedIdx) {
-            setProjects((prev) => {
-              // Map ungrouped indices back to the full projects array indices
-              const ungrouped = prev.filter((n) => !folders.some((f) => f.projectNames.includes(n)));
-              const fromName = ungrouped[fromUngroupedIdx];
-              const toInsertBefore = toUngroupedIdx < ungrouped.length ? ungrouped[toUngroupedIdx] : null;
-              if (!fromName) return prev;
-              const without = prev.filter((n) => n !== fromName);
-              if (toInsertBefore === null) {
-                // Insert at end
-                const reordered = [...without, fromName];
-                saveProjectOrder(reordered);
-                return reordered;
-              }
-              const insertIdx = without.indexOf(toInsertBefore);
-              const reordered = [...without.slice(0, insertIdx), fromName, ...without.slice(insertIdx)];
-              saveProjectOrder(reordered);
-              return reordered;
-            });
-          }
-          return;
-        }
-      }
-    };
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  };
-
-  /** Pointer-events drag handler for reordering folder headers. */
-  const handleFolderGripDown = (folderId: string, e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const startFolderIdx = folders.findIndex((f) => f.id === folderId);
-    setDraggingFolderId(folderId);
-    setFolderReorderDropIdx(startFolderIdx);
-    folderReorderDropIdxRef.current = startFolderIdx;
-    const folderName = folders[startFolderIdx]?.name ?? "Folder";
-    setDragGhost({ name: folderName, x: e.clientX, y: e.clientY });
-
-    const updateDropIdx = (idx: number) => {
-      folderReorderDropIdxRef.current = idx;
-      setFolderReorderDropIdx(idx);
-    };
-
-    const onMove = (ev: PointerEvent) => {
-      setDragGhost({ name: folderName, x: ev.clientX, y: ev.clientY });
-      // Walk up from hit element to find a [data-folder-reorder-idx] ancestor
-      const el = document.elementFromPoint(ev.clientX, ev.clientY);
-      let cur: HTMLElement | null = el as HTMLElement;
-      while (cur) {
-        if (cur.dataset?.folderReorderIdx !== undefined) {
-          const idx = parseInt(cur.dataset.folderReorderIdx, 10);
-          if (!isNaN(idx)) {
-            const rect = cur.getBoundingClientRect();
-            const mid = rect.top + rect.height / 2;
-            updateDropIdx(ev.clientY < mid ? idx : idx + 1);
-            return;
-          }
-        }
-        cur = cur.parentElement;
-      }
-    };
-
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-
-      setDragGhost(null);
-      const fromIdx = startFolderIdx;
-      const toIdx = folderReorderDropIdxRef.current;
-      folderReorderDropIdxRef.current = null;
-      setDraggingFolderId(null);
-      setFolderReorderDropIdx(null);
-
-      if (toIdx === null || fromIdx === toIdx || fromIdx === toIdx - 1) return;
-
-      const reordered = [...folders];
-      const [removed] = reordered.splice(fromIdx, 1);
-      const insertAt = toIdx > fromIdx ? toIdx - 1 : toIdx;
-      reordered.splice(insertAt, 0, removed);
-      saveFolders(reordered);
-    };
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  };
-
   const loadProjects = async () => {
     try {
       const result: string[] = await invoke("get_projects");
@@ -3548,6 +3025,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
             console.warn(`Group sync: could not sync project '${name}':`, e);
           });
         }
+        window.dispatchEvent(new CustomEvent("groups-updated"));
       }
     } catch (err: any) {
       setError(`Failed to add to group: ${err}`);
@@ -3571,6 +3049,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
           console.warn(`Group sync: could not sync project '${name}':`, e);
         });
       }
+      window.dispatchEvent(new CustomEvent("groups-updated"));
     } catch (err: any) {
       setError(`Failed to remove from group: ${err}`);
     }
@@ -3608,6 +3087,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         console.warn(`Group sync: could not sync project '${name}':`, e);
       });
     }
+    window.dispatchEvent(new CustomEvent("groups-updated"));
   };
 
   const loadContext = async (projectName: string) => {
@@ -4178,9 +3658,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       setDirty(detectedDiffers);
       setIsCreating(false);
       setError(null);
-      if (!sidebarPinned) {
-        setSidebarExpanded(false);
-      }
       // Load project files for this project
       if (data.directory && data.agents.length > 0) {
         await loadProjectFiles(name);
@@ -4431,8 +3908,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         setProject(null);
         setDirty(false);
       }
-      // Clean up folder membership for deleted project
-      saveFolders(folders.map((f) => ({ ...f, projectNames: f.projectNames.filter((n) => n !== name) })));
       await loadProjects();
       setError(null);
     } catch (err: any) {
@@ -4927,319 +4402,21 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   if (!selectedName && !isCreating) {
     return (
       <>
-        <div className="flex h-full w-full bg-bg-base relative overflow-hidden">
-          {/* Collapsed trigger strip */}
-          {!sidebarOpen && (
-            <div
-              ref={sidebarTriggerRef}
-              className="flex-shrink-0 flex flex-col items-center border-r border-border-strong/40 bg-bg-input/50 relative z-30 cursor-pointer select-none"
-              style={{ width: 28 }}
-              onClick={toggleSidebarOpen}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  openSidebar();
-                }
-              }}
-              role="button"
-              tabIndex={0}
-              title="Show projects"
-            >
-              <div className="flex flex-col items-center justify-center h-full gap-1 text-text-muted hover:text-text-base transition-colors">
-                <ChevronRight size={12} />
-                <span
-                  className="text-[10px] font-semibold tracking-widest uppercase"
-                  style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
-                >
-                  Projects
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Flyout / pinned sidebar panel */}
-          <div
-            ref={sidebarPanelRef}
-            className={`flex flex-col border-r border-border-strong/40 bg-bg-input/50 relative transition-all duration-200 ${
-              sidebarOpen
-                ? sidebarPinned
-                  ? "flex-shrink-0"
-                  : "absolute left-0 top-0 h-full z-40 shadow-xl"
-                : "hidden"
-            }`}
-            style={{ width: sidebarWidth }}
-          >
-            <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center bg-bg-base/30">
-              <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
-                Projects
-              </span>
-              <div className="flex items-center gap-0.5">
-                {!sidebarPinned && (
-                  <button
-                    onClick={closeSidebar}
-                    className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-                    title="Close project tray"
-                  >
-                    <X size={13} />
-                  </button>
-                )}
-                <button
-                  onClick={toggleSidebarPin}
-                  className={`transition-colors p-1 hover:bg-bg-sidebar rounded ${sidebarPinned ? "text-brand" : "text-text-muted hover:text-text-base"}`}
-                  title={sidebarPinned ? "Unpin sidebar" : "Pin sidebar open"}
-                >
-                  {sidebarPinned ? <Pin size={13} /> : <PinOff size={13} />}
-                </button>
-                <button
-                  onClick={() => createFolder()}
-                  className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-                  title="New Folder"
-                >
-                  <FolderPlus size={14} />
-                </button>
-                <button
-                  onClick={() => startCreate()}
-                  className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-                  title="Create New Project"
-                >
-                  <Plus size={14} />
-                </button>
-              </div>
-            </div>
-
-            <div ref={sidebarListRef} data-ungrouped-zone="" className="flex-1 overflow-y-auto py-2 custom-scrollbar">
-              {projects.length === 0 && folders.length === 0 ? (
-                <div className="px-4 py-3 text-[13px] text-text-muted text-center">
-                  No projects yet.
-                </div>
-              ) : (
-                <ul className="space-y-0.5 px-2" ref={listRef} data-ungrouped-zone="">
-                  {/* ── Folders ─────────────────────────────────────────── */}
-                  {folders.map((folder, folderIdx) => (
-                    <li key={folder.id} data-folder-reorder-idx={folderIdx} className="relative">
-                      {draggingFolderId && folderReorderDropIdx === folderIdx && folderReorderDropIdx !== folders.findIndex((f) => f.id === draggingFolderId) && folderReorderDropIdx !== folders.findIndex((f) => f.id === draggingFolderId) + 1 && (
-                        <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
-                      )}
-                      <div
-                        data-folder-id={folder.id}
-                        className={`group relative flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors cursor-pointer ${
-                          draggingFolderId === folder.id
-                            ? "opacity-30"
-                            : dragOverFolderId === folder.id
-                            ? "bg-brand/15 ring-1 ring-brand/40"
-                            : selectedFolderId === folder.id
-                            ? "bg-bg-sidebar text-text-base"
-                            : "hover:bg-bg-sidebar/40"
-                        }`}
-                      >
-                        <div
-                          className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
-                          onPointerDown={(e) => handleFolderGripDown(folder.id, e)}
-                        >
-                          <GripVertical size={10} className="text-text-muted" />
-                        </div>
-                        {/* Chevron toggles collapse; folder name/icon sets the overview filter */}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); if (!draggingFolderId) toggleFolderCollapsed(folder.id); }}
-                          className="flex-shrink-0 p-0.5 text-text-muted hover:text-text-base"
-                          title={folder.collapsed ? "Expand folder" : "Collapse folder"}
-                        >
-                          <ChevronDown
-                            size={10}
-                            className={`flex-shrink-0 transition-transform ${folder.collapsed ? "-rotate-90" : ""}`}
-                          />
-                        </button>
-                        <button
-                          onClick={() => { if (!draggingFolderId) setSelectedFolderId((prev) => prev === folder.id ? null : folder.id); }}
-                          className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
-                          title={`Filter to ${folder.name}`}
-                        >
-                          <Folder
-                            size={13}
-                            className={`flex-shrink-0 ${selectedFolderId === folder.id ? "text-brand" : "text-text-muted"}`}
-                          />
-                          {editingFolderId === folder.id ? (
-                            <input
-                              type="text"
-                              value={editingFolderName}
-                              autoFocus
-                              className="flex-1 min-w-0 bg-transparent text-[12px] font-medium text-text-base outline-none border-b border-brand"
-                              onChange={(e) => setEditingFolderName(e.target.value)}
-                              onBlur={() => {
-                                const trimmed = editingFolderName.trim();
-                                if (trimmed) renameFolder(folder.id, trimmed);
-                                setEditingFolderId(null);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  const trimmed = editingFolderName.trim();
-                                  if (trimmed) renameFolder(folder.id, trimmed);
-                                  setEditingFolderId(null);
-                                } else if (e.key === "Escape") {
-                                  setEditingFolderId(null);
-                                }
-                              }}
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          ) : (
-                            <span className={`flex-1 text-[12px] font-medium truncate ${selectedFolderId === folder.id ? "text-text-base" : "text-text-muted"}`}>
-                              {folder.name}
-                            </span>
-                          )}
-                          <span className="text-[10px] text-text-muted/60 flex-shrink-0 ml-1">
-                            {folder.projectNames.filter((n) => projects.includes(n)).length}
-                          </span>
-                        </button>
-                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingFolderId(folder.id);
-                              setEditingFolderName(folder.name);
-                            }}
-                            className="p-0.5 text-text-muted hover:text-text-base rounded hover:bg-bg-sidebar"
-                            title="Rename folder"
-                          >
-                            <Edit2 size={10} />
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); deleteFolder(folder.id); }}
-                            className="p-0.5 text-text-muted hover:text-danger rounded hover:bg-bg-sidebar"
-                            title="Delete folder (projects remain)"
-                          >
-                            <X size={10} />
-                          </button>
-                        </div>
-                      </div>
-
-                      {!folder.collapsed && (
-                        <ul className="mt-0.5 space-y-0.5">
-                          {folder.projectNames
-                            .filter((n) => projects.includes(n))
-                            .map((name, itemIdx) => (
-                              <li
-                                key={name}
-                                className="relative pl-4"
-                                data-folder-item-fid={folder.id}
-                                data-folder-item-idx={itemIdx}
-                              >
-                                {folderDropTarget && folderDropTarget.folderId === folder.id && folderDropTarget.itemIdx === itemIdx && (
-                                  <div className="absolute -top-[1px] left-6 right-2 h-[2px] bg-brand rounded-full z-10" />
-                                )}
-                                <div className={`group flex items-center relative ${dragGhost?.name === name ? "opacity-30" : ""}`}>
-                                  <div
-                                    className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
-                                    onPointerDown={(e) => handleGripDown(name, folder.id, e)}
-                                  >
-                                    <GripVertical size={10} className="text-text-muted" />
-                                  </div>
-                                  <button
-                                    onClick={() => { if (!dragGhost) selectProject(name); }}
-                                    className="w-full flex items-center gap-2 pl-4 pr-2 py-1.5 rounded-md text-[13px] font-medium transition-colors text-text-muted hover:bg-bg-sidebar/50 hover:text-text-base"
-                                  >
-                                    <FolderOpen
-                                      size={13}
-                                      className={driftByProject[name] === true ? "text-warning" : "text-text-muted"}
-                                    />
-                                    <span className="flex-1 text-left truncate">{name}</span>
-                                  </button>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); moveProjectToFolder(name, null); }}
-                                    className="absolute right-2 p-1 text-text-muted hover:text-text-base opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                                    title="Remove from folder"
-                                  >
-                                    <X size={10} />
-                                  </button>
-                                </div>
-                                {folderDropTarget && folderDropTarget.folderId === folder.id && folderDropTarget.itemIdx === itemIdx + 1 && itemIdx === folder.projectNames.filter((n) => projects.includes(n)).length - 1 && (
-                                  <div className="absolute -bottom-[1px] left-6 right-2 h-[2px] bg-brand rounded-full z-10" />
-                                )}
-                              </li>
-                            ))}
-                          {folder.projectNames.filter((n) => projects.includes(n)).length === 0 && (
-                            <li className="pl-8 py-1 text-[11px] text-text-muted/50 italic">
-                              Empty — drag projects here
-                            </li>
-                          )}
-                        </ul>
-                      )}
-                      {draggingFolderId && folderReorderDropIdx === folderIdx + 1 && folderIdx === folders.length - 1 && folderReorderDropIdx !== folders.findIndex((f) => f.id === draggingFolderId) && (
-                        <div className="absolute -bottom-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
-                      )}
-                    </li>
-                  ))}
-
-                  {/* ── Ungrouped projects ───────────────────────────────── */}
-                  {ungroupedProjects.map((name, idx) => (
-                    <li
-                      key={name}
-                      className="relative"
-                      data-ungrouped-idx={idx}
-                    >
-                      {dragGhost !== null && dropIdx === idx && (dragIdx === null || (dropIdx !== dragIdx && dropIdx !== dragIdx + 1)) && (
-                        <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
-                      )}
-                      <div className={`group flex items-center relative ${dragGhost?.name === name ? "opacity-30" : ""}`}>
-                        <div
-                          className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
-                          onPointerDown={(e) => handleGripDown(name, null, e)}
-                        >
-                          <GripVertical size={10} className="text-text-muted" />
-                        </div>
-                        <button
-                          onClick={() => { if (!dragGhost) selectProject(name); }}
-                          className="w-full flex items-center gap-2.5 pl-4 pr-2 py-1.5 rounded-md text-[13px] font-medium transition-colors text-text-muted hover:bg-bg-sidebar/50 hover:text-text-base"
-                        >
-                          <FolderOpen
-                            size={14}
-                            className={driftByProject[name] === true ? "text-warning" : "text-text-muted"}
-                          />
-                          <span className="flex-1 text-left truncate">{name}</span>
-                        </button>
-                        <button
-                          onClick={(e) => handleRemove(name, e)}
-                          className="absolute right-2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                          title="Remove Project from Automatic"
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                      {dragGhost !== null && dropIdx === ungroupedProjects.length && idx === ungroupedProjects.length - 1 && (dragIdx === null || dropIdx !== dragIdx) && (
-                        <div className="absolute -bottom-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            {/* Resize handle (only when pinned) */}
-            {sidebarPinned && (
-              <div
-                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-brand/40 active:bg-brand/60 transition-colors z-10"
-                onMouseDown={onSidebarMouseDown}
-              />
-            )}
-          </div>
-
-          {/* Right area - overview card grid */}
-          <div className="flex-1 min-w-0 h-full overflow-hidden">
-            <ProjectsOverview
-              projects={projects}
-              projectsLoading={projectsLoading}
-              projectDetails={projectDetailsMap}
-              driftByProject={driftByProject}
-              folders={folders}
-              onSelect={(name) => {
-                setSelectedName(name);
-                selectProject(name);
-              }}
-              onCreate={() => startCreate()}
-              onSyncAll={handleSyncAll}
-              syncAllStatus={syncAllStatus}
-              selectedFolder={selectedFolderId ? (folders.find((f) => f.id === selectedFolderId) ?? null) : null}
-              onClearFolder={() => setSelectedFolderId(null)}
-            />
-          </div>
+        <div className="h-full w-full bg-bg-base overflow-hidden">
+          <ProjectsOverview
+            projects={projects}
+            projectsLoading={projectsLoading}
+            projectDetails={projectDetailsMap}
+            driftByProject={driftByProject}
+            onSelect={(name) => {
+              setSelectedName(name);
+              selectProject(name);
+            }}
+            onCreate={() => startCreate()}
+            onSyncAll={handleSyncAll}
+            syncAllStatus={syncAllStatus}
+            filterGroup={filterGroup}
+          />
         </div>
         {driftDiffFile && (
           <DriftDiffModal
@@ -5265,325 +4442,9 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   return (
     <>
-    <div className="flex h-full w-full bg-bg-base relative overflow-hidden">
-      {/* Left sidebar - project list (hidden while creating a new project) */}
-      {/* Collapsed trigger strip */}
-      {!isCreating && !sidebarOpen && (
-        <div
-          ref={sidebarTriggerRef}
-          className="flex-shrink-0 flex flex-col items-center border-r border-border-strong/40 bg-bg-input/50 relative z-30 cursor-pointer select-none"
-          style={{ width: 28 }}
-          onClick={toggleSidebarOpen}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              openSidebar();
-            }
-          }}
-          role="button"
-          tabIndex={0}
-          title="Show projects"
-        >
-          <div className="flex flex-col items-center justify-center h-full gap-1 text-text-muted hover:text-text-base transition-colors">
-            <ChevronRight size={12} />
-            <span
-              className="text-[10px] font-semibold tracking-widest uppercase"
-              style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
-            >
-              Projects
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Flyout / pinned sidebar panel */}
-      {!isCreating && (
-        <div
-          ref={sidebarPanelRef}
-          className={`flex flex-col border-r border-border-strong/40 bg-bg-input/50 relative transition-all duration-200 ${
-            sidebarOpen
-              ? sidebarPinned
-                ? "flex-shrink-0"
-                : "absolute left-0 top-0 h-full z-40 shadow-xl"
-              : "hidden"
-          }`}
-          style={{ width: sidebarWidth }}
-        >
-        <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center bg-bg-base/30">
-          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
-            Projects
-          </span>
-          <div className="flex items-center gap-0.5">
-            {!sidebarPinned && (
-              <button
-                onClick={closeSidebar}
-                className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-                title="Close project tray"
-              >
-                <X size={13} />
-              </button>
-            )}
-            <button
-              onClick={toggleSidebarPin}
-              className={`transition-colors p-1 hover:bg-bg-sidebar rounded ${sidebarPinned ? "text-brand" : "text-text-muted hover:text-text-base"}`}
-              title={sidebarPinned ? "Unpin sidebar" : "Pin sidebar open"}
-            >
-              {sidebarPinned ? <Pin size={13} /> : <PinOff size={13} />}
-            </button>
-            <button
-              onClick={() => createFolder()}
-              className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-              title="New Folder"
-            >
-              <FolderPlus size={14} />
-            </button>
-            <button
-              onClick={() => startCreate()}
-              className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-              title="Create New Project"
-            >
-              <Plus size={14} />
-            </button>
-          </div>
-        </div>
-
-        <div ref={sidebarListRef} data-ungrouped-zone="" className="flex-1 overflow-y-auto py-2 custom-scrollbar">
-          {projects.length === 0 && !isCreating && folders.length === 0 ? (
-            <div className="px-4 py-3 text-[13px] text-text-muted text-center">
-              No projects yet.
-            </div>
-          ) : (
-            <ul className="space-y-0.5 px-2" ref={listRef} data-ungrouped-zone="">
-
-
-              {/* ── Folders ─────────────────────────────────────────── */}
-              {folders.map((folder, folderIdx) => (
-                <li key={folder.id} data-folder-reorder-idx={folderIdx} className="relative">
-                  {/* Drop indicator line — above this folder (for folder reordering) */}
-                  {draggingFolderId && folderReorderDropIdx === folderIdx && folderReorderDropIdx !== folders.findIndex((f) => f.id === draggingFolderId) && folderReorderDropIdx !== folders.findIndex((f) => f.id === draggingFolderId) + 1 && (
-                    <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
-                  )}
-                  {/* Folder header */}
-                  <div
-                    data-folder-id={folder.id}
-                    className={`group relative flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors cursor-pointer ${
-                      draggingFolderId === folder.id
-                        ? "opacity-30"
-                        : dragOverFolderId === folder.id
-                        ? "bg-brand/15 ring-1 ring-brand/40"
-                        : "hover:bg-bg-sidebar/40"
-                    }`}
-                  >
-                    {/* Grip handle for folder reordering — absolutely positioned so it doesn't push content right */}
-                    <div
-                      className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
-                      onPointerDown={(e) => handleFolderGripDown(folder.id, e)}
-                    >
-                      <GripVertical size={10} className="text-text-muted" />
-                    </div>
-                    <button
-                      onClick={() => { if (!draggingFolderId) toggleFolderCollapsed(folder.id); }}
-                      className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
-                    >
-                      <ChevronDown
-                        size={10}
-                        className={`text-text-muted flex-shrink-0 transition-transform ${folder.collapsed ? "-rotate-90" : ""}`}
-                      />
-                      <Folder size={13} className="text-text-muted flex-shrink-0" />
-                      {editingFolderId === folder.id ? (
-                        <input
-                          type="text"
-                          value={editingFolderName}
-                          autoFocus
-                          className="flex-1 min-w-0 bg-transparent text-[12px] font-medium text-text-base outline-none border-b border-brand"
-                          onChange={(e) => setEditingFolderName(e.target.value)}
-                          onBlur={() => {
-                            const trimmed = editingFolderName.trim();
-                            if (trimmed) renameFolder(folder.id, trimmed);
-                            setEditingFolderId(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              const trimmed = editingFolderName.trim();
-                              if (trimmed) renameFolder(folder.id, trimmed);
-                              setEditingFolderId(null);
-                            } else if (e.key === "Escape") {
-                              setEditingFolderId(null);
-                            }
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      ) : (
-                        <span className="flex-1 text-[12px] font-medium text-text-muted truncate">
-                          {folder.name}
-                        </span>
-                      )}
-                      <span className="text-[10px] text-text-muted/60 flex-shrink-0 ml-1">
-                        {folder.projectNames.filter((n) => projects.includes(n)).length}
-                      </span>
-                    </button>
-                    {/* Folder actions (rename / delete) */}
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingFolderId(folder.id);
-                          setEditingFolderName(folder.name);
-                        }}
-                        className="p-0.5 text-text-muted hover:text-text-base rounded hover:bg-bg-sidebar"
-                        title="Rename folder"
-                      >
-                        <Edit2 size={10} />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteFolder(folder.id); }}
-                        className="p-0.5 text-text-muted hover:text-danger rounded hover:bg-bg-sidebar"
-                        title="Delete folder (projects remain)"
-                      >
-                        <X size={10} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Folder contents */}
-                  {!folder.collapsed && (
-                    <ul className="mt-0.5 space-y-0.5">
-                      {folder.projectNames
-                        .filter((n) => projects.includes(n))
-                        .map((name, itemIdx) => (
-                            <li
-                              key={name}
-                              className="relative pl-4"
-                              data-folder-item-fid={folder.id}
-                              data-folder-item-idx={itemIdx}
-                            >
-                              {/* Drop indicator line — above this folder item */}
-                              {folderDropTarget && folderDropTarget.folderId === folder.id && folderDropTarget.itemIdx === itemIdx && (
-                                <div className="absolute -top-[1px] left-6 right-2 h-[2px] bg-brand rounded-full z-10" />
-                              )}
-                              <div className={`group flex items-center relative ${dragGhost?.name === name ? "opacity-30" : ""}`}>
-                                <div
-                                  className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
-                                  onPointerDown={(e) => handleGripDown(name, folder.id, e)}
-                                >
-                                  <GripVertical size={10} className="text-text-muted" />
-                                </div>
-                                <button
-                                  onClick={() => { if (!dragGhost) selectProject(name); }}
-                                  className={`w-full flex items-center gap-2 pl-4 pr-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
-                                    selectedName === name && !isCreating
-                                      ? "bg-bg-sidebar text-text-base"
-                                      : "text-text-muted hover:bg-bg-sidebar/50 hover:text-text-base"
-                                  }`}
-                                >
-                                  <FolderOpen
-                                    size={13}
-                                    className={
-                                      driftByProject[name] === true
-                                        ? "text-warning"
-                                        : selectedName === name && !isCreating
-                                        ? "text-text-base"
-                                        : "text-text-muted"
-                                    }
-                                  />
-                                  <span className="flex-1 text-left truncate">{name}</span>
-                                </button>
-                                {/* Remove-from-folder button */}
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); moveProjectToFolder(name, null); }}
-                                  className="absolute right-2 p-1 text-text-muted hover:text-text-base opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                                  title="Remove from folder"
-                                >
-                                  <X size={10} />
-                                </button>
-                              </div>
-                              {/* Drop indicator line — after last folder item */}
-                              {folderDropTarget && folderDropTarget.folderId === folder.id && folderDropTarget.itemIdx === itemIdx + 1 && itemIdx === folder.projectNames.filter((n) => projects.includes(n)).length - 1 && (
-                                <div className="absolute -bottom-[1px] left-6 right-2 h-[2px] bg-brand rounded-full z-10" />
-                              )}
-                            </li>
-                        ))}
-                      {folder.projectNames.filter((n) => projects.includes(n)).length === 0 && (
-                        <li className="pl-8 py-1 text-[11px] text-text-muted/50 italic">
-                          Empty — drag projects here
-                        </li>
-                      )}
-                    </ul>
-                  )}
-                  {/* Drop indicator line — after last folder (for folder reordering) */}
-                  {draggingFolderId && folderReorderDropIdx === folderIdx + 1 && folderIdx === folders.length - 1 && folderReorderDropIdx !== folders.findIndex((f) => f.id === draggingFolderId) && (
-                    <div className="absolute -bottom-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
-                  )}
-                </li>
-              ))}
-
-              {/* ── Ungrouped projects ───────────────────────────────── */}
-              {ungroupedProjects.map((name, idx) => (
-                <li
-                  key={name}
-                  className="relative"
-                  data-ungrouped-idx={idx}
-                >
-                  {/* Drop indicator line — above this item */}
-                  {dragGhost !== null && dropIdx === idx && (dragIdx === null || (dropIdx !== dragIdx && dropIdx !== dragIdx + 1)) && (
-                    <div className="absolute -top-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
-                  )}
-                  <div className={`group flex items-center relative ${dragGhost?.name === name ? "opacity-30" : ""}`}>
-                    <div
-                      className="absolute left-0 top-0 bottom-0 flex items-center pl-0.5 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity touch-none select-none z-10"
-                      onPointerDown={(e) => handleGripDown(name, null, e)}
-                    >
-                      <GripVertical size={10} className="text-text-muted" />
-                    </div>
-                    <button
-                      onClick={() => { if (!dragGhost) selectProject(name); }}
-                      className={`w-full flex items-center gap-2.5 pl-4 pr-2 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
-                        selectedName === name && !isCreating
-                          ? "bg-bg-sidebar text-text-base"
-                          : "text-text-muted hover:bg-bg-sidebar/50 hover:text-text-base"
-                      }`}
-                    >
-                      <FolderOpen
-                        size={14}
-                        className={
-                          driftByProject[name] === true
-                            ? "text-warning"
-                            : selectedName === name && !isCreating
-                            ? "text-text-base"
-                            : "text-text-muted"
-                        }
-                      />
-                      <span className="flex-1 text-left truncate">{name}</span>
-                    </button>
-                    <button
-                      onClick={(e) => handleRemove(name, e)}
-                      className="absolute right-2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                      title="Remove Project from Automatic"
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                  {/* Drop indicator line — after last ungrouped item */}
-                  {dragGhost !== null && dropIdx === ungroupedProjects.length && idx === ungroupedProjects.length - 1 && (dragIdx === null || dropIdx !== dragIdx) && (
-                    <div className="absolute -bottom-[1px] left-2 right-2 h-[2px] bg-brand rounded-full z-10" />
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        {/* Resize handle (only when pinned — fly-out can't be resized) */}
-        {sidebarPinned && (
-          <div
-            className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-brand/40 active:bg-brand/60 transition-colors z-10"
-            onMouseDown={onSidebarMouseDown}
-          />
-        )}
-      </div>
-      )}
-
-      {/* Right area - project detail */}
-      <div className="flex-1 flex flex-col min-w-0 bg-bg-base">
+    <div className="h-full w-full bg-bg-base overflow-hidden">
+      {/* Project detail */}
+      <div className="flex flex-col h-full bg-bg-base">
         {error && (
           <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between">
             {error}
@@ -9993,26 +8854,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       />
     )}
 
-    {/* ── Drag ghost — follows the cursor while dragging a project or folder ─── */}
-    {dragGhost && (
-      <div
-        style={{
-          position: "fixed",
-          left: dragGhost.x + 12,
-          top: dragGhost.y - 12,
-          pointerEvents: "none",
-          zIndex: 9999,
-        }}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-md text-[13px] font-medium bg-bg-sidebar border border-border-strong/60 shadow-lg text-text-base opacity-90"
-      >
-        {draggingFolderId ? (
-          <Folder size={13} className="text-text-muted flex-shrink-0" />
-        ) : (
-          <FolderOpen size={13} className="text-text-muted flex-shrink-0" />
-        )}
-        <span>{dragGhost.name}</span>
-      </div>
-    )}
     </>
   );
 }

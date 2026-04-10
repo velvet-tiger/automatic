@@ -45,6 +45,13 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
     loadAllProjects();
   }, []);
 
+  // Reload when any component signals a group change
+  useEffect(() => {
+    const handler = () => { loadGroups(); if (selectedName) loadGroup(selectedName); };
+    window.addEventListener("groups-updated", handler);
+    return () => window.removeEventListener("groups-updated", handler);
+  }, [selectedName]);
+
   // Select initial group when provided
   useEffect(() => {
     if (initialGroup && groups.includes(initialGroup) && selectedName !== initialGroup) {
@@ -152,6 +159,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
       await loadGroups();
       setIsCreating(false);
       loadGroup(name);
+      window.dispatchEvent(new CustomEvent("groups-updated"));
     } catch (err: any) {
       setError(`Failed to create group: ${err}`);
     } finally {
@@ -172,6 +180,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
       setSelectedName(null);
       setGroup(null);
       await loadGroups();
+      window.dispatchEvent(new CustomEvent("groups-updated"));
     } catch (err: any) {
       setError(`Failed to delete group: ${err}`);
     }
@@ -223,6 +232,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
           console.warn(`Group sync: could not re-sync project '${name}':`, e);
         });
       }
+      window.dispatchEvent(new CustomEvent("groups-updated"));
     } catch (err: any) {
       setError(`Failed to update group: ${err}`);
     }
