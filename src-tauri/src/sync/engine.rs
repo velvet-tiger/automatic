@@ -145,8 +145,9 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         &selected_servers,
         &mut written_files,
     )?;
-    sync_instruction_files_step(&dir, project, &instruction_targets, &mut written_files)?;
-    record_instruction_state_step(project);
+    let written_instruction_files =
+        sync_instruction_files_step(&dir, project, &instruction_targets, &mut written_files)?;
+    record_instruction_state_step(project, &written_instruction_files);
 
     Ok(written_files)
 }
@@ -310,10 +311,12 @@ fn sync_instruction_files_step(
     project: &Project,
     instruction_targets: &[InstructionTarget],
     written_files: &mut Vec<String>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     if !project.instructions_index_mode {
         let _ = crate::core::sync_rules_to_automatic_instructions(&project.directory, &[], &[]);
     }
+
+    let mut written_instruction_files = Vec::new();
 
     if project.instruction_mode == "unified" {
         let shared_user_content =
@@ -329,6 +332,7 @@ fn sync_instruction_files_step(
                     true,
                     written_files,
                 )?;
+                written_instruction_files.push(target.filename.clone());
             }
         }
     } else {
@@ -344,10 +348,11 @@ fn sync_instruction_files_step(
                 false,
                 written_files,
             )?;
+            written_instruction_files.push(target.filename.clone());
         }
     }
 
-    Ok(())
+    Ok(written_instruction_files)
 }
 
 fn resolve_unified_instruction_content(
@@ -515,30 +520,23 @@ fn sync_instruction_target_file(
     Ok(())
 }
 
-fn record_instruction_state_step(project: &mut Project) {
+fn record_instruction_state_step(project: &mut Project, written_instruction_files: &[String]) {
     let project_name = project.name.clone();
-    crate::core::record_instruction_hashes(&project_name, project);
+    crate::core::record_instruction_hashes_for_filenames(
+        &project_name,
+        project,
+        written_instruction_files,
+    );
 
     let mut snap_seen: HashSet<String> = HashSet::new();
-    for agent_id in &project.agents {
-        if let Some(a) = agent::from_id(agent_id) {
-            if !a.capabilities().instructions {
-                continue;
-            }
-            let filename = a.project_file_name().to_string();
-            if snap_seen.contains(&filename) {
-                continue;
-            }
-            snap_seen.insert(filename.clone());
+    for filename in written_instruction_files {
+        if !snap_seen.insert(filename.clone()) {
+            continue;
+        }
 
-            if let Ok(user_content) = crate::core::read_project_file(&project.directory, &filename)
-            {
-                let _ = crate::core::save_instruction_snapshot(
-                    &project.directory,
-                    &filename,
-                    &user_content,
-                );
-            }
+        if let Ok(user_content) = crate::core::read_project_file(&project.directory, filename) {
+            let _ =
+                crate::core::save_instruction_snapshot(&project.directory, filename, &user_content);
         }
     }
 }
@@ -546,7 +544,7 @@ fn record_instruction_state_step(project: &mut Project) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{read_project_file, save_project_file_for_project, CustomRule};
+    use crate::core::{CustomRule, read_project_file, save_project_file_for_project};
     use tempfile::TempDir;
 
     const USER_INSTRUCTIONS: &str = "# Instructions\n\nFollow the project conventions.";
@@ -785,5 +783,36 @@ mod tests {
             read_project_file(dir.path().to_str().unwrap(), ".clinerules/automatic.md")
                 .expect("read migrated project file");
         assert_eq!(user_content.trim(), legacy_content.trim());
+    }
+
+    #[test]
+    fn sync_keeps_conflicted_unified_instruction_files_unmanaged() {
+        let dir = tmp();
+        fs::write(dir.path().join("AGENTS.md"), "# Agents\n\nCodex-specific")
+            .expect("write AGENTS");
+        fs::write(dir.path().join("CLAUDE.md"), "# Claude\n\nClaude-specific")
+            .expect("write CLAUDE");
+
+        let mut project = Project {
+            name: "test-project".to_string(),
+            directory: dir.path().to_str().unwrap().to_string(),
+            agents: vec!["claude".to_string(), "opencode".to_string()],
+            instruction_mode: "unified".to_string(),
+            ..Default::default()
+        };
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        assert!(
+            project.instruction_file_hashes.is_empty(),
+            "conflicted files should not be marked as Automatic-managed"
+        );
+
+        let drift = crate::sync::check_project_drift(&project).expect("drift");
+        assert_eq!(
+            drift.instruction_conflicts.len(),
+            2,
+            "both conflicting unified files should still require resolution"
+        );
     }
 }

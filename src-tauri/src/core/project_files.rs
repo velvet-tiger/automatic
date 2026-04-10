@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -241,7 +241,7 @@ pub fn project_uses_dot_claude_rules(project: &Project, key: &str) -> bool {
 }
 
 /// Collect the unique project filenames for all agents in a project.
-fn collect_agent_filenames(project: &Project) -> Vec<String> {
+pub fn collect_agent_filenames(project: &Project) -> Vec<String> {
     let mut filenames = Vec::new();
     for agent_id in &project.agents {
         if let Some(a) = agent::from_id(agent_id) {
@@ -252,6 +252,16 @@ fn collect_agent_filenames(project: &Project) -> Vec<String> {
         }
     }
     filenames
+}
+
+/// Resolve a save target (`"_unified"` or a concrete filename) to the actual
+/// instruction files it writes for the given project.
+pub fn resolve_instruction_target_filenames(project: &Project, filename: &str) -> Vec<String> {
+    if filename == "_unified" || project.instruction_mode == "unified" {
+        collect_agent_filenames(project)
+    } else {
+        vec![filename.to_string()]
+    }
 }
 
 /// Public wrapper for `strip_managed_section` (used by sync).
@@ -333,6 +343,48 @@ pub fn record_instruction_hashes(project_name: &str, project: &mut Project) {
     project.instruction_file_hashes = compute_instruction_hashes(project);
 
     // Persist updated hashes to the registry.
+    if let Ok(data) = serde_json::to_string_pretty(project) {
+        let _ = save_project(project_name, &data);
+    }
+}
+
+/// Update the stored hashes for only the instruction files Automatic just
+/// wrote, leaving unrelated files untouched so unresolved conflicts remain
+/// visible to drift detection.
+pub fn record_instruction_hashes_for_filenames(
+    project_name: &str,
+    project: &mut Project,
+    filenames: &[String],
+) {
+    let valid_filenames: HashSet<String> = collect_agent_filenames(project).into_iter().collect();
+    project
+        .instruction_file_hashes
+        .retain(|filename, _| valid_filenames.contains(filename));
+
+    if project.directory.is_empty() {
+        return;
+    }
+
+    let dir = PathBuf::from(&project.directory);
+    let mut seen = HashSet::new();
+
+    for filename in filenames {
+        if !seen.insert(filename.clone()) || !valid_filenames.contains(filename) {
+            continue;
+        }
+
+        let path = dir.join(filename);
+        if path.is_file() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                project
+                    .instruction_file_hashes
+                    .insert(filename.clone(), compute_content_hash(&content));
+            }
+        } else {
+            project.instruction_file_hashes.remove(filename);
+        }
+    }
+
     if let Ok(data) = serde_json::to_string_pretty(project) {
         let _ = save_project(project_name, &data);
     }
@@ -439,6 +491,32 @@ mod tests {
 
         assert!(hashes.contains_key("CLAUDE.md"));
         assert!(!hashes.contains_key(".clinerules"));
+    }
+
+    #[test]
+    fn record_instruction_hashes_for_filenames_only_updates_written_files() {
+        let dir = tmp();
+        fs::write(dir.path().join("AGENTS.md"), "# Agents").expect("write AGENTS");
+        fs::write(dir.path().join("CLAUDE.md"), "# Claude").expect("write CLAUDE");
+
+        let mut project =
+            make_unified_project(dir.path().to_str().unwrap(), &["claude", "opencode"]);
+        let project_name = project.name.clone();
+
+        record_instruction_hashes_for_filenames(
+            &project_name,
+            &mut project,
+            &["AGENTS.md".to_string()],
+        );
+
+        assert!(
+            project.instruction_file_hashes.contains_key("AGENTS.md"),
+            "written file hash should be recorded"
+        );
+        assert!(
+            !project.instruction_file_hashes.contains_key("CLAUDE.md"),
+            "unwritten file hash should remain unset"
+        );
     }
 
     #[test]

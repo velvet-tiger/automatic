@@ -127,11 +127,12 @@ pub fn save_project_file(name: &str, filename: &str, content: &str) -> Result<()
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let touched_files = core::resolve_instruction_target_filenames(&project, filename);
 
     core::save_project_file_for_project(&project, filename, content)?;
 
-    // Record updated hashes so drift detection reflects what we just wrote.
-    core::record_instruction_hashes(name, &mut project);
+    // Record only the files we actually wrote so unrelated conflicts remain visible.
+    core::record_instruction_hashes_for_filenames(name, &mut project, &touched_files);
     Ok(())
 }
 
@@ -149,6 +150,7 @@ pub fn adopt_instruction_file(name: &str, filename: &str) -> Result<String, Stri
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let touched_files = core::resolve_instruction_target_filenames(&project, filename);
 
     // read_project_file strips managed sections and returns only user content.
     let user_content = core::read_project_file(&project.directory, filename)?;
@@ -156,8 +158,8 @@ pub fn adopt_instruction_file(name: &str, filename: &str) -> Result<String, Stri
     // Re-write through the standard path so rules are correctly applied.
     core::save_project_file_for_project(&project, filename, &user_content)?;
 
-    // Record updated hashes so drift detection reflects what we just wrote.
-    core::record_instruction_hashes(name, &mut project);
+    // Record only the files we actually wrote so unrelated conflicts remain visible.
+    core::record_instruction_hashes_for_filenames(name, &mut project, &touched_files);
 
     // Return the adopted user content so the frontend can update its editor state.
     Ok(user_content)
@@ -174,12 +176,13 @@ pub fn overwrite_instruction_file(name: &str, filename: &str) -> Result<(), Stri
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+    let touched_files = core::resolve_instruction_target_filenames(&project, filename);
 
     // Write an empty user-content file with the configured rules re-applied.
     core::save_project_file_for_project(&project, filename, "")?;
 
-    // Record updated hashes so drift detection reflects what we just wrote.
-    core::record_instruction_hashes(name, &mut project);
+    // Record only the files we actually wrote so unrelated conflicts remain visible.
+    core::record_instruction_hashes_for_filenames(name, &mut project, &touched_files);
     Ok(())
 }
 
