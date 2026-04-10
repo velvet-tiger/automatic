@@ -371,11 +371,31 @@ function App() {
       className="relative flex flex-col h-screen w-screen overflow-hidden bg-bg-base text-[#fafafa] selection:bg-brand/30"
       aria-hidden={showWizard === true}
     >
-      {/* ── Top drag region — clears macOS traffic lights ─────────────── */}
+      {/* ── Top bar — drag region with section tabs and actions ─────── */}
       <div
         data-tauri-drag-region
-        className="h-11 flex-shrink-0 flex items-center bg-bg-base select-none relative"
+        className="h-11 flex-shrink-0 flex items-center border-b border-border-strong/40 bg-bg-base select-none"
       >
+        {/* Left: section tabs (after traffic-light clearance) */}
+        <div className="flex items-center gap-1 pl-20 relative z-10">
+          {(["start", "workspace", "library", "marketplace"] as const).map((section) => {
+            const isActive = activeSection === section && activeTab !== "settings";
+            return (
+              <button
+                key={section}
+                onClick={() => handleSectionClick(section)}
+                className={`px-3 py-1 rounded-md text-[13px] font-medium transition-colors ${
+                  isActive
+                    ? "text-text-base bg-bg-sidebar"
+                    : "text-text-muted hover:text-text-base hover:bg-bg-sidebar/50"
+                }`}
+              >
+                {SECTION_LABELS[section]}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Right: contextual actions + task log toggle + settings cog */}
         <div className="ml-auto pr-4 flex items-center gap-2 relative z-10">
           {activeTab === "skills" && (
@@ -406,7 +426,6 @@ function App() {
             </button>
           )}
           <TaskLogToggleButton />
-          {/* Settings cog */}
           <button
             onClick={() => setActiveTab("settings")}
             className={`flex items-center justify-center w-[26px] h-[26px] rounded-md transition-colors ${
@@ -420,26 +439,6 @@ function App() {
             <SettingsIcon size={14} />
           </button>
         </div>
-      </div>
-
-      {/* ── Section tab bar ───────────────────────────────────────────── */}
-      <div className="flex-shrink-0 flex items-center gap-1 px-4 py-1.5 border-b border-border-strong/40 bg-bg-base">
-        {(["start", "workspace", "library", "marketplace"] as const).map((section) => {
-          const isActive = activeSection === section && activeTab !== "settings";
-          return (
-            <button
-              key={section}
-              onClick={() => handleSectionClick(section)}
-              className={`px-3 py-1 rounded-md text-[13px] font-medium transition-colors ${
-                isActive
-                  ? "text-text-base bg-bg-sidebar"
-                  : "text-text-muted hover:text-text-base hover:bg-bg-sidebar/50"
-              }`}
-            >
-              {SECTION_LABELS[section]}
-            </button>
-          );
-        })}
       </div>
 
       {/* ── Sidebar + Main content ────────────────────────────────────── */}
