@@ -1992,7 +1992,7 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
             onClick={onCreate}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors shadow-sm"
           >
-            <Plus size={12} /> New Project
+            <Plus size={12} /> Add Project
           </button>
         </div>
       </div>
@@ -2789,7 +2789,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     setIsCreating(false);
   }, [resetKey]);
 
-  // Listen for sidebar "New Project" trigger
+  // Listen for sidebar "Add Project" trigger
   useEffect(() => {
     const handler = () => { startCreate(); };
     window.addEventListener("create-project", handler);

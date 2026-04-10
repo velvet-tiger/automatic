@@ -25,7 +25,7 @@ interface WorkspaceSidebarProps {
   activeGroupFilter: string | null;
   /** Called when a group name is clicked — filters the Projects page to that group. */
   onFilterByGroup: (groupName: string | null) => void;
-  /** Called when "New Project" is clicked in the sidebar. */
+  /** Called when "Add Project" is clicked in the sidebar. */
   onCreateProject: () => void;
 }
 
@@ -270,13 +270,13 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <>
-      {/* New Project action */}
+      {/* Add Project action */}
       <button
         onClick={onCreateProject}
         className="w-full flex items-center gap-2.5 px-3 py-2 mb-2 rounded-md text-[13px] font-medium text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors"
       >
         <FolderPlus size={14} className="shrink-0 text-text-muted" />
-        <span className="flex-1 text-left">New Project</span>
+        <span className="flex-1 text-left">Add Project</span>
       </button>
 
       {/* Projects section header with create group button */}
