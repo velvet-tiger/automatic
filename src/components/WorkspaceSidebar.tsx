@@ -269,7 +269,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   return (
     <>
       {/* Projects header with create group button */}
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-1">
         <NavItem id="projects" icon={FolderOpen} label="Projects" isActive={activeTab === "projects" && !activeGroupFilter} onClick={() => { onFilterByGroup(null); onTabClick("projects"); }} />
         <button
           onClick={() => { setCreatingGroup(true); setNewGroupName(""); }}
@@ -282,7 +282,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
 
       {/* Inline group creation */}
       {creatingGroup && (
-        <div className="ml-2 mb-2 px-2">
+        <div className="mb-1 px-2">
           <input
             ref={newGroupInputRef}
             value={newGroupName}
@@ -298,32 +298,56 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
         </div>
       )}
 
-      {/* Grouped projects */}
-      <div className="ml-2 space-y-1 mb-4">
+      {/* Ungrouped projects — top level */}
+      {ungroupedProjects.length > 0 && (
+        <div className="mb-1" data-sidebar-group="__ungrouped__">
+          {ungroupedProjects.map((projectName) => (
+            <div key={projectName} className="flex items-center group">
+              <span
+                className="flex items-center justify-center w-4 h-4 shrink-0 cursor-grab text-transparent group-hover:text-text-muted/40 transition-colors ml-2"
+                onPointerDown={(e) => handleDragStart(projectName, null, e)}
+              >
+                <GripVertical size={10} />
+              </span>
+              <button
+                onClick={() => onNavigateToProject(projectName)}
+                className="flex-1 text-left px-1.5 py-1 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
+              >
+                {projectName}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Groups */}
+      <div className="mb-2">
         {groups.map((group) => {
           const isActiveFilter = activeGroupFilter === group.name && activeTab === "projects";
           return (
           <div key={group.name} data-sidebar-group={group.name}>
-            <div className={`flex items-center gap-0.5 px-2 py-1 rounded-md transition-colors ${isActiveFilter ? "bg-bg-sidebar" : ""}`}>
+            <button
+              onClick={() => { onFilterByGroup(group.name); onTabClick("projects"); }}
+              className={`w-full flex items-center gap-2 px-3 py-1 rounded-md text-[13px] font-medium transition-colors ${
+                isActiveFilter
+                  ? "bg-bg-sidebar text-text-base"
+                  : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
+              }`}
+            >
               <button
-                onClick={() => toggleGroupCollapse(group.name)}
-                className="shrink-0 p-0.5 text-text-muted hover:text-text-base transition-colors"
+                onClick={(e) => { e.stopPropagation(); toggleGroupCollapse(group.name); }}
+                className="shrink-0 text-text-muted hover:text-text-base transition-colors"
               >
                 {collapsedGroups.has(group.name)
-                  ? <ChevronRight size={10} />
-                  : <ChevronDown size={10} />
+                  ? <ChevronRight size={12} />
+                  : <ChevronDown size={12} />
                 }
               </button>
-              <button
-                onClick={() => { onFilterByGroup(group.name); onTabClick("projects"); }}
-                className={`flex-1 text-left text-[13px] font-medium tracking-wide truncate transition-colors ${isActiveFilter ? "text-text-base" : "text-text-muted hover:text-text-base"}`}
-              >
-                {group.name}
-              </button>
-              <span className="text-[10px] text-text-muted/50 shrink-0">{group.projects.length}</span>
-            </div>
+              <span className="flex-1 text-left truncate">{group.name}</span>
+              <span className="text-[11px] text-text-muted/50 shrink-0">{group.projects.length}</span>
+            </button>
             {!collapsedGroups.has(group.name) && (
-              <ul className="ml-1 space-y-0.5">
+              <ul className="ml-5">
                 {group.projects
                   .filter((p) => projects.includes(p))
                   .sort((a, b) => a.localeCompare(b))
@@ -344,81 +368,12 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
                     </li>
                   ))}
                 {group.projects.filter((p) => projects.includes(p)).length === 0 && (
-                  <li className="px-6 py-1 text-[11px] text-text-muted/40 italic">Empty</li>
+                  <li className="px-3 py-1 text-[11px] text-text-muted/40 italic">Empty</li>
                 )}
               </ul>
             )}
           </div>
         );})}
-
-        {/* Ungrouped ("Other") projects */}
-        {ungroupedProjects.length > 0 && groups.length > 0 && (() => {
-          const isActiveFilter = activeGroupFilter === "__ungrouped__" && activeTab === "projects";
-          return (
-          <div data-sidebar-group="__ungrouped__">
-            <div className={`flex items-center gap-0.5 px-2 py-1 rounded-md transition-colors ${isActiveFilter ? "bg-bg-sidebar" : ""}`}>
-              <button
-                onClick={() => toggleGroupCollapse("__other__")}
-                className="shrink-0 p-0.5 text-text-muted hover:text-text-base transition-colors"
-              >
-                {collapsedGroups.has("__other__")
-                  ? <ChevronRight size={10} />
-                  : <ChevronDown size={10} />
-                }
-              </button>
-              <button
-                onClick={() => { onFilterByGroup("__ungrouped__"); onTabClick("projects"); }}
-                className={`flex-1 text-left text-[13px] font-medium tracking-wide truncate transition-colors ${isActiveFilter ? "text-text-base" : "text-text-muted hover:text-text-base"}`}
-              >
-                Other
-              </button>
-              <span className="text-[10px] text-text-muted/50 shrink-0">{ungroupedProjects.length}</span>
-            </div>
-            {!collapsedGroups.has("__other__") && (
-              <ul className="ml-1 space-y-0.5">
-                {ungroupedProjects.map((projectName) => (
-                  <li key={projectName} className="flex items-center group">
-                    <span
-                      className="flex items-center justify-center w-4 h-4 shrink-0 cursor-grab text-transparent group-hover:text-text-muted/40 transition-colors"
-                      onPointerDown={(e) => handleDragStart(projectName, null, e)}
-                    >
-                      <GripVertical size={10} />
-                    </span>
-                    <button
-                      onClick={() => onNavigateToProject(projectName)}
-                      className="flex-1 text-left px-1.5 py-1 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
-                    >
-                      {projectName}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          );
-        })()}
-
-        {/* No groups — show all projects directly */}
-        {ungroupedProjects.length > 0 && groups.length === 0 && (
-          <ul className="space-y-0.5" data-sidebar-group="__ungrouped__">
-            {ungroupedProjects.map((projectName) => (
-              <li key={projectName} className="flex items-center group">
-                <span
-                  className="flex items-center justify-center w-4 h-4 shrink-0 cursor-grab text-transparent group-hover:text-text-muted/40 transition-colors"
-                  onPointerDown={(e) => handleDragStart(projectName, null, e)}
-                >
-                  <GripVertical size={10} />
-                </span>
-                <button
-                  onClick={() => onNavigateToProject(projectName)}
-                  className="flex-1 text-left px-1.5 py-1 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
-                >
-                  {projectName}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
 
       <ul className="space-y-0.5">
