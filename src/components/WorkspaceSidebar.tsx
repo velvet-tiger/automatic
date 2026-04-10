@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown, ChevronRight, FolderOpen, Layers, Plus, GripVertical } from "lucide-react";
+import { Folder, FolderOpen as FolderOpenIcon, Layers, Plus, FolderPlus } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +25,8 @@ interface WorkspaceSidebarProps {
   activeGroupFilter: string | null;
   /** Called when a group name is clicked — filters the Projects page to that group. */
   onFilterByGroup: (groupName: string | null) => void;
+  /** Called when "New Project" is clicked in the sidebar. */
+  onCreateProject: () => void;
 }
 
 // ── NavItem (matches App.tsx pattern) ────────────────────────────────────────
@@ -53,7 +55,7 @@ function NavItem({ id, icon: Icon, label, isActive, onClick }: {
 
 // ── WorkspaceSidebar ─────────────────────────────────────────────────────────
 
-export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToProject, activeGroupFilter, onFilterByGroup }: WorkspaceSidebarProps) {
+export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToProject, activeGroupFilter, onFilterByGroup, onCreateProject }: WorkspaceSidebarProps) {
   // ── Project + group data ─────────────────────────────────────────────────
   const [projects, setProjects] = useState<string[]>([]);
   const [groups, setGroups] = useState<SidebarGroup[]>([]);
@@ -268,12 +270,26 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <>
-      {/* Projects header with create group button */}
+      {/* New Project action */}
+      <button
+        onClick={onCreateProject}
+        className="w-full flex items-center gap-2.5 px-3 py-2 mb-2 rounded-md text-[13px] font-medium text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors"
+      >
+        <FolderPlus size={14} className="shrink-0 text-text-muted" />
+        <span className="flex-1 text-left">New Project</span>
+      </button>
+
+      {/* Projects section header with create group button */}
       <div className="flex items-center justify-between mb-1">
-        <NavItem id="projects" icon={FolderOpen} label="Projects" isActive={activeTab === "projects" && !activeGroupFilter} onClick={() => { onFilterByGroup(null); onTabClick("projects"); }} />
+        <button
+          onClick={() => { onFilterByGroup(null); onTabClick("projects"); }}
+          className="flex items-center gap-1 px-3 py-1 hover:text-text-base transition-colors"
+        >
+          <span className="text-[11px] font-semibold tracking-wider text-text-muted/60 hover:text-text-muted">Projects</span>
+        </button>
         <button
           onClick={() => { setCreatingGroup(true); setNewGroupName(""); }}
-          className="flex items-center justify-center w-[22px] h-[22px] rounded text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors mr-1"
+          className="flex items-center justify-center w-[22px] h-[22px] rounded text-text-muted/50 hover:text-text-base hover:bg-bg-sidebar transition-colors mr-1"
           title="New group"
         >
           <Plus size={12} />
@@ -282,7 +298,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
 
       {/* Inline group creation */}
       {creatingGroup && (
-        <div className="mb-1 px-2">
+        <div className="mb-1 px-3">
           <input
             ref={newGroupInputRef}
             value={newGroupName}
@@ -302,20 +318,19 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
       {ungroupedProjects.length > 0 && (
         <div className="mb-1" data-sidebar-group="__ungrouped__">
           {ungroupedProjects.map((projectName) => (
-            <div key={projectName} className="flex items-center group">
-              <span
-                className="flex items-center justify-center w-4 h-4 shrink-0 cursor-grab text-transparent group-hover:text-text-muted/40 transition-colors ml-2"
-                onPointerDown={(e) => handleDragStart(projectName, null, e)}
-              >
-                <GripVertical size={10} />
-              </span>
-              <button
-                onClick={() => onNavigateToProject(projectName)}
-                className="flex-1 text-left px-1.5 py-1 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
-              >
-                {projectName}
-              </button>
-            </div>
+            <button
+              key={projectName}
+              onClick={() => onNavigateToProject(projectName)}
+              className="w-full text-left pl-[34px] pr-3 py-1.5 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                const timeout = setTimeout(() => handleDragStart(projectName, null, e), 200);
+                const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
+                window.addEventListener("pointerup", cancel, { once: true });
+              }}
+            >
+              {projectName}
+            </button>
           ))}
         </div>
       )}
@@ -323,54 +338,47 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
       {/* Groups */}
       <div className="mb-2">
         {groups.map((group) => {
+          const isCollapsed = collapsedGroups.has(group.name);
           const isActiveFilter = activeGroupFilter === group.name && activeTab === "projects";
+          const GroupIcon = isCollapsed ? Folder : FolderOpenIcon;
           return (
           <div key={group.name} data-sidebar-group={group.name}>
             <button
-              onClick={() => { onFilterByGroup(group.name); onTabClick("projects"); }}
-              className={`w-full flex items-center gap-2 px-3 py-1 rounded-md text-[13px] font-medium transition-colors ${
+              onClick={() => { toggleGroupCollapse(group.name); onFilterByGroup(group.name); onTabClick("projects"); }}
+              className={`w-full flex items-center gap-2 pl-[12px] pr-3 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
                 isActiveFilter
                   ? "bg-bg-sidebar text-text-base"
                   : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
               }`}
             >
-              <button
-                onClick={(e) => { e.stopPropagation(); toggleGroupCollapse(group.name); }}
-                className="shrink-0 text-text-muted hover:text-text-base transition-colors"
-              >
-                {collapsedGroups.has(group.name)
-                  ? <ChevronRight size={12} />
-                  : <ChevronDown size={12} />
-                }
-              </button>
+              <GroupIcon size={14} className={`shrink-0 ${isActiveFilter ? "text-text-base" : "text-text-muted"}`} />
               <span className="flex-1 text-left truncate">{group.name}</span>
               <span className="text-[11px] text-text-muted/50 shrink-0">{group.projects.length}</span>
             </button>
-            {!collapsedGroups.has(group.name) && (
-              <ul className="ml-5">
+            {!isCollapsed && (
+              <div>
                 {group.projects
                   .filter((p) => projects.includes(p))
                   .sort((a, b) => a.localeCompare(b))
                   .map((projectName) => (
-                    <li key={projectName} className="flex items-center group">
-                      <span
-                        className="flex items-center justify-center w-4 h-4 shrink-0 cursor-grab text-transparent group-hover:text-text-muted/40 transition-colors"
-                        onPointerDown={(e) => handleDragStart(projectName, group.name, e)}
-                      >
-                        <GripVertical size={10} />
-                      </span>
-                      <button
-                        onClick={() => onNavigateToProject(projectName)}
-                        className="flex-1 text-left px-1.5 py-1 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
-                      >
-                        {projectName}
-                      </button>
-                    </li>
+                    <button
+                      key={projectName}
+                      onClick={() => onNavigateToProject(projectName)}
+                      className="w-full text-left pl-[34px] pr-3 py-1.5 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
+                      onPointerDown={(e) => {
+                        if (e.button !== 0) return;
+                        const timeout = setTimeout(() => handleDragStart(projectName, group.name, e), 200);
+                        const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
+                        window.addEventListener("pointerup", cancel, { once: true });
+                      }}
+                    >
+                      {projectName}
+                    </button>
                   ))}
                 {group.projects.filter((p) => projects.includes(p)).length === 0 && (
-                  <li className="px-3 py-1 text-[11px] text-text-muted/40 italic">Empty</li>
+                  <div className="pl-[34px] pr-3 py-1.5 text-[11px] text-text-muted/40 italic">Empty</div>
                 )}
-              </ul>
+              </div>
             )}
           </div>
         );})}

@@ -470,7 +470,7 @@ function App() {
       {/* ── Sidebar + Main content ────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-      <aside className={`flex-shrink-0 bg-bg-input border-r border-border-strong/40 flex flex-col transition-all duration-200 overflow-hidden ${sidebarCollapsed ? "w-0 border-r-0" : "w-[180px]"}`}>
+      <aside className={`flex-shrink-0 bg-bg-input border-r border-border-strong/40 flex flex-col transition-all duration-200 overflow-hidden ${sidebarCollapsed ? "w-0 border-r-0" : "w-[270px]"}`}>
 
         {/* Section-specific navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-3 custom-scrollbar">
@@ -491,6 +491,11 @@ function App() {
               onNavigateToProject={navigateToProject}
               activeGroupFilter={activeGroupFilter}
               onFilterByGroup={setActiveGroupFilter}
+              onCreateProject={() => {
+                setActiveGroupFilter(null);
+                setActiveTabWithSection("projects");
+                window.dispatchEvent(new CustomEvent("create-project"));
+              }}
             />
           )}
 
