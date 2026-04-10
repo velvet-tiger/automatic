@@ -1489,41 +1489,41 @@ function ProjectCard({
   return (
     <button
       onClick={() => onSelect(name)}
-      className={`group relative w-full h-full text-left bg-bg-input border ${borderClass} rounded-xl p-3 flex flex-col gap-2.5 transition-all hover:bg-surface-hover hover:-translate-y-0.5`}
+      className={`group relative w-full h-full text-left bg-bg-input border ${borderClass} rounded-xl p-5 flex flex-col gap-3 transition-all hover:bg-surface-hover hover:-translate-y-0.5`}
     >
       {/* Sync status — top right */}
       {isConfigured && (
-        <div className="absolute top-2.5 right-2.5">
+        <div className="absolute top-4 right-4">
           <ProjectStatusBadge drift={drift} />
         </div>
       )}
 
-      {/* Row 1: title */}
-      <div className="flex items-start gap-2.5 pr-20">
+      {/* Row 1: icon + title + directory */}
+      <div className="flex items-start gap-3 pr-20">
         <div
-          className={`mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border ${
+          className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border ${
             isDrifted
               ? "border-warning/30 bg-warning/10"
-              : "border-border-strong/40 bg-bg-sidebar"
+              : "border-brand/20 bg-brand/10"
           }`}
         >
           <FolderOpen
-            size={12}
-            className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-icon-agent"}`}
+            size={16}
+            className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-brand"}`}
           />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-semibold text-text-base truncate">{name}</div>
+          <div className="text-[14px] font-semibold text-text-base leading-snug truncate">{name}</div>
         </div>
       </div>
 
       {/* Row 2: agent chips */}
       {(project?.agents?.length ?? 0) > 0 ? (
-        <div className="flex items-center gap-1 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
           {(project?.agents ?? []).map((agentId) => (
             <span
               key={agentId}
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] text-text-muted"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] text-text-muted"
             >
               <AgentIcon agentId={agentId} size={9} />
               {agentId}
@@ -1531,14 +1531,14 @@ function ProjectCard({
           ))}
         </div>
       ) : (
-        <div className="flex items-center gap-1 text-[11px] text-warning/70">
+        <div className="flex items-center gap-1.5 text-[11px] text-warning/70">
           <AlertCircle size={10} className="flex-shrink-0" />
           <span>No agents configured</span>
         </div>
       )}
 
       {/* Row 3: stats footer */}
-      <div className="mt-auto flex w-full items-center gap-3 pt-2 border-t border-border-strong/30 text-[11px] text-text-muted">
+      <div className="mt-auto flex w-full items-center gap-3 pt-3 border-t border-border-strong/30 text-[11px] text-text-muted">
         <span className="flex items-center gap-1">
           <Code size={10} />
           {totalSkills}
@@ -1817,7 +1817,7 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
   const filteredProjects = sortNames(baseProjects.filter(matchesSearch));
 
   const renderCardGrid = (names: string[]) => (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       {names.map((name) => (
         <ProjectCard
           key={name}
@@ -1833,8 +1833,8 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
   return (
     <div className="flex-1 h-full overflow-y-auto custom-scrollbar bg-bg-base">
       {/* Top bar */}
-      <div className="h-11 px-6 border-b border-border-strong/40 flex items-center justify-between bg-bg-base/50 flex-shrink-0">
-        <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
+      <div className="px-6 py-3 border-b border-border-strong/40 flex items-center justify-between bg-bg-base/50 flex-shrink-0">
+        <span className="text-[13px] font-semibold text-text-muted tracking-wide uppercase">
           {filterGroup === "__ungrouped__" ? "Other Projects" : filterGroup ? filterGroup : "Projects"}
         </span>
         <div className="flex items-center gap-2">
@@ -1883,7 +1883,7 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
         </div>
       </div>
 
-      <div className="p-6 space-y-6">
+      <div className="p-6 space-y-5">
         {/* Health overview bar */}
         {!projectsLoading && baseProjects.length > 0 && (
           <ProjectsHealthBar
@@ -1896,8 +1896,8 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
         {/* Empty state */}
         {!projectsLoading && baseProjects.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-16 h-16 rounded-2xl border border-dashed border-border-strong flex items-center justify-center mb-5">
-              <FolderOpen size={24} className="text-text-muted" />
+            <div className="w-16 h-16 rounded-2xl border border-brand/20 bg-brand/10 flex items-center justify-center mb-5">
+              <FolderOpen size={24} className="text-brand" />
             </div>
             <h2 className="text-[16px] font-semibold text-text-base mb-2">No projects yet</h2>
             <p className="text-[13px] text-text-muted mb-6 leading-relaxed max-w-xs">
