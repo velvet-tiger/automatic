@@ -5,7 +5,15 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, Terminal, Trash2, Check, Edit2, X } from "lucide-react";
 import { ICONS } from "../../lib/icons";
 import { TokenPill } from "../../components/TokenPill";
-import { formatAssetScanResult, scanAssetContent, warningFindings } from "../../lib/assetSecurity";
+import {
+  type AssetSecurityScanRecord,
+  formatAssetScanResult,
+  getAssetSecurityNoticeClass,
+  getAssetSecurityStatus,
+  scanAssetContent,
+  toAssetSecurityScanRecord,
+  warningFindings,
+} from "../../lib/assetSecurity";
 
 interface UserCommandEntry {
   id: string;
@@ -69,6 +77,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
   const [newMachineName, setNewMachineName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
+  const [currentScan, setCurrentScan] = useState<AssetSecurityScanRecord | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameName, setRenameName] = useState("");
 
@@ -100,6 +109,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
   const loadCommand = async (id: string) => {
     try {
       const raw: string = await invoke("read_user_command", { machineName: id });
+      const scan = await scanAssetContent("user_command", raw);
       const { description, body } = parseCommandContent(raw);
       setSelectedId(id);
       setEditDescription(description);
@@ -108,7 +118,14 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
-      setSecurityNotice(null);
+      setCurrentScan(toAssetSecurityScanRecord(scan));
+      setSecurityNotice(
+        scan.findings.length > 0
+          ? formatAssetScanResult(scan, "command", {
+              blockedHeader: "Dangerous content found in command:",
+            })
+          : null,
+      );
     } catch (err: any) {
       setError(`Failed to read command: ${err}`);
     }
@@ -140,6 +157,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
       setIsEditing(false);
       setDescriptionError(null);
       setError(null);
+      setCurrentScan(toAssetSecurityScanRecord(scan));
       setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "command") : null);
     } catch (err: any) {
       setError(`Failed to save command: ${err}`);
@@ -162,6 +180,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
       await loadCommands();
       setError(null);
       setSecurityNotice(null);
+      setCurrentScan(null);
     } catch (err: any) {
       setError(`Failed to delete command: ${err}`);
     }
@@ -177,6 +196,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
     setNewMachineName("");
     setError(null);
     setSecurityNotice(null);
+    setCurrentScan(null);
   };
 
   const startRename = () => {
@@ -204,6 +224,13 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
   };
 
   const selectedEntry = commands.find((entry) => entry.id === selectedId) ?? null;
+  const { label: scanStatusLabel, className: scanStatusClass } = getAssetSecurityStatus(currentScan, {
+    blockedLabel: "Danger",
+  });
+  const scanTimestamp = currentScan
+    ? new Date(currentScan.scanned_at).toLocaleString()
+    : null;
+  const securityNoticeToneClass = getAssetSecurityNoticeClass(currentScan);
 
   return (
     <div className="flex h-full w-full bg-bg-base">
@@ -345,6 +372,20 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
               </div>
             </div>
 
+            {!isEditing && (
+              <div className="px-5 py-2.5 border-b border-border-strong/40 flex items-center gap-2 shrink-0 bg-bg-input/20">
+                <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">
+                  Current Security Scan
+                </span>
+                <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium ${scanStatusClass}`}>
+                  {scanStatusLabel}
+                </span>
+                <span className="text-[11px] text-text-muted">
+                  {scanTimestamp ? scanTimestamp : "No scan yet"}
+                </span>
+              </div>
+            )}
+
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
               {isEditing ? (
                 <>
@@ -444,13 +485,13 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
         )}
 
         {error && (
-          <div className="mx-5 mb-5 mt-0 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-[12px] text-danger">
+          <div className="mx-5 mb-5 mt-0 rounded-lg border border-red-300/80 bg-red-50 px-4 py-3 text-[12px] text-red-950">
             <div className="whitespace-pre-wrap">{error}</div>
           </div>
         )}
 
         {securityNotice && (
-          <div className="mx-5 mb-5 mt-0 rounded-lg border border-amber-400/60 bg-amber-100/85 px-4 py-3 text-[12px] text-text-base">
+          <div className={`mx-5 mb-5 mt-0 rounded-lg border px-4 py-3 text-[12px] ${securityNoticeToneClass}`}>
             <div className="whitespace-pre-wrap">{securityNotice}</div>
           </div>
         )}

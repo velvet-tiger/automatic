@@ -37,8 +37,11 @@ import SkillImportDialog from "../../components/SkillImportDialog";
 import {
   type AssetSecurityScanRecord,
   formatAssetScanResult,
-  getSkillScanState,
+  getAssetSecurityDismissButtonClass,
+  getAssetSecurityNoticeClass,
+  getAssetSecurityStatus,
   scanAssetContent,
+  toAssetSecurityScanRecord,
   warningFindings,
 } from "../../lib/assetSecurity";
 
@@ -466,7 +469,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
-  const [lastScan, setLastScan] = useState<AssetSecurityScanRecord | null>(null);
+  const [currentScan, setCurrentScan] = useState<AssetSecurityScanRecord | null>(null);
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
   const [collections, setCollections] = useState<SkillCollection[]>([]);
 
@@ -545,13 +548,13 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
   const loadSkillContent = async (name: string) => {
     try {
-      const [content, resources, projectNames, templateNames, skillScanState] = await Promise.all([
+      const [content, resources, projectNames, templateNames] = await Promise.all([
         invoke<string>("read_skill", { name }),
         invoke<SkillResources>("get_skill_resources", { name }),
         invoke<string[]>("get_projects"),
         invoke<string[]>("get_project_templates"),
-        getSkillScanState(name),
       ]);
+      const scan = await scanAssetContent("skill", content);
       setSelectedSkill(name);
       setSkillContent(content);
       setSkillResources(resources);
@@ -584,10 +587,12 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
-      setLastScan(skillScanState);
+      setCurrentScan(toAssetSecurityScanRecord(scan));
       setSecurityNotice(
-        skillScanState && skillScanState.findings.length > 0
-          ? formatAssetScanResult(skillScanState, "skill")
+        scan.findings.length > 0
+          ? formatAssetScanResult(scan, "skill", {
+              blockedHeader: "Dangerous content found in skill:",
+            })
           : null,
       );
     } catch (err: any) {
@@ -616,6 +621,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
         trackSkillCreated(newSkillName, "local");
         setIsCreating(false);
         setIsEditing(false);
+        setCurrentScan(toAssetSecurityScanRecord(scan));
         await loadSkills();
         await loadSkillContent(newSkillName);
         setError(null);
@@ -643,6 +649,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
         trackSkillUpdated(selectedSkill!);
         setSkillContent(finalContent);
         setIsEditing(false);
+        setCurrentScan(toAssetSecurityScanRecord(scan));
         setError(null);
         setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "skill") : null);
       } catch (err: any) {
@@ -658,7 +665,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
     try {
       await invoke("delete_skill", { name });
       trackSkillDeleted(name);
-      if (selectedSkill === name) { setSelectedSkill(null); setSkillContent(""); setSkillUsedBy(null); setIsEditing(false); setLastScan(null); }
+      if (selectedSkill === name) { setSelectedSkill(null); setSkillContent(""); setSkillUsedBy(null); setIsEditing(false); setCurrentScan(null); }
       await loadSkills();
       setError(null);
       setSecurityNotice(null);
@@ -704,7 +711,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
     setSkillContent("");
     setSkillResources(null);
     setSkillUsedBy(null);
-    setLastScan(null);
+    setCurrentScan(null);
     setFieldErrors({ name: null, description: null });
     setIsCreating(true);
     setIsEditing(true);
@@ -726,23 +733,14 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   });
 
   const selectedEntry = skills.find(s => s.name === selectedSkill);
-  const scanStatusLabel = lastScan
-    ? lastScan.blocked
-      ? "Blocked"
-      : lastScan.findings.length > 0
-        ? "Warnings"
-        : "Clean"
-    : "Unknown";
-  const scanStatusClass = lastScan
-    ? lastScan.blocked
-      ? "bg-red-100 border-red-300/70 text-red-900"
-      : lastScan.findings.length > 0
-        ? "bg-amber-100 border-amber-400/70 text-amber-950"
-        : "bg-emerald-100 border-emerald-300/70 text-emerald-900"
-    : "bg-bg-sidebar border-border-strong/40 text-text-muted";
-  const scanTimestamp = lastScan
-    ? new Date(lastScan.scanned_at).toLocaleString()
+  const { label: scanStatusLabel, className: scanStatusClass } = getAssetSecurityStatus(currentScan, {
+    blockedLabel: "Danger",
+  });
+  const scanTimestamp = currentScan
+    ? new Date(currentScan.scanned_at).toLocaleString()
     : null;
+  const securityNoticeToneClass = getAssetSecurityNoticeClass(currentScan);
+  const securityDismissButtonClass = getAssetSecurityDismissButtonClass(currentScan);
 
   return (
     <div className="flex h-full w-full bg-bg-base">
@@ -976,17 +974,22 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
       {/* ── Right Pane ───────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col min-w-0">
         {error && (
-          <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between shrink-0">
+          <div className="border-b border-red-300/80 bg-red-50 p-3 text-[13px] text-red-950 flex items-center justify-between shrink-0">
             <div className="whitespace-pre-wrap">{error}</div>
-            <button onClick={() => setError(null)}><X size={14} /></button>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-900/70 hover:text-red-950 transition-colors"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
         {securityNotice && (
-          <div className="bg-amber-100/85 text-text-base p-3 text-[13px] border-b border-amber-400/60 flex items-center justify-between shrink-0">
+          <div className={`${securityNoticeToneClass} p-3 text-[13px] border-b flex items-center justify-between shrink-0`}>
             <div className="whitespace-pre-wrap">{securityNotice}</div>
             <button
               onClick={() => setSecurityNotice(null)}
-              className="text-amber-900/70 hover:text-amber-950 transition-colors"
+              className={securityDismissButtonClass}
             >
               <X size={14} />
             </button>
@@ -1203,7 +1206,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
             {!isEditing && (
               <div className="px-5 py-2.5 border-b border-border-strong/40 flex items-center gap-2 shrink-0 bg-bg-input/20">
                 <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">
-                  Last Security Scan
+                  Current Security Scan
                 </span>
                 <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium ${scanStatusClass}`}>
                   {scanStatusLabel}

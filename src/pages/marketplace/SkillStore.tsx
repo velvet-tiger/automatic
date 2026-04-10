@@ -967,12 +967,12 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
                   </div>
 
                   {actionError && (
-                    <div className="mb-5 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-[12px] text-red-400 whitespace-pre-wrap">
+                    <div className="mb-5 rounded-lg border border-red-300/80 bg-red-50 p-3 text-[12px] text-red-950 whitespace-pre-wrap">
                       {actionError}
                     </div>
                   )}
                   {previewNotice && (
-                    <div className="mb-5 rounded-lg border border-amber-400/60 bg-amber-100/85 p-3 text-[12px] text-text-base whitespace-pre-wrap">
+                    <div className="mb-5 rounded-lg border border-amber-400/70 bg-amber-100 p-3 text-[12px] text-amber-950 whitespace-pre-wrap">
                       {previewNotice}
                     </div>
                   )}

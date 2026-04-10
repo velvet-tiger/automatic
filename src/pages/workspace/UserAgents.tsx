@@ -5,7 +5,16 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, Check, MessagesSquare, Copy, Lock, FolderGit2 } from "lucide-react";
 import { AuthorSection } from "../../components/AuthorPanel";
 import { TokenPill } from "../../components/TokenPill";
-import { formatAssetScanResult, scanAssetContent, warningFindings } from "../../lib/assetSecurity";
+import {
+  type AssetSecurityScanRecord,
+  formatAssetScanResult,
+  getAssetSecurityDismissButtonClass,
+  getAssetSecurityNoticeClass,
+  getAssetSecurityStatus,
+  scanAssetContent,
+  toAssetSecurityScanRecord,
+  warningFindings,
+} from "../../lib/assetSecurity";
 
 interface UserAgentEntry {
   id: string;
@@ -56,6 +65,7 @@ export default function UserAgents() {
   const [newDisplayName, setNewDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
+  const [currentScan, setCurrentScan] = useState<AssetSecurityScanRecord | null>(null);
   const [referencingProjects, setReferencingProjects] = useState<ProjectRef[]>([]);
 
   useEffect(() => {
@@ -86,13 +96,21 @@ export default function UserAgents() {
     try {
       const raw: string = await invoke("read_user_agent", { machineName: id });
       const agent: UserAgent = JSON.parse(raw);
+      const scan = await scanAssetContent("user_agent", agent.content);
       setSelectedId(id);
       setDisplayName(agent.name);
       setAgentContent(agent.content);
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
-      setSecurityNotice(null);
+      setCurrentScan(toAssetSecurityScanRecord(scan));
+      setSecurityNotice(
+        scan.findings.length > 0
+          ? formatAssetScanResult(scan, "user agent", {
+              blockedHeader: "Dangerous content found in user agent:",
+            })
+          : null,
+      );
       await loadReferencingProjects(id);
     } catch (err: any) {
       setError(`Failed to read agent: ${err}`);
@@ -121,6 +139,7 @@ export default function UserAgents() {
         setDisplayName(name);
         setReferencingProjects([]);
         setError(null);
+        setCurrentScan(toAssetSecurityScanRecord(scan));
         setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "user agent") : null);
       } catch (err: any) {
         setError(`Failed to save agent: ${err}`);
@@ -138,6 +157,7 @@ export default function UserAgents() {
         setIsEditing(false);
         setAgents(prev => prev.map(a => a.id === selectedId ? { ...a, name: displayName } : a).sort((a, b) => a.name.localeCompare(b.name)));
         setError(null);
+        setCurrentScan(toAssetSecurityScanRecord(scan));
         setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "user agent") : null);
       } catch (err: any) {
         setError(`Failed to save agent: ${err}`);
@@ -161,6 +181,7 @@ export default function UserAgents() {
       await loadAgents();
       setError(null);
       setSecurityNotice(null);
+      setCurrentScan(null);
     } catch (err: any) {
       setError(`Failed to delete agent: ${err}`);
     }
@@ -176,6 +197,7 @@ export default function UserAgents() {
     setNewDisplayName("");
     setReferencingProjects([]);
     setSecurityNotice(null);
+    setCurrentScan(null);
   };
 
   const handleDuplicate = async (id: string) => {
@@ -204,6 +226,14 @@ export default function UserAgents() {
   };
 
   const selectedEntry = agents.find(a => a.id === selectedId);
+  const { label: scanStatusLabel, className: scanStatusClass } = getAssetSecurityStatus(currentScan, {
+    blockedLabel: "Danger",
+  });
+  const scanTimestamp = currentScan
+    ? new Date(currentScan.scanned_at).toLocaleString()
+    : null;
+  const securityNoticeToneClass = getAssetSecurityNoticeClass(currentScan);
+  const securityDismissButtonClass = getAssetSecurityDismissButtonClass(currentScan);
 
   return (
     <div className="flex h-full w-full bg-bg-base">
@@ -275,17 +305,22 @@ export default function UserAgents() {
       {/* Right Area - Editor/Viewer */}
       <div className="flex-1 flex flex-col min-w-0 bg-bg-base">
         {error && (
-          <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between">
+          <div className="border-b border-red-300/80 bg-red-50 p-3 text-[13px] text-red-950 flex items-center justify-between">
             <div className="whitespace-pre-wrap">{error}</div>
-            <button onClick={() => setError(null)}><X size={14} /></button>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-900/70 hover:text-red-950 transition-colors"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
         {securityNotice && (
-          <div className="bg-amber-100/85 text-text-base p-3 text-[13px] border-b border-amber-400/60 flex items-center justify-between">
+          <div className={`${securityNoticeToneClass} p-3 text-[13px] border-b flex items-center justify-between`}>
             <div className="whitespace-pre-wrap">{securityNotice}</div>
             <button
               onClick={() => setSecurityNotice(null)}
-              className="text-amber-900/70 hover:text-amber-950 transition-colors"
+              className={securityDismissButtonClass}
             >
               <X size={14} />
             </button>
@@ -399,6 +434,20 @@ export default function UserAgents() {
                 )}
               </div>
             </div>
+
+            {!isEditing && (
+              <div className="px-6 py-2.5 border-b border-border-strong/40 flex items-center gap-2 shrink-0 bg-bg-input/20">
+                <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">
+                  Current Security Scan
+                </span>
+                <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium ${scanStatusClass}`}>
+                  {scanStatusLabel}
+                </span>
+                <span className="text-[11px] text-text-muted">
+                  {scanTimestamp ? scanTimestamp : "No scan yet"}
+                </span>
+              </div>
+            )}
 
             {/* Editor Body */}
             <div className="flex-1 min-h-0 flex flex-col">

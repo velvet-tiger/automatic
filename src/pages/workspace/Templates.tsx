@@ -6,7 +6,16 @@ import { Plus, X, Edit2, FileText, Check, ClipboardList } from "lucide-react";
 import { ICONS } from "../../lib/icons";
 import { AuthorSection } from "../../components/AuthorPanel";
 import { TokenPill } from "../../components/TokenPill";
-import { formatAssetScanResult, scanAssetContent, warningFindings } from "../../lib/assetSecurity";
+import {
+  type AssetSecurityScanRecord,
+  formatAssetScanResult,
+  getAssetSecurityDismissButtonClass,
+  getAssetSecurityNoticeClass,
+  getAssetSecurityStatus,
+  scanAssetContent,
+  toAssetSecurityScanRecord,
+  warningFindings,
+} from "../../lib/assetSecurity";
 
 export default function Templates() {
   const [templates, setTemplates] = useState<string[]>([]);
@@ -17,6 +26,7 @@ export default function Templates() {
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
+  const [currentScan, setCurrentScan] = useState<AssetSecurityScanRecord | null>(null);
 
   useEffect(() => {
     loadTemplates();
@@ -35,12 +45,20 @@ export default function Templates() {
   const loadTemplateContent = async (name: string) => {
     try {
       const content: string = await invoke("read_template", { name });
+      const scan = await scanAssetContent("template", content);
       setSelectedTemplate(name);
       setTemplateContent(content);
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
-      setSecurityNotice(null);
+      setCurrentScan(toAssetSecurityScanRecord(scan));
+      setSecurityNotice(
+        scan.findings.length > 0
+          ? formatAssetScanResult(scan, "instruction", {
+              blockedHeader: "Dangerous content found in instruction:",
+            })
+          : null,
+      );
     } catch (err: any) {
       setError(`Failed to read template ${name}: ${err}`);
     }
@@ -53,7 +71,7 @@ export default function Templates() {
     try {
       const scan = await scanAssetContent("template", templateContent);
       if (scan.blocked) {
-        setError(formatAssetScanResult(scan, "template"));
+        setError(formatAssetScanResult(scan, "instruction"));
         setSecurityNotice(null);
         return;
       }
@@ -66,7 +84,8 @@ export default function Templates() {
         await loadTemplates();
       }
       setError(null);
-      setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "template") : null);
+      setCurrentScan(toAssetSecurityScanRecord(scan));
+      setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "instruction") : null);
     } catch (err: any) {
       setError(`Failed to save template: ${err}`);
     }
@@ -86,6 +105,7 @@ export default function Templates() {
       await loadTemplates();
       setError(null);
       setSecurityNotice(null);
+      setCurrentScan(null);
     } catch (err: any) {
       setError(`Failed to delete template: ${err}`);
     }
@@ -98,7 +118,17 @@ export default function Templates() {
     setIsEditing(true);
     setNewTemplateName("");
     setSecurityNotice(null);
+    setCurrentScan(null);
   };
+
+  const { label: scanStatusLabel, className: scanStatusClass } = getAssetSecurityStatus(currentScan, {
+    blockedLabel: "Danger",
+  });
+  const scanTimestamp = currentScan
+    ? new Date(currentScan.scanned_at).toLocaleString()
+    : null;
+  const securityNoticeToneClass = getAssetSecurityNoticeClass(currentScan);
+  const securityDismissButtonClass = getAssetSecurityDismissButtonClass(currentScan);
 
   return (
     <div className="flex h-full w-full bg-bg-base">
@@ -165,17 +195,22 @@ export default function Templates() {
       {/* Right Area - Editor/Viewer */}
       <div className="flex-1 flex flex-col min-w-0 bg-bg-base">
         {error && (
-          <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between">
+          <div className="border-b border-red-300/80 bg-red-50 p-3 text-[13px] text-red-950 flex items-center justify-between">
             <div className="whitespace-pre-wrap">{error}</div>
-            <button onClick={() => setError(null)}><X size={14} /></button>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-900/70 hover:text-red-950 transition-colors"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
         {securityNotice && (
-          <div className="bg-amber-100/85 text-text-base p-3 text-[13px] border-b border-amber-400/60 flex items-center justify-between">
+          <div className={`${securityNoticeToneClass} p-3 text-[13px] border-b flex items-center justify-between`}>
             <div className="whitespace-pre-wrap">{securityNotice}</div>
             <button
               onClick={() => setSecurityNotice(null)}
-              className="text-amber-900/70 hover:text-amber-950 transition-colors"
+              className={securityDismissButtonClass}
             >
               <X size={14} />
             </button>
@@ -235,6 +270,20 @@ export default function Templates() {
                 )}
               </div>
             </div>
+
+            {!isEditing && (
+              <div className="px-6 py-2.5 border-b border-border-strong/40 flex items-center gap-2 shrink-0 bg-bg-input/20">
+                <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">
+                  Current Security Scan
+                </span>
+                <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium ${scanStatusClass}`}>
+                  {scanStatusLabel}
+                </span>
+                <span className="text-[11px] text-text-muted">
+                  {scanTimestamp ? scanTimestamp : "No scan yet"}
+                </span>
+              </div>
+            )}
 
             {/* Editor Body */}
             <div className="flex-1 flex flex-col relative min-h-0">
