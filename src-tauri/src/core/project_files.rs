@@ -264,6 +264,29 @@ pub fn resolve_instruction_target_filenames(project: &Project, filename: &str) -
     }
 }
 
+/// Resolve the user-authored content Automatic should restore for an
+/// instruction file overwrite action.
+///
+/// For concrete filenames this is simply the stored snapshot for that file.
+/// For unified requests we prefer the first non-empty snapshot from the
+/// participating files, since unified-mode files should normally share the
+/// same user-authored content.
+pub fn resolve_instruction_snapshot_content(project: &Project, filename: &str) -> String {
+    let target_files = resolve_instruction_target_filenames(project, filename);
+
+    for target in &target_files {
+        let snapshot = read_instruction_snapshot(&project.directory, target).unwrap_or_default();
+        if !snapshot.trim().is_empty() {
+            return snapshot;
+        }
+    }
+
+    target_files
+        .first()
+        .and_then(|target| read_instruction_snapshot(&project.directory, target))
+        .unwrap_or_default()
+}
+
 /// Public wrapper for `strip_managed_section` (used by sync).
 pub fn strip_managed_section_pub(content: &str) -> String {
     strip_managed_section(content)
@@ -517,6 +540,21 @@ mod tests {
             !project.instruction_file_hashes.contains_key("CLAUDE.md"),
             "unwritten file hash should remain unset"
         );
+    }
+
+    #[test]
+    fn resolve_instruction_snapshot_content_returns_saved_snapshot() {
+        let dir = tmp();
+        let project = make_project(dir.path().to_str().unwrap(), &["opencode"]);
+        save_instruction_snapshot(
+            dir.path().to_str().unwrap(),
+            "AGENTS.md",
+            "# Stored Instructions\n\nKeep this.",
+        )
+        .expect("save snapshot");
+
+        let content = resolve_instruction_snapshot_content(&project, "AGENTS.md");
+        assert_eq!(content, "# Stored Instructions\n\nKeep this.");
     }
 
     #[test]

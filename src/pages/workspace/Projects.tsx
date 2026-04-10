@@ -788,6 +788,11 @@ interface DiffLine {
   lineNo: { a: number | null; b: number | null };
 }
 
+interface SideBySideDiffRow {
+  left: DiffLine | null;
+  right: DiffLine | null;
+}
+
 /** Compute a simple line-level diff between two text strings.
  *  Uses a greedy longest-common-subsequence approach suitable for config files. */
 function computeLineDiff(expected: string, actual: string): DiffLine[] {
@@ -826,6 +831,44 @@ function computeLineDiff(expected: string, actual: string): DiffLine[] {
   }
 
   return result;
+}
+
+function buildSideBySideDiffRows(diffLines: DiffLine[]): SideBySideDiffRow[] {
+  const rows: SideBySideDiffRow[] = [];
+  let index = 0;
+
+  while (index < diffLines.length) {
+    const current = diffLines[index]!;
+
+    if (current.type === "same") {
+      rows.push({ left: current, right: current });
+      index += 1;
+      continue;
+    }
+
+    const removed: DiffLine[] = [];
+    const added: DiffLine[] = [];
+
+    while (index < diffLines.length && diffLines[index]!.type !== "same") {
+      const line = diffLines[index]!;
+      if (line.type === "removed") {
+        removed.push(line);
+      } else if (line.type === "added") {
+        added.push(line);
+      }
+      index += 1;
+    }
+
+    const pairCount = Math.max(removed.length, added.length);
+    for (let pairIndex = 0; pairIndex < pairCount; pairIndex += 1) {
+      rows.push({
+        left: removed[pairIndex] ?? null,
+        right: added[pairIndex] ?? null,
+      });
+    }
+  }
+
+  return rows;
 }
 
 interface DriftDiffModalProps {
@@ -1124,44 +1167,54 @@ function InstructionConflictModal({
   }, [onClose]);
 
   const hasAutomaticContent = conflict.automatic_content.trim().length > 0;
-
-  // Compute a simple line-level diff (LCS-based)
-  type DiffLine = { type: "same" | "added" | "removed"; text: string };
-  const diffLines = useMemo((): DiffLine[] => {
-    const aLines = (hasAutomaticContent ? conflict.automatic_content : "").split("\n");
-    const bLines = conflict.disk_content.split("\n");
-    // LCS table
-    const m = aLines.length, n = bLines.length;
-    const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-    for (let i = m - 1; i >= 0; i--) {
-      for (let j = n - 1; j >= 0; j--) {
-        dp[i]![j] = aLines[i] === bLines[j]
-          ? 1 + (dp[i + 1]?.[j + 1] ?? 0)
-          : Math.max(dp[i + 1]?.[j] ?? 0, dp[i]?.[j + 1] ?? 0);
-      }
-    }
-    // Traceback
-    const result: DiffLine[] = [];
-    let i = 0, j = 0;
-    while (i < m || j < n) {
-      if (i < m && j < n && aLines[i] === bLines[j]) {
-        result.push({ type: "same", text: aLines[i]! });
-        i++; j++;
-      } else if (j < n && (i >= m || (dp[i + 1]?.[j] ?? 0) <= (dp[i]?.[j + 1] ?? 0))) {
-        result.push({ type: "added", text: bLines[j]! });
-        j++;
-      } else {
-        result.push({ type: "removed", text: aLines[i]! });
-        i++;
-      }
-    }
-    return result;
-  }, [conflict.automatic_content, conflict.disk_content, hasAutomaticContent]);
-
-  const addedCount = diffLines.filter((l: DiffLine) => l.type === "added").length;
-  const removedCount = diffLines.filter((l: DiffLine) => l.type === "removed").length;
+  const diffLines = useMemo(
+    () =>
+      hasAutomaticContent
+        ? computeLineDiff(conflict.automatic_content, conflict.disk_content)
+        : null,
+    [conflict.automatic_content, conflict.disk_content, hasAutomaticContent],
+  );
+  const sideBySideRows = useMemo(
+    () => (diffLines ? buildSideBySideDiffRows(diffLines) : []),
+    [diffLines],
+  );
+  const addedCount = diffLines?.filter((line) => line.type === "added").length ?? 0;
+  const removedCount = diffLines?.filter((line) => line.type === "removed").length ?? 0;
   const diskLineCount = conflict.disk_content.split("\n").length;
-  const noDiff = addedCount === 0 && removedCount === 0;
+  const automaticLineCount = hasAutomaticContent ? conflict.automatic_content.split("\n").length : 0;
+  const noDiff = diffLines ? addedCount === 0 && removedCount === 0 : false;
+
+  const renderDiffCell = (line: DiffLine | null, side: "left" | "right") => {
+    const isBlank = line == null;
+    const lineNumber = side === "left" ? line?.lineNo.a : line?.lineNo.b;
+    const isChanged = line != null && line.type !== "same";
+    const toneClass = isBlank
+      ? "bg-bg-base/30 text-text-subtle/40"
+      : line.type === "added"
+      ? "bg-success/10 text-success"
+      : line.type === "removed"
+      ? "bg-danger/10 text-danger"
+      : "bg-bg-base text-text-muted";
+
+    return (
+      <div
+        className={`grid grid-cols-[3rem_1fr] border-b border-border-strong/20 last:border-b-0 ${toneClass}`}
+      >
+        <div className="select-none border-r border-border-strong/20 px-2 py-1 text-right text-[11px] text-border-strong">
+          {lineNumber ?? ""}
+        </div>
+        <div
+          className={`px-3 py-1 whitespace-pre-wrap break-words leading-relaxed ${
+            isChanged && side === "left" && line?.type === "removed"
+              ? "decoration-danger/40 line-through"
+              : ""
+          } ${isBlank ? "italic" : ""}`}
+        >
+          {isBlank ? " " : line?.content || " "}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -1171,7 +1224,7 @@ function InstructionConflictModal({
     >
       <div
         className="flex flex-col bg-bg-sidebar border border-border-strong/40 rounded-xl shadow-2xl overflow-hidden"
-        style={{ width: "min(640px, 90vw)", maxHeight: "85vh" }}
+        style={{ width: "min(1100px, 94vw)", maxHeight: "85vh" }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border-strong flex-shrink-0">
@@ -1199,46 +1252,102 @@ function InstructionConflictModal({
 
           {/* Diff view */}
           <div className="rounded-lg border border-border-strong/40 overflow-hidden">
-            <div className="bg-bg-input px-3 py-2 flex items-center justify-between border-b border-border-strong/30">
-              <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
-                {hasAutomaticContent ? "Changes vs Automatic" : "On disk"}
-              </span>
-              <span className="text-[11px] text-text-muted flex items-center gap-2">
-                {hasAutomaticContent && !noDiff && (
-                  <>
+            {!hasAutomaticContent ? (
+              <>
+                <div className="bg-bg-input px-3 py-2 flex items-center justify-between border-b border-border-strong/30">
+                  <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
+                    Side-By-Side Comparison
+                  </span>
+                  <span className="text-[11px] text-text-muted">Automatic is empty on the left</span>
+                </div>
+                <div className="grid grid-cols-1 xl:grid-cols-2 max-h-[28rem] overflow-y-auto">
+                  <div className="border-b border-border-strong/30 xl:border-b-0 xl:border-r xl:border-border-strong/30">
+                    <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border-strong/20 bg-danger/5 px-3 py-2">
+                      <span className="text-[11px] font-medium uppercase tracking-wider text-danger">
+                        Automatic
+                      </span>
+                      <span className="text-[11px] text-text-muted">0 lines</span>
+                    </div>
+                    <div className="bg-bg-base px-3 py-4 text-[12px] font-mono leading-relaxed text-text-subtle italic">
+                      empty
+                    </div>
+                  </div>
+                  <div>
+                    <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border-strong/20 bg-success/5 px-3 py-2">
+                      <span className="text-[11px] font-medium uppercase tracking-wider text-success">
+                        On Disk
+                      </span>
+                      <span className="text-[11px] text-text-muted">
+                        {diskLineCount} line{diskLineCount !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <pre className="bg-bg-base p-3 text-[12px] font-mono whitespace-pre-wrap leading-relaxed text-text-muted">
+                      {conflict.disk_content.trim() || <em className="not-italic text-text-subtle">empty</em>}
+                    </pre>
+                  </div>
+                </div>
+              </>
+            ) : noDiff ? (
+              <>
+                <div className="bg-bg-input px-3 py-2 flex items-center justify-between border-b border-border-strong/30">
+                  <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
+                    Automatic And Disk Match
+                  </span>
+                  <span className="text-[11px] text-text-muted">
+                    {diskLineCount} line{diskLineCount !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                <pre className="max-h-72 overflow-y-auto bg-bg-base p-3 text-[12px] font-mono whitespace-pre-wrap leading-relaxed text-text-muted">
+                  {conflict.disk_content.trim() || <em className="not-italic text-text-subtle">empty</em>}
+                </pre>
+              </>
+            ) : (
+              <>
+                <div className="bg-bg-input px-3 py-2 flex items-center justify-between border-b border-border-strong/30">
+                  <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
+                    Side-By-Side Diff
+                  </span>
+                  <span className="text-[11px] text-text-muted flex items-center gap-2">
                     {addedCount > 0 && <span className="text-success">+{addedCount}</span>}
                     {removedCount > 0 && <span className="text-danger">−{removedCount}</span>}
                     <span className="text-border-strong/60">·</span>
-                  </>
-                )}
-                <span>{diskLineCount} line{diskLineCount !== 1 ? "s" : ""}</span>
-              </span>
-            </div>
-            <pre className="text-[12px] font-mono p-0 whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
-              {noDiff || !hasAutomaticContent ? (
-                <span className="block p-3 text-text-muted">
-                  {conflict.disk_content.trim() || <em className="not-italic text-text-subtle">empty</em>}
-                </span>
-              ) : (
-                diffLines.map((line: DiffLine, idx: number) => (
-                  <span
-                    key={idx}
-                    className={
-                      line.type === "added"
-                        ? "block px-3 py-px bg-success/10 text-success"
-                        : line.type === "removed"
-                        ? "block px-3 py-px bg-danger/10 text-danger line-through decoration-danger/40"
-                        : "block px-3 py-px text-text-muted"
-                    }
-                  >
-                    <span className="select-none mr-2 opacity-50 w-4 inline-block text-right">
-                      {line.type === "added" ? "+" : line.type === "removed" ? "−" : " "}
-                    </span>
-                    {line.text || " "}
+                    <span>{automaticLineCount} vs {diskLineCount} lines</span>
                   </span>
-                ))
-              )}
-            </pre>
+                </div>
+                <div className="grid grid-cols-1 xl:grid-cols-2 max-h-[28rem] overflow-y-auto">
+                  <div className="border-b border-border-strong/30 xl:border-b-0 xl:border-r xl:border-border-strong/30">
+                    <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border-strong/20 bg-danger/5 px-3 py-2">
+                      <span className="text-[11px] font-medium uppercase tracking-wider text-danger">
+                        Automatic
+                      </span>
+                      <span className="text-[11px] text-text-muted">
+                        {automaticLineCount} line{automaticLineCount !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <div className="font-mono text-[12px]">
+                      {sideBySideRows.map((row, idx) => (
+                        <div key={`left-${idx}`}>{renderDiffCell(row.left, "left")}</div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border-strong/20 bg-success/5 px-3 py-2">
+                      <span className="text-[11px] font-medium uppercase tracking-wider text-success">
+                        On Disk
+                      </span>
+                      <span className="text-[11px] text-text-muted">
+                        {diskLineCount} line{diskLineCount !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <div className="font-mono text-[12px]">
+                      {sideBySideRows.map((row, idx) => (
+                        <div key={`right-${idx}`}>{renderDiffCell(row.right, "right")}</div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="grid grid-cols-1 gap-2">
@@ -2679,6 +2788,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     setSelectedName(null);
     setIsCreating(false);
   }, [resetKey]);
+
+  // Listen for sidebar "New Project" trigger
+  useEffect(() => {
+    const handler = () => { startCreate(); };
+    window.addEventListener("create-project", handler);
+    return () => window.removeEventListener("create-project", handler);
+  }, []);
 
   // Open the new-project wizard with a template pre-applied.
   // (triggered from the "New project from template" action in ProjectTemplates)

@@ -177,9 +177,11 @@ pub fn overwrite_instruction_file(name: &str, filename: &str) -> Result<(), Stri
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
     let touched_files = core::resolve_instruction_target_filenames(&project, filename);
+    let automatic_content = core::resolve_instruction_snapshot_content(&project, filename);
 
-    // Write an empty user-content file with the configured rules re-applied.
-    core::save_project_file_for_project(&project, filename, "")?;
+    // Restore the user-authored content Automatic last stored for this file.
+    // If no snapshot exists, this falls back to an empty user-content file.
+    core::save_project_file_for_project(&project, filename, &automatic_content)?;
 
     // Record only the files we actually wrote so unrelated conflicts remain visible.
     core::record_instruction_hashes_for_filenames(name, &mut project, &touched_files);
@@ -502,4 +504,80 @@ pub fn get_instruction_file_conflicts(name: &str) -> Result<String, String> {
 
     let conflicts = crate::sync::collect_instruction_conflicts_pub(&project, &dir);
     serde_json::to_string(&conflicts).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Project;
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::tempdir;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_temp_home<T>(test: impl FnOnce(&Path) -> T) -> T {
+        let _lock = env_lock().lock().expect("env lock");
+        let home = tempdir().expect("temp home");
+        let original = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", home.path());
+        }
+
+        let result = test(home.path());
+
+        unsafe {
+            if let Some(value) = original {
+                std::env::set_var("HOME", value);
+            } else {
+                std::env::remove_var("HOME");
+            }
+        }
+
+        result
+    }
+
+    #[test]
+    fn overwrite_instruction_file_restores_snapshot_content() {
+        with_temp_home(|_| {
+            let project_dir = tempdir().expect("project dir");
+            let project = Project {
+                name: "test-project".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["opencode".to_string()],
+                ..Default::default()
+            };
+
+            let project_json = serde_json::to_string_pretty(&project).expect("project json");
+            crate::core::save_project(&project.name, &project_json).expect("save project");
+
+            crate::core::save_instruction_snapshot(
+                project_dir.path().to_str().unwrap(),
+                "AGENTS.md",
+                "# Stored Instructions\n\nKeep this.",
+            )
+            .expect("save snapshot");
+            std::fs::write(
+                project_dir.path().join("AGENTS.md"),
+                "# Different\n\nDisk content",
+            )
+            .expect("write disk content");
+
+            overwrite_instruction_file(&project.name, "AGENTS.md").expect("overwrite");
+
+            let on_disk =
+                std::fs::read_to_string(project_dir.path().join("AGENTS.md")).expect("read file");
+            assert!(
+                on_disk.contains("# Stored Instructions"),
+                "overwrite should restore Automatic's stored snapshot content"
+            );
+            assert!(
+                on_disk.contains("Keep this."),
+                "restored file should contain the stored user-authored content"
+            );
+        });
+    }
 }

@@ -292,10 +292,9 @@ pub fn collect_instruction_conflicts_pub(
 
 /// Detect instruction files that were modified outside Automatic.
 ///
-/// Compares the current on-disk hash of each instruction file against the
-/// hash Automatic recorded the last time it wrote the file (stored in
-/// `project.instruction_file_hashes`).  A mismatch means the file was
-/// edited externally.
+/// Uses the stored snapshot of the user-authored content as the primary source
+/// of truth. This avoids false conflicts when only Automatic-managed sections
+/// (rules, groups, index blocks) changed on disk.
 ///
 /// Also detects "orphaned" files: instruction files that exist on disk but
 /// have no stored hash at all (e.g. the user created one manually before
@@ -351,14 +350,23 @@ fn collect_instruction_file_conflicts(
             continue;
         }
 
+        let snapshot_content =
+            crate::core::read_instruction_snapshot(project.directory.as_str(), &filename);
         let current_hash = crate::core::compute_content_hash(&raw_disk);
         let stored_hash = project.instruction_file_hashes.get(&filename);
 
         let is_externally_modified = match stored_hash {
-            Some(stored) => &current_hash != stored,
-            // No stored hash means Automatic has never recorded writing this
-            // file.  If the file has user content, it was created externally.
-            None => true,
+            Some(stored) => match snapshot_content.as_ref() {
+                Some(snapshot) => disk_user_content.trim() != snapshot.trim(),
+                None => &current_hash != stored,
+            },
+            // No stored hash means Automatic may never have recorded writing this
+            // file. If we do have a snapshot, compare against that; otherwise
+            // any non-empty user content is treated as external.
+            None => match snapshot_content.as_ref() {
+                Some(snapshot) => disk_user_content.trim() != snapshot.trim(),
+                None => true,
+            },
         };
 
         if is_externally_modified {
@@ -953,6 +961,42 @@ mod tests {
             before.len(),
             after.len(),
             "Drift check must not write any files to disk"
+        );
+    }
+
+    #[test]
+    fn instruction_conflict_uses_snapshot_user_content_not_full_file_hash() {
+        let project_dir = tempdir().unwrap();
+        let project = Project {
+            name: "test".to_string(),
+            directory: project_dir.path().display().to_string(),
+            agents: vec!["opencode".to_string()],
+            ..Default::default()
+        };
+
+        let current_content = "# Instructions\n\nKeep this.\n\n<!-- automatic:rules:start -->\nRule v2\n<!-- automatic:rules:end -->\n";
+        fs::write(project_dir.path().join("AGENTS.md"), current_content)
+            .expect("write instruction file");
+        crate::core::save_instruction_snapshot(
+            project_dir.path().to_str().unwrap(),
+            "AGENTS.md",
+            "# Instructions\n\nKeep this.\n",
+        )
+        .expect("save snapshot");
+
+        let mut project = project;
+        project.instruction_file_hashes.insert(
+            "AGENTS.md".to_string(),
+            crate::core::compute_content_hash(
+                "# Instructions\n\nKeep this.\n\n<!-- automatic:rules:start -->\nRule v1\n<!-- automatic:rules:end -->\n",
+            ),
+        );
+
+        let conflicts =
+            collect_instruction_conflicts_pub(&project, &project_dir.path().to_path_buf());
+        assert!(
+            conflicts.is_empty(),
+            "matching snapshot content should not be treated as an instruction conflict"
         );
     }
 
