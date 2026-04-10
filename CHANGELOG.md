@@ -4,6 +4,21 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-04-11
+
+### Fixed
+
+- Rename "New Project" to "Add Project" across sidebar and projects page. (`eff05fa`)
+- Improve instruction conflict resolution and diff view. (`be9fada`)
+
+### Changed
+
+- Redesign workspace sidebar to match opencode style. (`2e58f0c`)
+
+### Maintenance
+
+- Docs cleanup. (`fc690e3`)
+
 ## [1.2.0] - 2026-04-10
 
 ### Added
