@@ -371,29 +371,31 @@ function App() {
       className="relative flex flex-col h-screen w-screen overflow-hidden bg-bg-base text-[#fafafa] selection:bg-brand/30"
       aria-hidden={showWizard === true}
     >
-      {/* ── Top bar — drag region with section tabs and actions ─────── */}
+      {/* ── Top bar — drag region with section toggle and actions ───── */}
       <div
         data-tauri-drag-region
-        className="h-11 flex-shrink-0 flex items-center border-b border-border-strong/40 bg-bg-base select-none"
+        className="h-11 flex-shrink-0 flex items-center border-b border-border-strong/40 bg-bg-base select-none relative"
       >
-        {/* Left: section tabs (after traffic-light clearance) */}
-        <div className="flex items-center gap-1 pl-20 relative z-10">
-          {(["start", "workspace", "library", "marketplace"] as const).map((section) => {
-            const isActive = activeSection === section && activeTab !== "settings";
-            return (
-              <button
-                key={section}
-                onClick={() => handleSectionClick(section)}
-                className={`px-3 py-1 rounded-md text-[13px] font-medium transition-colors ${
-                  isActive
-                    ? "text-text-base bg-bg-sidebar"
-                    : "text-text-muted hover:text-text-base hover:bg-bg-sidebar/50"
-                }`}
-              >
-                {SECTION_LABELS[section]}
-              </button>
-            );
-          })}
+        {/* Center: section toggle pill */}
+        <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-0">
+          <div className="flex items-center bg-bg-input border border-border-strong/40 rounded-lg p-0.5 pointer-events-auto">
+            {(["start", "workspace", "library", "marketplace"] as const).map((section) => {
+              const isActive = activeSection === section && activeTab !== "settings";
+              return (
+                <button
+                  key={section}
+                  onClick={() => handleSectionClick(section)}
+                  className={`px-3 py-1 rounded-md text-[12px] font-medium transition-all ${
+                    isActive
+                      ? "text-text-base bg-bg-sidebar shadow-sm"
+                      : "text-text-muted hover:text-text-base"
+                  }`}
+                >
+                  {SECTION_LABELS[section]}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Right: contextual actions + task log toggle + settings cog */}
