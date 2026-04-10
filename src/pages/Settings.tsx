@@ -10,9 +10,12 @@ import { useTaskLog } from "../contexts/TaskLogContext";
 import { AgentSelector, type AgentInfo } from "../components/AgentSelector";
 import SettingsPlugins from "../plugins/SettingsPlugins";
 import { MarkdownPreview } from "../components/MarkdownPreview";
-import { Bot, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw } from "lucide-react";
+import TokenEstimator from "./utilities/TokenEstimator";
+import AiPlayground from "./utilities/AiPlayground";
+import { flag } from "../lib/flags";
+import { Bot, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw, Hash, FlaskConical } from "lucide-react";
 
-type SettingsPage = "sync" | "agents" | "appearance" | "app" | "plugins" | "support";
+type SettingsPage = "sync" | "agents" | "appearance" | "app" | "plugins" | "support" | "token-estimator" | "ai-playground";
 
 interface AppSettings {
   sync_mode: string;
@@ -57,6 +60,22 @@ const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; descripti
     icon: <LifeBuoy size={15} />,
     description: "Get help",
   },
+  {
+    id: "token-estimator",
+    label: "Token Estimator",
+    icon: <Hash size={15} />,
+    description: "Estimate token costs",
+  },
+  ...(flag("ai_playground")
+    ? [
+        {
+          id: "ai-playground" as SettingsPage,
+          label: "AI Playground",
+          icon: <FlaskConical size={15} />,
+          description: "Chat interface",
+        },
+      ]
+    : []),
 ];
 
 interface SettingsProps {
@@ -855,6 +874,20 @@ export default function Settings({ onOpenWizard }: SettingsProps) {
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ── Token Estimator page ──────────────────────────────────── */}
+          {activePage === "token-estimator" && (
+            <div className="flex-1 h-full -m-8">
+              <TokenEstimator />
+            </div>
+          )}
+
+          {/* ── AI Playground page ────────────────────────────────────── */}
+          {flag("ai_playground") && activePage === "ai-playground" && (
+            <div className="flex-1 h-full -m-8">
+              <AiPlayground />
             </div>
           )}
 

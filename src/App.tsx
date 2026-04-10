@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { applyTheme, Theme, THEMES } from "./lib/theme";
@@ -24,17 +24,49 @@ import Settings from "./pages/Settings";
 import TemplateMarketplace from "./pages/marketplace/TemplateMarketplace";
 import McpMarketplace from "./pages/marketplace/McpMarketplace";
 import CollectionMarketplace from "./pages/marketplace/CollectionMarketplace";
-import AiPlayground from "./pages/utilities/AiPlayground";
-import TokenEstimator from "./pages/utilities/TokenEstimator";
 import FirstRunWizard from "./pages/FirstRunWizard";
 import { TaskLogProvider, useTaskLog } from "./contexts/TaskLogContext";
 import TaskLog from "./components/TaskLog";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import UpdateToast from "./components/UpdateToast";
-import { ClipboardList, Code, Server, ChevronDown, FolderOpen, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, FlaskConical, Lightbulb, List, Wrench, Hash, MessagesSquare, Terminal } from "lucide-react";
-import { flag } from "./lib/flags";
+import WorkspaceSidebar from "./components/WorkspaceSidebar";
+import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal } from "lucide-react";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
+
+// ── Section / Tab mapping ────────────────────────────────────────────────────
+
+type Section = "start" | "workspace" | "library" | "marketplace";
+
+const SECTION_TABS: Record<Section, string[]> = {
+  start: ["getting-started", "recommendations"],
+  workspace: ["projects", "project-groups"],
+  library: ["project-templates", "templates", "rules", "user-agents", "commands", "skills", "mcp", "agents", "tools"],
+  marketplace: ["collection-marketplace", "template-marketplace", "skill-store", "mcp-marketplace"],
+};
+
+const DEFAULT_TAB: Record<Section, string> = {
+  start: "getting-started",
+  workspace: "projects",
+  library: "project-templates",
+  marketplace: "collection-marketplace",
+};
+
+const SECTION_LABELS: Record<Section, string> = {
+  start: "Start",
+  workspace: "Workspace",
+  library: "Library",
+  marketplace: "Marketplace",
+};
+
+function sectionForTab(tabId: string): Section {
+  for (const [section, tabs] of Object.entries(SECTION_TABS)) {
+    if (tabs.includes(tabId)) return section as Section;
+  }
+  return "start";
+}
+
+// ── Small helper components ──────────────────────────────────────────────────
 
 /**
  * Small icon button that toggles the Task Log panel open/closed.
@@ -85,6 +117,7 @@ function AnalyticsBootstrap() {
 }
 
 function App() {
+  // ── Active tab + section state ───────────────────────────────────────────
   const [activeTab, setActiveTab] = useState(() => {
     // Migrate legacy "nexus." localStorage keys to "automatic." prefix
     const legacy = localStorage.getItem("nexus.activeTab");
@@ -93,11 +126,27 @@ function App() {
       localStorage.removeItem("nexus.activeTab");
     }
     const saved = localStorage.getItem("automatic.activeTab") || legacy;
-    // Migrate from removed tabs: activity, configuration, dashboard → getting-started; support → settings
+    // Migrate from removed tabs
     if (saved === "activity" || saved === "configuration" || saved === "dashboard") return "getting-started";
     if (saved === "support") return "settings";
+    // Migrate utilities into settings
+    if (saved === "token-estimator" || saved === "ai-playground") return "settings";
     return saved || "getting-started";
   });
+
+  const [activeSection, setActiveSection] = useState<Section>(() => {
+    if (activeTab === "settings") {
+      // When settings is active, restore last real section for the sidebar
+      const saved = localStorage.getItem("automatic.activeSection") as Section | null;
+      return saved && SECTION_TABS[saved] ? saved : "workspace";
+    }
+    return sectionForTab(activeTab);
+  });
+
+  // ── Group filter for Projects page ────────────────────────────────────────
+  const [activeGroupFilter, setActiveGroupFilter] = useState<string | null>(null);
+
+  // ── Pending navigation state ─────────────────────────────────────────────
   const [pendingProject, setPendingProject] = useState<string | null>(null);
   const [pendingProjectTab, setPendingProjectTab] = useState<string | null>(null);
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
@@ -119,14 +168,11 @@ function App() {
   const [pendingGroup, setPendingGroup] = useState<string | null>(null);
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
 
-
-
-  // ── App version ─────────────────────────────────────────────────────────
+  // ── App version ──────────────────────────────────────────────────────────
   const [appVersion, setAppVersion] = useState<string>("");
   useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);
 
-  // ── Theme Init ──────────────────────────────────────────────────────────
-  // Default to "system" for new installs (no saved preference).
+  // ── Theme Init ───────────────────────────────────────────────────────────
   const [activeTheme, setActiveTheme] = useState<Theme>(
     () => (localStorage.getItem("automatic.theme") as Theme | null) ?? "system"
   );
@@ -134,7 +180,6 @@ function App() {
     applyTheme(activeTheme);
   }, []);
 
-  // Listen for OS color-scheme changes and re-apply when following system.
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const handleChange = () => {
@@ -146,11 +191,8 @@ function App() {
     return () => mq.removeEventListener("change", handleChange);
   }, []);
 
-
-  // ── First-run wizard ────────────────────────────────────────────────────
-  // null = still loading, true = must show, false = already completed
+  // ── First-run wizard ─────────────────────────────────────────────────────
   const [showWizard, setShowWizard] = useState<boolean | null>(null);
-  // true when the wizard was re-opened manually (vs. first run)
   const [wizardIsReopen, setWizardIsReopen] = useState(false);
 
   useEffect(() => {
@@ -159,7 +201,6 @@ function App() {
         const settings: any = await invoke("read_settings");
         setShowWizard(!(settings?.wizard_completed ?? false));
       } catch {
-        // If we can't read settings, show the wizard to be safe.
         setShowWizard(true);
       }
     }
@@ -167,11 +208,8 @@ function App() {
   }, []);
 
   const handleWizardComplete = (answers: { analyticsEnabled: boolean; createdProjectName?: string }) => {
-    // Apply analytics preference immediately so the runtime flag is in sync.
     setAnalyticsEnabled(answers.analyticsEnabled);
     setShowWizard(false);
-    // Navigate to the newly created project if one was set up, otherwise always
-    // land on the dashboard regardless of what was previously stored in localStorage.
     if (answers.createdProjectName) {
       navigateToProject(answers.createdProjectName);
     } else {
@@ -179,83 +217,96 @@ function App() {
     }
   };
 
+  // ── Persist active tab + section ─────────────────────────────────────────
   useEffect(() => {
     localStorage.setItem("automatic.activeTab", activeTab);
   }, [activeTab]);
 
+  useEffect(() => {
+    localStorage.setItem("automatic.activeSection", activeSection);
+    // Save per-section last tab
+    if (activeTab !== "settings") {
+      localStorage.setItem(`automatic.lastTab.${activeSection}`, activeTab);
+    }
+  }, [activeSection, activeTab]);
+
+  // ── Section-aware tab setter ─────────────────────────────────────────────
+  const setActiveTabWithSection = useCallback((tabId: string) => {
+    const section = sectionForTab(tabId);
+    setActiveSection(section);
+    setActiveTab(tabId);
+  }, []);
+
+  // ── Navigation helpers ───────────────────────────────────────────────────
   const navigateToProject = (projectName: string, tab?: string) => {
     setPendingProject(projectName);
     setPendingProjectTab(tab ?? null);
-    setActiveTab("projects");
+    setActiveTabWithSection("projects");
   };
 
   const navigateToTemplate = (templateName: string) => {
     setPendingTemplate(templateName);
-    setActiveTab("project-templates");
+    setActiveTabWithSection("project-templates");
   };
 
   const navigateToSkill = (skillName: string) => {
     setPendingSkill(skillName);
-    setActiveTab("skills");
+    setActiveTabWithSection("skills");
   };
 
   const navigateToCreateWithTemplate = (templateName: string) => {
     setPendingCreateWithTemplate(templateName);
-    setActiveTab("projects");
+    setActiveTabWithSection("projects");
   };
 
   const navigateToMcpServer = (serverName: string) => {
     setPendingMcpServer(serverName);
-    setActiveTab("mcp");
+    setActiveTabWithSection("mcp");
   };
 
   const navigateToGroup = (groupName: string) => {
     setPendingGroup(groupName);
-    setActiveTab("project-groups");
+    setActiveTabWithSection("project-groups");
   };
 
   const navigateToCommand = (commandId: string) => {
     setPendingCommand(commandId);
-    setActiveTab("commands");
+    setActiveTabWithSection("commands");
   };
 
   const navigateToSkillStore = (skillId: string) => {
     setPendingSkillStoreId(skillId);
-    // Extract the bare skill name from a full ID ("owner/repo/name" → "name")
-    // and use it as a search query so the search box is pre-filled when the
-    // full ID doesn't match a featured skill exactly.
     const bareName = skillId.includes("/") ? skillId.split("/").pop()! : skillId;
     setPendingSkillStoreQuery(bareName);
     setPendingSkillStoreResult(null);
-    setActiveTab("skill-store");
+    setActiveTabWithSection("skill-store");
   };
 
-  // Navigate to the Skill Store and auto-select a specific skill result from AI
-  // metadata (id, name, source, installs all known — no search needed).
   const navigateToSkillStoreWithResult = (result: { id: string; name: string; source: string; installs: number }) => {
     setPendingSkillStoreResult(result);
     setPendingSkillStoreId(null);
     setPendingSkillStoreQuery(null);
-    setActiveTab("skill-store");
+    setActiveTabWithSection("skill-store");
   };
 
   const navigateToMcpMarketplace = (slug: string) => {
     setPendingMcpSlug(slug);
     setPendingMcpQuery(slug);
-    setActiveTab("mcp-marketplace");
+    setActiveTabWithSection("mcp-marketplace");
   };
 
   const navigateToTemplateMarketplace = (templateName: string) => {
     setPendingMarketplaceTemplate(templateName);
-    setActiveTab("template-marketplace");
+    setActiveTabWithSection("template-marketplace");
   };
 
   const navigateToCollectionMarketplace = (query: string) => {
     setPendingCollectionQuery(query);
-    setActiveTab("collection-marketplace");
+    setActiveTabWithSection("collection-marketplace");
   };
 
-  const MARKETPLACE_TABS: Record<string, () => void> = {
+  // ── Tab click + double-click refresh ─────────────────────────────────────
+  const REFRESHABLE_TABS: Record<string, () => void> = {
     "projects": () => setProjectsResetKey((k) => k + 1),
     "skill-store": () => setSkillStoreResetKey((k) => k + 1),
     "template-marketplace": () => setTemplateMarketplaceResetKey((k) => k + 1),
@@ -264,27 +315,37 @@ function App() {
   };
 
   const handleTabClick = (id: string) => {
-    if (activeTab === id && MARKETPLACE_TABS[id]) {
-      MARKETPLACE_TABS[id]!();
+    if (activeTab === id && REFRESHABLE_TABS[id]) {
+      REFRESHABLE_TABS[id]!();
     }
     setActiveTab(id);
     trackNavigation(id);
   };
 
-  const NavItem = ({ id, icon: Icon, label, count }: any) => {
+  const handleSectionClick = (section: Section) => {
+    if (section === activeSection && activeTab !== "settings") return;
+    setActiveSection(section);
+    const lastTab = localStorage.getItem(`automatic.lastTab.${section}`);
+    const tab = lastTab && SECTION_TABS[section].includes(lastTab) ? lastTab : DEFAULT_TAB[section];
+    setActiveTab(tab);
+    trackNavigation(tab);
+  };
+
+  // ── Sidebar NavItem ──────────────────────────────────────────────────────
+  const NavItem = ({ id, icon: Icon, label, count }: { id: string; icon: React.ComponentType<{ size?: number; className?: string }>; label: string; count?: number }) => {
     const isActive = activeTab === id;
     return (
       <button
         onClick={() => handleTabClick(id)}
         className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
-          isActive 
-            ? "bg-bg-sidebar text-text-base" 
+          isActive
+            ? "bg-bg-sidebar text-text-base"
             : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
         }`}
       >
         <Icon size={14} className={`shrink-0 ${isActive ? "text-text-base" : "text-text-muted"}`} />
         <span className="flex-1 text-left">{label}</span>
-        {count && (
+        {count != null && (
           <span className="text-[11px] bg-bg-sidebar text-text-muted px-1.5 rounded-sm">
             {count}
           </span>
@@ -293,13 +354,13 @@ function App() {
     );
   };
 
+  // ── Compute grouped projects for workspace sidebar ───────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <UpdateProvider>
     <TaskLogProvider>
     <ProfileProvider>
     <AnalyticsBootstrap />
-    {/* First-run wizard — rendered as a full-screen overlay; main UI is
-        mounted but hidden so that tabs retain their state after completion. */}
     {showWizard === true && (
       <FirstRunWizard
         onComplete={handleWizardComplete}
@@ -307,41 +368,109 @@ function App() {
       />
     )}
     <div
-      className="relative flex h-screen w-screen overflow-hidden bg-bg-base text-[#fafafa] selection:bg-brand/30"
+      className="relative flex flex-col h-screen w-screen overflow-hidden bg-bg-base text-[#fafafa] selection:bg-brand/30"
       aria-hidden={showWizard === true}
     >
-      {/* Sidebar */}
+      {/* ── Top drag region — clears macOS traffic lights ─────────────── */}
+      <div
+        data-tauri-drag-region
+        className="h-11 flex-shrink-0 flex items-center bg-bg-base select-none relative"
+      >
+        {/* Right: contextual actions + task log toggle + settings cog */}
+        <div className="ml-auto pr-4 flex items-center gap-2 relative z-10">
+          {activeTab === "skills" && (
+            <button
+              onClick={() => setActiveTabWithSection("skill-store")}
+              className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
+            >
+              <Store size={13} />
+              Skill Store
+            </button>
+          )}
+          {activeTab === "project-templates" && (
+            <button
+              onClick={() => setActiveTabWithSection("template-marketplace")}
+              className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
+            >
+              <Store size={13} />
+              Template Marketplace
+            </button>
+          )}
+          {activeTab === "mcp" && (
+            <button
+              onClick={() => setActiveTabWithSection("mcp-marketplace")}
+              className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
+            >
+              <Store size={13} />
+              MCP Marketplace
+            </button>
+          )}
+          <TaskLogToggleButton />
+          {/* Settings cog */}
+          <button
+            onClick={() => setActiveTab("settings")}
+            className={`flex items-center justify-center w-[26px] h-[26px] rounded-md transition-colors ${
+              activeTab === "settings"
+                ? "bg-bg-sidebar text-text-base"
+                : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
+            }`}
+            aria-label="Settings"
+            title="Settings"
+          >
+            <SettingsIcon size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Section tab bar ───────────────────────────────────────────── */}
+      <div className="flex-shrink-0 flex items-center gap-1 px-4 py-1.5 border-b border-border-strong/40 bg-bg-base">
+        {(["start", "workspace", "library", "marketplace"] as const).map((section) => {
+          const isActive = activeSection === section && activeTab !== "settings";
+          return (
+            <button
+              key={section}
+              onClick={() => handleSectionClick(section)}
+              className={`px-3 py-1 rounded-md text-[13px] font-medium transition-colors ${
+                isActive
+                  ? "text-text-base bg-bg-sidebar"
+                  : "text-text-muted hover:text-text-base hover:bg-bg-sidebar/50"
+              }`}
+            >
+              {SECTION_LABELS[section]}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Sidebar + Main content ────────────────────────────────────── */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+      {/* ── Sidebar ─────────────────────────────────────────────────────── */}
       <aside className="w-[180px] flex-shrink-0 bg-bg-input border-r border-border-strong/40 flex flex-col">
-        {/* Workspace Header — drag region; left padding clears macOS traffic lights */}
-        <div
-          data-tauri-drag-region
-          className="h-11 border-b border-border-strong/50 select-none"
-        />
 
-        {/* Navigation */}
+        {/* Section-specific navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-3 custom-scrollbar">
-          {/* Top-level items */}
-          <ul className="space-y-0.5 mb-6">
-            <NavItem id="getting-started" icon={Sparkles} label="Getting Started" />
-            <NavItem id="recommendations" icon={Lightbulb} label="Insights" />
-          </ul>
 
-          <div className="mb-6">
-            <div className="px-3 pb-1.5 text-[11px] font-semibold text-text-muted tracking-wider flex items-center justify-between group cursor-pointer hover:text-text-base">
-              <span>Workspace</span>
-              <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
+          {/* ── Start sidebar ─────────────────────────────────────────── */}
+          {activeSection === "start" && (
             <ul className="space-y-0.5">
-              <NavItem id="projects" icon={FolderOpen} label="Projects" />
-              <NavItem id="project-groups" icon={Layers} label="Groups" />
+              <NavItem id="getting-started" icon={Sparkles} label="Getting Started" />
+              <NavItem id="recommendations" icon={Lightbulb} label="Insights" />
             </ul>
-          </div>
+          )}
 
-          <div className="mb-6">
-            <div className="px-3 pb-1.5 text-[11px] font-semibold text-text-muted tracking-wider flex items-center justify-between group cursor-pointer hover:text-text-base">
-              <span>Library</span>
-              <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
+          {/* ── Workspace sidebar ──────────────────────────────────────── */}
+          {activeSection === "workspace" && (
+            <WorkspaceSidebar
+              activeTab={activeTab}
+              onTabClick={handleTabClick}
+              onNavigateToProject={navigateToProject}
+              activeGroupFilter={activeGroupFilter}
+              onFilterByGroup={setActiveGroupFilter}
+            />
+          )}
+
+          {/* ── Library sidebar ─────────────────────────────────────────── */}
+          {activeSection === "library" && (
             <ul className="space-y-0.5">
               <NavItem id="project-templates" icon={LayoutTemplate} label="Templates" />
               <NavItem id="templates" icon={ClipboardList} label="Instructions" />
@@ -353,36 +482,15 @@ function App() {
               <NavItem id="agents" icon={Bot} label="Providers" />
               <NavItem id="tools" icon={Wrench} label="Tools" />
             </ul>
-          </div>
+          )}
 
-          <div className="mb-6">
-            <div className="px-3 pb-1.5 text-[11px] font-semibold text-text-muted tracking-wider flex items-center justify-between group cursor-pointer hover:text-text-base">
-              <span>Marketplace</span>
-              <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
+          {/* ── Marketplace sidebar ─────────────────────────────────────── */}
+          {activeSection === "marketplace" && (
             <ul className="space-y-0.5">
               <NavItem id="collection-marketplace" icon={PackageOpen} label="Collections" />
               <NavItem id="template-marketplace" icon={Layers} label="Templates" />
               <NavItem id="skill-store" icon={Puzzle} label="Skills" />
               <NavItem id="mcp-marketplace" icon={Server} label="MCP Servers" />
-            </ul>
-          </div>
-
-          {/* Tools section */}
-          <div className="mb-6">
-            <div className="px-3 pb-1.5 text-[11px] font-semibold text-text-muted tracking-wider flex items-center justify-between group cursor-pointer hover:text-text-base">
-              <span>Utilities</span>
-              <ChevronDown size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
-            <ul className="space-y-0.5">
-              <NavItem id="token-estimator" icon={Hash} label="Token Estimator" />
-            </ul>
-          </div>
-
-          {/* AI Playground — top-level, feature-flagged */}
-          {flag("ai_playground") && (
-            <ul className="space-y-0.5 mb-6">
-              <NavItem id="ai-playground" icon={FlaskConical} label="AI Playground" />
             </ul>
           )}
 
@@ -434,9 +542,6 @@ function App() {
             </div>
           );
         })()}
-        <div className="px-3 pt-0 pb-1">
-          <NavItem id="settings" icon={SettingsIcon} label="Settings" />
-        </div>
         {/* Sidebar footer — branding */}
         <div className="px-3 py-3 border-t border-border-strong/60">
           <div className="flex items-center gap-2 px-3 py-1.5 text-[14px] font-semibold text-text-base">
@@ -447,62 +552,17 @@ function App() {
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* ── Main Content ────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col min-w-0">
-        {/* Top Header — drag region, title centered, actions right */}
-        <header
-          data-tauri-drag-region
-          className="h-11 border-b border-border-strong/40 flex items-center bg-bg-base select-none relative"
-        >
-          {/* Center: page title */}
-          <span
-            data-tauri-drag-region
-            className="absolute inset-0 flex items-center justify-center text-[13px] font-medium text-text-muted pointer-events-none capitalize"
-          >
-            {activeTab.replace(/-/g, ' ')}
-          </span>
 
-          {/* Right: contextual actions + task log toggle */}
-          <div className="ml-auto pr-4 flex items-center gap-2 relative z-10">
-            <TaskLogToggleButton />
-            {activeTab === "skills" && (
-              <button
-                onClick={() => setActiveTab("skill-store")}
-                className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
-              >
-                <Store size={13} />
-                Skill Store
-              </button>
-            )}
-            {activeTab === "project-templates" && (
-              <button
-                onClick={() => setActiveTab("template-marketplace")}
-                className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
-              >
-                <Store size={13} />
-                Template Marketplace
-              </button>
-            )}
-            {activeTab === "mcp" && (
-              <button
-                onClick={() => setActiveTab("mcp-marketplace")}
-                className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
-              >
-                <Store size={13} />
-                MCP Marketplace
-              </button>
-            )}
-          </div>
-        </header>
-
-        {/* Update toast — shown when a background update is ready to apply */}
+        {/* Update toast */}
         <UpdateToast />
 
         {/* Content Area */}
         <div className="flex-1 overflow-hidden flex flex-col">
           {activeTab === "getting-started" && (
             <div className="flex-1 h-full">
-              <GettingStarted onNavigate={setActiveTab} />
+              <GettingStarted onNavigate={setActiveTabWithSection} />
             </div>
           )}
           {activeTab === "projects" && (
@@ -522,6 +582,7 @@ function App() {
                 onNavigateToCommand={navigateToCommand}
                 initialCreateWithTemplate={pendingCreateWithTemplate}
                 onInitialCreateWithTemplateConsumed={() => setPendingCreateWithTemplate(null)}
+                filterGroup={activeGroupFilter}
               />
             </div>
           )}
@@ -543,7 +604,6 @@ function App() {
               />
             </div>
           )}
-
           {activeTab === "recommendations" && (
             <div className="flex-1 h-full">
               <Recommendations
@@ -655,19 +715,10 @@ function App() {
               <Settings onOpenWizard={() => { setWizardIsReopen(true); setShowWizard(true); }} />
             </div>
           )}
-          {activeTab === "token-estimator" && (
-            <div className="flex-1 h-full">
-              <TokenEstimator />
-            </div>
-          )}
-          {flag("ai_playground") && activeTab === "ai-playground" && (
-            <div className="flex-1 h-full">
-              <AiPlayground />
-            </div>
-          )}
         </div>
       </main>
       <TaskLog />
+    </div>{/* end sidebar+main flex wrapper */}
     </div>
     </ProfileProvider>
     </TaskLogProvider>
