@@ -122,8 +122,21 @@ function AnalyticsBootstrap() {
 
 function App() {
   // ── Active tab + section state ───────────────────────────────────────────
-  // Always start on the getting-started page
-  const [activeTab, setActiveTab] = useState("getting-started");
+  const [activeTab, setActiveTab] = useState(() => {
+    // Migrate legacy "nexus." localStorage keys to "automatic." prefix
+    const legacy = localStorage.getItem("nexus.activeTab");
+    if (legacy) {
+      localStorage.setItem("automatic.activeTab", legacy);
+      localStorage.removeItem("nexus.activeTab");
+    }
+    const saved = localStorage.getItem("automatic.activeTab") || legacy;
+    // Migrate from removed tabs
+    if (saved === "activity" || saved === "configuration" || saved === "dashboard") return "getting-started";
+    if (saved === "support") return "settings";
+    // Migrate utilities into settings
+    if (saved === "token-estimator" || saved === "ai-playground") return "settings";
+    return saved || "getting-started";
+  });
 
   const [activeSection, setActiveSection] = useState<Section>(() => {
     if (activeTab === "settings") {
