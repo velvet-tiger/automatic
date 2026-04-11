@@ -2325,6 +2325,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   const [wizardDiscovering, setWizardDiscovering] = useState(false);
   const [wizardDiscoveredAgents, setWizardDiscoveredAgents] = useState<string[]>([]);
+  const [wizardDefaultAgents, setWizardDefaultAgents] = useState<string[]>([]);
   /** Non-empty when the wizard was launched from a "New project from template" action. */
   const [wizardSourceTemplates, setWizardSourceTemplates] = useState<string[]>([]);
   /** Tracks the name of the stub project saved during step 1 so it can be deleted on cancel. */
@@ -4049,6 +4050,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     }
 
     // If launched from one or more templates, merge all their values into the initial project state.
+    setWizardDefaultAgents(defaultAgents);
     const templates = opts?.fromTemplates ?? [];
     const baseProject = {
       ...emptyProject(""),
@@ -5152,7 +5154,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                         <h2 className="text-[16px] font-semibold text-text-base mb-1">Which agents are you using?</h2>
                         <p className="text-[13px] text-text-muted leading-relaxed">
                           {wizardDiscoveredAgents.length > 0
-                            ? `We detected ${wizardDiscoveredAgents.length} agent${wizardDiscoveredAgents.length !== 1 ? "s" : ""} in this directory. Add or remove as needed.`
+                            ? `We detected ${wizardDiscoveredAgents.length} agent${wizardDiscoveredAgents.length !== 1 ? "s" : ""} in this directory. Other agents below may also come from your defaults or selected templates.`
                             : "No agents were detected. Add the ones you use."}
                         </p>
                       </div>
@@ -5162,6 +5164,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                         {project.agents.map((id, idx) => {
                           const info = availableAgents.find((a) => a.id === id);
                           const isDiscovered = wizardDiscoveredAgents.includes(id);
+                          const isDefault = wizardDefaultAgents.includes(id);
+                          const templateNames = availableProjectTemplates
+                            .filter((tmpl) => selectedProjectTemplates.includes(tmpl.name) && tmpl.agents.includes(id))
+                            .map((tmpl) => tmpl.name);
                           return (
                             <div
                               key={id}
@@ -5170,8 +5176,26 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                               <AgentIcon agentId={id} size={18} />
                               <div className="flex-1 min-w-0">
                                 <div className="text-[13px] font-medium text-text-base">{info?.label ?? id}</div>
-                                {isDiscovered && (
-                                  <div className="text-[10px] text-brand mt-0.5">Detected in directory</div>
+                                {(isDiscovered || isDefault || templateNames.length > 0) && (
+                                  <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                    {isDiscovered && (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-brand/10 border border-brand/20 text-[10px] font-medium text-brand">
+                                        Detected
+                                      </span>
+                                    )}
+                                    {isDefault && (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] font-medium text-text-muted">
+                                        Default
+                                      </span>
+                                    )}
+                                    {templateNames.length > 0 && (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-bg-sidebar border border-border-strong/40 text-[10px] font-medium text-text-base">
+                                        {templateNames.length === 1
+                                          ? `Template: ${templateNames[0]}`
+                                          : `Templates: ${templateNames.join(", ")}`}
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                               <button

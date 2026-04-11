@@ -30,7 +30,8 @@ impl Agent for ClaudeCode {
     // ── Detection ───────────────────────────────────────────────────────
 
     fn detect_in(&self, dir: &Path) -> bool {
-        dir.join(".mcp.json").exists()
+        dir.join("CLAUDE.md").exists()
+            || dir.join(".mcp.json").exists()
             || dir.join(".claude").join("settings.json").exists()
             || dir.join(".claude").join("skills").exists()
             || dir.join(".claude").join("commands").exists()
@@ -246,6 +247,10 @@ mod tests {
         let dir = tempdir().unwrap();
         assert!(!ClaudeCode.detect_in(dir.path()));
 
+        fs::write(dir.path().join("CLAUDE.md"), "# Claude").unwrap();
+        assert!(ClaudeCode.detect_in(dir.path()));
+
+        fs::remove_file(dir.path().join("CLAUDE.md")).unwrap();
         fs::write(dir.path().join(".mcp.json"), "{}").unwrap();
         assert!(ClaudeCode.detect_in(dir.path()));
     }

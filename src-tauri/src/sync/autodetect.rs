@@ -147,3 +147,34 @@ pub(super) fn autodetect_inner(
 
     Ok((updated_project, discovered_servers))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn autodetect_only_adds_claude_for_projects_with_only_claude_md() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("CLAUDE.md"), "This is the claude md file")
+            .expect("write CLAUDE.md");
+
+        let project = Project {
+            name: "test-project".to_string(),
+            directory: dir.path().display().to_string(),
+            ..Default::default()
+        };
+
+        let (updated, discovered_servers) = autodetect_inner(&project).expect("autodetect");
+
+        assert_eq!(
+            updated.agents,
+            vec!["claude".to_string()],
+            "a project with only CLAUDE.md should detect only Claude"
+        );
+        assert!(
+            discovered_servers.is_empty(),
+            "plain CLAUDE.md should not imply any MCP server configs"
+        );
+    }
+}
