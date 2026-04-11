@@ -382,7 +382,7 @@ function StepAgents({
       {/* Auto-detect note — shown only when agents were pre-ticked by install detection */}
       {autoDetectedIds.length > 0 && (
         <p className="mt-3 text-[12px] text-text-muted italic">
-          Pre-selected based on agents detected on this machine. Deselect any you don't want to use with Automatic.
+          These agents were detected on this machine. Select the ones you'd like to use with Automatic.
         </p>
       )}
 
@@ -691,12 +691,11 @@ export default function FirstRunWizard({ onComplete, onCancel }: FirstRunWizardP
 
         let initialAgents = savedAgents;
         if (savedAgents.length === 0) {
-          // Fresh run — pre-tick agents detected as installed.
+          // Fresh run — detect installed agents for display hints but don't pre-select.
           try {
             const raw: string = await invoke("detect_installed_agents");
             const detected: string[] = JSON.parse(raw);
             if (detected.length > 0) {
-              initialAgents = detected;
               setAutoDetectedIds(detected);
             }
           } catch (e) {
