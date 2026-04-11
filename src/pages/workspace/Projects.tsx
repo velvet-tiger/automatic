@@ -3994,11 +3994,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
           };
           await invoke("save_project", { name, data: JSON.stringify(withRules, null, 2) });
         }
-        await invoke("save_project_file", {
-          name,
-          filename: "_unified",
-          content: mergedContent,
-        });
+        if (mergedContent.trim()) {
+          await invoke("save_project_file", {
+            name,
+            filename: "_unified",
+            content: mergedContent,
+          });
+        }
       }
 
       // Reload UI state from disk (picks up autodetected changes)
