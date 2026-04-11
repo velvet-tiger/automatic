@@ -2797,6 +2797,26 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     return () => window.removeEventListener("create-project", handler);
   }, []);
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const removedName = (event as CustomEvent<{ name?: string }>).detail?.name;
+      if (!removedName) return;
+
+      if (selectedName === removedName) {
+        setSelectedName(null);
+        localStorage.removeItem(LAST_PROJECT_KEY);
+        setProject(null);
+        setDirty(false);
+        setIsCreating(false);
+      }
+
+      void loadProjects();
+    };
+
+    window.addEventListener("project-removed", handler);
+    return () => window.removeEventListener("project-removed", handler);
+  }, [selectedName]);
+
   // Open the new-project wizard with a template pre-applied.
   // (triggered from the "New project from template" action in ProjectTemplates)
   useEffect(() => {
@@ -4028,6 +4048,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         setDirty(false);
       }
       await loadProjects();
+      window.dispatchEvent(new CustomEvent("project-removed", { detail: { name } }));
       setError(null);
     } catch (err: any) {
       setError(`Failed to remove project: ${err}`);

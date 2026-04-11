@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Folder, FolderOpen as FolderOpenIcon, Layers, Plus, FolderPlus } from "lucide-react";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { Folder, FolderOpen as FolderOpenIcon, Layers, Plus, FolderPlus, Trash2 } from "lucide-react";
+import { trackProjectDeleted } from "../lib/analytics";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -81,8 +83,8 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   const loadData = useCallback(async () => {
     try {
       const projectNames: string[] = await invoke("get_projects");
-      projectNames.sort((a, b) => a.localeCompare(b));
-      setProjects(projectNames);
+      const sortedProjectNames = [...projectNames].sort((a, b) => a.localeCompare(b));
+      setProjects(sortedProjectNames);
 
       const groupNames: string[] = await invoke("list_groups");
       const loaded: SidebarGroup[] = [];
@@ -90,7 +92,10 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
         try {
           const raw: string = await invoke("read_group", { name });
           const g = JSON.parse(raw);
-          loaded.push({ name: g.name, projects: g.projects ?? [] });
+          loaded.push({
+            name: g.name,
+            projects: (g.projects ?? []).filter((projectName: string) => sortedProjectNames.includes(projectName)),
+          });
         } catch {
           // Skip unreadable groups
         }
@@ -107,12 +112,20 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   useEffect(() => {
     const handler = () => { loadData(); };
     window.addEventListener("groups-updated", handler);
-    return () => window.removeEventListener("groups-updated", handler);
+    window.addEventListener("project-removed", handler);
+    return () => {
+      window.removeEventListener("groups-updated", handler);
+      window.removeEventListener("project-removed", handler);
+    };
   }, [loadData]);
 
   /** Notify other components that groups changed. */
   const emitGroupsUpdated = () => {
     window.dispatchEvent(new CustomEvent("groups-updated"));
+  };
+
+  const emitProjectRemoved = (name: string) => {
+    window.dispatchEvent(new CustomEvent("project-removed", { detail: { name } }));
   };
 
   // ── Derived data ─────────────────────────────────────────────────────────
@@ -193,6 +206,27 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
       if (group.projects.includes(projectName)) {
         await removeProjectFromGroup(projectName, group.name);
       }
+    }
+  };
+
+  const handleRemoveProject = async (projectName: string, event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const confirmed = await ask(
+      `Remove project "${projectName}" from Automatic?\n\n(This only removes the project from this app. Your actual project files will NOT be deleted.)`,
+      { title: "Remove Project", kind: "warning" },
+    );
+    if (!confirmed) return;
+
+    try {
+      await invoke("delete_project", { name: projectName });
+      trackProjectDeleted(projectName);
+      await loadData();
+      emitGroupsUpdated();
+      emitProjectRemoved(projectName);
+    } catch (error) {
+      console.error("Failed to remove project:", error);
     }
   };
 
@@ -318,19 +352,32 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
       {ungroupedProjects.length > 0 && (
         <div className="mb-1" data-sidebar-group="__ungrouped__">
           {ungroupedProjects.map((projectName) => (
-            <button
+            <div
               key={projectName}
-              onClick={() => onNavigateToProject(projectName)}
-              className="w-full text-left pl-[34px] pr-3 py-1.5 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
-              onPointerDown={(e) => {
-                if (e.button !== 0) return;
-                const timeout = setTimeout(() => handleDragStart(projectName, null, e), 200);
-                const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
-                window.addEventListener("pointerup", cancel, { once: true });
-              }}
+              className="group/project relative"
             >
-              {projectName}
-            </button>
+              <button
+                onClick={() => onNavigateToProject(projectName)}
+                className="w-full text-left pl-[34px] pr-9 py-1.5 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  const timeout = setTimeout(() => handleDragStart(projectName, null, e), 200);
+                  const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
+                  window.addEventListener("pointerup", cancel, { once: true });
+                }}
+              >
+                {projectName}
+              </button>
+              <button
+                type="button"
+                onClick={(event) => void handleRemoveProject(projectName, event)}
+                className="pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-text-muted/50 opacity-0 transition-[background-color,color,opacity] hover:bg-danger/10 hover:text-danger group-hover/project:pointer-events-auto group-hover/project:opacity-100 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100"
+                aria-label={`Remove ${projectName}`}
+                title={`Remove ${projectName}`}
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -361,19 +408,32 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
                   .filter((p) => projects.includes(p))
                   .sort((a, b) => a.localeCompare(b))
                   .map((projectName) => (
-                    <button
+                    <div
                       key={projectName}
-                      onClick={() => onNavigateToProject(projectName)}
-                      className="w-full text-left pl-[34px] pr-3 py-1.5 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
-                      onPointerDown={(e) => {
-                        if (e.button !== 0) return;
-                        const timeout = setTimeout(() => handleDragStart(projectName, group.name, e), 200);
-                        const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
-                        window.addEventListener("pointerup", cancel, { once: true });
-                      }}
+                      className="group/project relative"
                     >
-                      {projectName}
-                    </button>
+                      <button
+                        onClick={() => onNavigateToProject(projectName)}
+                        className="w-full text-left pl-[34px] pr-9 py-1.5 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
+                        onPointerDown={(e) => {
+                          if (e.button !== 0) return;
+                          const timeout = setTimeout(() => handleDragStart(projectName, group.name, e), 200);
+                          const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
+                          window.addEventListener("pointerup", cancel, { once: true });
+                        }}
+                      >
+                        {projectName}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => void handleRemoveProject(projectName, event)}
+                        className="pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-text-muted/50 opacity-0 transition-[background-color,color,opacity] hover:bg-danger/10 hover:text-danger group-hover/project:pointer-events-auto group-hover/project:opacity-100 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100"
+                        aria-label={`Remove ${projectName}`}
+                        title={`Remove ${projectName}`}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
                   ))}
                 {group.projects.filter((p) => projects.includes(p)).length === 0 && (
                   <div className="pl-[34px] pr-3 py-1.5 text-[11px] text-text-muted/40 italic">Empty</div>
