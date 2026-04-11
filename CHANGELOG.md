@@ -13,6 +13,7 @@ All notable changes to Automatic are documented here.
 
 ### Fixed
 
+- Don't pre-select detected agents in setup wizard. (`6f305c3`)
 - Clarify agent sources in wizard. (`7f8e974`)
 - Preserve existing instructions on template apply. (`b0b57f8`)
 
