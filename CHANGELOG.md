@@ -4,6 +4,22 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-04-12
+
+### Added
+
+- Add Community section with Featured page. (`9c349db`)
+- Add sidebar project removal. (`8ddd6d9`)
+
+### Fixed
+
+- Clarify agent sources in wizard. (`7f8e974`)
+- Preserve existing instructions on template apply. (`b0b57f8`)
+
+### Maintenance
+
+- Update groups. (`b35039e`)
+
 ## [1.2.1] - 2026-04-11
 
 ### Fixed
