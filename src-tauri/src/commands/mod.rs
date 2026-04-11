@@ -2,6 +2,7 @@ mod activity;
 mod agents;
 mod ai;
 mod app_plugins;
+mod community;
 mod credentials;
 mod flags;
 mod groups;
@@ -27,6 +28,7 @@ mod whats_new;
 
 pub use crate::plugins::build::commands::*;
 pub use activity::*;
+pub use community::*;
 pub use agents::*;
 pub use ai::*;
 pub use app_plugins::*;

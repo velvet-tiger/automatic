@@ -12,6 +12,7 @@ const MARKETPLACE_DIR: &str = "marketplace";
 const MCP_SERVERS_FILE: &str = "mcp-servers.json";
 const COLLECTIONS_FILE: &str = "collections.json";
 const TEMPLATES_FILE: &str = "templates.json";
+const FEATURED_COMMUNITY_FILE: &str = "featured-community.json";
 
 // ── Compiled-in seed content ──────────────────────────────────────────────────
 //
@@ -24,7 +25,6 @@ const TEMPLATES_FILE: &str = "templates.json";
 
 const SEED_MCP_SERVERS: &str = include_str!("../../assets/marketplace/featured-mcp-servers.json");
 const SEED_COLLECTIONS: &str = include_str!("../../assets/marketplace/collections.json");
-
 // Individual template JSON files are held in project_templates::BUNDLED_TEMPLATES;
 // we re-export that slice here so the seeding logic can aggregate it without a
 // circular dependency.
@@ -46,6 +46,10 @@ fn collections_path() -> Result<PathBuf, String> {
 
 fn templates_path() -> Result<PathBuf, String> {
     Ok(get_marketplace_dir()?.join(TEMPLATES_FILE))
+}
+
+pub fn featured_community_path() -> Result<PathBuf, String> {
+    Ok(get_marketplace_dir()?.join(FEATURED_COMMUNITY_FILE))
 }
 
 // ── Startup seeding ───────────────────────────────────────────────────────────
@@ -73,6 +77,9 @@ pub fn init_marketplace_files(force: bool) -> Result<(), String> {
 
     seed_file(&mcp_servers_path()?, SEED_MCP_SERVERS, force)?;
     seed_file(&collections_path()?, SEED_COLLECTIONS, force)?;
+    // featured-community.json is not seeded — it is fetched from the remote
+    // endpoint on demand and cached to disk.  If the file does not exist and
+    // the network is unavailable, the UI shows an empty / "check back" state.
 
     let templates_json = build_bundled_templates_json()?;
     seed_file(&templates_path()?, &templates_json, force)?;
@@ -124,6 +131,11 @@ pub fn read_collections_json() -> Result<String, String> {
 /// Read `~/.automatic/marketplace/templates.json`.
 pub fn read_templates_json() -> Result<String, String> {
     read_json_file(&templates_path()?)
+}
+
+/// Read `~/.automatic/marketplace/featured-community.json`.
+pub fn read_featured_community_json() -> Result<String, String> {
+    read_json_file(&featured_community_path()?)
 }
 
 fn read_json_file(path: &PathBuf) -> Result<String, String> {

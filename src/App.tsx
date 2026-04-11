@@ -30,19 +30,21 @@ import TaskLog from "./components/TaskLog";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import UpdateToast from "./components/UpdateToast";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
-import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, PanelLeft } from "lucide-react";
+import Featured from "./pages/community/Featured";
+import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, PanelLeft, Star } from "lucide-react";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
 
 // ── Section / Tab mapping ────────────────────────────────────────────────────
 
-type Section = "start" | "workspace" | "library" | "marketplace";
+type Section = "start" | "workspace" | "library" | "marketplace" | "community";
 
 const SECTION_TABS: Record<Section, string[]> = {
   start: ["getting-started", "recommendations"],
   workspace: ["projects", "project-groups"],
   library: ["project-templates", "templates", "rules", "user-agents", "commands", "skills", "mcp", "agents", "tools"],
   marketplace: ["collection-marketplace", "template-marketplace", "skill-store", "mcp-marketplace"],
+  community: ["community-featured"],
 };
 
 const DEFAULT_TAB: Record<Section, string> = {
@@ -50,6 +52,7 @@ const DEFAULT_TAB: Record<Section, string> = {
   workspace: "projects",
   library: "project-templates",
   marketplace: "collection-marketplace",
+  community: "community-featured",
 };
 
 const SECTION_LABELS: Record<Section, string> = {
@@ -57,6 +60,7 @@ const SECTION_LABELS: Record<Section, string> = {
   workspace: "Workspace",
   library: "Library",
   marketplace: "Marketplace",
+  community: "Community",
 };
 
 function sectionForTab(tabId: string): Section {
@@ -143,13 +147,47 @@ function App() {
     return sectionForTab(activeTab);
   });
 
-  // ── Sidebar collapsed state ───────────────────────────────────────────────
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    return localStorage.getItem("automatic.sidebarCollapsed") === "true";
+  // ── Per-section sidebar collapsed state ────────────────────────────────────
+  // Sections default to expanded, except community which defaults to collapsed.
+  const SIDEBAR_COLLAPSED_DEFAULTS: Record<Section, boolean> = {
+    start: false,
+    workspace: false,
+    library: false,
+    marketplace: false,
+    community: true,
+  };
+
+  const [sidebarBySection, setSidebarBySection] = useState<Record<Section, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem("automatic.sidebarBySection");
+      if (saved) {
+        const parsed = JSON.parse(saved) as Record<string, boolean>;
+        // Merge with defaults so new sections get their default value
+        return { ...SIDEBAR_COLLAPSED_DEFAULTS, ...parsed } as Record<Section, boolean>;
+      }
+    } catch { /* ignore parse errors */ }
+    // Migrate legacy single-value setting
+    const legacy = localStorage.getItem("automatic.sidebarCollapsed");
+    if (legacy !== null) {
+      const val = legacy === "true";
+      return { start: val, workspace: val, library: val, marketplace: val, community: true };
+    }
+    return { ...SIDEBAR_COLLAPSED_DEFAULTS };
   });
+
+  const sidebarCollapsed = sidebarBySection[activeSection] ?? false;
+
+  const setSidebarCollapsed = useCallback((valueOrFn: boolean | ((prev: boolean) => boolean)) => {
+    setSidebarBySection((prev) => {
+      const current = prev[activeSection] ?? false;
+      const next = typeof valueOrFn === "function" ? valueOrFn(current) : valueOrFn;
+      return { ...prev, [activeSection]: next };
+    });
+  }, [activeSection]);
+
   useEffect(() => {
-    localStorage.setItem("automatic.sidebarCollapsed", String(sidebarCollapsed));
-  }, [sidebarCollapsed]);
+    localStorage.setItem("automatic.sidebarBySection", JSON.stringify(sidebarBySection));
+  }, [sidebarBySection]);
 
   // ── Group filter for Projects page ────────────────────────────────────────
   const [activeGroupFilter, setActiveGroupFilter] = useState<string | null>(null);
@@ -175,6 +213,7 @@ function App() {
   const [pendingMcpServer, setPendingMcpServer] = useState<string | null>(null);
   const [pendingGroup, setPendingGroup] = useState<string | null>(null);
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
+  const [pendingSettingsPage, setPendingSettingsPage] = useState<string | null>(null);
 
   // ── App version ──────────────────────────────────────────────────────────
   const [appVersion, setAppVersion] = useState<string>("");
@@ -280,6 +319,11 @@ function App() {
   const navigateToCommand = (commandId: string) => {
     setPendingCommand(commandId);
     setActiveTabWithSection("commands");
+  };
+
+  const navigateToSettings = (page: string) => {
+    setPendingSettingsPage(page);
+    setActiveTab("settings");
   };
 
   const navigateToSkillStore = (skillId: string) => {
@@ -403,7 +447,7 @@ function App() {
         {/* Center: section toggle pill */}
         <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-0">
           <div className="flex items-center bg-bg-input border border-border-strong/40 rounded-lg p-0.5 pointer-events-auto">
-            {(["start", "workspace", "library", "marketplace"] as const).map((section) => {
+            {(["start", "workspace", "library", "marketplace", "community"] as const).map((section) => {
               const isActive = activeSection === section && activeTab !== "settings";
               return (
                 <button
@@ -521,6 +565,13 @@ function App() {
               <NavItem id="template-marketplace" icon={Layers} label="Templates" />
               <NavItem id="skill-store" icon={Puzzle} label="Skills" />
               <NavItem id="mcp-marketplace" icon={Server} label="MCP Servers" />
+            </ul>
+          )}
+
+          {/* ── Community sidebar ──────────────────────────────────────── */}
+          {activeSection === "community" && (
+            <ul className="space-y-0.5">
+              <NavItem id="community-featured" icon={Star} label="Featured" />
             </ul>
           )}
 
@@ -709,6 +760,11 @@ function App() {
               />
             </div>
           )}
+          {activeTab === "community-featured" && (
+            <div className="flex-1 h-full">
+              <Featured onNavigateToTab={setActiveTabWithSection} onNavigateToSettings={navigateToSettings} />
+            </div>
+          )}
           {activeTab === "templates" && (
             <div className="flex-1 h-full">
               <Templates />
@@ -742,7 +798,11 @@ function App() {
           )}
           {activeTab === "settings" && (
             <div className="flex-1 h-full">
-              <Settings onOpenWizard={() => { setWizardIsReopen(true); setShowWizard(true); }} />
+              <Settings
+                onOpenWizard={() => { setWizardIsReopen(true); setShowWizard(true); }}
+                initialPage={pendingSettingsPage}
+                onInitialPageConsumed={() => setPendingSettingsPage(null)}
+              />
             </div>
           )}
         </div>

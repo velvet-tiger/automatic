@@ -228,6 +228,7 @@ pub fn run() {
             delete_mcp_server_config,
             search_mcp_marketplace,
             search_collections,
+            get_featured_community,
             get_projects,
             read_project,
             preview_rebuild_project,

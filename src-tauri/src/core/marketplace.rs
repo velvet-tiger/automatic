@@ -1,6 +1,11 @@
+use std::time::{Duration, SystemTime};
+
 use serde::{Deserialize, Serialize};
 
-use super::marketplace_data::{read_collections_json, read_mcp_servers_json};
+use super::marketplace_data::{
+    featured_community_path, read_collections_json, read_featured_community_json,
+    read_mcp_servers_json,
+};
 
 // ── MCP Server Marketplace ────────────────────────────────────────────────────
 
@@ -161,4 +166,76 @@ pub fn search_collections(query: &str) -> Result<String, String> {
     };
 
     serde_json::to_string(&filtered).map_err(|e| e.to_string())
+}
+
+// ── Featured Community ──────────────────────────────────────────────────────
+
+const FEATURED_COMMUNITY_URL: &str = "https://tryautomatic.app/featured-community.json";
+const FEATURED_COMMUNITY_MAX_AGE: Duration = Duration::from_secs(3600);
+
+/// Return the featured community JSON, fetching from the remote endpoint if
+/// the cached file is older than one hour.  Falls back to the on-disk cache
+/// (or bundled seed data) when the network is unavailable.
+pub async fn get_featured_community() -> Result<String, String> {
+    let path = featured_community_path()?;
+
+    // Check whether the cached file is still fresh.
+    let needs_fetch = match path.metadata().and_then(|m| m.modified()) {
+        Ok(modified) => SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or(Duration::MAX)
+            > FEATURED_COMMUNITY_MAX_AGE,
+        Err(_) => true, // file missing or unreadable — fetch
+    };
+
+    if needs_fetch {
+        match fetch_featured_community_remote().await {
+            Ok(json) => {
+                // Validate the response is a JSON array before caching.
+                if serde_json::from_str::<Vec<serde_json::Value>>(&json).is_ok() {
+                    if let Err(e) = std::fs::write(&path, &json) {
+                        eprintln!(
+                            "[automatic] Failed to cache featured-community.json: {}",
+                            e
+                        );
+                    }
+                    return Ok(json);
+                }
+                eprintln!(
+                    "[automatic] Remote featured-community.json is not a valid JSON array, using cache"
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[automatic] Failed to fetch featured-community.json: {}, using cache",
+                    e
+                );
+            }
+        }
+    }
+
+    // Return the cached/seeded file.
+    read_featured_community_json()
+}
+
+/// Fetch the featured community JSON from the remote endpoint.
+async fn fetch_featured_community_remote() -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let resp = client
+        .get(FEATURED_COMMUNITY_URL)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+
+    resp.text()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))
 }

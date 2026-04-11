@@ -80,10 +80,28 @@ const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; descripti
 
 interface SettingsProps {
   onOpenWizard?: () => void;
+  initialPage?: string | null;
+  onInitialPageConsumed?: () => void;
 }
 
-export default function Settings({ onOpenWizard }: SettingsProps) {
-  const [activePage, setActivePage] = useState<SettingsPage>("sync");
+export default function Settings({ onOpenWizard, initialPage, onInitialPageConsumed }: SettingsProps) {
+  const [activePage, setActivePage] = useState<SettingsPage>(() => {
+    const valid: SettingsPage[] = ["sync", "agents", "appearance", "app", "plugins", "support", "token-estimator", "ai-playground"];
+    if (initialPage && valid.includes(initialPage as SettingsPage)) {
+      return initialPage as SettingsPage;
+    }
+    return "sync";
+  });
+  // Handle deep-link navigation when initialPage changes after mount
+  useEffect(() => {
+    if (!initialPage) return;
+    const valid: SettingsPage[] = ["sync", "agents", "appearance", "app", "plugins", "support", "token-estimator", "ai-playground"];
+    if (valid.includes(initialPage as SettingsPage)) {
+      setActivePage(initialPage as SettingsPage);
+    }
+    onInitialPageConsumed?.();
+  }, [initialPage, onInitialPageConsumed]);
+
   const [settings, setSettings] = useState<AppSettings>({
     sync_mode: "symlink",
     analytics_enabled: true,
