@@ -4,6 +4,18 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-04-13
+
+### Added
+
+- Wire up `automatic://` deep-link URL handler so install links actually open the app. (`920154c`)
+- New Remote Install Dialog that fetches the package manifest, shows available resources with checkboxes, and installs selected items.
+- Deep-link event bridge from Rust (`on_open_url`) to React frontend via Tauri events.
+
+### Fixed
+
+- `automatic://install?repo=...` links were not functional despite the URL scheme being registered — the deep-link plugin was initialized but had no event listener.
+
 ## [1.4.0] - 2026-04-12
 
 ### Added
