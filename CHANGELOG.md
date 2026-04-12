@@ -4,6 +4,25 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-04-12
+
+### Added
+
+- Remote Sources system for installing resources from git repositories. (`462c22c`)
+- `automatic.json` manifest format with JSON Schema for editor validation.
+- Support for all resource types: skills, MCP servers, rules, templates, commands, agents.
+- `skill.json` fallback for repos that only publish skills.
+- Per-agent overrides with include/exclude modifiers in the manifest.
+- Version pinning: track a branch, pin to a tag, or lock to a commit SHA.
+- Marketplace collections declared in the manifest.
+- Monorepo support via `dir` parameter for subdirectory manifests.
+- `automatic://` deep-link URI scheme for one-click install buttons.
+- Provenance tracking and conflict detection across sources.
+- 7 Tauri commands: fetch, install, update, remove, list, conflicts, URI handler.
+- Bundled skill: `automatic-remote-source-authoring` for creating source packages.
+- Install badge SVGs (light and dark variants) in `docs/assets/`.
+- Full documentation with example repository in `docs/remote-sources.md`.
+
 ## [1.3.0] - 2026-04-12
 
 ### Added
