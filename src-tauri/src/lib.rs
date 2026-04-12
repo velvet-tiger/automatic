@@ -48,6 +48,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|_app| {
             // Ensure plugin marketplace exists on disk; register with Claude
             // Code if the CLI is available.  Runs on a background thread so
@@ -347,6 +348,13 @@ pub fn run() {
             is_analytics_configured,
             get_whats_new,
             mark_whats_new_seen,
+            fetch_remote_source,
+            install_remote_source,
+            update_remote_source,
+            remove_remote_source,
+            list_remote_sources,
+            check_source_conflicts,
+            handle_install_uri,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

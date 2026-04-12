@@ -1,0 +1,13 @@
+{
+  "command": "npx",
+  "args": ["-y", "@acme/mcp-db-server"],
+  "env": {
+    "ACME_DB_URL": "",
+    "ACME_DB_READONLY": "true"
+  },
+  "_description": "Acme PostgreSQL database MCP server. Provides read-only query tools for the Acme data model.",
+  "_author": {
+    "name": "Acme Corp",
+    "url": "https://acme.dev"
+  }
+}

@@ -22,6 +22,7 @@ mod marketplace_data;
 mod mcp_servers;
 mod paths;
 mod plugins;
+pub mod remote_sources;
 mod profile;
 mod project_files;
 mod project_templates;

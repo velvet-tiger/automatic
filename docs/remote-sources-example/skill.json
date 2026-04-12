@@ -1,0 +1,25 @@
+{
+  "$schema": "https://skills.json.org/schema/1.0.0/skills.schema.json",
+  "name": "acme-ai-toolkit",
+  "version": "2.1.0",
+  "description": "Skills for Acme full-stack development",
+  "author": {
+    "name": "Acme Corp",
+    "url": "https://acme.dev"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/acme/ai-toolkit"
+  },
+  "keywords": ["acme", "react", "typescript"],
+  "skills": [
+    {
+      "name": "acme-react-patterns",
+      "path": "./skills/acme-react-patterns",
+      "description": "React component patterns, hooks conventions, and state management for Acme UI",
+      "category": "frontend",
+      "tags": ["react", "typescript", "components", "hooks"]
+    }
+  ]
+}

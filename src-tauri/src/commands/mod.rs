@@ -24,6 +24,7 @@ mod tokens;
 mod tools;
 mod user_agents;
 mod user_commands;
+mod remote_sources;
 mod whats_new;
 
 pub use crate::plugins::build::commands::*;
@@ -53,6 +54,7 @@ pub use tokens::*;
 pub use tools::*;
 pub use user_agents::*;
 pub use user_commands::*;
+pub use remote_sources::*;
 pub use whats_new::*;
 
 // ── Plugin dispatch ───────────────────────────────────────────────────────────

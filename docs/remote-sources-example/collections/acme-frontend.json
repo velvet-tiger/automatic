@@ -1,0 +1,38 @@
+{
+  "id": "acme/frontend",
+  "name": "Acme Frontend",
+  "slug": "acme-frontend",
+  "description": "Skills, rules, and tools for Acme React frontend development",
+  "author": {
+    "type": "provider",
+    "name": "Acme Corp",
+    "url": "https://acme.dev",
+    "repository_url": "https://github.com/acme/ai-toolkit"
+  },
+  "icon": "acme.dev",
+  "tags": ["frontend", "react", "typescript", "acme"],
+  "skills": [
+    {
+      "name": "acme-react-patterns",
+      "display_name": "Acme React Patterns",
+      "description": "React component patterns, hooks, and state management for Acme UI",
+      "source": "acme/ai-toolkit",
+      "id": "acme/ai-toolkit/acme-react-patterns",
+      "kind": "github"
+    }
+  ],
+  "mcp_servers": [
+    {
+      "name": "acme-db",
+      "display_name": "Acme Database",
+      "description": "Read-only PostgreSQL access for Acme data"
+    }
+  ],
+  "templates": [
+    {
+      "name": "acme-fullstack-project",
+      "display_name": "Acme Full-Stack Project",
+      "description": "Standard project scaffold with React, Node, and PostgreSQL"
+    }
+  ]
+}

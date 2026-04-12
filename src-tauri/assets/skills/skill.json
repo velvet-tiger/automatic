@@ -98,6 +98,13 @@
       "description": "Principles and patterns for writing effective tests. Use when writing unit, integration, or end-to-end tests, or reviewing test quality.",
       "category": "testing",
       "tags": ["testing", "unit-tests", "integration-tests", "e2e", "tdd", "test-quality"]
+    },
+    {
+      "name": "automatic-remote-source-authoring",
+      "path": "./automatic-remote-source-authoring",
+      "description": "Create and maintain Automatic remote source packages — automatic.json manifests, skill.json references, collections, badges, and directory structure for publishing resources via git repositories.",
+      "category": "development",
+      "tags": ["automatic", "remote-sources", "packaging", "manifest", "skill-json", "publishing"]
     }
   ]
 }
