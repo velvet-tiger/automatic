@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { applyTheme, Theme, THEMES } from "./lib/theme";
 import { ProfileProvider } from "./contexts/ProfileContext";
@@ -29,6 +30,7 @@ import { TaskLogProvider, useTaskLog } from "./contexts/TaskLogContext";
 import TaskLog from "./components/TaskLog";
 import { UpdateProvider } from "./contexts/UpdateContext";
 import UpdateToast from "./components/UpdateToast";
+import RemoteInstallDialog from "./components/RemoteInstallDialog";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Featured from "./pages/community/Featured";
 import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, PanelLeft, Star } from "lucide-react";
@@ -214,6 +216,25 @@ function App() {
   const [pendingGroup, setPendingGroup] = useState<string | null>(null);
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const [pendingSettingsPage, setPendingSettingsPage] = useState<string | null>(null);
+
+  // ── Deep-link install dialog ────────────────────────────────────────────
+  const [deepLinkInstall, setDeepLinkInstall] = useState<{
+    repo: string;
+    git_ref: string | null;
+    directory: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    const unlisten = listen<{ repo: string; git_ref: string | null; directory: string | null }>(
+      "deep-link://install",
+      (event) => {
+        setDeepLinkInstall(event.payload);
+      }
+    );
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   // ── App version ──────────────────────────────────────────────────────────
   const [appVersion, setAppVersion] = useState<string>("");
@@ -419,6 +440,14 @@ function App() {
         onCancel={wizardIsReopen ? () => { setShowWizard(false); setWizardIsReopen(false); } : undefined}
       />
     )}
+    <RemoteInstallDialog
+      isOpen={deepLinkInstall !== null}
+      repo={deepLinkInstall?.repo ?? ""}
+      gitRef={deepLinkInstall?.git_ref}
+      directory={deepLinkInstall?.directory}
+      onClose={() => setDeepLinkInstall(null)}
+      onInstalled={() => setDeepLinkInstall(null)}
+    />
     <div
       className="relative flex flex-col h-screen w-screen overflow-hidden bg-bg-base text-[#fafafa] selection:bg-brand/30"
       aria-hidden={showWizard === true}

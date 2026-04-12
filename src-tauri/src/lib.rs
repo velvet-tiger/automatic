@@ -49,7 +49,29 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
-        .setup(|_app| {
+        .setup(|app| {
+            // ── Deep-link handler ────────────────────────────���────────────
+            // Listens for automatic:// URLs from the OS and emits a Tauri
+            // event so the React frontend can show an install dialog.
+            {
+                use tauri::Emitter;
+                use tauri_plugin_deep_link::DeepLinkExt;
+
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        let uri = url.as_str().to_string();
+                        if let Ok(params) =
+                            core::remote_sources::parse_install_uri(&uri)
+                        {
+                            let _ = handle.emit("deep-link://install", &params);
+                        } else {
+                            eprintln!("[automatic] ignoring unrecognised deep link: {}", uri);
+                        }
+                    }
+                });
+            }
+
             // Ensure plugin marketplace exists on disk; register with Claude
             // Code if the CLI is available.  Runs on a background thread so
             // it never blocks the UI.
