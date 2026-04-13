@@ -375,13 +375,17 @@ Control which resources are enabled per agent tool:
 Add a one-click install button to your README:
 
 ```markdown
-[![Install in Automatic](https://tryautomatic.app/badges/install.svg)](automatic://install?repo=your-org/your-repo)
+<a href="automatic://install?repo=your-org/your-repo">
+  <img src="https://tryautomatic.app/badges/install.svg" alt="Install in Automatic">
+</a>
 ```
 
 With a pinned version:
 
 ```markdown
-[![Install in Automatic](https://tryautomatic.app/badges/install.svg)](automatic://install?repo=your-org/your-repo&ref=v2.0.0)
+<a href="automatic://install?repo=your-org/your-repo&ref=v2.0.0">
+  <img src="https://tryautomatic.app/badges/install.svg" alt="Install in Automatic">
+</a>
 ```
 
 HTML for websites:
@@ -440,4 +444,4 @@ Before publishing, verify:
 4. Optionally add `agent_overrides` if some resources are agent-specific.
 5. Optionally create a collection JSON and reference it in `collections`.
 6. Add the install badge to your README.
-7. Commit and push. Users can now install via `automatic://install?repo=owner/repo`.
+7. Commit and push. Users can now install via `<a href="automatic://install?repo=owner/repo">automatic://install?repo=owner/repo</a>`.

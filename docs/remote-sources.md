@@ -281,10 +281,10 @@ The effective set for an agent is: `defaults + includes - excludes`.
 Users can install a source with a single click using a deep link:
 
 ```
-automatic://install?repo=acme/ai-toolkit
-automatic://install?repo=acme/ai-toolkit&ref=v2.0.0
-automatic://install?repo=acme/monorepo&dir=packages/ai-config
-automatic://install?repo=acme/monorepo&dir=packages/ai-config&ref=v2.0.0
+<a href="automatic://install?repo=acme/ai-toolkit">automatic://install?repo=acme/ai-toolkit</a>
+<a href="automatic://install?repo=acme/ai-toolkit&ref=v2.0.0">automatic://install?repo=acme/ai-toolkit&ref=v2.0.0</a>
+<a href="automatic://install?repo=acme/monorepo&dir=packages/ai-config">automatic://install?repo=acme/monorepo&dir=packages/ai-config</a>
+<a href="automatic://install?repo=acme/monorepo&dir=packages/ai-config&ref=v2.0.0">automatic://install?repo=acme/monorepo&dir=packages/ai-config&ref=v2.0.0</a>
 ```
 
 | Parameter | Required | Description |
@@ -300,7 +300,7 @@ When clicked, the OS opens Automatic, which fetches the manifest and shows a con
 When `automatic.json` lives in a subdirectory (e.g. `packages/ai-config/automatic.json`), pass the `dir` parameter. All resource paths in the manifest are resolved relative to that subdirectory, not the repo root.
 
 ```
-automatic://install?repo=acme/monorepo&dir=packages/ai-config
+<a href="automatic://install?repo=acme/monorepo&dir=packages/ai-config">automatic://install?repo=acme/monorepo&dir=packages/ai-config</a>
 ```
 
 The `directory` is stored in `sources.json` so updates resolve from the same subdirectory.
@@ -315,36 +315,34 @@ Use the badge SVGs in `docs/assets/`. Replace `your-org/your-repo` with your Git
 |-------|------|
 | ![Install in Automatic](assets/install-in-automatic.svg) | ![Install in Automatic](assets/install-in-automatic-dark.svg) |
 
-**Markdown (hosted badge — use once `tryautomatic.app` serves the files):**
+**HTML (hosted badge):**
 
-```markdown
-[![Install in Automatic](https://tryautomatic.app/badges/install.svg)](automatic://install?repo=your-org/your-repo)
+```html
+<a href="automatic://install?repo=aurabx/skills"><img src="https://tryautomatic.app/badges/install.svg" alt="Install in Automatic"></a>
 ```
 
-**Markdown (local badge — works immediately from the repo):**
-
-```markdown
-[![Install in Automatic](docs/assets/install-in-automatic.svg)](automatic://install?repo=your-org/your-repo)
-```
-
-**With a pinned version:**
-
-```markdown
-[![Install in Automatic](https://tryautomatic.app/badges/install.svg)](automatic://install?repo=your-org/your-repo&ref=v2.0.0)
-```
-
-**HTML (for websites, landing pages, or wikis):**
+**HTML (local badge from this repo):**
 
 ```html
 <a href="automatic://install?repo=your-org/your-repo">
+  <img src="docs/assets/install-in-automatic.svg" alt="Install in Automatic" height="32">
+</a>
+```
+
+**HTML (with a pinned version):**
+
+```html
+<a href="automatic://install?repo=your-org/your-repo&ref=v2.0.0">
   <img src="https://tryautomatic.app/badges/install.svg" alt="Install in Automatic" height="32">
 </a>
 ```
 
-**Dark variant (for dark backgrounds):**
+**HTML dark variant (for dark backgrounds):**
 
-```markdown
-[![Install in Automatic](https://tryautomatic.app/badges/install-dark.svg)](automatic://install?repo=your-org/your-repo)
+```html
+<a href="automatic://install?repo=your-org/your-repo">
+  <img src="https://tryautomatic.app/badges/install-dark.svg" alt="Install in Automatic" height="32">
+</a>
 ```
 
 ## Local Storage
