@@ -1,6 +1,6 @@
 # Remote Sources
 
-Remote Sources let Automatic load resources — skills, MCP servers, rules, templates, commands, and agents — from a git repository. Users can install a source once and keep it updated, or use a one-click `automatic://` link from a README or website.
+Remote Sources let Automatic load resources — skills, MCP servers, rules, templates, commands, and agents — from a git repository. Users can install a source once and keep it updated, or use a one-click install link from a README or website.
 
 ## How It Works
 
@@ -276,15 +276,14 @@ Keyed by agent ID (`claude`, `cursor`, `codex`, `kilo-code`, etc.). Each support
 
 The effective set for an agent is: `defaults + includes - excludes`.
 
-## Deep Links (`automatic://`)
-
-Users can install a source with a single click using a deep link:
+## Install Links
+Users can install a source with a single click using the hosted install URL on `tryautomatic.app`. The website constructs the underlying `automatic://install?...` deep link and routes the user into the app:
 
 ```
-<a href="automatic://install?repo=acme/ai-toolkit">automatic://install?repo=acme/ai-toolkit</a>
-<a href="automatic://install?repo=acme/ai-toolkit&ref=v2.0.0">automatic://install?repo=acme/ai-toolkit&ref=v2.0.0</a>
-<a href="automatic://install?repo=acme/monorepo&dir=packages/ai-config">automatic://install?repo=acme/monorepo&dir=packages/ai-config</a>
-<a href="automatic://install?repo=acme/monorepo&dir=packages/ai-config&ref=v2.0.0">automatic://install?repo=acme/monorepo&dir=packages/ai-config&ref=v2.0.0</a>
+<a href="https://tryautomatic.app/install?repo=acme/ai-toolkit">https://tryautomatic.app/install?repo=acme/ai-toolkit</a>
+<a href="https://tryautomatic.app/install?repo=acme/ai-toolkit&ref=v2.0.0">https://tryautomatic.app/install?repo=acme/ai-toolkit&ref=v2.0.0</a>
+<a href="https://tryautomatic.app/install?repo=acme/monorepo&dir=packages/ai-config">https://tryautomatic.app/install?repo=acme/monorepo&dir=packages/ai-config</a>
+<a href="https://tryautomatic.app/install?repo=acme/monorepo&dir=packages/ai-config&ref=v2.0.0">https://tryautomatic.app/install?repo=acme/monorepo&dir=packages/ai-config&ref=v2.0.0</a>
 ```
 
 | Parameter | Required | Description |
@@ -293,14 +292,16 @@ Users can install a source with a single click using a deep link:
 | `ref` | No | Git ref to pin to (tag, SHA, or branch). |
 | `dir` | No | Subdirectory within the repo where `automatic.json` lives (monorepo support). |
 
-When clicked, the OS opens Automatic, which fetches the manifest and shows a confirmation dialog before installing anything.
+When clicked, the website hands off to Automatic, which fetches the manifest and shows a confirmation dialog before installing anything.
+
+If you need the raw deep link for testing or app internals, Automatic still handles `automatic://install?...` URIs directly.
 
 ### Monorepo Support
 
 When `automatic.json` lives in a subdirectory (e.g. `packages/ai-config/automatic.json`), pass the `dir` parameter. All resource paths in the manifest are resolved relative to that subdirectory, not the repo root.
 
 ```
-<a href="automatic://install?repo=acme/monorepo&dir=packages/ai-config">automatic://install?repo=acme/monorepo&dir=packages/ai-config</a>
+<a href="https://tryautomatic.app/install?repo=acme/monorepo&dir=packages/ai-config">https://tryautomatic.app/install?repo=acme/monorepo&dir=packages/ai-config</a>
 ```
 
 The `directory` is stored in `sources.json` so updates resolve from the same subdirectory.
@@ -318,13 +319,13 @@ Use the badge SVGs in `docs/assets/`. Replace `your-org/your-repo` with your Git
 **HTML (hosted badge):**
 
 ```html
-<a href="automatic://install?repo=aurabx/skills"><img src="https://tryautomatic.app/badges/install.svg" alt="Install in Automatic"></a>
+<a href="https://tryautomatic.app/install?repo=aurabx/skills"><img src="https://tryautomatic.app/badges/install.svg" alt="Install in Automatic"></a>
 ```
 
 **HTML (local badge from this repo):**
 
 ```html
-<a href="automatic://install?repo=your-org/your-repo">
+<a href="https://tryautomatic.app/install?repo=your-org/your-repo">
   <img src="docs/assets/install-in-automatic.svg" alt="Install in Automatic" height="32">
 </a>
 ```
@@ -332,7 +333,7 @@ Use the badge SVGs in `docs/assets/`. Replace `your-org/your-repo` with your Git
 **HTML (with a pinned version):**
 
 ```html
-<a href="automatic://install?repo=your-org/your-repo&ref=v2.0.0">
+<a href="https://tryautomatic.app/install?repo=your-org/your-repo&ref=v2.0.0">
   <img src="https://tryautomatic.app/badges/install.svg" alt="Install in Automatic" height="32">
 </a>
 ```
@@ -340,7 +341,7 @@ Use the badge SVGs in `docs/assets/`. Replace `your-org/your-repo` with your Git
 **HTML dark variant (for dark backgrounds):**
 
 ```html
-<a href="automatic://install?repo=your-org/your-repo">
+<a href="https://tryautomatic.app/install?repo=your-org/your-repo">
   <img src="https://tryautomatic.app/badges/install-dark.svg" alt="Install in Automatic" height="32">
 </a>
 ```

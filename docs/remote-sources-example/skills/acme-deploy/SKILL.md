@@ -2,6 +2,10 @@
 
 You are deploying an Acme service. Follow this procedure exactly.
 
+## Install in Automatic
+
+<a href="https://tryautomatic.app/install?repo=aurabx/skills"><img src="https://tryautomatic.app/badges/install.svg" alt="Install in Automatic"></a>
+
 ## Environments
 
 | Environment | Branch | URL |

@@ -372,10 +372,10 @@ Control which resources are enabled per agent tool:
 
 ## Install Badge
 
-Add a one-click install button to your README:
+Add a one-click install button to your README using the hosted installer URL. The website builds the `automatic://install?...` deep link and routes the user into the app:
 
 ```markdown
-<a href="automatic://install?repo=your-org/your-repo">
+<a href="https://tryautomatic.app/install?repo=your-org/your-repo">
   <img src="https://tryautomatic.app/badges/install.svg" alt="Install in Automatic">
 </a>
 ```
@@ -383,7 +383,7 @@ Add a one-click install button to your README:
 With a pinned version:
 
 ```markdown
-<a href="automatic://install?repo=your-org/your-repo&ref=v2.0.0">
+<a href="https://tryautomatic.app/install?repo=your-org/your-repo&ref=v2.0.0">
   <img src="https://tryautomatic.app/badges/install.svg" alt="Install in Automatic">
 </a>
 ```
@@ -391,7 +391,7 @@ With a pinned version:
 HTML for websites:
 
 ```html
-<a href="automatic://install?repo=your-org/your-repo">
+<a href="https://tryautomatic.app/install?repo=your-org/your-repo">
   <img src="https://tryautomatic.app/badges/install.svg" alt="Install in Automatic" height="32">
 </a>
 ```
@@ -444,4 +444,4 @@ Before publishing, verify:
 4. Optionally add `agent_overrides` if some resources are agent-specific.
 5. Optionally create a collection JSON and reference it in `collections`.
 6. Add the install badge to your README.
-7. Commit and push. Users can now install via `<a href="automatic://install?repo=owner/repo">automatic://install?repo=owner/repo</a>`.
+7. Commit and push. Users can now install via `<a href="https://tryautomatic.app/install?repo=owner/repo">https://tryautomatic.app/install?repo=owner/repo</a>`.

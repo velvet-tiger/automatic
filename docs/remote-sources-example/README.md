@@ -37,7 +37,7 @@ This directory shows the complete structure of a git repository that publishes r
 
 ## What happens on install
 
-When a user runs `automatic://install?repo=acme/ai-toolkit`:
+When a user opens `https://tryautomatic.app/install?repo=acme/ai-toolkit`:
 
 1. Automatic clones the repo to `~/.automatic/sources/acme/ai-toolkit/`
 2. Parses `automatic.json`
