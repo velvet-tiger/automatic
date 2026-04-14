@@ -4,6 +4,16 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-04-15
+
+### Fixed
+
+- Remote install dialog reported "no installable resources" for manifests that delegated their skill list to a referenced `skill.json` (e.g. `aurabx/skills`). `fetch_source_manifest` now resolves the `skills.skill_json` reference and inlines the entries before returning to the frontend.
+
+### Security
+
+- Remote install pathway (`core/remote_sources.rs`) now runs the asset security scanner (`enforce_text_asset`) before writing any skill, rule, template, MCP server, command, or agent to disk, matching the scanning that already happened on the in-app install paths. Skills are walked recursively; symlinks inside a skill tree are rejected outright.
+
 ## [1.4.2] - 2026-04-15
 
 ### Fixed
