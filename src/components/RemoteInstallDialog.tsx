@@ -107,11 +107,11 @@ function buildResourceGroups(manifest: AutomaticManifest): ResourceGroup[] {
     icon: React.ComponentType<{ size?: number; className?: string }>;
     items: ManifestResource[];
   }> = [
-    { key: "mcp_servers", label: "MCP Servers", icon: Server, items: manifest.mcp_servers },
-    { key: "rules", label: "Rules", icon: ScrollText, items: manifest.rules },
-    { key: "templates", label: "Templates", icon: LayoutTemplate, items: manifest.templates },
-    { key: "commands", label: "Commands", icon: Terminal, items: manifest.commands },
-    { key: "agents", label: "Agents", icon: Bot, items: manifest.agents },
+    { key: "mcp_servers", label: "MCP Servers", icon: Server, items: manifest.mcp_servers ?? [] },
+    { key: "rules", label: "Rules", icon: ScrollText, items: manifest.rules ?? [] },
+    { key: "templates", label: "Templates", icon: LayoutTemplate, items: manifest.templates ?? [] },
+    { key: "commands", label: "Commands", icon: Terminal, items: manifest.commands ?? [] },
+    { key: "agents", label: "Agents", icon: Bot, items: manifest.agents ?? [] },
   ];
 
   for (const rt of resourceTypes) {
