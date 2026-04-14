@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-04-15
+
+### Fixed
+
+- Remote install dialog crashed with `undefined is not an object (evaluating 'p.items.length')` when a manifest omitted any of the `mcp_servers`, `rules`, `templates`, `commands`, or `agents` arrays (e.g. skills-only packages like `aurabx/skills`). (`cde8951`)
+
 ## [1.4.1] - 2026-04-13
 
 ### Added
