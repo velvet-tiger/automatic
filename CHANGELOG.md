@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-04-15
+
+### Fixed
+
+- Remote installs now preserve and display their GitHub provenance across workspace assets instead of being mislabeled as local. Skills, rules, project templates, MCP servers, and user agents now hydrate author/source metadata from the existing remote provenance registry. (`de61a79`)
+
 ## [1.4.3] - 2026-04-15
 
 ### Fixed
