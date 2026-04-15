@@ -60,6 +60,20 @@ pub fn read_mcp_server_config(name: &str) -> Result<String, String> {
         env_crypto::decrypt_env_values(env)?;
     }
 
+    if config.get("_author").is_none() {
+        if let Some(repo) = super::remote_sources::get_provenance("mcp_server", name)? {
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert(
+                    "_author".to_string(),
+                    serde_json::json!({
+                        "name": repo,
+                        "repository_url": format!("https://github.com/{}", repo),
+                    }),
+                );
+            }
+        }
+    }
+
     serde_json::to_string(&config).map_err(|e| e.to_string())
 }
 
@@ -253,6 +267,7 @@ pub fn is_builtin_skill(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::paths::with_test_home;
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -439,6 +454,29 @@ mod tests {
         let tmp = tmp();
         let dir = tmp.path().join("mcp_servers");
         delete_at(&dir, "ghost").expect("delete non-existent should not error");
+    }
+
+    #[test]
+    fn read_config_hydrates_remote_author_from_provenance() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("remote-server", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save config");
+            super::super::remote_sources::record_provenance(
+                "mcp_server",
+                "remote-server",
+                "octocat/remote-servers",
+            )
+            .expect("record provenance");
+
+            let raw = read_mcp_server_config("remote-server").expect("read config");
+            let value: serde_json::Value = serde_json::from_str(&raw).expect("parse config");
+
+            assert_eq!(
+                value["_author"]["repository_url"].as_str(),
+                Some("https://github.com/octocat/remote-servers")
+            );
+        });
     }
 
     // ── invalid name handling ────────────────────────────────────────────────

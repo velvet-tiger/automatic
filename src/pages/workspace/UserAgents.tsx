@@ -19,8 +19,9 @@ import {
 interface UserAgentEntry {
   id: string;
   name: string;
-  source?: string; // "automatic" | "local" | "codex"
+  source?: string; // "automatic" | "local" | "codex" | "github"
   author?: string; // "Automatic" | "You" | "OpenAI"
+  source_repo?: string;
 }
 
 interface UserAgent {
@@ -466,6 +467,8 @@ export default function UserAgents() {
                         descriptor={
                           selectedEntry?.source === "codex"
                             ? { type: "provider", name: "OpenAI", url: "https://openai.com" }
+                            : selectedEntry?.source === "github" && selectedEntry.source_repo
+                              ? { type: "github", repo: selectedEntry.source_repo }
                             : selectedEntry?.source === "automatic" || (selectedId && isBundledAgent(selectedId))
                               ? { type: "provider", name: "Automatic", url: "https://automatic.computer" }
                               : { type: "local" }

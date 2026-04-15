@@ -60,6 +60,12 @@ interface McpServerConfig {
   _builtin?: boolean;
 }
 
+function parseGitHubRepo(url?: string): string | null {
+  if (!url) return null;
+  const match = url.match(/^https?:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git|\/)?$/i);
+  return match ? match[1] : null;
+}
+
 interface McpOAuthTokenStatus {
   has_token: boolean;
   valid: boolean;
@@ -515,8 +521,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   };
 
   const isStdio = config?.type === "stdio";
+  const githubRepo = parseGitHubRepo(config?._author?.repository_url);
   /** Server was installed from the MCP Directory or is built-in — lock core settings. */
-  const isManaged = !!config?._author || !!config?._builtin;
+  const isManaged = (!!config?._author && !githubRepo) || !!config?._builtin;
   /** Built-in server (e.g. Automatic itself) — lock everything including delete. */
   const isBuiltin = !!config?._builtin;
 
@@ -677,6 +684,8 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                 {(() => {
                   const descriptor: AuthorDescriptor = isBuiltin
                     ? { type: "provider", name: "Automatic", url: "https://automatic.sh" }
+                    : githubRepo
+                    ? { type: "github", repo: githubRepo, url: config._author?.repository_url }
                     : config._author
                     ? { type: "provider", name: config._author.name, url: config._author.url ?? config._author.repository_url }
                     : { type: "local" };

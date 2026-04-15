@@ -101,7 +101,13 @@ pub fn read_project_template(name: &str) -> Result<String, String> {
     let dir = get_project_templates_dir()?;
     let path = dir.join(format!("{}.json", name));
     if path.exists() {
-        fs::read_to_string(path).map_err(|e| e.to_string())
+        let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let mut template: ProjectTemplate =
+            serde_json::from_str(&raw).map_err(|e| format!("Invalid template data: {}", e))?;
+        if template._author.is_none() {
+            template._author = super::remote_sources::get_provenance_author("template", name)?;
+        }
+        serde_json::to_string(&template).map_err(|e| e.to_string())
     } else {
         Err(format!("Project template '{}' not found", name))
     }
@@ -628,6 +634,7 @@ pub fn check_template_dependencies(template_name: &str) -> Result<String, String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::paths::with_test_home;
     use std::fs;
 
     fn empty_project() -> Project {
@@ -644,6 +651,38 @@ mod tests {
             name: name.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn read_project_template_hydrates_author_from_remote_provenance() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            let dir = get_project_templates_dir().expect("templates dir");
+            fs::create_dir_all(&dir).expect("create templates dir");
+            let template = ProjectTemplate {
+                name: "remote-template".into(),
+                description: "Remote template".into(),
+                ..Default::default()
+            };
+            fs::write(
+                dir.join("remote-template.json"),
+                serde_json::to_string_pretty(&template).expect("serialize template"),
+            )
+            .expect("write template");
+            super::super::remote_sources::record_provenance(
+                "template",
+                "remote-template",
+                "octocat/remote-templates",
+            )
+            .expect("record provenance");
+
+            let raw = read_project_template("remote-template").expect("read template");
+            let hydrated: ProjectTemplate = serde_json::from_str(&raw).expect("parse template");
+            let author = hydrated._author.expect("author metadata");
+
+            assert_eq!(author["type"].as_str(), Some("github"));
+            assert_eq!(author["repo"].as_str(), Some("octocat/remote-templates"));
+        });
     }
 
     // ── All asset types are merged ──────────────────────────────────────────

@@ -190,10 +190,20 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
 
             let plugin_id = super::app_plugins::plugin_id_for_skill(&name);
             let collection = collections.get(&name).cloned();
+            let source = registry.get(&name).cloned().or_else(|| {
+                super::remote_sources::get_provenance("skill", &name)
+                    .ok()
+                    .flatten()
+                    .map(|repo| SkillSource {
+                        source: repo.clone(),
+                        id: format!("{repo}/{name}"),
+                        kind: "github".to_string(),
+                    })
+            });
 
             SkillEntry {
                 sources: sources_list,
-                source: registry.get(&name).cloned(),
+                source,
                 has_resources,
                 license,
                 plugin_id,
@@ -1245,6 +1255,34 @@ mod tests {
 
         let result = scan_skills_dir(&skills_root).expect("scan");
         assert!(result.contains("manifest-skill"));
+    }
+
+    #[test]
+    fn list_skills_uses_remote_provenance_when_registry_is_missing() {
+        with_temp_home(|_| {
+            let skills_root = get_agents_skills_dir().expect("skills dir");
+            make_skill(
+                &skills_root,
+                "remote-skill",
+                "---\nname: remote-skill\n---\n",
+            );
+            super::super::remote_sources::record_provenance(
+                "skill",
+                "remote-skill",
+                "octocat/remote-skills",
+            )
+            .expect("record provenance");
+
+            let skill = list_skills()
+                .expect("list skills")
+                .into_iter()
+                .find(|entry| entry.name == "remote-skill")
+                .expect("remote skill entry");
+
+            let source = skill.source.expect("source metadata");
+            assert_eq!(source.source, "octocat/remote-skills");
+            assert_eq!(source.kind, "github");
+        });
     }
 
     // ── skill_has_resources ───────────────────────────────────────────────────

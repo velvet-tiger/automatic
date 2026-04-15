@@ -4,7 +4,7 @@ import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, FileText, Check, ScrollText, RefreshCw, FolderGit2, Copy, Lock } from "lucide-react";
 import { ICONS } from "../../lib/icons";
-import { AuthorSection } from "../../components/AuthorPanel";
+import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
 import { TokenPill } from "../../components/TokenPill";
 import {
   type AssetSecurityScanRecord,
@@ -27,6 +27,7 @@ interface Rule {
   name: string;
   content: string;
   plugin_id?: string;
+  _author?: AuthorDescriptor;
 }
 
 interface RuleProjectStatus {
@@ -53,6 +54,7 @@ export default function Rules() {
   const [error, setError] = useState<string | null>(null);
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
   const [currentScan, setCurrentScan] = useState<AssetSecurityScanRecord | null>(null);
+  const [ruleAuthor, setRuleAuthor] = useState<AuthorDescriptor | null>(null);
 
   // Projects referencing this rule
   const [referencingProjects, setReferencingProjects] = useState<string[]>([]);
@@ -100,6 +102,7 @@ export default function Rules() {
       setSelectedId(id);
       setDisplayName(rule.name);
       setRuleContent(rule.content);
+      setRuleAuthor(rule._author ?? null);
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
@@ -153,6 +156,7 @@ export default function Rules() {
         setIsEditing(false);
         setSelectedId(id);
         setDisplayName(name);
+        setRuleAuthor(null);
         setReferencingProjects([]);
         setProjectSyncState({});
         setSyncAllState("needs-sync");
@@ -200,6 +204,7 @@ export default function Rules() {
         setSelectedId(null);
         setDisplayName("");
         setRuleContent("");
+        setRuleAuthor(null);
         setIsEditing(false);
         setReferencingProjects([]);
         setProjectSyncState({});
@@ -227,6 +232,7 @@ export default function Rules() {
     setSyncAllState("needs-sync");
     setSecurityNotice(null);
     setCurrentScan(null);
+    setRuleAuthor(null);
   };
 
   const handleSyncProject = async (projectName: string) => {
@@ -539,7 +545,9 @@ export default function Rules() {
                     <div className="px-6 pt-4 pb-3 border-b border-border-strong/40">
                       <AuthorSection
                         descriptor={
-                          selectedId && isDefaultRule(selectedId)
+                          ruleAuthor
+                            ? ruleAuthor
+                            : selectedId && isDefaultRule(selectedId)
                             ? { type: "provider", name: "Automatic", url: "https://automatic.computer" }
                             : { type: "local" }
                         }

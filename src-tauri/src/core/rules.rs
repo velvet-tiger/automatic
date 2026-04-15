@@ -69,6 +69,9 @@ pub struct Rule {
     /// by the user.  The value is the plugin's unique id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin_id: Option<String>,
+    /// Optional author metadata hydrated from bundled metadata or provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub _author: Option<serde_json::Value>,
 }
 
 /// Summary returned by `list_rules` — machine name + display name.
@@ -158,7 +161,13 @@ pub fn read_rule(machine_name: &str) -> Result<String, String> {
     let path = dir.join(format!("{}.json", machine_name));
 
     if path.exists() {
-        fs::read_to_string(path).map_err(|e| e.to_string())
+        let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let mut rule: Rule =
+            serde_json::from_str(&raw).map_err(|e| format!("Invalid rule data: {}", e))?;
+        if rule._author.is_none() {
+            rule._author = super::remote_sources::get_provenance_author("rule", machine_name)?;
+        }
+        serde_json::to_string(&rule).map_err(|e| e.to_string())
     } else {
         Err(format!("Rule '{}' not found", machine_name))
     }
@@ -191,10 +200,16 @@ pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), St
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
 
+    let existing_author = fs::read_to_string(dir.join(format!("{}.json", machine_name)))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Rule>(&raw).ok())
+        .and_then(|existing| existing._author);
+
     let rule = Rule {
         name: name.to_string(),
         content: content.to_string(),
         plugin_id: None,
+        _author: existing_author,
     };
     let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
     let path = dir.join(format!("{}.json", machine_name));
@@ -261,6 +276,7 @@ pub fn save_plugin_rule(
         name: name.to_string(),
         content: content.to_string(),
         plugin_id: Some(plugin_id.to_string()),
+        _author: None,
     };
     let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
     let path = dir.join(format!("{}.json", machine_name));
@@ -316,6 +332,7 @@ pub fn install_default_rules_inner(force: bool) -> Result<(), String> {
                 name: display_name.to_string(),
                 content: content.to_string(),
                 plugin_id: None,
+                _author: None,
             };
             let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
             fs::write(&path, pretty).map_err(|e| e.to_string())?;
@@ -338,6 +355,7 @@ pub fn install_default_rules_inner(force: bool) -> Result<(), String> {
                 name: display_name.to_string(),
                 content: content.to_string(),
                 plugin_id: None,
+                _author: None,
             };
             if let Ok(pretty) = serde_json::to_string_pretty(&rule) {
                 let _ = fs::write(&path, pretty);
@@ -537,6 +555,7 @@ mod tests {
             name: display_name.to_string(),
             content: content.to_string(),
             plugin_id: None,
+            _author: None,
         };
         let json = serde_json::to_string_pretty(&rule).expect("serialize");
         fs::write(rules_dir.join(format!("{}.json", machine_name)), json).expect("write rule");
@@ -710,6 +729,28 @@ mod tests {
 
             assert!(err.contains("Blocked unsafe rule"));
             assert!(err.contains("prompt-override"));
+        });
+    }
+
+    #[test]
+    fn read_rule_hydrates_author_from_remote_provenance() {
+        with_temp_home(|_| {
+            let rules_dir = get_rules_dir().expect("rules dir");
+            fs::create_dir_all(&rules_dir).expect("create rules dir");
+            write_rule(&rules_dir, "remote-rule", "Remote Rule", "Use with care.");
+            super::super::remote_sources::record_provenance(
+                "rule",
+                "remote-rule",
+                "octocat/remote-rules",
+            )
+            .expect("record provenance");
+
+            let raw = read_rule("remote-rule").expect("read rule");
+            let rule: Rule = serde_json::from_str(&raw).expect("parse rule");
+            let author = rule._author.expect("author metadata");
+
+            assert_eq!(author["type"].as_str(), Some("github"));
+            assert_eq!(author["repo"].as_str(), Some("octocat/remote-rules"));
         });
     }
 

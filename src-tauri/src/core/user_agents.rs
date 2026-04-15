@@ -29,6 +29,9 @@ pub struct UserAgentEntry {
     /// Author display name: "Automatic", "You", "OpenAI", etc.
     #[serde(default)]
     pub author: String,
+    /// Remote GitHub repo when the agent was installed through the remote source pathway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_repo: Option<String>,
 }
 
 /// Validate an agent machine name: lowercase alphanumeric + hyphens only,
@@ -101,19 +104,22 @@ pub fn list_user_agents() -> Result<Vec<UserAgentEntry>, String> {
                         if let Ok(raw) = fs::read_to_string(&path) {
                             let name = extract_name_from_frontmatter(&raw)
                                 .unwrap_or_else(|| stem.to_string());
+                            let remote_repo = super::remote_sources::get_provenance("agent", stem)
+                                .ok()
+                                .flatten();
+                            let (source, author, source_repo) = if is_bundled_agent(stem) {
+                                ("automatic".to_string(), "Automatic".to_string(), None)
+                            } else if let Some(repo) = remote_repo {
+                                ("github".to_string(), repo.clone(), Some(repo))
+                            } else {
+                                ("local".to_string(), "You".to_string(), None)
+                            };
                             agents.push(UserAgentEntry {
                                 id: stem.to_string(),
                                 name,
-                                source: if is_bundled_agent(stem) {
-                                    "automatic".to_string()
-                                } else {
-                                    "local".to_string()
-                                },
-                                author: if is_bundled_agent(stem) {
-                                    "Automatic".to_string()
-                                } else {
-                                    "You".to_string()
-                                },
+                                source,
+                                author,
+                                source_repo,
                             });
                         }
                     }
@@ -240,6 +246,7 @@ fn discover_codex_agents() -> Vec<UserAgentEntry> {
                             name: agent.display_name,
                             source: "codex".to_string(),
                             author: "OpenAI".to_string(),
+                            source_repo: None,
                         });
                     }
                 }
@@ -617,6 +624,34 @@ mod tests {
             let err = result.expect_err("unsafe agent should be blocked");
             assert!(err.contains("prompt-override"), "unexpected error: {err}");
             assert!(!home.join(".automatic-dev/agents/unsafe-agent.md").exists());
+        });
+    }
+
+    #[test]
+    fn list_user_agents_marks_remote_provenance_as_github() {
+        with_temp_home(|_| {
+            let agents_dir = get_user_agents_dir().expect("agents dir");
+            fs::create_dir_all(&agents_dir).expect("create agents dir");
+            write_agent(
+                &agents_dir,
+                "remote-agent",
+                "---\nname: Remote Agent\n---\n\nBody",
+            );
+            super::super::remote_sources::record_provenance(
+                "agent",
+                "remote-agent",
+                "octocat/remote-agents",
+            )
+            .expect("record provenance");
+
+            let entry = list_user_agents()
+                .expect("list agents")
+                .into_iter()
+                .find(|agent| agent.id == "remote-agent")
+                .expect("remote agent");
+
+            assert_eq!(entry.source, "github");
+            assert_eq!(entry.source_repo.as_deref(), Some("octocat/remote-agents"));
         });
     }
 

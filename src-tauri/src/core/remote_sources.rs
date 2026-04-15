@@ -268,7 +268,10 @@ pub fn get_sources_dir() -> Result<PathBuf, String> {
 pub fn source_clone_path(repo: &str) -> Result<PathBuf, String> {
     let parts: Vec<&str> = repo.splitn(2, '/').collect();
     if parts.len() != 2 {
-        return Err(format!("Invalid repo format '{}', expected 'owner/repo'", repo));
+        return Err(format!(
+            "Invalid repo format '{}', expected 'owner/repo'",
+            repo
+        ));
     }
     Ok(get_sources_dir()?.join(parts[0]).join(parts[1]))
 }
@@ -310,10 +313,9 @@ pub fn list_sources() -> Result<Vec<RemoteSource>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read sources.json: {}", e))?;
-    serde_json::from_str(&raw)
-        .map_err(|e| format!("Failed to parse sources.json: {}", e))
+    let raw =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read sources.json: {}", e))?;
+    serde_json::from_str(&raw).map_err(|e| format!("Failed to parse sources.json: {}", e))
 }
 
 /// Read a single source by repo slug.
@@ -326,13 +328,11 @@ pub fn get_source(repo: &str) -> Result<Option<RemoteSource>, String> {
 fn save_sources(sources: &[RemoteSource]) -> Result<(), String> {
     let path = sources_registry_path()?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
     let json = serde_json::to_string_pretty(sources)
         .map_err(|e| format!("Failed to serialize sources: {}", e))?;
-    fs::write(&path, json)
-        .map_err(|e| format!("Failed to write sources.json: {}", e))
+    fs::write(&path, json).map_err(|e| format!("Failed to write sources.json: {}", e))
 }
 
 /// Add or update a source in the registry.
@@ -363,21 +363,18 @@ pub fn read_provenance() -> Result<HashMap<String, String>, String> {
     }
     let raw = fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read source-provenance.json: {}", e))?;
-    serde_json::from_str(&raw)
-        .map_err(|e| format!("Failed to parse source-provenance.json: {}", e))
+    serde_json::from_str(&raw).map_err(|e| format!("Failed to parse source-provenance.json: {}", e))
 }
 
 /// Save the provenance map.
 fn save_provenance(prov: &HashMap<String, String>) -> Result<(), String> {
     let path = provenance_path()?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
     let json = serde_json::to_string_pretty(prov)
         .map_err(|e| format!("Failed to serialize provenance: {}", e))?;
-    fs::write(&path, json)
-        .map_err(|e| format!("Failed to write source-provenance.json: {}", e))
+    fs::write(&path, json).map_err(|e| format!("Failed to write source-provenance.json: {}", e))
 }
 
 /// Record provenance for a resource.
@@ -393,6 +390,15 @@ pub fn get_provenance(resource_type: &str, name: &str) -> Result<Option<String>,
     let prov = read_provenance()?;
     let key = format!("{}:{}", resource_type, name);
     Ok(prov.get(&key).cloned())
+}
+
+/// Get the GitHub author descriptor for a resource based on recorded provenance.
+pub fn get_provenance_author(
+    resource_type: &str,
+    name: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    Ok(get_provenance(resource_type, name)?
+        .map(|repo| serde_json::json!({ "type": "github", "repo": repo })))
 }
 
 /// Remove provenance for a resource.
@@ -429,11 +435,7 @@ pub fn git_clone_source(repo: &str, pin: &PinningConfig) -> Result<PathBuf, Stri
 
     let url = format!("https://github.com/{}.git", repo);
 
-    let mut args = vec![
-        "clone".to_string(),
-        "--depth".to_string(),
-        "1".to_string(),
-    ];
+    let mut args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
 
     // For branch/tag, use --branch flag
     match pin.strategy.as_str() {
@@ -520,8 +522,7 @@ pub fn git_update_source(repo: &str) -> Result<String, String> {
 
     if !output.status.success() {
         // If ff-only fails, re-clone
-        let source = get_source(repo)?
-            .ok_or_else(|| format!("Source not registered: {}", repo))?;
+        let source = get_source(repo)?.ok_or_else(|| format!("Source not registered: {}", repo))?;
         git_clone_source(repo, &source.pin)?;
     }
 
@@ -539,13 +540,12 @@ pub fn parse_manifest(base_dir: &Path) -> Result<AutomaticManifest, String> {
     if automatic_path.exists() {
         let raw = fs::read_to_string(&automatic_path)
             .map_err(|e| format!("Failed to read automatic.json: {}", e))?;
-        serde_json::from_str(&raw)
-            .map_err(|e| format!("Failed to parse automatic.json: {}", e))
+        serde_json::from_str(&raw).map_err(|e| format!("Failed to parse automatic.json: {}", e))
     } else if skill_json_path.exists() {
         let raw = fs::read_to_string(&skill_json_path)
             .map_err(|e| format!("Failed to read skill.json: {}", e))?;
-        let skills_json: SkillsJson = serde_json::from_str(&raw)
-            .map_err(|e| format!("Failed to parse skill.json: {}", e))?;
+        let skills_json: SkillsJson =
+            serde_json::from_str(&raw).map_err(|e| format!("Failed to parse skill.json: {}", e))?;
         Ok(AutomaticManifest::from(skills_json))
     } else {
         Err(format!(
@@ -607,15 +607,19 @@ pub fn fetch_source_manifest(
 }
 
 /// Resolve all skill entries from the skills section.
-fn resolve_skills(source_dir: &Path, skills: &SkillsSection) -> Result<Vec<SkillsJsonSkill>, String> {
+fn resolve_skills(
+    source_dir: &Path,
+    skills: &SkillsSection,
+) -> Result<Vec<SkillsJsonSkill>, String> {
     let mut result = Vec::new();
 
     // Load from skill.json reference if provided
     if let Some(ref sj_path) = skills.skill_json {
         let full_path = source_dir.join(sj_path);
         if full_path.exists() {
-            let raw = fs::read_to_string(&full_path)
-                .map_err(|e| format!("Failed to read referenced skill.json at {}: {}", sj_path, e))?;
+            let raw = fs::read_to_string(&full_path).map_err(|e| {
+                format!("Failed to read referenced skill.json at {}: {}", sj_path, e)
+            })?;
             let sj: SkillsJson = serde_json::from_str(&raw)
                 .map_err(|e| format!("Failed to parse referenced skill.json: {}", e))?;
             result.extend(sj.skills);
@@ -692,7 +696,10 @@ pub fn install_source(
 ) -> Result<InstallResult, String> {
     let clone_path = source_clone_path(repo)?;
     if !clone_path.exists() {
-        return Err(format!("Source not cloned. Call fetch_source_manifest first: {}", repo));
+        return Err(format!(
+            "Source not cloned. Call fetch_source_manifest first: {}",
+            repo
+        ));
     }
 
     let base_dir = resolve_base_dir(repo, directory)?;
@@ -713,7 +720,10 @@ pub fn install_source(
             match install_skill(&base_dir, skill) {
                 Ok(()) => {
                     record_provenance("skill", &skill.name, repo)?;
-                    installed.entry("skills".to_string()).or_default().push(skill.name.clone());
+                    installed
+                        .entry("skills".to_string())
+                        .or_default()
+                        .push(skill.name.clone());
                 }
                 Err(e) => {
                     warnings.push(format!("Failed to install skill '{}': {}", skill.name, e));
@@ -731,10 +741,16 @@ pub fn install_source(
         match install_mcp_server(&base_dir, server) {
             Ok(()) => {
                 record_provenance("mcp_server", &server.name, repo)?;
-                installed.entry("mcp_servers".to_string()).or_default().push(server.name.clone());
+                installed
+                    .entry("mcp_servers".to_string())
+                    .or_default()
+                    .push(server.name.clone());
             }
             Err(e) => {
-                warnings.push(format!("Failed to install MCP server '{}': {}", server.name, e));
+                warnings.push(format!(
+                    "Failed to install MCP server '{}': {}",
+                    server.name, e
+                ));
                 skipped.push(format!("mcp_server:{}", server.name));
             }
         }
@@ -748,7 +764,10 @@ pub fn install_source(
         match install_rule(&base_dir, rule) {
             Ok(()) => {
                 record_provenance("rule", &rule.name, repo)?;
-                installed.entry("rules".to_string()).or_default().push(rule.name.clone());
+                installed
+                    .entry("rules".to_string())
+                    .or_default()
+                    .push(rule.name.clone());
             }
             Err(e) => {
                 warnings.push(format!("Failed to install rule '{}': {}", rule.name, e));
@@ -765,10 +784,16 @@ pub fn install_source(
         match install_template(&base_dir, template) {
             Ok(()) => {
                 record_provenance("template", &template.name, repo)?;
-                installed.entry("templates".to_string()).or_default().push(template.name.clone());
+                installed
+                    .entry("templates".to_string())
+                    .or_default()
+                    .push(template.name.clone());
             }
             Err(e) => {
-                warnings.push(format!("Failed to install template '{}': {}", template.name, e));
+                warnings.push(format!(
+                    "Failed to install template '{}': {}",
+                    template.name, e
+                ));
                 skipped.push(format!("template:{}", template.name));
             }
         }
@@ -782,7 +807,10 @@ pub fn install_source(
         match install_command(&base_dir, cmd) {
             Ok(()) => {
                 record_provenance("command", &cmd.name, repo)?;
-                installed.entry("commands".to_string()).or_default().push(cmd.name.clone());
+                installed
+                    .entry("commands".to_string())
+                    .or_default()
+                    .push(cmd.name.clone());
             }
             Err(e) => {
                 warnings.push(format!("Failed to install command '{}': {}", cmd.name, e));
@@ -799,7 +827,10 @@ pub fn install_source(
         match install_agent(&base_dir, agent) {
             Ok(()) => {
                 record_provenance("agent", &agent.name, repo)?;
-                installed.entry("agents".to_string()).or_default().push(agent.name.clone());
+                installed
+                    .entry("agents".to_string())
+                    .or_default()
+                    .push(agent.name.clone());
             }
             Err(e) => {
                 warnings.push(format!("Failed to install agent '{}': {}", agent.name, e));
@@ -816,7 +847,10 @@ pub fn install_source(
                 collection_slugs.push(slug);
             }
             Err(e) => {
-                warnings.push(format!("Failed to install collection '{}': {}", coll_ref.path, e));
+                warnings.push(format!(
+                    "Failed to install collection '{}': {}",
+                    coll_ref.path, e
+                ));
             }
         }
     }
@@ -847,8 +881,7 @@ pub fn install_source(
 
 /// Remove a source and all resources it provided.
 pub fn remove_source(repo: &str) -> Result<Vec<String>, String> {
-    let source = get_source(repo)?
-        .ok_or_else(|| format!("Source not registered: {}", repo))?;
+    let source = get_source(repo)?.ok_or_else(|| format!("Source not registered: {}", repo))?;
 
     let mut removed = Vec::new();
 
@@ -860,7 +893,10 @@ pub fn remove_source(repo: &str) -> Result<Vec<String>, String> {
                     removed.push(format!("{}:{}", resource_type, name));
                 }
                 Err(e) => {
-                    eprintln!("[remote_sources] Failed to remove {}:{}: {}", resource_type, name, e);
+                    eprintln!(
+                        "[remote_sources] Failed to remove {}:{}: {}",
+                        resource_type, name, e
+                    );
                 }
             }
         }
@@ -883,8 +919,7 @@ pub fn remove_source(repo: &str) -> Result<Vec<String>, String> {
 
 /// Update a source: pull latest and re-install changed resources.
 pub fn update_source(repo: &str) -> Result<UpdateResult, String> {
-    let existing = get_source(repo)?
-        .ok_or_else(|| format!("Source not registered: {}", repo))?;
+    let existing = get_source(repo)?.ok_or_else(|| format!("Source not registered: {}", repo))?;
 
     let old_version = existing.version.clone();
     let old_resources = existing.resources.clone();
@@ -908,7 +943,9 @@ pub fn update_source(repo: &str) -> Result<UpdateResult, String> {
     // Determine what was removed (in old but not in new)
     let mut removed: HashMap<String, Vec<String>> = HashMap::new();
     for (resource_type, old_names) in &old_resources {
-        let new_names = result.installed.get(resource_type)
+        let new_names = result
+            .installed
+            .get(resource_type)
             .cloned()
             .unwrap_or_default();
         for name in old_names {
@@ -916,7 +953,10 @@ pub fn update_source(repo: &str) -> Result<UpdateResult, String> {
                 // Resource was removed from manifest
                 let _ = remove_installed_resource(resource_type, name);
                 let _ = remove_provenance(resource_type, name);
-                removed.entry(resource_type.clone()).or_default().push(name.clone());
+                removed
+                    .entry(resource_type.clone())
+                    .or_default()
+                    .push(name.clone());
             }
         }
     }
@@ -977,11 +1017,9 @@ fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill) -> Result<(), Strin
 
     let dest = super::paths::get_agents_skills_dir()?.join(&skill.name);
     if dest.exists() {
-        fs::remove_dir_all(&dest)
-            .map_err(|e| format!("Failed to remove existing skill: {}", e))?;
+        fs::remove_dir_all(&dest).map_err(|e| format!("Failed to remove existing skill: {}", e))?;
     }
-    fs::create_dir_all(&dest)
-        .map_err(|e| format!("Failed to create skill directory: {}", e))?;
+    fs::create_dir_all(&dest).map_err(|e| format!("Failed to create skill directory: {}", e))?;
 
     copy_dir_recursive(&skill_source, &dest)?;
     Ok(())
@@ -992,9 +1030,9 @@ fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill) -> Result<(), Strin
 /// blocking finding as an `Err`.
 fn scan_skill_tree(root: &Path, skill_name: &str) -> Result<(), String> {
     fn walk(root: &Path, dir: &Path, skill_name: &str) -> Result<(), String> {
-        for entry in fs::read_dir(dir).map_err(|e| {
-            format!("Failed to read skill directory {}: {}", dir.display(), e)
-        })? {
+        for entry in fs::read_dir(dir)
+            .map_err(|e| format!("Failed to read skill directory {}: {}", dir.display(), e))?
+        {
             let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
             let path = entry.path();
             let file_type = entry
@@ -1038,7 +1076,11 @@ fn scan_skill_tree(root: &Path, skill_name: &str) -> Result<(), String> {
             } else {
                 AssetKind::CompanionFile
             };
-            enforce_text_asset(kind, &format!("skill '{}' file '{}'", skill_name, rel), &content)?;
+            enforce_text_asset(
+                kind,
+                &format!("skill '{}' file '{}'", skill_name, rel),
+                &content,
+            )?;
         }
         Ok(())
     }
@@ -1067,8 +1109,7 @@ fn install_rule(source_dir: &Path, rule: &ManifestResource) -> Result<(), String
     let dest = rules_dir.join(format!("{}.json", rule.name));
     let json_str = serde_json::to_string_pretty(&rule_json)
         .map_err(|e| format!("Failed to serialize rule: {}", e))?;
-    fs::write(&dest, json_str)
-        .map_err(|e| format!("Failed to write rule: {}", e))
+    fs::write(&dest, json_str).map_err(|e| format!("Failed to write rule: {}", e))
 }
 
 /// Install a template: copy JSON file to project_templates dir.
@@ -1092,8 +1133,7 @@ fn install_template(source_dir: &Path, template: &ManifestResource) -> Result<()
         .map_err(|e| format!("Failed to create project_templates directory: {}", e))?;
 
     let dest = templates_dir.join(format!("{}.json", template.name));
-    fs::write(&dest, content)
-        .map_err(|e| format!("Failed to write template: {}", e))
+    fs::write(&dest, content).map_err(|e| format!("Failed to write template: {}", e))
 }
 
 /// Install an MCP server config: copy JSON to mcp_servers dir.
@@ -1120,8 +1160,7 @@ fn install_mcp_server(source_dir: &Path, server: &ManifestResource) -> Result<()
         .map_err(|e| format!("Failed to create mcp_servers directory: {}", e))?;
 
     let dest = servers_dir.join(format!("{}.json", server.name));
-    fs::write(&dest, content)
-        .map_err(|e| format!("Failed to write MCP server config: {}", e))
+    fs::write(&dest, content).map_err(|e| format!("Failed to write MCP server config: {}", e))
 }
 
 /// Install a command: copy .md file to commands dir.
@@ -1141,8 +1180,7 @@ fn install_command(source_dir: &Path, cmd: &ManifestResource) -> Result<(), Stri
         .map_err(|e| format!("Failed to create commands directory: {}", e))?;
 
     let dest = commands_dir.join(format!("{}.md", cmd.name));
-    fs::write(&dest, content)
-        .map_err(|e| format!("Failed to write command: {}", e))
+    fs::write(&dest, content).map_err(|e| format!("Failed to write command: {}", e))
 }
 
 /// Install an agent: copy .md file to agents dir.
@@ -1162,8 +1200,7 @@ fn install_agent(source_dir: &Path, agent: &ManifestResource) -> Result<(), Stri
         .map_err(|e| format!("Failed to create agents directory: {}", e))?;
 
     let dest = agents_dir.join(format!("{}.md", agent.name));
-    fs::write(&dest, content)
-        .map_err(|e| format!("Failed to write agent: {}", e))
+    fs::write(&dest, content).map_err(|e| format!("Failed to write agent: {}", e))
 }
 
 /// Install a collection: parse JSON and append to marketplace collections.
@@ -1175,7 +1212,8 @@ fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<Str
     let collection: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("Collection '{}' is not valid JSON: {}", coll_ref.path, e))?;
 
-    let slug = collection.get("slug")
+    let slug = collection
+        .get("slug")
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("Collection at '{}' missing 'slug' field", coll_ref.path))?
         .to_string();
@@ -1195,9 +1233,7 @@ fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<Str
     };
 
     // Remove existing entry with same slug, then add new one
-    collections.retain(|c| {
-        c.get("slug").and_then(|v| v.as_str()) != Some(&slug)
-    });
+    collections.retain(|c| c.get("slug").and_then(|v| v.as_str()) != Some(&slug));
     collections.push(collection);
 
     let json = serde_json::to_string_pretty(&collections)
@@ -1214,43 +1250,48 @@ fn remove_installed_resource(resource_type: &str, name: &str) -> Result<(), Stri
         "skills" | "skill" => {
             let path = super::paths::get_agents_skills_dir()?.join(name);
             if path.exists() {
-                fs::remove_dir_all(&path)
-                    .map_err(|e| format!("Failed to remove skill: {}", e))?;
+                fs::remove_dir_all(&path).map_err(|e| format!("Failed to remove skill: {}", e))?;
             }
         }
         "mcp_servers" | "mcp_server" => {
-            let path = get_automatic_dir()?.join("mcp_servers").join(format!("{}.json", name));
+            let path = get_automatic_dir()?
+                .join("mcp_servers")
+                .join(format!("{}.json", name));
             if path.exists() {
                 fs::remove_file(&path)
                     .map_err(|e| format!("Failed to remove MCP server: {}", e))?;
             }
         }
         "rules" | "rule" => {
-            let path = get_automatic_dir()?.join("rules").join(format!("{}.json", name));
+            let path = get_automatic_dir()?
+                .join("rules")
+                .join(format!("{}.json", name));
             if path.exists() {
-                fs::remove_file(&path)
-                    .map_err(|e| format!("Failed to remove rule: {}", e))?;
+                fs::remove_file(&path).map_err(|e| format!("Failed to remove rule: {}", e))?;
             }
         }
         "templates" | "template" => {
-            let path = get_automatic_dir()?.join("project_templates").join(format!("{}.json", name));
+            let path = get_automatic_dir()?
+                .join("project_templates")
+                .join(format!("{}.json", name));
             if path.exists() {
-                fs::remove_file(&path)
-                    .map_err(|e| format!("Failed to remove template: {}", e))?;
+                fs::remove_file(&path).map_err(|e| format!("Failed to remove template: {}", e))?;
             }
         }
         "commands" | "command" => {
-            let path = get_automatic_dir()?.join("commands").join(format!("{}.md", name));
+            let path = get_automatic_dir()?
+                .join("commands")
+                .join(format!("{}.md", name));
             if path.exists() {
-                fs::remove_file(&path)
-                    .map_err(|e| format!("Failed to remove command: {}", e))?;
+                fs::remove_file(&path).map_err(|e| format!("Failed to remove command: {}", e))?;
             }
         }
         "agents" | "agent" => {
-            let path = get_automatic_dir()?.join("agents").join(format!("{}.md", name));
+            let path = get_automatic_dir()?
+                .join("agents")
+                .join(format!("{}.md", name));
             if path.exists() {
-                fs::remove_file(&path)
-                    .map_err(|e| format!("Failed to remove agent: {}", e))?;
+                fs::remove_file(&path).map_err(|e| format!("Failed to remove agent: {}", e))?;
             }
         }
         _ => {
@@ -1281,8 +1322,7 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), String> {
             }
             copy_dir_recursive(&path, &dest_path)?;
         } else {
-            fs::copy(&path, &dest_path)
-                .map_err(|e| format!("Failed to copy file: {}", e))?;
+            fs::copy(&path, &dest_path).map_err(|e| format!("Failed to copy file: {}", e))?;
         }
     }
 
@@ -1301,11 +1341,13 @@ pub struct InstallUriParams {
 
 /// Parse an automatic:// URI and extract install parameters.
 pub fn parse_install_uri(uri: &str) -> Result<InstallUriParams, String> {
-    let parsed = url::Url::parse(uri)
-        .map_err(|e| format!("Invalid URI: {}", e))?;
+    let parsed = url::Url::parse(uri).map_err(|e| format!("Invalid URI: {}", e))?;
 
     if parsed.scheme() != "automatic" {
-        return Err(format!("Expected 'automatic' scheme, got '{}'", parsed.scheme()));
+        return Err(format!(
+            "Expected 'automatic' scheme, got '{}'",
+            parsed.scheme()
+        ));
     }
 
     if parsed.host_str() != Some("install") {
@@ -1329,7 +1371,10 @@ pub fn parse_install_uri(uri: &str) -> Result<InstallUriParams, String> {
 
     // Validate repo format
     if repo.split('/').count() != 2 {
-        return Err(format!("Invalid repo format '{}', expected 'owner/repo'", repo));
+        return Err(format!(
+            "Invalid repo format '{}', expected 'owner/repo'",
+            repo
+        ));
     }
 
     Ok(InstallUriParams {
@@ -1361,7 +1406,9 @@ mod tests {
 
     #[test]
     fn test_parse_install_uri_with_dir() {
-        let params = parse_install_uri("automatic://install?repo=acme/monorepo&dir=packages/ai-config").unwrap();
+        let params =
+            parse_install_uri("automatic://install?repo=acme/monorepo&dir=packages/ai-config")
+                .unwrap();
         assert_eq!(params.repo, "acme/monorepo");
         assert_eq!(params.git_ref, None);
         assert_eq!(params.directory, Some("packages/ai-config".to_string()));
@@ -1369,7 +1416,9 @@ mod tests {
 
     #[test]
     fn test_parse_install_uri_with_ref_and_dir() {
-        let params = parse_install_uri("automatic://install?repo=acme/monorepo&ref=v2.0.0&dir=packages/ai").unwrap();
+        let params =
+            parse_install_uri("automatic://install?repo=acme/monorepo&ref=v2.0.0&dir=packages/ai")
+                .unwrap();
         assert_eq!(params.repo, "acme/monorepo");
         assert_eq!(params.git_ref, Some("v2.0.0".to_string()));
         assert_eq!(params.directory, Some("packages/ai".to_string()));
