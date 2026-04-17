@@ -380,7 +380,7 @@ async fn send_http_response(stream: &mut tokio::net::TcpStream, html: &str) {
 /// Loops to handle browser preflight/favicon requests, only returning
 /// when the real `/callback` with `code` and `state` params arrives.
 /// Returns `(code, state)`.
-async fn wait_for_callback(listener: TcpListener) -> Result<(String, String), String> {
+pub(crate) async fn wait_for_callback(listener: TcpListener) -> Result<(String, String), String> {
     // Timeout after 5 minutes to avoid hanging forever.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300);
 

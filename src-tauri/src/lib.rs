@@ -20,6 +20,7 @@
 // targeted allowances keep the existing codebase releasable without forcing a
 // broad, unrelated refactor during release prep.
 
+pub mod account;
 pub mod activity;
 pub mod agent;
 pub mod context;
@@ -170,6 +171,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            account_login,
+            account_logout,
+            account_status,
             ai_chat,
             ai_chat_with_tools,
             ai_list_models,

@@ -1,3 +1,4 @@
+mod account;
 mod activity;
 mod agents;
 mod ai;
@@ -28,6 +29,7 @@ mod remote_sources;
 mod whats_new;
 
 pub use crate::plugins::build::commands::*;
+pub use account::*;
 pub use activity::*;
 pub use community::*;
 pub use agents::*;

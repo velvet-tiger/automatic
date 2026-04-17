@@ -13,9 +13,21 @@ import { MarkdownPreview } from "../components/MarkdownPreview";
 import TokenEstimator from "./utilities/TokenEstimator";
 import AiPlayground from "./utilities/AiPlayground";
 import { flag } from "../lib/flags";
-import { Bot, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw, Hash, FlaskConical } from "lucide-react";
+import { Bot, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw, Hash, FlaskConical, UserCircle, LogOut } from "lucide-react";
 
-type SettingsPage = "sync" | "agents" | "appearance" | "app" | "plugins" | "support" | "token-estimator" | "ai-playground";
+type SettingsPage = "account" | "sync" | "agents" | "appearance" | "app" | "plugins" | "support" | "token-estimator" | "ai-playground";
+
+interface AccountProfile {
+  user_id: string;
+  email: string | null;
+  display_name: string;
+}
+
+interface AccountStatus {
+  signed_in: boolean;
+  profile?: AccountProfile;
+  webapp_url: string;
+}
 
 interface AppSettings {
   sync_mode: string;
@@ -24,6 +36,16 @@ interface AppSettings {
 }
 
 const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; description: string }[] = [
+  ...(flag("authentication")
+    ? [
+        {
+          id: "account" as SettingsPage,
+          label: "Account",
+          icon: <UserCircle size={15} />,
+          description: "Sign in to tryautomatic.app",
+        },
+      ]
+    : []),
   {
     id: "sync",
     label: "Sync",
@@ -86,7 +108,7 @@ interface SettingsProps {
 
 export default function Settings({ onOpenWizard, initialPage, onInitialPageConsumed }: SettingsProps) {
   const [activePage, setActivePage] = useState<SettingsPage>(() => {
-    const valid: SettingsPage[] = ["sync", "agents", "appearance", "app", "plugins", "support", "token-estimator", "ai-playground"];
+    const valid: SettingsPage[] = ["account", "sync", "agents", "appearance", "app", "plugins", "support", "token-estimator", "ai-playground"];
     if (initialPage && valid.includes(initialPage as SettingsPage)) {
       return initialPage as SettingsPage;
     }
@@ -95,7 +117,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
   // Handle deep-link navigation when initialPage changes after mount
   useEffect(() => {
     if (!initialPage) return;
-    const valid: SettingsPage[] = ["sync", "agents", "appearance", "app", "plugins", "support", "token-estimator", "ai-playground"];
+    const valid: SettingsPage[] = ["account", "sync", "agents", "appearance", "app", "plugins", "support", "token-estimator", "ai-playground"];
     if (valid.includes(initialPage as SettingsPage)) {
       setActivePage(initialPage as SettingsPage);
     }
@@ -121,6 +143,11 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
   const [newsletterEmail, setNewsletterEmail] = useState("");
   const [unsubscribeStatus, setUnsubscribeStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [unsubscribeError, setUnsubscribeError] = useState("");
+
+  // ── Account (webapp sign-in) state ──────────────────────────────────────
+  const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
+  const [accountBusy, setAccountBusy] = useState<"idle" | "signing-in" | "signing-out">("idle");
+  const [accountError, setAccountError] = useState("");
 
   const [currentTheme, setCurrentTheme] = useState<Theme>(() => {
     let saved = localStorage.getItem("automatic.theme") as string;
@@ -184,7 +211,46 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
     getVersion()
       .then(setAppVersion)
       .catch(() => {});
+
+    if (flag("authentication")) {
+      invoke<AccountStatus>("account_status")
+        .then(setAccountStatus)
+        .catch((e) => console.error("Failed to read account status", e));
+    }
   }, []);
+
+  async function handleSignIn() {
+    setAccountBusy("signing-in");
+    setAccountError("");
+    try {
+      const profile = await invoke<AccountProfile>("account_login");
+      setAccountStatus((prev) => ({
+        signed_in: true,
+        profile,
+        webapp_url: prev?.webapp_url ?? "",
+      }));
+    } catch (e) {
+      setAccountError(String(e));
+    } finally {
+      setAccountBusy("idle");
+    }
+  }
+
+  async function handleSignOut() {
+    setAccountBusy("signing-out");
+    setAccountError("");
+    try {
+      await invoke("account_logout");
+      setAccountStatus((prev) => ({
+        signed_in: false,
+        webapp_url: prev?.webapp_url ?? "",
+      }));
+    } catch (e) {
+      setAccountError(String(e));
+    } finally {
+      setAccountBusy("idle");
+    }
+  }
 
   async function persistSettings(updated: AppSettings) {
     try {
@@ -377,6 +443,70 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
       {/* Content area */}
       <div className="flex-1 overflow-y-auto h-full">
         <div className="p-8 max-w-2xl">
+
+          {/* ── Account page (gated by `authentication` flag) ─────────── */}
+          {activePage === "account" && flag("authentication") && (
+            <div>
+              <h2 className="text-lg font-medium mb-1 text-text-base">Account</h2>
+              <p className="text-[13px] text-text-muted mb-6">
+                Sign in to your Automatic account to sync your library to the cloud.
+              </p>
+
+              {accountStatus === null ? (
+                <div className="text-[13px] text-text-muted">Loading…</div>
+              ) : accountStatus.signed_in && accountStatus.profile ? (
+                <div className="p-4 rounded-lg border border-border-strong/40 bg-bg-input-dark mb-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-medium text-text-base truncate">
+                        {accountStatus.profile.display_name}
+                      </div>
+                      {accountStatus.profile.email && (
+                        <div className="text-[12px] text-text-muted truncate">
+                          {accountStatus.profile.email}
+                        </div>
+                      )}
+                      <div className="text-[11px] text-text-muted/80 mt-2">
+                        Signed in to {accountStatus.webapp_url}
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleSignOut}
+                      disabled={accountBusy !== "idle"}
+                      className="flex items-center gap-1.5 shrink-0 px-3 py-1.5 rounded-lg border border-border-strong/40 bg-bg-input-dark text-[12px] text-text-muted hover:border-danger hover:text-danger hover:bg-danger/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <LogOut size={13} />
+                      {accountBusy === "signing-out" ? "Signing out…" : "Sign out"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 rounded-lg border border-border-strong/40 bg-bg-input-dark mb-4">
+                  <p className="text-[13px] text-text-muted mb-3 leading-relaxed">
+                    You are not signed in. Signing in opens your browser to
+                    authorize Automatic desktop via{" "}
+                    <span className="text-text-base font-mono text-[12px]">
+                      {accountStatus.webapp_url}
+                    </span>
+                    .
+                  </p>
+                  <button
+                    onClick={handleSignIn}
+                    disabled={accountBusy !== "idle"}
+                    className="px-4 py-2 rounded-lg bg-brand hover:bg-brand-hover text-white text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {accountBusy === "signing-in" ? "Waiting for browser…" : "Sign in with Automatic"}
+                  </button>
+                </div>
+              )}
+
+              {accountError && (
+                <div className="p-3 rounded-lg border border-danger bg-danger/10 text-[12px] text-danger">
+                  {accountError}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Sync page ──────────────────────────────────────────── */}
           {activePage === "sync" && (
