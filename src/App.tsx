@@ -459,18 +459,16 @@ function App() {
       >
         {/* Left: sidebar toggle (after traffic-light clearance) */}
         <div className="pl-20 relative z-10">
-          <button
-            onClick={() => setSidebarCollapsed((c) => !c)}
-            className={`flex items-center justify-center w-[26px] h-[26px] rounded-md transition-colors ${
-              sidebarCollapsed
-                ? "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
-                : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
-            }`}
-            aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-            title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
-          >
-            <PanelLeft size={14} />
-          </button>
+          {activeTab !== "settings" && (
+            <button
+              onClick={() => setSidebarCollapsed((c) => !c)}
+              className="flex items-center justify-center w-[26px] h-[26px] rounded-md transition-colors text-text-muted hover:bg-bg-sidebar hover:text-text-base"
+              aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+              title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+            >
+              <PanelLeft size={14} />
+            </button>
+          )}
         </div>
 
         {/* Center: section toggle pill */}
@@ -543,7 +541,7 @@ function App() {
       {/* ── Sidebar + Main content ────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-      <aside className={`flex-shrink-0 bg-bg-input border-r border-border-strong/40 flex flex-col transition-all duration-200 overflow-hidden ${sidebarCollapsed ? "w-0 border-r-0" : "w-[270px]"}`}>
+      <aside className={`flex-shrink-0 bg-bg-input border-r border-border-strong/40 flex flex-col transition-all duration-200 overflow-hidden ${sidebarCollapsed || activeTab === "settings" ? "w-0 border-r-0" : "w-[270px]"}`}>
 
         {/* Section-specific navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-3 custom-scrollbar">
