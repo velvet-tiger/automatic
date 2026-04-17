@@ -82,6 +82,11 @@ pub fn read_project(name: &str) -> Result<String, String> {
         registry_project
     };
 
+    // Mark the project if its directory no longer exists on disk.
+    if !project.directory.is_empty() && !std::path::Path::new(&project.directory).exists() {
+        project.directory_missing = true;
+    }
+
     // Restore: write project-level metadata back into user-level registries
     // for any entries that are missing locally.  This is the key portability
     // mechanism — when a project arrives on a new machine, its resolved data
@@ -90,8 +95,10 @@ pub fn read_project(name: &str) -> Result<String, String> {
 
     // Enrich with current user-level metadata and persist so the project
     // config stays up-to-date on disk (important for portability).
+    // Skip the write-back when the directory is missing — we cannot write to
+    // a path that does not exist, and doing so would recreate the folder.
     enrich_project(&mut project);
-    if !project.directory.is_empty() {
+    if !project.directory.is_empty() && !project.directory_missing {
         let config_path = project_config_path(&project.directory);
         if let Ok(pretty) = serde_json::to_string_pretty(&project) {
             let _ = fs::write(&config_path, &pretty);
@@ -312,6 +319,8 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
 
     let mut project: Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
+    // directory_missing is a transient runtime flag — never persist it.
+    project.directory_missing = false;
     enrich_project(&mut project);
     let pretty = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
 

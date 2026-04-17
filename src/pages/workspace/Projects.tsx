@@ -143,6 +143,8 @@ interface Project {
   custom_skills?: CustomSkill[];
   /** When true, rules are written to .automatic/instructions/ and the instruction file becomes an index. */
   instructions_index_mode?: boolean;
+  /** Computed by backend at read-time: true when directory is set but no longer exists on disk. */
+  directory_missing?: boolean;
 }
 
 interface AgentInfo {
@@ -1588,9 +1590,12 @@ function ProjectCard({
   onSelect: (name: string) => void;
 }) {
   const isDrifted = drift === true;
+  const isMissingDir = project?.directory_missing === true;
   const isConfigured = !!(project?.directory && (project?.agents?.length ?? 0) > 0);
 
-  const borderClass = isDrifted
+  const borderClass = isMissingDir
+    ? "border-danger/30 hover:border-danger/50"
+    : isDrifted
     ? "border-warning/30 hover:border-warning/50"
     : "border-border-strong/40 hover:border-border-strong/70";
 
@@ -1616,15 +1621,21 @@ function ProjectCard({
       <div className="flex items-start gap-3 pr-20">
         <div
           className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border ${
-            isDrifted
+            isMissingDir
+              ? "border-danger/30 bg-danger/10"
+              : isDrifted
               ? "border-warning/30 bg-warning/10"
               : "border-brand/20 bg-brand/10"
           }`}
         >
-          <FolderOpen
-            size={16}
-            className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-brand"}`}
-          />
+          {isMissingDir ? (
+            <AlertCircle size={16} className="flex-shrink-0 text-danger" />
+          ) : (
+            <FolderOpen
+              size={16}
+              className={`flex-shrink-0 ${isDrifted ? "text-warning" : "text-brand"}`}
+            />
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-[14px] font-semibold text-text-base leading-snug truncate">{name}</div>
@@ -1648,6 +1659,14 @@ function ProjectCard({
         <div className="flex items-center gap-1.5 text-[11px] text-warning/70">
           <AlertCircle size={10} className="flex-shrink-0" />
           <span>No agents configured</span>
+        </div>
+      )}
+
+      {/* Missing directory warning */}
+      {isMissingDir && (
+        <div className="flex items-center gap-1.5 text-[11px] text-danger/80">
+          <AlertCircle size={10} className="flex-shrink-0" />
+          <span>Folder not found — relink required</span>
         </div>
       )}
 
@@ -3786,6 +3805,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         custom_commands: stored.custom_commands || [],
         user_commands: stored.user_commands || [],
         custom_skills: stored.custom_skills || [],
+        directory_missing: stored.directory_missing === true,
       };
 
       setSelectedName(name);
@@ -3861,6 +3881,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         custom_skills: parsed.custom_skills || [],
         tools: parsed.tools || [],
         instructions_index_mode: parsed.instructions_index_mode || false,
+        directory_missing: parsed.directory_missing === true,
       };
       setSelectedName(name);
       setIsCreating(false);
@@ -4843,6 +4864,53 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                       ))}
                     </div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Missing directory banner ─────────────────────────── */}
+            {!isCreating && project.directory_missing && (
+              <div className="border-b border-danger/30 bg-danger/10 px-6 py-4 flex items-start gap-3 flex-shrink-0">
+                <AlertCircle size={16} className="text-danger shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-semibold text-danger mb-0.5">Project folder not found</div>
+                  <div className="text-[11px] font-mono text-danger/70 truncate">{project.directory}</div>
+                  <div className="text-[11px] text-danger/60 mt-1">This folder has been moved or deleted. Relink it to continue syncing.</div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
+                  <button
+                    onClick={async () => {
+                      const selected: string | null = await invoke("open_directory_dialog");
+                      if (!selected || !project || !selectedName) return;
+                      const updatedProject = { ...project, directory: selected, directory_missing: false };
+                      setProject(updatedProject);
+                      setDirty(false);
+                      setSyncStatus("syncing");
+                      try {
+                        await invoke("save_project", {
+                          name: selectedName,
+                          data: JSON.stringify(updatedProject),
+                        });
+                        await reloadProject(selectedName);
+                        setSyncStatus("saved");
+                        setTimeout(() => setSyncStatus(null), 4000);
+                      } catch (err: any) {
+                        setSyncStatus(null);
+                        setError(`Failed to relink project: ${err}`);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-md border border-brand/40 bg-brand/10 text-brand hover:bg-brand/20 transition-colors"
+                  >
+                    <LinkIcon size={12} />
+                    Relink folder
+                  </button>
+                  <button
+                    onClick={() => handleRemove(selectedName!)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-md border border-danger/40 bg-danger/5 text-danger hover:bg-danger/15 transition-colors"
+                  >
+                    <Trash2 size={12} />
+                    Delete project
+                  </button>
                 </div>
               </div>
             )}

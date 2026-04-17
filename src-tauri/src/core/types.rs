@@ -1,6 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// Serde helper: skip serializing a bool field when it is false.
+// Used for transient runtime flags that should not be persisted to disk but
+// must be visible in API responses when set.
+fn is_false(v: &bool) -> bool {
+    !v
+}
+
 // ── Data Structures ──────────────────────────────────────────────────────────
 
 // ── skill.json (velvet-tiger/skills-json spec) ───────────────────────────────
@@ -325,6 +332,12 @@ pub struct Project {
     /// Defaults to `false` to preserve existing inline-injection behaviour.
     #[serde(default)]
     pub instructions_index_mode: bool,
+
+    /// Computed at read-time: `true` when `directory` is non-empty but the path
+    /// does not exist on disk (folder moved or deleted).  Never persisted —
+    /// `save_project` always resets this to `false` before writing.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub directory_missing: bool,
 
     // ── Resolved metadata (project portability) ─────────────────────────────
     //
