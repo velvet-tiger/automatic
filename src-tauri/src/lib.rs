@@ -174,6 +174,8 @@ pub fn run() {
             account_login,
             account_logout,
             account_status,
+            cloud_build_bundle,
+            cloud_sync_library,
             ai_chat,
             ai_chat_with_tools,
             ai_list_models,

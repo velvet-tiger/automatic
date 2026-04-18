@@ -33,7 +33,9 @@ import UpdateToast from "./components/UpdateToast";
 import RemoteInstallDialog from "./components/RemoteInstallDialog";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Featured from "./pages/community/Featured";
-import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, PanelLeft, Star } from "lucide-react";
+import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, PanelLeft, Star, RefreshCw } from "lucide-react";
+import { flag } from "./lib/flags";
+import CloudSync from "./pages/CloudSync";
 import graphLogo from "../logos/graph_5.svg";
 import "./App.css";
 
@@ -459,7 +461,7 @@ function App() {
       >
         {/* Left: sidebar toggle (after traffic-light clearance) */}
         <div className="pl-20 relative z-10">
-          {activeTab !== "settings" && (
+          {activeTab !== "settings" && activeTab !== "sync" && (
             <button
               onClick={() => setSidebarCollapsed((c) => !c)}
               className="flex items-center justify-center w-[26px] h-[26px] rounded-md transition-colors text-text-muted hover:bg-bg-sidebar hover:text-text-base"
@@ -475,7 +477,7 @@ function App() {
         <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-0">
           <div className="flex items-center bg-bg-input border border-border-strong/40 rounded-lg p-0.5 pointer-events-auto">
             {(["start", "workspace", "library", "marketplace", "community"] as const).map((section) => {
-              const isActive = activeSection === section && activeTab !== "settings";
+              const isActive = activeSection === section && activeTab !== "settings" && activeTab !== "sync";
               return (
                 <button
                   key={section}
@@ -523,6 +525,20 @@ function App() {
             </button>
           )}
           <TaskLogToggleButton />
+          {flag("cloud_sync") && (
+            <button
+              onClick={() => setActiveTab("sync")}
+              className={`flex items-center justify-center w-[26px] h-[26px] rounded-md transition-colors ${
+                activeTab === "sync"
+                  ? "bg-bg-sidebar text-text-base"
+                  : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
+              }`}
+              aria-label="Cloud Sync"
+              title="Cloud Sync"
+            >
+              <RefreshCw size={14} />
+            </button>
+          )}
           <button
             onClick={() => setActiveTab("settings")}
             className={`flex items-center justify-center w-[26px] h-[26px] rounded-md transition-colors ${
@@ -541,7 +557,7 @@ function App() {
       {/* ── Sidebar + Main content ────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-      <aside className={`flex-shrink-0 bg-bg-input border-r border-border-strong/40 flex flex-col transition-all duration-200 overflow-hidden ${sidebarCollapsed || activeTab === "settings" ? "w-0 border-r-0" : "w-[270px]"}`}>
+      <aside className={`flex-shrink-0 bg-bg-input border-r border-border-strong/40 flex flex-col transition-all duration-200 overflow-hidden ${sidebarCollapsed || activeTab === "settings" || activeTab === "sync" ? "w-0 border-r-0" : "w-[270px]"}`}>
 
         {/* Section-specific navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-3 custom-scrollbar">
@@ -830,6 +846,11 @@ function App() {
                 initialPage={pendingSettingsPage}
                 onInitialPageConsumed={() => setPendingSettingsPage(null)}
               />
+            </div>
+          )}
+          {activeTab === "sync" && (
+            <div className="flex-1 h-full">
+              <CloudSync />
             </div>
           )}
         </div>
