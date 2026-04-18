@@ -588,17 +588,22 @@ function App() {
 
           {/* ── Library sidebar ─────────────────────────────────────────── */}
           {activeSection === "library" && (
-            <ul className="space-y-0.5">
-              <NavItem id="project-templates" icon={LayoutTemplate} label="Templates" />
-              <NavItem id="templates" icon={ClipboardList} label="Instructions" />
-              <NavItem id="rules" icon={ScrollText} label="Rules" />
-              <NavItem id="user-agents" icon={MessagesSquare} label="Sub-Agents" />
-              <NavItem id="commands" icon={Terminal} label="Commands" />
-              <NavItem id="skills" icon={Code} label="Skills" />
-              <NavItem id="mcp" icon={Server} label="MCP Servers" />
-              <NavItem id="agents" icon={Bot} label="Providers" />
-              <NavItem id="tools" icon={Wrench} label="Tools" />
-            </ul>
+            <div className="space-y-3">
+              <div>
+                <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">My Library</p>
+                <ul className="space-y-0.5">
+                  <NavItem id="project-templates" icon={LayoutTemplate} label="Templates" />
+                  <NavItem id="templates" icon={ClipboardList} label="Instructions" />
+                  <NavItem id="rules" icon={ScrollText} label="Rules" />
+                  <NavItem id="user-agents" icon={MessagesSquare} label="Sub-Agents" />
+                  <NavItem id="commands" icon={Terminal} label="Commands" />
+                  <NavItem id="skills" icon={Code} label="Skills" />
+                  <NavItem id="mcp" icon={Server} label="MCP Servers" />
+                  <NavItem id="agents" icon={Bot} label="Providers" />
+                  <NavItem id="tools" icon={Wrench} label="Tools" />
+                </ul>
+              </div>
+            </div>
           )}
 
           {/* ── Marketplace sidebar ─────────────────────────────────────── */}
