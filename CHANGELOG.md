@@ -4,6 +4,20 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-04-19
+
+### Added
+
+- Library sidebar items are now grouped under a "My Library" section header. (`dc56ed1`)
+- Bidirectional v2 library sync added behind a feature flag. (`e7f58a3`)
+- Settings panel now hides the sidebar when active. (`6a6c7eb`)
+- Webapp OAuth sign-in added, gated by authentication flag. (`1c0d7ec`)
+- `VITE_FLAGS` forwarded to Rust compile-time environment. (`5a54087`)
+
+### Fixed
+
+- Missing project folders are now detected and surfaced in the Projects view. (`7b4ff71`)
+
 ## [1.4.4] - 2026-04-15
 
 ### Fixed
