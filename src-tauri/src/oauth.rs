@@ -335,6 +335,127 @@ pub async fn authorize_server(server_name: &str, mcp_url: &str) -> Result<String
     Ok(token_response.access_token)
 }
 
+// ── Callback HTML pages ───────────────────────────────────────────────────────
+
+enum CallbackStatus {
+    Success,
+    Error,
+    Info,
+}
+
+fn callback_page(status: CallbackStatus, heading: &str, body: &str) -> String {
+    let (icon_svg, icon_color) = match status {
+        CallbackStatus::Success => (
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>"#,
+            "#22c55e",
+        ),
+        CallbackStatus::Error => (
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>"#,
+            "#ef4444",
+        ),
+        CallbackStatus::Info => (
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>"#,
+            "#6366f1",
+        ),
+    };
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Automatic — Authorization</title>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #18181b;
+      color: #fafafa;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }}
+    .card {{
+      background: #2e2e34;
+      border: 1px solid #3f3f46;
+      border-radius: 16px;
+      padding: 48px 40px;
+      max-width: 440px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 24px 48px rgba(0,0,0,0.4);
+    }}
+    .wordmark {{
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #6366f1;
+      margin-bottom: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }}
+    .wordmark-dot {{
+      width: 6px;
+      height: 6px;
+      background: #6366f1;
+      border-radius: 50%;
+    }}
+    .icon {{
+      color: {icon_color};
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: center;
+    }}
+    h1 {{
+      font-size: 20px;
+      font-weight: 600;
+      color: #fafafa;
+      margin-bottom: 12px;
+      line-height: 1.3;
+    }}
+    p {{
+      font-size: 14px;
+      line-height: 1.6;
+      color: #a1a1aa;
+    }}
+    .divider {{
+      height: 1px;
+      background: #3f3f46;
+      margin: 28px 0;
+    }}
+    .hint {{
+      font-size: 12px;
+      color: #71717a;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="wordmark">
+      <div class="wordmark-dot"></div>
+      Automatic
+    </div>
+    <div class="icon">{icon_svg}</div>
+    <h1>{heading}</h1>
+    <p>{body}</p>
+    <div class="divider"></div>
+    <p class="hint">You can close this browser tab and return to the app.</p>
+  </div>
+</body>
+</html>"#,
+        icon_color = icon_color,
+        icon_svg = icon_svg,
+        heading = heading,
+        body = body,
+    )
+}
+
 // ── Callback listener ────────────────────────────────────────────────────────
 
 /// Read a full HTTP request from a TCP stream.
@@ -406,7 +527,7 @@ pub(crate) async fn wait_for_callback(listener: TcpListener) -> Result<(String, 
         if !path.starts_with("/callback") {
             send_http_response(
                 &mut stream,
-                "<!DOCTYPE html><html><body>Not found</body></html>",
+                &callback_page(CallbackStatus::Info, "Not Found", "This page does not exist."),
             )
             .await;
             continue;
@@ -419,7 +540,7 @@ pub(crate) async fn wait_for_callback(listener: TcpListener) -> Result<(String, 
             Err(_) => {
                 send_http_response(
                     &mut stream,
-                    "<!DOCTYPE html><html><body>Bad request</body></html>",
+                    &callback_page(CallbackStatus::Error, "Bad Request", "The callback URL could not be parsed."),
                 )
                 .await;
                 continue;
@@ -433,11 +554,12 @@ pub(crate) async fn wait_for_callback(listener: TcpListener) -> Result<(String, 
                 .get("error_description")
                 .map(|s| s.as_str())
                 .unwrap_or("no description");
-            let html = format!(
-                "<!DOCTYPE html><html><body><h2>Authorization Failed</h2><p>{}: {}</p><p>You can close this tab.</p></body></html>",
-                error, desc
-            );
-            send_http_response(&mut stream, &html).await;
+            let body = format!("{}: {}", error, desc);
+            send_http_response(
+                &mut stream,
+                &callback_page(CallbackStatus::Error, "Authorization Failed", &body),
+            )
+            .await;
             return Err(format!("OAuth error: {} — {}", error, desc));
         }
 
@@ -447,7 +569,7 @@ pub(crate) async fn wait_for_callback(listener: TcpListener) -> Result<(String, 
             None => {
                 send_http_response(
                     &mut stream,
-                    "<!DOCTYPE html><html><body>Missing code parameter</body></html>",
+                    &callback_page(CallbackStatus::Error, "Bad Request", "Missing authorization code."),
                 )
                 .await;
                 continue;
@@ -458,7 +580,7 @@ pub(crate) async fn wait_for_callback(listener: TcpListener) -> Result<(String, 
             None => {
                 send_http_response(
                     &mut stream,
-                    "<!DOCTYPE html><html><body>Missing state parameter</body></html>",
+                    &callback_page(CallbackStatus::Error, "Bad Request", "Missing state parameter."),
                 )
                 .await;
                 continue;
@@ -466,11 +588,12 @@ pub(crate) async fn wait_for_callback(listener: TcpListener) -> Result<(String, 
         };
 
         // Send a "processing" page — we haven't confirmed the token exchange yet.
-        let html = "<!DOCTYPE html><html><body>\
-            <h2>Received!</h2>\
-            <p>Exchanging authorization code for token... You can close this tab and return to Automatic.</p>\
-            </body></html>";
-        send_http_response(&mut stream, html).await;
+        let html = callback_page(
+            CallbackStatus::Success,
+            "Authorization Complete",
+            "Your token is being finalized. You can close this tab and return to Automatic.",
+        );
+        send_http_response(&mut stream, &html).await;
 
         return Ok((code, state));
     }
