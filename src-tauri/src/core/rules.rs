@@ -303,6 +303,11 @@ const DEFAULT_RULES: &[(&str, &str, &str)] = &[
         include_str!("../../assets/rules/automatic/process.md"),
     ),
     (
+        "automatic-guardrails",
+        "Guardrails",
+        include_str!("../../assets/rules/automatic/guardrails.md"),
+    ),
+    (
         "automatic-service",
         "Automatic",
         include_str!("../../assets/rules/automatic/automatic-service.md"),
