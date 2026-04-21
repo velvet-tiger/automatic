@@ -77,6 +77,7 @@ import {
   Puzzle,
   Layers,
   MessagesSquare,
+  EyeOff,
 } from "lucide-react";
 
 interface CustomRule {
@@ -143,6 +144,13 @@ interface Project {
   custom_skills?: CustomSkill[];
   /** When true, rules are written to .automatic/instructions/ and the instruction file becomes an index. */
   instructions_index_mode?: boolean;
+  /**
+   * Sync mode for this project.
+   * - "normal" (default): files are written directly into the project directory.
+   * - "silent": files that would normally go outside .automatic/ are redirected
+   *   to .automatic/silent/, leaving the rest of the project tree untouched.
+   */
+  mode?: 'normal' | 'silent';
   /** Computed by backend at read-time: true when directory is set but no longer exists on disk. */
   directory_missing?: boolean;
 }
@@ -2422,7 +2430,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "commands" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools";
+  type ProjectTab = "summary" | "agents" | "commands" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools" | "settings";
   type ProjectGroup = "summary" | "project_file" | "rules" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "configuration" | "instructions" | "documentation" | "memory" | "activity" | "insights";
 
   const PROJECT_GROUPS: {
@@ -2468,6 +2476,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         { id: "agents", label: "Providers" },
         { id: "tools", label: "Tools" },
         { id: "groups", label: "Groups" },
+        { id: "settings", label: "Settings" },
       ],
     },
     { id: "insights", label: "Insights", tabs: [{ id: "recommendations", label: "Recommendations" }] },
@@ -2794,7 +2803,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   // After a project is selected via initialProject, switch to the requested tab.
   useEffect(() => {
     if (!initialProjectTab) return;
-    const validTabs = ["summary", "agents", "skills", "mcp_servers", "commands", "custom_agents", "groups", "project_file", "rules", "context", "memory", "activity", "recommendations"] as const;
+    const validTabs = ["summary", "agents", "skills", "mcp_servers", "commands", "custom_agents", "groups", "project_file", "rules", "context", "memory", "activity", "recommendations", "settings"] as const;
     type ProjectTab = typeof validTabs[number];
     if (validTabs.includes(initialProjectTab as ProjectTab)) {
       selectTab(initialProjectTab as ProjectTab);
@@ -3805,6 +3814,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         custom_commands: stored.custom_commands || [],
         user_commands: stored.user_commands || [],
         custom_skills: stored.custom_skills || [],
+        mode: stored.mode === 'silent' ? 'silent' : 'normal',
         directory_missing: stored.directory_missing === true,
       };
 
@@ -3881,6 +3891,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         custom_skills: parsed.custom_skills || [],
         tools: parsed.tools || [],
         instructions_index_mode: parsed.instructions_index_mode || false,
+        mode: parsed.mode === 'silent' ? 'silent' : 'normal',
         directory_missing: parsed.directory_missing === true,
       };
       setSelectedName(name);
@@ -4912,6 +4923,44 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                     Delete project
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* ── Silent mode banner ───────────────────────────────── */}
+            {!isCreating && project.mode === 'silent' && project.directory && (
+              <div className="border-b border-border-strong/30 bg-bg-input px-6 py-3 flex items-start gap-3 flex-shrink-0">
+                <EyeOff size={14} className="text-text-muted shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12px] font-semibold text-text-base mb-0.5">Silent mode enabled</div>
+                  <div className="text-[11px] text-text-muted leading-relaxed">
+                    Automatic writes all files to{" "}
+                    <code className="bg-bg-sidebar px-1 rounded text-[10px]">.automatic/silent/</code>{" "}
+                    instead of the project root, leaving existing files untouched.
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    const silentDir = `${project.directory}/.automatic/silent`;
+                    const prompt = [
+                      `This project uses Automatic in Silent mode.`,
+                      `All Automatic-generated config is stored under \`.automatic/silent/\` rather than the project root.`,
+                      ``,
+                      `When looking for agent configuration, check:`,
+                      `- Instruction files (CLAUDE.md, AGENTS.md, etc.): \`.automatic/silent/\``,
+                      `- Skills: \`.automatic/silent/.agents/skills/\``,
+                      `- Sub-agents: \`.automatic/silent/.claude/agents/\` (or equivalent for your agent)`,
+                      `- MCP config: \`.automatic/silent/.claude/\` (or equivalent)`,
+                      `- Commands: \`.automatic/silent/.agents/commands/\``,
+                      ``,
+                      `Full path: \`${silentDir}\``,
+                    ].join('\n');
+                    navigator.clipboard.writeText(prompt).catch(() => {});
+                  }}
+                  className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium rounded-md border border-border-strong/40 bg-bg-sidebar text-text-muted hover:text-text-base hover:border-border-strong/60 transition-colors"
+                >
+                  <Copy size={11} />
+                  Copy prompt
+                </button>
               </div>
             )}
 
@@ -9013,6 +9062,118 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           When this project is synced, Automatic injects a context block into its agent instruction
                           files listing all related projects — with their descriptions and relative paths — so
                           agents can recognise and navigate between them.
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+                )}
+
+                {/* ── Settings tab ─────────────────────────────────────── */}
+                {projectTab === "settings" && (
+                  <section className="flex gap-6">
+                    <div className="flex-1 min-w-0 space-y-4">
+                      {/* Section header */}
+                      <div className="flex items-center gap-2">
+                        <Layers size={13} className="text-text-muted" />
+                        <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Project Settings</span>
+                      </div>
+
+                      {/* Sync Mode */}
+                      <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+                        <div className="px-4 py-3 border-b border-border-strong/30 flex items-center justify-between gap-4">
+                          <div className="min-w-0">
+                            <div className="text-[13px] font-medium text-text-base">Sync Mode</div>
+                            <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                              {project.mode === 'silent'
+                                ? <>Files are written to <code className="bg-bg-sidebar px-1 rounded text-[10px]">.automatic/silent/</code> only — the project root is left untouched.</>
+                                : "Files are written directly into the project directory (CLAUDE.md, .agents/, .claude/, etc.)."}
+                            </div>
+                          </div>
+                          <div className="flex gap-1.5 flex-shrink-0">
+                            <button
+                              onClick={() => {
+                                if (project.mode !== 'normal') {
+                                  setProject({ ...project, mode: 'normal', updated_at: new Date().toISOString() });
+                                  setDirty(true);
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded text-[12px] font-medium border transition-colors ${
+                                (project.mode ?? 'normal') === 'normal'
+                                  ? 'bg-brand/10 border-brand/30 text-brand'
+                                  : 'bg-bg-sidebar border-border-strong/30 text-text-muted hover:text-text-base'
+                              }`}
+                            >
+                              Normal
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (project.mode !== 'silent') {
+                                  setProject({ ...project, mode: 'silent', updated_at: new Date().toISOString() });
+                                  setDirty(true);
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded text-[12px] font-medium border transition-colors ${
+                                project.mode === 'silent'
+                                  ? 'bg-brand/10 border-brand/30 text-brand'
+                                  : 'bg-bg-sidebar border-border-strong/30 text-text-muted hover:text-text-base'
+                              }`}
+                            >
+                              Silent
+                            </button>
+                          </div>
+                        </div>
+                        {project.mode === 'silent' && (
+                          <div className="px-4 py-3 bg-bg-sidebar/50 space-y-2">
+                            <p className="text-[11px] text-text-muted leading-relaxed">
+                              Silent mode is designed for existing codebases where Automatic&apos;s normal output files
+                              (instruction files, skills, agent configs) cannot be added to the project root.
+                              All synced content is mirrored under{" "}
+                              <code className="bg-bg-input px-1 rounded text-[10px]">.automatic/silent/</code>.
+                            </p>
+                            <p className="text-[11px] text-text-muted">
+                              Use the prompt below to tell an agent where to find Automatic&apos;s output:
+                            </p>
+                            <button
+                              onClick={() => {
+                                const silentDir = `${project.directory}/.automatic/silent`;
+                                const prompt = [
+                                  `This project uses Automatic in Silent mode.`,
+                                  `All Automatic-generated config is stored under \`.automatic/silent/\` rather than the project root.`,
+                                  ``,
+                                  `When looking for agent configuration, check:`,
+                                  `- Instruction files (CLAUDE.md, AGENTS.md, etc.): \`.automatic/silent/\``,
+                                  `- Skills: \`.automatic/silent/.agents/skills/\``,
+                                  `- Sub-agents: \`.automatic/silent/.claude/agents/\` (or equivalent for your agent)`,
+                                  `- MCP config: \`.automatic/silent/.claude/\` (or equivalent)`,
+                                  `- Commands: \`.automatic/silent/.agents/commands/\``,
+                                  ``,
+                                  `Full path: \`${silentDir}\``,
+                                ].join('\n');
+                                navigator.clipboard.writeText(prompt).catch(() => {});
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-md border border-border-strong/40 bg-bg-input text-text-muted hover:text-text-base hover:border-border-strong/60 transition-colors"
+                            >
+                              <Copy size={11} />
+                              Copy agent prompt
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Help sidebar */}
+                    <div className="w-52 flex-shrink-0">
+                      <div className="rounded-md bg-bg-input border border-border-strong/30 px-3 py-2.5 text-[11px] text-text-muted space-y-1.5 sticky top-0">
+                        <p className="font-medium text-text-base text-[12px]">Sync Mode</p>
+                        <p className="leading-relaxed">
+                          <strong className="text-text-base font-medium">Normal</strong> — the default. Automatic writes
+                          CLAUDE.md, .agents/, .claude/ and other config files directly into your project directory.
+                        </p>
+                        <p className="leading-relaxed">
+                          <strong className="text-text-base font-medium">Silent</strong> — for codebases where you
+                          can&apos;t add Automatic&apos;s files to the project root. All output is redirected to{" "}
+                          <code className="bg-bg-sidebar px-1 rounded text-[10px]">.automatic/silent/</code>.
+                          Copy the agent prompt to tell your agent where to look.
                         </p>
                       </div>
                     </div>

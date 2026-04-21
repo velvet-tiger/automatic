@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::agent;
-use crate::core::Project;
+use crate::core::{Project, ProjectMode};
 
 use super::helpers::{
     build_selected_servers, extract_agent_machine_name, load_mcp_server_configs,
@@ -220,6 +220,14 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         });
     }
 
+    // In Silent mode all synced files live under .automatic/silent/ rather than
+    // the project root.  Drift must be checked there — not against the project
+    // root where Automatic has never written anything.
+    let effective_dir = match project.mode {
+        ProjectMode::Silent => dir.join(".automatic").join("silent"),
+        ProjectMode::Normal => dir.clone(),
+    };
+
     // Build the MCP server map using the same logic as the sync engine
     // (strips internal `_` fields, substitutes OAuth proxy configs).
     let mcp_config = load_mcp_server_configs()?;
@@ -245,10 +253,10 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         if let Some(agent_instance) = agent::from_id(agent_id) {
             let mut files: Vec<DriftedFile> = Vec::new();
 
-            collect_mcp_drift(agent_instance, &dir, &selected_servers, &mut files);
+            collect_mcp_drift(agent_instance, &effective_dir, &selected_servers, &mut files);
             collect_skills_drift(
                 agent_instance,
-                &dir,
+                &effective_dir,
                 &skill_contents,
                 &all_selected_skill_names,
                 &project.local_skills,
@@ -256,7 +264,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
             );
             collect_agents_drift(
                 agent_instance,
-                &dir,
+                &effective_dir,
                 project.custom_agents.as_deref().unwrap_or(&[]),
                 &project.user_agents,
                 &mut files,
@@ -272,7 +280,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         }
     }
 
-    let instruction_conflicts = collect_instruction_file_conflicts(project, &dir);
+    let instruction_conflicts = collect_instruction_file_conflicts(project, &effective_dir);
 
     let drifted = !agent_drifts.is_empty() || !instruction_conflicts.is_empty();
     Ok(DriftReport {
@@ -283,11 +291,16 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
 }
 
 /// Public wrapper for use by the `commands` layer.
+/// Automatically resolves the effective directory based on project mode.
 pub fn collect_instruction_conflicts_pub(
     project: &Project,
     dir: &PathBuf,
 ) -> Vec<InstructionFileConflict> {
-    collect_instruction_file_conflicts(project, dir)
+    let effective_dir = match project.mode {
+        ProjectMode::Silent => dir.join(".automatic").join("silent"),
+        ProjectMode::Normal => dir.clone(),
+    };
+    collect_instruction_file_conflicts(project, &effective_dir)
 }
 
 /// Detect instruction files that were modified outside Automatic.

@@ -8,6 +8,26 @@ fn is_false(v: &bool) -> bool {
     !v
 }
 
+/// Controls how Automatic writes synced files for a project.
+///
+/// - `Normal` (default) — files are written directly into the project directory
+///   (e.g. `CLAUDE.md`, `.agents/skills/`, `.claude/agents/`).
+/// - `Silent` — all files that would normally be written outside `.automatic/`
+///   are instead redirected into `.automatic/silent/`, leaving the rest of the
+///   project tree untouched. Designed for existing codebases where the normal
+///   instruction files cannot be modified.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectMode {
+    #[default]
+    Normal,
+    Silent,
+}
+
+fn is_normal_mode(mode: &ProjectMode) -> bool {
+    *mode == ProjectMode::Normal
+}
+
 // ── Data Structures ──────────────────────────────────────────────────────────
 
 // ── skill.json (velvet-tiger/skills-json spec) ───────────────────────────────
@@ -332,6 +352,13 @@ pub struct Project {
     /// Defaults to `false` to preserve existing inline-injection behaviour.
     #[serde(default)]
     pub instructions_index_mode: bool,
+
+    /// How Automatic writes synced files for this project.
+    /// `Normal` (default) — files go directly into the project directory.
+    /// `Silent` — files that would normally live outside `.automatic/` are
+    /// redirected to `.automatic/silent/`, leaving the project tree untouched.
+    #[serde(default, skip_serializing_if = "is_normal_mode")]
+    pub mode: ProjectMode,
 
     /// Computed at read-time: `true` when `directory` is non-empty but the path
     /// does not exist on disk (folder moved or deleted).  Never persisted —

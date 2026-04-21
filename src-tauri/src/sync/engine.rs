@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::agent;
-use crate::core::{self, Project};
+use crate::core::{self, Project, ProjectMode};
 
 use super::autodetect::autodetect_inner;
 use super::helpers::{
@@ -86,6 +86,19 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         let _ = crate::core::save_project(&project.name, &proj_str);
     }
 
+    // In Silent mode all synced files are written under .automatic/silent/
+    // instead of the project root, leaving the project tree untouched.
+    let effective_dir = match project.mode {
+        ProjectMode::Silent => {
+            let silent_dir = dir.join(".automatic").join("silent");
+            fs::create_dir_all(&silent_dir).map_err(|e| {
+                format!("Failed to create silent sync dir '{}': {}", silent_dir.display(), e)
+            })?;
+            silent_dir
+        }
+        ProjectMode::Normal => dir.clone(),
+    };
+
     // Read MCP server configs from the Automatic registry and build the
     // selected server map (includes stripping internal fields and OAuth proxy
     // substitution).  Uses the shared helper so drift detection produces
@@ -122,20 +135,20 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         .collect();
 
     let project_skills_dir = sync_project_skills_step(
-        &dir,
+        &effective_dir,
         project,
         &skill_contents,
         &all_selected_skill_names,
         &mut written_files,
     )?;
     let project_commands_dir = sync_project_commands_step(
-        &dir,
+        &effective_dir,
         project,
         &workspace_command_contents,
         &mut written_files,
     )?;
     let instruction_targets = sync_agent_configs_step(
-        &dir,
+        &effective_dir,
         project,
         &project_skills_dir,
         &project_commands_dir,
@@ -145,9 +158,18 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         &selected_servers,
         &mut written_files,
     )?;
-    let written_instruction_files =
-        sync_instruction_files_step(&dir, project, &instruction_targets, &mut written_files)?;
-    record_instruction_state_step(project, &written_instruction_files);
+    let effective_dir_str = effective_dir
+        .to_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| project.directory.clone());
+    let written_instruction_files = sync_instruction_files_step(
+        &effective_dir,
+        project,
+        &instruction_targets,
+        &effective_dir_str,
+        &mut written_files,
+    )?;
+    record_instruction_state_step(project, &written_instruction_files, &effective_dir_str);
 
     Ok(written_files)
 }
@@ -285,7 +307,7 @@ fn sync_agent_configs_step(
                     }
 
                     if let Ok(true) = crate::core::inject_groups_into_project_file(
-                        &project.directory,
+                        dir.to_str().unwrap_or(&project.directory),
                         pf,
                         &project.name,
                         &project_groups,
@@ -310,6 +332,7 @@ fn sync_instruction_files_step(
     dir: &PathBuf,
     project: &Project,
     instruction_targets: &[InstructionTarget],
+    write_dir: &str,
     written_files: &mut Vec<String>,
 ) -> Result<Vec<String>, String> {
     if !project.instructions_index_mode {
@@ -330,6 +353,7 @@ fn sync_instruction_files_step(
                     &target.filename,
                     &shared_user_content,
                     true,
+                    write_dir,
                     written_files,
                 )?;
                 written_instruction_files.push(target.filename.clone());
@@ -337,7 +361,7 @@ fn sync_instruction_files_step(
         }
     } else {
         for target in instruction_targets {
-            let user_content = crate::core::read_project_file(&project.directory, &target.filename)
+            let user_content = crate::core::read_project_file(write_dir, &target.filename)
                 .unwrap_or_default();
             sync_instruction_target_file(
                 dir,
@@ -346,6 +370,7 @@ fn sync_instruction_files_step(
                 &target.filename,
                 &user_content,
                 false,
+                write_dir,
                 written_files,
             )?;
             written_instruction_files.push(target.filename.clone());
@@ -427,6 +452,7 @@ fn sync_instruction_target_file(
     filename: &str,
     user_content: &str,
     use_unified_rules: bool,
+    write_dir: &str,
     written_files: &mut Vec<String>,
 ) -> Result<(), String> {
     let Some(agent_instance) = agent::from_id(agent_id) else {
@@ -463,9 +489,9 @@ fn sync_instruction_target_file(
     let project_groups = crate::core::groups_for_project(&project.name);
     let uses_dot_claude_rules = crate::core::project_uses_dot_claude_rules(project, filename);
 
-    crate::core::save_project_file(&project.directory, filename, user_content)?;
+    crate::core::save_project_file(write_dir, filename, user_content)?;
     let _ = crate::core::inject_groups_into_project_file(
-        &project.directory,
+        write_dir,
         filename,
         &project.name,
         &project_groups,
@@ -473,8 +499,20 @@ fn sync_instruction_target_file(
 
     let mut custom_rules_handled = false;
     if uses_dot_claude_rules {
+        // When write_dir differs from project.directory (Silent mode), redirect
+        // the .claude/rules/ writes to write_dir by using a temporary project.
+        let tmp_project;
+        let project_for_rules: &Project = if write_dir != project.directory {
+            tmp_project = crate::core::Project {
+                directory: write_dir.to_string(),
+                ..project.clone()
+            };
+            &tmp_project
+        } else {
+            project
+        };
         if let Some(touched) =
-            agent_instance.sync_instruction_rules(project, filename, &rules, &custom_contents)?
+            agent_instance.sync_instruction_rules(project_for_rules, filename, &rules, &custom_contents)?
         {
             custom_rules_handled = true;
             for path in touched {
@@ -486,6 +524,8 @@ fn sync_instruction_target_file(
     }
 
     if project.instructions_index_mode && !uses_dot_claude_rules {
+        // .automatic/instructions/ lives inside .automatic/ — never redirect it to
+        // the Silent write root.  Always write to the real project directory.
         match crate::core::sync_rules_to_automatic_instructions(
             &project.directory,
             &rules,
@@ -495,7 +535,7 @@ fn sync_instruction_target_file(
             Err(e) => eprintln!("Failed to sync rules to .automatic/instructions/: {}", e),
         }
         if let Ok(true) = crate::core::inject_index_into_project_file(
-            &project.directory,
+            write_dir,
             filename,
             &rules,
             &custom_rule_structs,
@@ -506,7 +546,7 @@ fn sync_instruction_target_file(
         }
     } else if !custom_rules_handled {
         if let Ok(true) = crate::core::inject_rules_into_project_file_with_custom(
-            &project.directory,
+            write_dir,
             filename,
             &rules,
             &custom_contents,
@@ -520,13 +560,48 @@ fn sync_instruction_target_file(
     Ok(())
 }
 
-fn record_instruction_state_step(project: &mut Project, written_instruction_files: &[String]) {
+fn record_instruction_state_step(
+    project: &mut Project,
+    written_instruction_files: &[String],
+    effective_dir: &str,
+) {
     let project_name = project.name.clone();
-    crate::core::record_instruction_hashes_for_filenames(
-        &project_name,
-        project,
-        written_instruction_files,
-    );
+
+    if effective_dir != project.directory {
+        // Silent mode: compute hashes directly from the files in effective_dir and
+        // store them on the real project (whose directory field must not change).
+        // We do NOT use record_instruction_hashes_for_filenames here because that
+        // function persists the project to disk — passing a clone with a different
+        // directory would overwrite project.directory with the silent path.
+        let hash_dir = std::path::PathBuf::from(effective_dir);
+        let mut seen: HashSet<String> = HashSet::new();
+        for filename in written_instruction_files {
+            if !seen.insert(filename.clone()) {
+                continue;
+            }
+            let path = hash_dir.join(filename);
+            if path.is_file() {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    project.instruction_file_hashes.insert(
+                        filename.clone(),
+                        crate::core::compute_content_hash(&content),
+                    );
+                }
+            } else {
+                project.instruction_file_hashes.remove(filename);
+            }
+        }
+        // Persist the real project (directory unchanged) with the updated hashes.
+        if let Ok(data) = serde_json::to_string_pretty(project) {
+            let _ = crate::core::save_project(&project_name, &data);
+        }
+    } else {
+        crate::core::record_instruction_hashes_for_filenames(
+            &project_name,
+            project,
+            written_instruction_files,
+        );
+    }
 
     let mut snap_seen: HashSet<String> = HashSet::new();
     for filename in written_instruction_files {
@@ -534,7 +609,7 @@ fn record_instruction_state_step(project: &mut Project, written_instruction_file
             continue;
         }
 
-        if let Ok(user_content) = crate::core::read_project_file(&project.directory, filename) {
+        if let Ok(user_content) = crate::core::read_project_file(effective_dir, filename) {
             let _ =
                 crate::core::save_instruction_snapshot(&project.directory, filename, &user_content);
         }
