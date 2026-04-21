@@ -218,13 +218,14 @@ pub trait Agent: Send + Sync {
     }
 
     /// Return home-directory skill directories that this agent uses
-    /// **outside** of the two directories Automatic already tracks
+    /// **outside** of the external scan paths Automatic already tracks
     /// (`~/.agents/skills/` and `~/.claude/skills/`).
     ///
     /// Only paths that are genuinely additional need to be listed here —
     /// i.e. agent-specific global skill locations (e.g. `~/.cline/skills/`).
-    /// Skills already in `~/.agents/skills/` or `~/.claude/skills/` are
-    /// already visible in Automatic's registry and do not need re-importing.
+    /// Entries are scanned read-only so that skills installed outside
+    /// Automatic are visible to the user and available for import into the
+    /// managed library, but Automatic never writes to them.
     ///
     /// The default implementation returns an empty vec.  Agents with extra
     /// home-directory skill locations should override this.
@@ -423,17 +424,17 @@ pub(crate) fn sync_individual_skills(
     Ok(())
 }
 
-/// Copy skill directories from the global registry (`~/.agents/skills/`) into
-/// the project's canonical `.agents/skills/` directory.  This is the first step
-/// of project sync — it populates the project-local hub that other agent
-/// directories will symlink to.
+/// Copy skill directories from Automatic's managed library
+/// (`~/.automatic/library/skills/`) into the project's canonical
+/// `.agents/skills/` directory.  This is the first step of project sync —
+/// it populates the project-local hub that other agent directories will
+/// symlink to.
 ///
 /// Each skill directory is copied recursively so that companion files
 /// (`scripts/`, `docs/`, etc.) are included, not just `SKILL.md`.
 ///
 /// `skill_contents` is used as a fallback: if a skill's source directory
-/// cannot be found in the global registry, the SKILL.md content is written
-/// directly.
+/// cannot be found in the library, the SKILL.md content is written directly.
 pub(crate) fn copy_skills_to_project(
     project_skills_dir: &Path,
     skills: &[(String, String)],
@@ -1163,8 +1164,9 @@ pub(crate) fn cleanup_agent_preview(
 }
 
 /// Scan the agent-specific extra global skill directories returned by
-/// [`Agent::extra_global_skill_dirs`] and return skills not already present
-/// in Automatic's global registry (`~/.agents/skills/` / `~/.claude/skills/`).
+/// [`Agent::extra_global_skill_dirs`] and return skills not already known
+/// to Automatic (i.e. missing from the managed library and from the
+/// external `~/.agents/skills/` / `~/.claude/skills/` scan paths).
 ///
 /// Returns `(name, content)` pairs — the skill name and its `SKILL.md` content —
 /// ready to be saved via `core::save_skill`.

@@ -307,8 +307,9 @@ fn read_file_tool_def() -> Value {
 fn list_skills_tool_def() -> Value {
     json!({
         "name": "list_skills",
-        "description": "List all skill names available in the Automatic skill library \
-            (~/.agents/skills/ and ~/.claude/skills/).",
+        "description": "List all skill names available in Automatic's managed \
+            skill library (~/.automatic/library/skills/) plus any skills discovered \
+            in external scan locations such as ~/.agents/skills/ and ~/.claude/skills/.",
         "input_schema": {
             "type": "object",
             "properties": {},
@@ -326,7 +327,7 @@ fn read_skill_tool_def() -> Value {
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "The skill name (directory name under ~/.agents/skills/)."
+                    "description": "The skill name (directory name in the managed library at ~/.automatic/library/skills/)."
                 }
             },
             "required": ["name"]

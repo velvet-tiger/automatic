@@ -1015,7 +1015,7 @@ fn install_skill(source_dir: &Path, skill: &SkillsJsonSkill) -> Result<(), Strin
     // as CompanionFile — matching the in-app skill install pathway.
     scan_skill_tree(&skill_source, &skill.name)?;
 
-    let dest = super::paths::get_agents_skills_dir()?.join(&skill.name);
+    let dest = super::paths::get_library_skills_dir()?.join(&skill.name);
     if dest.exists() {
         fs::remove_dir_all(&dest).map_err(|e| format!("Failed to remove existing skill: {}", e))?;
     }
@@ -1248,7 +1248,7 @@ fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<Str
 fn remove_installed_resource(resource_type: &str, name: &str) -> Result<(), String> {
     match resource_type {
         "skills" | "skill" => {
-            let path = super::paths::get_agents_skills_dir()?.join(name);
+            let path = super::paths::get_library_skills_dir()?.join(name);
             if path.exists() {
                 fs::remove_dir_all(&path).map_err(|e| format!("Failed to remove skill: {}", e))?;
             }

@@ -230,12 +230,15 @@ fn default_true() -> bool {
     true
 }
 
-/// A skill entry with its name and which global directories it exists in.
+/// A skill entry with its name and which skill directories it exists in.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SkillEntry {
     pub name: String,
-    /// Which global sources contain this skill: e.g., ["agents", "claude", "codex", "cline"]
-    /// "agents" refers to ~/.agents/skills/; other values match agent IDs.
+    /// Which sources contain this skill: e.g., ["library", "agents", "claude"].
+    /// "library" is Automatic's managed store at ~/.automatic/library/skills/;
+    /// "agents" (~/.agents/skills/), "claude" (~/.claude/skills/) and any
+    /// agent id are external scan locations that Automatic reads but does
+    /// not write to.
     #[serde(default)]
     pub sources: Vec<String>,
     /// Remote origin from ~/.automatic/skills.json, if this was imported from skills.sh

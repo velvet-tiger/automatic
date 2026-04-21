@@ -166,13 +166,15 @@ pub fn import_agent_global_configs(agent_ids: Vec<String>) -> Result<String, Str
 }
 
 /// Import skills found in agent-specific extra global skill directories
-/// (e.g. `~/.cline/skills/`) that are not yet in Automatic's registry.
+/// (e.g. `~/.cline/skills/`) that are not yet in Automatic's library.
 ///
-/// Each discovered skill is saved to `~/.agents/skills/` (the canonical
-/// location) so it becomes available to all agents and projects.
+/// Each discovered skill is saved to Automatic's managed library
+/// (`~/.automatic/library/skills/`) so it becomes available for per-project
+/// sync.
 ///
-/// Skills already present in `~/.agents/skills/` or `~/.claude/skills/`
-/// are skipped — this only imports genuinely new skills.
+/// Skills already present in the library (or in the external
+/// `~/.agents/skills/` / `~/.claude/skills/` scan paths) are skipped —
+/// this only imports genuinely new skills.
 ///
 /// `agent_ids` is the array of agent id strings.  The special value
 /// `"other"` is silently ignored.

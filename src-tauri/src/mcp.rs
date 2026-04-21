@@ -18,10 +18,12 @@ pub struct GetCredentialParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ReadSkillParams {
-    /// The skill name (directory name under ~/.agents/skills/ or ~/.claude/skills/)
+    /// The skill name (directory name in Automatic's managed library at
+    /// ~/.automatic/library/skills/, or in an external scan location such as
+    /// ~/.agents/skills/ or ~/.claude/skills/)
     pub name: String,
     /// Optional project name. When provided, project-local skills are searched first
-    /// before falling back to the global skill registry.
+    /// before falling back to the managed library and external scan locations.
     pub project: Option<String>,
 }
 

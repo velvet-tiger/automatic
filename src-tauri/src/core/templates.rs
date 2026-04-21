@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::asset_security::{enforce_text_asset, validate_relative_asset_path, AssetKind};
-use super::paths::{get_agents_skills_dir, get_automatic_dir, is_valid_name};
+use super::paths::{get_automatic_dir, get_library_skills_dir, is_valid_name};
 use super::skill_store::record_skill_source;
 use super::skills::record_skill_scan_state;
 
@@ -88,9 +88,10 @@ pub fn delete_template(name: &str) -> Result<(), String> {
 
 /// The bundled skill manifest (`src-tauri/assets/skills/skill.json`), embedded at
 /// compile time.  At runtime, `auto_install_skill_names()` parses this to
-/// determine which skills should be written to `~/.agents/skills/` on startup.
-/// To add a new auto-install skill: add it to `skill.json` and add its
-/// `include_str!` entry here.  No other code changes are required.
+/// determine which skills should be written to the managed library
+/// (`~/.automatic/library/skills/`) on startup. To add a new auto-install
+/// skill: add it to `skill.json` and add its `include_str!` entry here.
+/// No other code changes are required.
 const BUNDLED_SKILL_JSON: &str = include_str!("../../assets/skills/skill.json");
 
 /// All skill content shipped with the binary, keyed by skill name.
@@ -219,7 +220,8 @@ fn auto_install_skill_names() -> Vec<&'static str> {
         .collect()
 }
 
-/// Write auto-install skills to `~/.agents/skills/`.
+/// Write auto-install skills to the managed library
+/// (`~/.automatic/library/skills/`).
 ///
 /// The set of skills to install is read from the embedded `skill.json` manifest,
 /// so adding a new default skill only requires updating that file and adding a
@@ -234,7 +236,7 @@ fn auto_install_skill_names() -> Vec<&'static str> {
 /// Each skill is recorded in the skills registry with source
 /// "automatic/automatic-app" so the UI resolves the author as "Automatic".
 pub fn install_default_skills_inner(force: bool) -> Result<(), String> {
-    let agents_dir = get_agents_skills_dir()?;
+    let library_dir = get_library_skills_dir()?;
     let names = auto_install_skill_names();
 
     for name in &names {
@@ -245,7 +247,7 @@ pub fn install_default_skills_inner(force: bool) -> Result<(), String> {
         if scan.blocked() {
             return Err(scan.to_display_message(&format!("bundled skill '{}'", name)));
         }
-        let skill_dir = agents_dir.join(name);
+        let skill_dir = library_dir.join(name);
         if !skill_dir.exists() {
             fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
         }
@@ -277,7 +279,7 @@ pub fn install_default_skills() -> Result<(), String> {
 /// present on disk.  Searches all of `BUNDLED_SKILL_CONTENTS`.
 /// Silently ignores names not found in the bundle.
 pub fn install_skills_from_bundle(skill_names: &[String]) -> Result<(), String> {
-    let agents_dir = get_agents_skills_dir()?;
+    let library_dir = get_library_skills_dir()?;
 
     for name in skill_names {
         let Some((_, content)) = BUNDLED_SKILL_CONTENTS
@@ -290,7 +292,7 @@ pub fn install_skills_from_bundle(skill_names: &[String]) -> Result<(), String> 
         if scan.blocked() {
             return Err(scan.to_display_message(&format!("bundled skill '{}'", name)));
         }
-        let skill_dir = agents_dir.join(name);
+        let skill_dir = library_dir.join(name);
         if !skill_dir.exists() {
             fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
         }
@@ -467,9 +469,11 @@ mod tests {
         with_temp_home(|home| {
             install_default_skills_inner(false).expect("install default skills");
 
-            assert!(home.join(".agents/skills/automatic/SKILL.md").exists());
             assert!(home
-                .join(".agents/skills/automatic-code-review/SKILL.md")
+                .join(".automatic-dev/library/skills/automatic/SKILL.md")
+                .exists());
+            assert!(home
+                .join(".automatic-dev/library/skills/automatic-code-review/SKILL.md")
                 .exists());
         });
     }
@@ -479,7 +483,9 @@ mod tests {
         with_temp_home(|home| {
             install_skills_from_bundle(&["php-pro".to_string()]).expect("install bundle subset");
 
-            assert!(home.join(".agents/skills/php-pro/SKILL.md").exists());
+            assert!(home
+                .join(".automatic-dev/library/skills/php-pro/SKILL.md")
+                .exists());
         });
     }
 

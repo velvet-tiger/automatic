@@ -48,15 +48,16 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Sync a single skill across both global directories (~/.agents/skills/ and
-/// ~/.claude/skills/).
+/// Import a skill from an external scan directory (e.g. `~/.agents/skills/`
+/// from an independent `npx skills add` install) into Automatic's managed
+/// library. No-op if already in the library.
 #[tauri::command]
 pub fn sync_skill(name: &str) -> Result<(), String> {
     core::sync_skill(name)
 }
 
-/// Sync all skills across both global directories.  Returns the list of
-/// skill names that were synced.
+/// Import every skill visible in external scan directories that isn't yet
+/// in the managed library. Returns the names imported.
 #[tauri::command]
 pub fn sync_all_skills() -> Result<Vec<String>, String> {
     core::sync_all_skills()

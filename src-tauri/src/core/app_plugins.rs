@@ -97,11 +97,12 @@ impl PluginToolDeclaration {
 }
 
 /// A skill declared by a plugin.  When the plugin is enabled, the skill is
-/// installed to `~/.agents/skills/` and recorded in the registry with the
-/// plugin's id.  Plugin-provided skills cannot be deleted by the user.
+/// installed to the managed library (`~/.automatic/library/skills/`) and
+/// recorded in the registry with the plugin's id.  Plugin-provided skills
+/// cannot be deleted by the user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginSkillDeclaration {
-    /// The skill name (directory name under `~/.agents/skills/`).
+    /// The skill name (directory name in `~/.automatic/library/skills/`).
     pub name: String,
     /// Optional GitHub source ("owner/repo") for fetching the skill remotely.
     /// When set, the skill is fetched from the repo instead of the app bundle.

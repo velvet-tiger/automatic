@@ -907,9 +907,9 @@ pub fn check_project_problems(name: &str) -> Result<String, String> {
 /// Adopt a stale skill by adding it to the project's skill list and re-syncing.
 ///
 /// `skill_name` is the bare skill name (e.g. `"my-skill"`).  The skill must
-/// already exist in the global registry (`~/.agents/skills/`) for the sync to
-/// succeed — if it only exists locally in the project directory, it is imported
-/// as a local skill instead.
+/// already exist in the managed library (`~/.automatic/library/skills/`) for
+/// the sync to succeed — if it only exists locally in the project directory,
+/// it is imported as a local skill instead.
 ///
 /// Call this when the user chooses "Add to project" in the drift resolution UI
 /// for a stale skill directory.

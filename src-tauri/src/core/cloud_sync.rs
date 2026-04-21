@@ -523,13 +523,14 @@ fn delete_asset(kind: &str, machine_name: &str) -> Result<(), String> {
 // ── Per-kind writers ──────────────────────────────────────────────────────────
 
 /// Write a skill: the payload carries a `files: { path -> string }` map.
-/// Strategy: clear the existing skill directory in `~/.agents/skills/`, then
-/// write every file from the payload. A full replace keeps local state in
-/// lockstep with the server — any file the server doesn't know about is
-/// removed, so renames and deletions inside a skill round-trip correctly.
+/// Strategy: clear the existing skill directory in the managed library
+/// (`~/.automatic/library/skills/`), then write every file from the payload.
+/// A full replace keeps local state in lockstep with the server — any file
+/// the server doesn't know about is removed, so renames and deletions
+/// inside a skill round-trip correctly.
 fn write_skill_asset(machine_name: &str, payload: &Value) -> Result<(), String> {
     use super::asset_security::validate_relative_asset_path;
-    use super::paths::{get_agents_skills_dir, is_valid_name};
+    use super::paths::{get_library_skills_dir, is_valid_name};
 
     if !is_valid_name(machine_name) {
         return Err(format!("invalid skill name '{}'", machine_name));
@@ -539,7 +540,7 @@ fn write_skill_asset(machine_name: &str, payload: &Value) -> Result<(), String> 
         .and_then(|v| v.as_object())
         .ok_or_else(|| "skill payload missing `files` object".to_string())?;
 
-    let skills_root = get_agents_skills_dir()?;
+    let skills_root = get_library_skills_dir()?;
     let skill_dir = skills_root.join(machine_name);
 
     // Wipe + recreate so server is authoritative over the skill's full tree.
@@ -1134,7 +1135,7 @@ mod tests {
 
     #[test]
     fn read_all_disk_assets_machine_names_all_valid() {
-        // Smoke test over the real dev ~/.agents + ~/.automatic-dev layout.
+        // Smoke test over the real dev ~/.automatic-dev layout.
         // Skips silently if nothing is configured (CI).
         let assets = match read_all_disk_assets() {
             Ok(a) => a,
@@ -1170,7 +1171,7 @@ mod tests {
             });
             write_skill_asset("my-skill", &payload).expect("write skill");
 
-            let skill_dir = home.join(".agents/skills/my-skill");
+            let skill_dir = home.join(".automatic-dev/library/skills/my-skill");
             assert_eq!(
                 fs::read_to_string(skill_dir.join("SKILL.md")).unwrap(),
                 "# Hello"
@@ -1188,7 +1189,7 @@ mod tests {
         // lose it too — otherwise "file renamed on device A" would leave
         // the old filename orphaned on device B forever.
         with_temp_home(|home| {
-            let skill_dir = home.join(".agents/skills/my-skill");
+            let skill_dir = home.join(".automatic-dev/library/skills/my-skill");
             fs::create_dir_all(skill_dir.join("scripts")).unwrap();
             fs::write(skill_dir.join("SKILL.md"), "# Old").unwrap();
             fs::write(skill_dir.join("scripts/legacy.sh"), "legacy").unwrap();

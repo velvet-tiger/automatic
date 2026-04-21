@@ -30,13 +30,30 @@ pub fn get_automatic_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Primary skills directory — the agentskills.io standard location.
+/// Primary skills directory — Automatic's managed library.
+///
+/// This is the only location Automatic writes to. Per-project sync copies
+/// skills from here into each project's agent-specific skill directory on
+/// demand; nothing is auto-loaded globally.
+pub fn get_library_skills_dir() -> Result<PathBuf, String> {
+    Ok(get_automatic_dir()?.join("library").join("skills"))
+}
+
+/// External skill directory — the agentskills.io standard location.
+///
+/// Read-only for Automatic. Scanned so that skills installed here by other
+/// tools (e.g. `npx skills add`) are visible in the UI, but Automatic does
+/// not write to this path. Some agents (notably OpenCode) auto-load from
+/// this directory globally — anything here applies to every project that
+/// uses such agents, which is why Automatic's managed library lives
+/// elsewhere.
 pub fn get_agents_skills_dir() -> Result<PathBuf, String> {
     let home = home_dir()?;
     Ok(home.join(".agents/skills"))
 }
 
-/// Secondary skills directory — Claude Code's location.
+/// External skill directory — Claude Code's location. Read-only for
+/// Automatic; same rationale as [`get_agents_skills_dir`].
 pub fn get_claude_skills_dir() -> Result<PathBuf, String> {
     let home = home_dir()?;
     Ok(home.join(".claude/skills"))
