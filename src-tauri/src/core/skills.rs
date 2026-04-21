@@ -251,8 +251,9 @@ pub fn read_skill_raw(name: &str) -> Result<String, String> {
     }
 }
 
-/// Read a skill's SKILL.md content.  Checks `~/.agents/skills/` first
-/// (the canonical location), then falls back to `~/.claude/skills/`.
+/// Read a skill's SKILL.md content.  Checks `~/.automatic/library/skills/`
+/// (the canonical location) first, then falls back to external scan paths
+/// such as `~/.agents/skills/` and `~/.claude/skills/`.
 pub fn read_skill(name: &str) -> Result<String, String> {
     if let Some(path) = get_skill_path(name)? {
         let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;

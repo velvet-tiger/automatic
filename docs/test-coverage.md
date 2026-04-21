@@ -77,7 +77,7 @@ Sync orchestration and drift detection are user-visible (drift banners in UI). N
 ### Priority 3 — Lower
 
 #### `core/skills.rs` (0 tests)
-`scan_skills_dir`, `save_skill`, `delete_skill`, `sync_skill`. Uses `~/.agents/skills/` and `~/.claude/skills/` — testable with temp dirs using path-injected helpers.
+`scan_skills_dir`, `save_skill`, `delete_skill`, `sync_skill`. Uses `~/.automatic/library/skills/` (canonical) and scans `~/.agents/skills/` and `~/.claude/skills/` read-only — testable with temp dirs using path-injected helpers.
 
 > **Action:** Tests added to `core/skills.rs` — see `#[cfg(test)]` block.
 

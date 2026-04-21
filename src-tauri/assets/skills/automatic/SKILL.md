@@ -28,7 +28,7 @@ Automatic exposes the following tools via the `nexus` MCP server (configured as 
 
 ### `automatic_list_skills`
 
-List all skill names currently registered in the user's skill registry (`~/.agents/skills/` and `~/.claude/skills/`).
+List all skill names currently registered in the user's skill registry (`~/.automatic/library/skills/`, with `~/.agents/skills/` and `~/.claude/skills/` scanned read-only).
 
 **When to use:** At the start of a session or task to discover what specialised instructions are available. If you find a relevant skill, read it with `automatic_read_skill`.
 

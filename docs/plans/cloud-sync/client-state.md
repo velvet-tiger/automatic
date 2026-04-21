@@ -106,7 +106,7 @@ stray file on disk.
   `disk`, not in `seen` → treated as a new upsert with `updated_at = now()`.
   Against the server's still-present tombstone, LWW resolves the
   resurrection: `now > tombstone.deleted_at` → server accepts.
-- **Mass local deletion** (e.g., user `rm -rf ~/.agents/skills`) — diff
+- **Mass local deletion** (e.g., user `rm -rf ~/.automatic/library/skills`) — diff
   would emit many tombstones. **The UI should prompt** when
   `len(tombstones) > threshold` (suggest 10) with a "Delete N assets from
   cloud?" confirmation before sending the bundle.

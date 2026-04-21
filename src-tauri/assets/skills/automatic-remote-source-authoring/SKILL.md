@@ -142,7 +142,7 @@ Every resource section (except `skills`) uses the same shape:
 
 | Type | Source file format | Installed to | Notes |
 |------|-------------------|--------------|-------|
-| **Skills** | Directory with `SKILL.md` | `~/.agents/skills/{name}/` | Include companion dirs: `scripts/`, `docs/`, `references/`, `examples/` |
+| **Skills** | Directory with `SKILL.md` | `~/.automatic/library/skills/{name}/` | Include companion dirs: `scripts/`, `docs/`, `references/`, `examples/` |
 | **MCP Servers** | `.json` | `~/.automatic/mcp_servers/{name}.json` | Standard MCP server config |
 | **Rules** | `.md` (plain markdown) | `~/.automatic/rules/{name}.json` | Installer wraps content in `{"name": ..., "content": ...}` |
 | **Templates** | `.json` (ProjectTemplate) | `~/.automatic/project_templates/{name}.json` | Must match Automatic's ProjectTemplate struct |

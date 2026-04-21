@@ -43,8 +43,8 @@ When a user opens `https://tryautomatic.app/install?repo=acme/ai-toolkit`:
 2. Parses `automatic.json`
 3. Shows a confirmation dialog listing all resources
 4. On confirm:
-   - `acme-react-patterns` skill dir copied to `~/.agents/skills/acme-react-patterns/`
-   - `acme-deploy` skill dir copied to `~/.agents/skills/acme-deploy/`
+   - `acme-react-patterns` skill dir copied to `~/.automatic/library/skills/acme-react-patterns/`
+   - `acme-deploy` skill dir copied to `~/.automatic/library/skills/acme-deploy/`
    - `acme-db.json` copied to `~/.automatic/mcp_servers/acme-db.json`
    - `acme-code-style.md` wrapped and written to `~/.automatic/rules/acme-code-style.json`
    - `acme-claude-hints.md` wrapped and written to `~/.automatic/rules/acme-claude-hints.json`

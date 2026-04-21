@@ -7,7 +7,7 @@ Remote Sources let Automatic load resources — skills, MCP servers, rules, temp
 1. A repository publishes an `automatic.json` manifest at its root.
 2. A user installs the source (via the UI, a Tauri command, or a deep link).
 3. Automatic clones the repo to `~/.automatic/sources/{owner}/{repo}/`.
-4. Resources are unpacked to their canonical locations (skills to `~/.agents/skills/`, rules to `~/.automatic/rules/`, etc.).
+4. Resources are unpacked to their canonical locations (skills to `~/.automatic/library/skills/`, rules to `~/.automatic/rules/`, etc.).
 5. Provenance is tracked so resources can be updated or cleanly removed.
 
 ## Manifest Format (`automatic.json`)
@@ -192,7 +192,7 @@ MCP servers, rules, templates, commands, and agents use a uniform shape:
 
 | Type | Source format | Installed to | Notes |
 |------|-------------|--------------|-------|
-| Skills | Directory with `SKILL.md` | `~/.agents/skills/{name}/` | Companion files (scripts/, docs/, etc.) are included. |
+| Skills | Directory with `SKILL.md` | `~/.automatic/library/skills/{name}/` | Companion files (scripts/, docs/, etc.) are included. |
 | MCP Servers | `.json` | `~/.automatic/mcp_servers/{name}.json` | Standard MCP server config JSON. |
 | Rules | `.md` | `~/.automatic/rules/{name}.json` | Markdown content is wrapped in `{"name": ..., "content": ...}`. |
 | Templates | `.json` | `~/.automatic/project_templates/{name}.json` | Must match the `ProjectTemplate` struct (see example). |

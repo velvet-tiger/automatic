@@ -4,7 +4,7 @@ see also ./docs/plans/cloud-sync/contract.md
 
 ## Context
 
-Automatic currently stores a user's library (nine asset types — skills, instructions, rules, templates, sub-agents, commands, MCP servers, collections, project templates) on disk in `~/.automatic/` and `~/.agents/skills/`. There is no server-side copy. The product goal is to give signed-in users a cloud mirror of their library at `tryautomatic.app` so they can see it online and, later, share libraries with teammates via Clerk Organizations.
+Automatic currently stores a user's library (nine asset types — skills, instructions, rules, templates, sub-agents, commands, MCP servers, collections, project templates) on disk in `~/.automatic/` (skills live in `~/.automatic/library/skills/`). There is no server-side copy. The product goal is to give signed-in users a cloud mirror of their library at `tryautomatic.app` so they can see it online and, later, share libraries with teammates via Clerk Organizations.
 
 This plan delivers **v1: up-only sync** (desktop → cloud) full-stack, covering both `automatic-app` (Rust desktop client) and `automatic-webapp` (Next.js + Clerk). The webapp currently has no API routes and no database, so both are added here. The design keeps the door open for v2 (down-sync) and v3 (team libraries) without breaking changes.
 

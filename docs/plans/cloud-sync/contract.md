@@ -208,5 +208,5 @@ with timestamp LWW: files with `mtime > remote.updated_at` stay local
 
 - `client_id = "automatic-desktop"` (unchanged)
 - `redirect_uri = http://127.0.0.1:<ephemeral_port>/callback` (unchanged)
-- `device_id` — UUIDv4, persisted in `~/.agents/.cloud-sync-state.json` (new — see `client-state.md`)
+- `device_id` — UUIDv4, persisted in `~/.automatic/cloud-sync-state.json` (new — see `client-state.md`)
 - Tokens in keychain under service `automatic_cloud` (unchanged)
