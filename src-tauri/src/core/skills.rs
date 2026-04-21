@@ -615,16 +615,19 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
 /// Automatic (e.g. via `npx skills add`) and the user wants Automatic to
 /// take ownership.
 ///
-/// No-op if the skill is already in the library.
+/// Copies the full skill directory — SKILL.md plus any companion files —
+/// so the library copy is a faithful reproduction of the external skill.
+/// No-op if the skill is already in the library. The external source is
+/// left in place; removing it is the user's call.
 pub fn sync_skill(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
 
     let library_dir = get_library_skills_dir()?;
-    let library_path = library_dir.join(name).join("SKILL.md");
+    let dest_dir = library_dir.join(name);
 
-    if library_path.exists() {
+    if dest_dir.join("SKILL.md").exists() {
         return Ok(());
     }
 
@@ -632,12 +635,14 @@ pub fn sync_skill(name: &str) -> Result<(), String> {
         if source.id == "library" {
             continue;
         }
-        let source_path = PathBuf::from(&source.path).join(name).join("SKILL.md");
-        if source_path.exists() {
-            let content = fs::read_to_string(&source_path).map_err(|e| e.to_string())?;
-            let target_dir = library_dir.join(name);
-            fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
-            fs::write(&library_path, content).map_err(|e| e.to_string())?;
+        let source_dir = PathBuf::from(&source.path).join(name);
+        if source_dir.join("SKILL.md").exists() {
+            if let Some(parent) = dest_dir.parent() {
+                if !parent.exists() {
+                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+            }
+            copy_dir_recursive_for_migration(&source_dir, &dest_dir)?;
             return Ok(());
         }
     }
@@ -659,6 +664,108 @@ pub fn sync_all_skills() -> Result<Vec<String>, String> {
     }
 
     Ok(synced)
+}
+
+// ── Library Migration ────────────────────────────────────────────────────────
+
+/// Move Automatic-managed skills out of `~/.agents/skills/` and into the
+/// managed library at `~/.automatic/library/skills/`.
+///
+/// Previously Automatic used `~/.agents/skills/` as both its private library
+/// and an external scan location. OpenCode auto-loads every skill in that
+/// directory globally, which meant any skill Automatic installed became
+/// active in every project — the opposite of the per-project opt-in model.
+///
+/// This migration reads `skills.json` (Automatic's registry of owned
+/// skills) and moves each registered skill's directory into the library,
+/// then removes the old copy from `~/.agents/skills/` so OpenCode stops
+/// auto-loading it. Unregistered directories are left untouched — they
+/// belong to the user or to another tool (e.g. `npx skills add`).
+///
+/// Idempotent: skills already in the library are left alone, and the old
+/// copy is just removed.  Returns the list of skill names migrated.
+pub fn migrate_agents_skills_to_library() -> Result<Vec<String>, String> {
+    let library_dir = get_library_skills_dir()?;
+    let agents_dir = get_agents_skills_dir()?;
+
+    if !agents_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let registry = super::skill_store::read_skill_sources().unwrap_or_default();
+    let mut migrated = Vec::new();
+
+    for name in registry.keys() {
+        if !is_valid_name(name) {
+            continue;
+        }
+        let src = agents_dir.join(name);
+        if !src.exists() {
+            continue;
+        }
+
+        let dest = library_dir.join(name);
+        if dest.exists() {
+            // Library already owns this skill; just remove the old copy.
+            fs::remove_dir_all(&src).map_err(|e| {
+                format!(
+                    "Failed to remove legacy skill {}: {}",
+                    src.display(),
+                    e
+                )
+            })?;
+            migrated.push(name.clone());
+            continue;
+        }
+
+        if let Some(parent) = dest.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent).map_err(|e| {
+                    format!(
+                        "Failed to create library directory {}: {}",
+                        parent.display(),
+                        e
+                    )
+                })?;
+            }
+        }
+
+        // Try a same-filesystem rename first; fall back to copy+remove if
+        // the library and `~/.agents/` live on different filesystems.
+        if fs::rename(&src, &dest).is_err() {
+            copy_dir_recursive_for_migration(&src, &dest)?;
+            fs::remove_dir_all(&src).map_err(|e| {
+                format!(
+                    "Failed to remove legacy skill after copy {}: {}",
+                    src.display(),
+                    e
+                )
+            })?;
+        }
+        migrated.push(name.clone());
+    }
+
+    Ok(migrated)
+}
+
+fn copy_dir_recursive_for_migration(src: &PathBuf, dest: &PathBuf) -> Result<(), String> {
+    if !dest.exists() {
+        fs::create_dir_all(dest)
+            .map_err(|e| format!("Failed to create {}: {}", dest.display(), e))?;
+    }
+    for entry in fs::read_dir(src).map_err(|e| format!("Failed to read {}: {}", src.display(), e))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive_for_migration(&path, &dest_path)?;
+        } else {
+            fs::copy(&path, &dest_path)
+                .map_err(|e| format!("Failed to copy {}: {}", path.display(), e))?;
+        }
+    }
+    Ok(())
 }
 
 // ── Skill Import ─────────────────────────────────────────────────────────────────
@@ -1768,6 +1875,117 @@ mod tests {
                 .findings
                 .iter()
                 .any(|finding| finding.code == "hidden-comment"));
+        });
+    }
+
+    // ── migrate_agents_skills_to_library ───────────────────────────────────
+
+    #[test]
+    fn migrate_moves_registered_skills_from_agents_to_library() {
+        with_temp_home(|_| {
+            let agents_dir = get_agents_skills_dir().expect("agents dir");
+            let library_dir = get_library_skills_dir().expect("library dir");
+            make_skill(&agents_dir, "bundled-skill", "# Bundled");
+            super::super::skill_store::record_skill_source(
+                "bundled-skill",
+                "automatic/automatic-app",
+                "automatic/automatic-app/bundled-skill",
+                "bundled",
+            )
+            .expect("record source");
+
+            let moved = migrate_agents_skills_to_library().expect("migrate");
+
+            assert!(moved.contains(&"bundled-skill".to_string()));
+            assert!(library_dir.join("bundled-skill/SKILL.md").exists());
+            assert!(!agents_dir.join("bundled-skill").exists());
+        });
+    }
+
+    #[test]
+    fn migrate_preserves_unregistered_external_skills() {
+        with_temp_home(|_| {
+            let agents_dir = get_agents_skills_dir().expect("agents dir");
+            let library_dir = get_library_skills_dir().expect("library dir");
+            make_skill(&agents_dir, "user-installed", "# External");
+
+            let moved = migrate_agents_skills_to_library().expect("migrate");
+
+            assert!(moved.is_empty());
+            assert!(agents_dir.join("user-installed/SKILL.md").exists());
+            assert!(!library_dir.join("user-installed").exists());
+        });
+    }
+
+    #[test]
+    fn migrate_removes_old_copy_when_library_already_populated() {
+        with_temp_home(|_| {
+            let agents_dir = get_agents_skills_dir().expect("agents dir");
+            let library_dir = get_library_skills_dir().expect("library dir");
+            make_skill(&agents_dir, "dup-skill", "# Agents version");
+            make_skill(&library_dir, "dup-skill", "# Library version");
+            super::super::skill_store::record_skill_source(
+                "dup-skill",
+                "automatic/automatic-app",
+                "automatic/automatic-app/dup-skill",
+                "bundled",
+            )
+            .expect("record source");
+
+            let moved = migrate_agents_skills_to_library().expect("migrate");
+
+            assert!(moved.contains(&"dup-skill".to_string()));
+            assert!(!agents_dir.join("dup-skill").exists());
+            // Library copy is left as-is.
+            let content =
+                fs::read_to_string(library_dir.join("dup-skill/SKILL.md")).expect("read library");
+            assert_eq!(content, "# Library version");
+        });
+    }
+
+    #[test]
+    fn migrate_is_idempotent() {
+        with_temp_home(|_| {
+            let agents_dir = get_agents_skills_dir().expect("agents dir");
+            make_skill(&agents_dir, "idem-skill", "# Idem");
+            super::super::skill_store::record_skill_source(
+                "idem-skill",
+                "automatic/automatic-app",
+                "automatic/automatic-app/idem-skill",
+                "bundled",
+            )
+            .expect("record source");
+
+            let first = migrate_agents_skills_to_library().expect("first migrate");
+            assert_eq!(first, vec!["idem-skill".to_string()]);
+
+            let second = migrate_agents_skills_to_library().expect("second migrate");
+            assert!(second.is_empty());
+        });
+    }
+
+    #[test]
+    fn migrate_copies_companion_files() {
+        with_temp_home(|_| {
+            let agents_dir = get_agents_skills_dir().expect("agents dir");
+            let library_dir = get_library_skills_dir().expect("library dir");
+            let skill_dir = agents_dir.join("rich-skill");
+            fs::create_dir_all(skill_dir.join("scripts")).expect("create scripts dir");
+            fs::write(skill_dir.join("SKILL.md"), "# Rich").expect("write SKILL.md");
+            fs::write(skill_dir.join("scripts/run.sh"), "#!/bin/bash").expect("write script");
+            super::super::skill_store::record_skill_source(
+                "rich-skill",
+                "automatic/automatic-app",
+                "automatic/automatic-app/rich-skill",
+                "bundled",
+            )
+            .expect("record source");
+
+            migrate_agents_skills_to_library().expect("migrate");
+
+            assert!(library_dir.join("rich-skill/SKILL.md").exists());
+            assert!(library_dir.join("rich-skill/scripts/run.sh").exists());
+            assert!(!agents_dir.join("rich-skill").exists());
         });
     }
 }

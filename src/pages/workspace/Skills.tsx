@@ -676,6 +676,18 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
 
 
+  const handleImportToLibrary = async (name: string) => {
+    try {
+      await invoke("sync_skill", { name });
+      await loadSkills();
+      await loadSkillContent(name);
+      setError(null);
+      setSecurityNotice(null);
+    } catch (err: any) {
+      setError(`Failed to import skill to library: ${err}`);
+    }
+  };
+
   const handleDuplicate = async (name: string) => {
     // Build a unique local name: "<name>-local", or "<name>-local-2", etc.
     const base = `${name}-local`;
@@ -856,6 +868,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
               {filteredSkills.map(skill => {
                 const isSelected = selectedSkill === skill.name && !isCreating;
                 const isRemote = !!skill.source;
+                const isExternalOnly = skill.sources.length > 0 && !skill.sources.includes("library");
 
                 return (
                   <li key={skill.name} className="group">
@@ -896,30 +909,48 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                           </span>
                         ) : null}
 
+                        {isExternalOnly && (
+                          <span
+                            className="px-1 py-0.5 rounded bg-warning/10 text-[9px] text-warning"
+                            title="Skill lives outside Automatic's managed library. Import to sync it into projects."
+                          >
+                            External
+                          </span>
+                        )}
+
                         {/* Source location badges */}
                         {skill.sources && skill.sources.length > 0 && (
                           <span className="flex items-center gap-1 text-[10px] text-text-muted">
-                            {skill.sources.map(src => (
-                              <button
-                                key={src}
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  try {
-                                    const sources = await invoke<{ id: string; path: string }[]>("list_skill_directories");
-                                    const source = sources.find(s => s.id === src);
-                                    if (source) {
-                                      const skillDir = `${source.path}/${skill.name}`;
-                                      await openPath(skillDir);
+                            {skill.sources.map(src => {
+                              const label = src === "library"
+                                ? "library"
+                                : src === "agents"
+                                  ? "~/.agents"
+                                  : src === "claude"
+                                    ? "~/.claude"
+                                    : src;
+                              return (
+                                <button
+                                  key={src}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    try {
+                                      const sources = await invoke<{ id: string; path: string }[]>("list_skill_directories");
+                                      const source = sources.find(s => s.id === src);
+                                      if (source) {
+                                        const skillDir = `${source.path}/${skill.name}`;
+                                        await openPath(skillDir);
+                                      }
+                                    } catch (err) {
+                                      console.error("Failed to open skill directory:", err);
                                     }
-                                  } catch (err) {
-                                    console.error("Failed to open skill directory:", err);
-                                  }
-                                }}
-                                className="px-1 py-0.5 rounded bg-bg-base/50 text-[9px] hover:bg-brand/20 hover:text-brand cursor-pointer transition-colors"
-                                title={`Open ${src === "agents" ? "local" : src} skill folder`}
-                              >{src === "agents" ? "local" : src}
-                              </button>
-                            ))}
+                                  }}
+                                  className="px-1 py-0.5 rounded bg-bg-base/50 text-[9px] hover:bg-brand/20 hover:text-brand cursor-pointer transition-colors"
+                                  title={`Open ${label} skill folder`}
+                                >{label}
+                                </button>
+                              );
+                            })}
                           </span>
                         )}
 
@@ -1064,7 +1095,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                   <p className="mt-1.5 text-[11px] text-red-400">{fieldErrors.name}</p>
                 ) : (
                   <p className="mt-1.5 text-[11px] text-text-muted">
-                    Lowercase letters, digits, and hyphens only. Becomes the directory name under <code className="font-mono">~/.agents/skills/</code>.
+                    Lowercase letters, digits, and hyphens only. Becomes the directory name in Automatic's managed library at <code className="font-mono">~/.automatic/library/skills/</code>.
                   </p>
                 )}
               </div>
@@ -1150,12 +1181,28 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                     Built-in
                   </span>
                 )}
+                {/* External badge — skill lives outside the managed library */}
+                {selectedEntry && selectedEntry.sources.length > 0 && !selectedEntry.sources.includes("library") && !isEditing && (
+                  <span className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-warning bg-warning/10 border border-warning/20" title="This skill lives in ~/.agents/skills or a similar external location. Import it to Automatic's library to sync it into projects.">
+                    <span>External</span>
+                  </span>
+                )}
                 {/* Remote skills are read-only — show a lock badge */}
                 {selectedEntry?.source && !isEditing && selectedSkill !== "automatic" && (
                   <span className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/40" title="Installed from a remote source — editing is disabled">
                     <Lock size={10} />
                     <span>Read-only</span>
                   </span>
+                )}
+                {/* Import to library — offered for external-only skills */}
+                {!isEditing && selectedEntry && selectedEntry.sources.length > 0 && !selectedEntry.sources.includes("library") && (
+                  <button
+                    onClick={() => handleImportToLibrary(selectedSkill!)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors"
+                    title="Copy this skill into Automatic's managed library so it can be synced to projects"
+                  >
+                    <Download size={12} /> Import to library
+                  </button>
                 )}
                 {!isEditing && (
                   <button

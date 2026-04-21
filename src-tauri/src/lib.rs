@@ -98,6 +98,19 @@ pub fn run() {
                     eprintln!("[automatic] marketplace init error: {}", e);
                 }
 
+                // One-time migration: any skill Automatic previously wrote to
+                // ~/.agents/skills/ (shared with OpenCode's global auto-load
+                // path) is moved into the managed library at
+                // ~/.automatic/library/skills/. Idempotent and safe to re-run.
+                match core::migrate_agents_skills_to_library() {
+                    Ok(moved) if !moved.is_empty() => eprintln!(
+                        "[automatic] migrated {} skill(s) from ~/.agents/skills/ into managed library",
+                        moved.len()
+                    ),
+                    Ok(_) => {}
+                    Err(e) => eprintln!("[automatic] skill library migration error: {}", e),
+                }
+
                 if let Err(e) = core::install_default_skills_inner(force_reinstall) {
                     eprintln!("[automatic] skill install error: {}", e);
                 } else if force_reinstall {
