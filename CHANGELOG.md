@@ -4,6 +4,20 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-04-23
+
+### Added
+
+- Silent sync mode for projects. (`eda40ab`)
+- Guardrails default rule. (`31174b3`)
+- Styled MCP authorization callback page for OAuth flows. (`cef2be0`)
+
+### Changed
+
+- Skill library relocated to `~/.automatic/library/skills`; legacy skills are migrated on launch and external skills surface in the UI. (`bc0db38`, `d693368`)
+- Documentation references updated from `~/.agents/skills` to `~/.automatic/library/skills`. (`784dfed`)
+- Process skill now includes an explicit Communicate step. (`4e4e736`)
+
 ## [1.4.5] - 2026-04-19
 
 ### Added
