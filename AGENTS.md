@@ -221,7 +221,15 @@ A framework for structured, honest, and traceable software development work. App
 - Consider failure modes: invalid input, unavailable dependencies, retried operations.
 - Validate your plan against the constraints from Phase 1. If there is a conflict, surface it rather than quietly working around it.
 
-## Phase 4: Implement
+## Phase 4: Communicate
+
+- Tell the user what you found, what needs to be done, and how you are going to fix it.
+- Communicate in plain, clear language. Do not use jargon, idioms, turns-of-phrase or colloquialisms.
+- Communicate in full sentances, do not omit words or drop articles.
+- Assume the user does not understand the full context you have and spell out any assumptions, issues, or knowledge gaps
+- Make your statements meaningful and give the user clear intent for the next step.
+
+## Phase 5: Implement
 
 - Edit only what is relevant to the task. If you notice a bug nearby, note it — do not silently fix it unless it is in scope.
 - Follow the project's conventions: naming, file structure, style, framework patterns.
@@ -230,14 +238,14 @@ A framework for structured, honest, and traceable software development work. App
 - Comment on *why*, not *what*. Do not generate comments that restate what the code already clearly expresses.
 - Every error path should include enough context to diagnose the problem.
 
-## Phase 5: Verify
+## Phase 6: Verify
 
 - Review your changes as if reading someone else's code. Check for logic errors, edge cases, and missing error handling.
 - Confirm the implementation actually solves the goal from Phase 1. Trace through it with a realistic input.
 - Consider what existing behaviour may have been affected. Run tests if they exist; note the gap if they do not.
 - Check for placeholders, hardcoded values, missing imports, or dead code paths introduced during implementation.
 
-## Phase 6: Communicate
+## Phase 7: Summarise
 
 - Summarise what you did and why, including significant decisions.
 - Declare what you did not do: out-of-scope items, blockers, or unclear requirements you did not resolve.
@@ -434,7 +442,15 @@ A framework for structured, honest, and traceable software development work. App
 - Consider failure modes: invalid input, unavailable dependencies, retried operations.
 - Validate your plan against the constraints from Phase 1. If there is a conflict, surface it rather than quietly working around it.
 
-## Phase 4: Implement
+## Phase 4: Communicate
+
+- Tell the user what you found, what needs to be done, and how you are going to fix it.
+- Communicate in plain, clear language. Do not use jargon, idioms, turns-of-phrase or colloquialisms.
+- Communicate in full sentances, do not omit words or drop articles.
+- Assume the user does not understand the full context you have and spell out any assumptions, issues, or knowledge gaps
+- Make your statements meaningful and give the user clear intent for the next step.
+
+## Phase 5: Implement
 
 - Edit only what is relevant to the task. If you notice a bug nearby, note it — do not silently fix it unless it is in scope.
 - Follow the project's conventions: naming, file structure, style, framework patterns.
@@ -443,14 +459,14 @@ A framework for structured, honest, and traceable software development work. App
 - Comment on *why*, not *what*. Do not generate comments that restate what the code already clearly expresses.
 - Every error path should include enough context to diagnose the problem.
 
-## Phase 5: Verify
+## Phase 6: Verify
 
 - Review your changes as if reading someone else's code. Check for logic errors, edge cases, and missing error handling.
 - Confirm the implementation actually solves the goal from Phase 1. Trace through it with a realistic input.
 - Consider what existing behaviour may have been affected. Run tests if they exist; note the gap if they do not.
 - Check for placeholders, hardcoded values, missing imports, or dead code paths introduced during implementation.
 
-## Phase 6: Communicate
+## Phase 7: Summarise
 
 - Summarise what you did and why, including significant decisions.
 - Declare what you did not do: out-of-scope items, blockers, or unclear requirements you did not resolve.
