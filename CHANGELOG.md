@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-04-26
+
+### Fixed
+
+- Toggling Unified instruction mode no longer leaves the per-agent files (`AGENTS.md`, `CLAUDE.md`, ...) in a divergent state. When their content disagrees the user is now shown a picker to choose which file becomes the canonical unified source, with an explicit warning that the unchosen files will be overwritten. Previously, divergence was deferred to drift resolution where adopting one file's content silently cascaded across every other unified target. (`20abecf`)
+
 ## [1.5.0] - 2026-04-23
 
 ### Added
