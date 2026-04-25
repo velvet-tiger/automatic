@@ -188,6 +188,150 @@ pub fn overwrite_instruction_file(name: &str, filename: &str) -> Result<(), Stri
     Ok(())
 }
 
+/// Per-agent instruction file candidate returned by
+/// [`inspect_unified_candidates`] for the unified-mode source picker.
+#[derive(serde::Serialize)]
+pub struct UnifiedCandidate {
+    /// Concrete instruction filename (e.g. `"AGENTS.md"`, `"CLAUDE.md"`).
+    pub filename: String,
+    /// Agent labels whose primary instruction file is this filename.
+    pub agent_labels: Vec<String>,
+    /// User-authored content currently on disk (managed sections stripped).
+    /// Empty string if the file does not exist on disk.
+    pub user_content: String,
+    /// True if the file exists on disk.
+    pub exists: bool,
+    /// Last-modified time as milliseconds since the Unix epoch, or `None` if
+    /// the file does not exist or its mtime cannot be read.
+    pub modified_ms: Option<u64>,
+}
+
+/// Result of inspecting the per-agent files in preparation for switching to
+/// unified instruction mode.
+#[derive(serde::Serialize)]
+pub struct UnifiedInspection {
+    /// Per-agent files that would be unified, in agent registration order.
+    pub candidates: Vec<UnifiedCandidate>,
+    /// True if every existing file's user content matches (whitespace-trimmed).
+    /// When this is true the frontend can switch silently; otherwise it must
+    /// ask the user which file's content should become the unified source.
+    pub consistent: bool,
+}
+
+/// Inspect a project's per-agent instruction files in preparation for
+/// switching to unified mode.
+///
+/// Returns each unique agent file with its user-authored content (managed
+/// sections stripped) and a `consistent` flag.  When `consistent` is `false`
+/// the on-disk files have diverged and the frontend must present a picker so
+/// the user can choose which file becomes the canonical unified source —
+/// switching silently would let one file's content silently overwrite
+/// another's via the next save.
+#[tauri::command]
+pub fn inspect_unified_candidates(name: &str) -> Result<String, String> {
+    let raw = core::read_project(name)?;
+    let project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    let empty = UnifiedInspection {
+        candidates: vec![],
+        consistent: true,
+    };
+
+    if project.directory.is_empty() {
+        return serde_json::to_string(&empty).map_err(|e| e.to_string());
+    }
+
+    let project_dir = std::path::PathBuf::from(&project.directory);
+    let mut candidates: Vec<UnifiedCandidate> = Vec::new();
+
+    for agent_id in &project.agents {
+        let Some(a) = agent::from_id(agent_id) else { continue };
+        if !a.capabilities().instructions {
+            continue;
+        }
+        let filename = a.project_file_name().to_string();
+        let label = a.label().to_string();
+
+        if let Some(existing) = candidates.iter_mut().find(|c| c.filename == filename) {
+            if !existing.agent_labels.iter().any(|l| l == &label) {
+                existing.agent_labels.push(label);
+            }
+            continue;
+        }
+
+        let path = project_dir.join(&filename);
+        let exists = path.is_file();
+        let user_content = if exists {
+            core::read_project_file(&project.directory, &filename).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let modified_ms = if exists {
+            path.metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+        } else {
+            None
+        };
+
+        candidates.push(UnifiedCandidate {
+            filename,
+            agent_labels: vec![label],
+            user_content,
+            exists,
+            modified_ms,
+        });
+    }
+
+    let non_empty: Vec<&str> = candidates
+        .iter()
+        .filter(|c| c.exists && !c.user_content.trim().is_empty())
+        .map(|c| c.user_content.trim())
+        .collect();
+    let consistent = non_empty.len() < 2 || non_empty.iter().all(|c| *c == non_empty[0]);
+
+    serde_json::to_string(&UnifiedInspection {
+        candidates,
+        consistent,
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// Switch a project to unified instruction mode.
+///
+/// When `source_filename` matches one of the project's agent instruction
+/// files, that file's user-authored content is propagated to **every** agent
+/// instruction file — overwriting any divergent content elsewhere — so the
+/// project starts unified mode in a consistent state.  Pass an empty string
+/// (or any filename that does not match an agent file) to skip propagation;
+/// only the `instruction_mode` flag is updated and existing files are left
+/// untouched.  The frontend uses the empty path when it has already verified
+/// that the per-agent files agree, and the picker path when they disagree.
+#[tauri::command]
+pub fn switch_to_unified_mode(name: &str, source_filename: &str) -> Result<(), String> {
+    let raw = core::read_project(name)?;
+    let mut project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    project.instruction_mode = "unified".to_string();
+    project.updated_at = chrono::Utc::now().to_rfc3339();
+    let updated_json = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
+    core::save_project(name, &updated_json)?;
+
+    let agent_filenames = core::collect_agent_filenames(&project);
+    if !source_filename.is_empty() && agent_filenames.iter().any(|f| f == source_filename) {
+        let user_content = core::read_project_file(&project.directory, source_filename)?;
+        let touched = core::resolve_instruction_target_filenames(&project, "_unified");
+        core::save_project_file_for_project(&project, "_unified", &user_content)?;
+        core::record_instruction_hashes_for_filenames(name, &mut project, &touched);
+    }
+
+    Ok(())
+}
+
 /// Use AI to analyse the project directory and generate a starter markdown body
 /// for an agent instruction file (e.g. `CLAUDE.md` or `AGENTS.md`).
 ///

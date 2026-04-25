@@ -257,6 +257,8 @@ pub fn run() {
             save_project_file,
             adopt_instruction_file,
             overwrite_instruction_file,
+            inspect_unified_candidates,
+            switch_to_unified_mode,
             get_instruction_file_conflicts,
             ai_generate_instruction,
             ai_update_instruction,

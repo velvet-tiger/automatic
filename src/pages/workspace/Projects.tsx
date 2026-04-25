@@ -189,6 +189,19 @@ interface InstructionFileConflict {
   automatic_content: string;
 }
 
+interface UnifiedCandidate {
+  filename: string;
+  agent_labels: string[];
+  user_content: string;
+  exists: boolean;
+  modified_ms: number | null;
+}
+
+interface UnifiedInspection {
+  candidates: UnifiedCandidate[];
+  consistent: boolean;
+}
+
 interface RebuildPreviewCategory {
   key: string;
   label: string;
@@ -1399,6 +1412,160 @@ function InstructionConflictModal({
   );
 }
 
+// ── UnifiedSourcePickerModal ─────────────────────────────────────────────────
+
+interface UnifiedSourcePickerModalProps {
+  candidates: UnifiedCandidate[];
+  busy: boolean;
+  onPick: (filename: string) => void;
+  onClose: () => void;
+}
+
+/**
+ * Shown when the user toggles Unified mode but the per-agent instruction
+ * files have divergent user content.  The user picks which file becomes the
+ * canonical unified source; the other files will be overwritten with that
+ * content.  Picking nothing dismisses without changing the mode.
+ */
+function UnifiedSourcePickerModal({
+  candidates,
+  busy,
+  onPick,
+  onClose,
+}: UnifiedSourcePickerModalProps) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose, busy]);
+
+  const visible = candidates.filter((c) => c.exists);
+  const newestMs = visible.reduce<number | null>(
+    (acc, c) => (c.modified_ms != null && (acc == null || c.modified_ms > acc) ? c.modified_ms : acc),
+    null,
+  );
+
+  const formatModified = (ms: number | null): string => {
+    if (ms == null) return "";
+    try {
+      return new Date(ms).toLocaleString();
+    } catch {
+      return "";
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(0,0,0,0.6)" }}
+      onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}
+    >
+      <div
+        className="flex flex-col bg-bg-sidebar border border-border-strong/40 rounded-xl shadow-2xl overflow-hidden"
+        style={{ width: "min(1100px, 94vw)", maxHeight: "85vh" }}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border-strong flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] font-medium text-warning/70 uppercase tracking-wider">
+              Switch To Unified Mode
+            </span>
+            <span className="text-border-strong">/</span>
+            <span className="text-[13px] text-text-base">Choose A Source File</span>
+          </div>
+          <button
+            onClick={() => { if (!busy) onClose(); }}
+            className="text-text-muted hover:text-text-base transition-colors disabled:opacity-50"
+            disabled={busy}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+          <div className="rounded-lg border border-warning/40 bg-warning/5 px-3 py-2.5">
+            <div className="flex items-start gap-2">
+              <AlertCircle size={14} className="text-warning mt-0.5 flex-shrink-0" />
+              <div className="text-[12px] text-text-base leading-relaxed">
+                <p className="font-medium text-warning mb-1">Your instruction files do not match.</p>
+                <p className="text-text-muted">
+                  Unified mode keeps a single shared body of instructions for every agent. Pick the
+                  file whose content should become the unified source. The content of the other
+                  files will be <span className="text-danger font-medium">overwritten</span> with
+                  the file you choose. This action cannot be undone from inside Automatic.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {visible.map((c) => {
+              const isNewest = newestMs != null && c.modified_ms === newestMs;
+              const lineCount = c.user_content.trim() ? c.user_content.split("\n").length : 0;
+              return (
+                <div
+                  key={c.filename}
+                  className="rounded-lg border border-border-strong/40 overflow-hidden bg-bg-base/40"
+                >
+                  <div className="flex items-center justify-between px-3 py-2 bg-bg-input/60 border-b border-border-strong/30">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText size={13} className="text-text-muted flex-shrink-0" />
+                      <span className="text-[13px] font-mono text-text-base truncate">
+                        {c.filename}
+                      </span>
+                      {c.agent_labels.length > 0 && (
+                        <span className="text-[11px] text-text-muted truncate">
+                          · {c.agent_labels.join(", ")}
+                        </span>
+                      )}
+                      {isNewest && visible.length > 1 && (
+                        <span className="text-[10px] text-success uppercase tracking-wider px-1.5 py-0.5 rounded bg-success/10 border border-success/30">
+                          Newest
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <span className="text-[11px] text-text-muted">
+                        {lineCount} line{lineCount !== 1 ? "s" : ""}
+                      </span>
+                      {c.modified_ms != null && (
+                        <span className="text-[11px] text-text-subtle">
+                          {formatModified(c.modified_ms)}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => { if (!busy) onPick(c.filename); }}
+                        disabled={busy}
+                        className="px-2.5 py-1 text-[11px] font-medium rounded border border-success/40 bg-success/10 hover:bg-success/20 hover:border-success/60 text-success transition-colors disabled:opacity-50"
+                      >
+                        Use this file
+                      </button>
+                    </div>
+                  </div>
+                  <pre className="max-h-48 overflow-y-auto bg-bg-base p-3 text-[12px] font-mono whitespace-pre-wrap leading-relaxed text-text-muted">
+                    {c.user_content.trim() || (
+                      <em className="not-italic text-text-subtle">empty</em>
+                    )}
+                  </pre>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border-strong flex-shrink-0">
+          <button
+            onClick={() => { if (!busy) onClose(); }}
+            disabled={busy}
+            className="px-3 py-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface RebuildConfirmationModalProps {
   preview: RebuildPreview;
   busy: boolean;
@@ -2398,6 +2565,11 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [instructionConflict, setInstructionConflict] = useState<InstructionFileConflict | null>(null);
   const [rebuildPreview, setRebuildPreview] = useState<RebuildPreview | null>(null);
   const [rebuildBusy, setRebuildBusy] = useState(false);
+
+  // Unified-mode source picker state — populated when the user toggles to
+  // unified mode and the per-agent files have divergent user content.
+  const [unifiedSourcePicker, setUnifiedSourcePicker] = useState<UnifiedCandidate[] | null>(null);
+  const [unifiedSourcePickerBusy, setUnifiedSourcePickerBusy] = useState(false);
 
   // Project template state
   const [availableProjectTemplates, setAvailableProjectTemplates] = useState<ProjectTemplate[]>([]);
@@ -5571,14 +5743,33 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                       <div className="flex rounded overflow-hidden border border-border-strong/40">
                         <button
                           onClick={async () => {
-                             if (project.instruction_mode !== "unified" && selectedName) {
-                              const updated = { ...project, instruction_mode: "unified", updated_at: new Date().toISOString() };
-                              setProject(updated);
-                              setDirty(false);
-                              await invoke("save_project", { name: selectedName, data: JSON.stringify(updated, null, 2) });
-                              await loadProjectFiles(selectedName);
-                              notifyProjectUpdated();
+                            if (project.instruction_mode === "unified" || !selectedName) {
+                              return;
                             }
+                            // Check whether the per-agent files agree before switching.
+                            // If they diverge, the user must choose which file becomes
+                            // the unified source — switching silently would let one
+                            // file's content overwrite the other on the next save.
+                            let inspection: UnifiedInspection;
+                            try {
+                              const raw = await invoke<string>("inspect_unified_candidates", {
+                                name: selectedName,
+                              });
+                              inspection = JSON.parse(raw) as UnifiedInspection;
+                            } catch (e) {
+                              console.error("inspect_unified_candidates failed", e);
+                              return;
+                            }
+                            if (!inspection.consistent) {
+                              setUnifiedSourcePicker(inspection.candidates);
+                              return;
+                            }
+                            const updated = { ...project, instruction_mode: "unified", updated_at: new Date().toISOString() };
+                            setProject(updated);
+                            setDirty(false);
+                            await invoke("save_project", { name: selectedName, data: JSON.stringify(updated, null, 2) });
+                            await loadProjectFiles(selectedName);
+                            notifyProjectUpdated();
                           }}
                           className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
                             (project.instruction_mode || "per-agent") === "unified"
@@ -9243,6 +9434,39 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
             setSyncStatus(null);
           }
         }}
+      />
+    )}
+
+    {unifiedSourcePicker && selectedName && (
+      <UnifiedSourcePickerModal
+        candidates={unifiedSourcePicker}
+        busy={unifiedSourcePickerBusy}
+        onPick={async (filename) => {
+          if (!project) {
+            return;
+          }
+          setUnifiedSourcePickerBusy(true);
+          try {
+            await invoke("switch_to_unified_mode", {
+              name: selectedName,
+              sourceFilename: filename,
+            });
+            setProject({
+              ...project,
+              instruction_mode: "unified",
+              updated_at: new Date().toISOString(),
+            });
+            setDirty(false);
+            await loadProjectFiles(selectedName);
+            notifyProjectUpdated();
+            setUnifiedSourcePicker(null);
+          } catch (e) {
+            console.error("switch_to_unified_mode failed", e);
+          } finally {
+            setUnifiedSourcePickerBusy(false);
+          }
+        }}
+        onClose={() => setUnifiedSourcePicker(null)}
       />
     )}
 
