@@ -315,22 +315,19 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let name = &params.0.name;
 
-        // When a project is specified, try project-local skills first.
+        // When a project is specified, try project-scoped custom skills first.
+        // Their content lives inline in the project JSON, so no disk read is needed.
         if let Some(ref project_name) = params.0.project {
             if let Ok(raw) = crate::core::read_project(project_name) {
                 if let Ok(project) = serde_json::from_str::<crate::core::Project>(&raw) {
-                    if project.local_skills.iter().any(|s| s == name) {
-                        match crate::sync::read_local_skill(&project, name) {
-                            Ok(content) => {
-                                return Ok(CallToolResult::success(vec![Content::text(content)]))
-                            }
-                            Err(e) => {
-                                return Ok(CallToolResult::error(vec![Content::text(format!(
-                                    "Failed to read local skill '{}' from project '{}': {}",
-                                    name, project_name, e
-                                ))]))
-                            }
-                        }
+                    if let Some(custom) = project
+                        .custom_skills
+                        .as_ref()
+                        .and_then(|skills| skills.iter().find(|s| s.name == *name))
+                    {
+                        return Ok(CallToolResult::success(vec![Content::text(
+                            custom.content.clone(),
+                        )]));
                     }
                 }
             }

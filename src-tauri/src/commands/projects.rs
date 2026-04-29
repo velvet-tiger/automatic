@@ -51,10 +51,10 @@ pub fn preview_rebuild_project(name: &str) -> Result<String, String> {
         ),
         diff_category("skills", "Skills", &project.skills, &rebuilt.skills),
         diff_category(
-            "local_skills",
-            "Local Skills",
-            &project.local_skills,
-            &rebuilt.local_skills,
+            "custom_skills",
+            "Project Skills",
+            &custom_skill_names(&project),
+            &custom_skill_names(&rebuilt),
         ),
         diff_category(
             "mcp_servers",
@@ -849,6 +849,14 @@ fn custom_command_names(project: &core::Project) -> Vec<String> {
         .custom_commands
         .as_ref()
         .map(|commands| commands.iter().map(|cmd| cmd.name.clone()).collect())
+        .unwrap_or_default()
+}
+
+fn custom_skill_names(project: &core::Project) -> Vec<String> {
+    project
+        .custom_skills
+        .as_ref()
+        .map(|skills| skills.iter().map(|skill| skill.name.clone()).collect())
         .unwrap_or_default()
 }
 

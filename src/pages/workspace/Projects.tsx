@@ -115,7 +115,6 @@ interface Project {
   description: string;
   directory: string;
   skills: string[];
-  local_skills: string[];
   mcp_servers: string[];
   disabled_mcp_servers?: string[];
   providers: string[];
@@ -448,7 +447,6 @@ function emptyProject(name: string): Project {
     description: "",
     directory: "",
     skills: [],
-    local_skills: [],
     mcp_servers: [],
     disabled_mcp_servers: [],
     providers: [],
@@ -1774,7 +1772,7 @@ function ProjectCard({
     ? "border-warning/30 hover:border-warning/50"
     : "border-border-strong/40 hover:border-border-strong/70";
 
-  const totalSkills = (project?.skills?.length ?? 0) + (project?.local_skills?.length ?? 0);
+  const totalSkills = (project?.skills?.length ?? 0) + (project?.custom_skills?.length ?? 0);
   const mcpCount = project?.mcp_servers?.length ?? 0;
   const totalRules = Object.values(project?.file_rules ?? {}).reduce((sum, arr) => sum + arr.length, 0) + (project?.custom_rules?.length ?? 0);
   const subAgentCount = (project?.custom_agents?.length ?? 0) + (project?.user_agents?.length ?? 0);
@@ -1903,7 +1901,7 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject }: Project
     if (!p) continue;
     (p.agents ?? []).forEach((a) => agentSet.add(a));
     (p.skills ?? []).forEach((s) => skillSet.add(s));
-    (p.local_skills ?? []).forEach((s) => skillSet.add(s));
+    (p.custom_skills ?? []).forEach((s) => skillSet.add(s.name));
     (p.mcp_servers ?? []).forEach((m) => mcpSet.add(m));
     if ((p.agents?.length ?? 0) > 0 && !!p.directory) fullyConfigured++;
   }
@@ -3942,24 +3940,25 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       // added back once the user has removed them.
       const storedAgents: string[] = stored.agents || [];
       const storedSkills: string[] = stored.skills || [];
-      const storedLocalSkills: string[] = stored.local_skills || [];
+      const storedCustomSkills: CustomSkill[] = stored.custom_skills || [];
       const storedMcp: string[] = stored.mcp_servers || [];
 
       const detectedAgents: string[] = parsed.agents || [];
       const detectedSkills: string[] = parsed.skills || [];
-      const detectedLocalSkills: string[] = parsed.local_skills || [];
+      const detectedCustomSkills: CustomSkill[] = parsed.custom_skills || [];
       const detectedMcp: string[] = parsed.mcp_servers || [];
 
       // New items found by autodetect that aren't yet in the stored config.
       const newAgents = detectedAgents.filter((a) => !storedAgents.includes(a));
       const newSkills = detectedSkills.filter((s) => !storedSkills.includes(s));
-      const newLocalSkills = detectedLocalSkills.filter((s) => !storedLocalSkills.includes(s));
+      const storedCustomSkillNames = new Set(storedCustomSkills.map((s) => s.name));
+      const newCustomSkills = detectedCustomSkills.filter((s) => !storedCustomSkillNames.has(s.name));
       const newMcp = detectedMcp.filter((m) => !storedMcp.includes(m));
 
       const detectedDiffers =
         newAgents.length > 0 ||
         newSkills.length > 0 ||
-        newLocalSkills.length > 0 ||
+        newCustomSkills.length > 0 ||
         newMcp.length > 0;
 
       // Normalize: ensure all fields exist with defaults for older projects.
@@ -3969,7 +3968,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         description: stored.description || "",
         directory: stored.directory || "",
         skills: [...storedSkills, ...newSkills],
-        local_skills: [...storedLocalSkills, ...newLocalSkills],
         mcp_servers: [...storedMcp, ...newMcp],
         disabled_mcp_servers: stored.disabled_mcp_servers || [],
         providers: stored.providers || [],
@@ -3985,7 +3983,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         user_agents: stored.user_agents || [],
         custom_commands: stored.custom_commands || [],
         user_commands: stored.user_commands || [],
-        custom_skills: stored.custom_skills || [],
+        custom_skills: [...storedCustomSkills, ...newCustomSkills],
         mode: stored.mode === 'silent' ? 'silent' : 'normal',
         directory_missing: stored.directory_missing === true,
       };
@@ -4045,7 +4043,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         description: parsed.description || "",
         directory: parsed.directory || "",
         skills: parsed.skills || [],
-        local_skills: parsed.local_skills || [],
         mcp_servers: parsed.mcp_servers || [],
         disabled_mcp_servers: parsed.disabled_mcp_servers || [],
         providers: parsed.providers || [],
@@ -5421,8 +5418,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                 const mergedMcp = [
                                   ...new Set([...currentProject.mcp_servers, ...detected.mcp_servers]),
                                 ];
-                                const mergedLocalSkills = [
-                                  ...new Set([...(currentProject.local_skills ?? []), ...detected.local_skills]),
+                                const detectedCustomSkills: CustomSkill[] = detected.custom_skills ?? [];
+                                const existingCustomNames = new Set(
+                                  (currentProject.custom_skills ?? []).map((s) => s.name)
+                                );
+                                const mergedCustomSkills = [
+                                  ...(currentProject.custom_skills ?? []),
+                                  ...detectedCustomSkills.filter((s) => !existingCustomNames.has(s.name)),
                                 ];
                                 setProject({
                                   ...currentProject,
@@ -5430,7 +5432,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                   directory: dir,
                                   agents: mergedAgents,
                                   skills: mergedSkills,
-                                  local_skills: mergedLocalSkills,
+                                  custom_skills: mergedCustomSkills,
                                   mcp_servers: mergedMcp,
                                 });
                                 setWizardDiscoveredAgents(detected.agents);
@@ -7552,7 +7554,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
                 {/* ── Summary tab ──────────────────────────────────────── */}
                 {projectTab === "summary" && (() => {
-                  const totalSkills = project.skills.length + project.local_skills.length + (project.custom_skills?.length ?? 0);
+                  const totalSkills = project.skills.length + (project.custom_skills?.length ?? 0);
                   const totalRules = ((project.file_rules || {})["_project"] || []).length + (project.custom_rules?.length ?? 0);
                   const totalSubAgents = (project.user_agents?.length ?? 0) + (project.custom_agents?.length ?? 0);
                   const totalCommands = (project.user_commands?.length ?? 0) + (project.custom_commands?.length ?? 0);
@@ -8021,7 +8023,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                               // Derive a unique name: "<name>-copy", then
                               // "<name>-copy-2", "<name>-copy-3", …
                               const existingCustomNames = new Set((project.custom_skills ?? []).map(s => s.name));
-                              const taken = new Set([...project.skills, ...project.local_skills, ...existingCustomNames]);
+                              const taken = new Set([...project.skills, ...existingCustomNames]);
                               let copyName = `${skillName}-copy`;
                               let n = 2;
                               while (taken.has(copyName)) {

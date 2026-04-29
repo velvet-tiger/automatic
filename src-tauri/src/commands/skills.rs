@@ -1,5 +1,4 @@
 use crate::core;
-use crate::sync;
 
 use super::projects::sync_projects_referencing_skill;
 
@@ -68,58 +67,11 @@ pub fn get_skill_resources(name: &str) -> Result<core::SkillResources, String> {
     core::list_skill_resources(name)
 }
 
-// ── Local Skills ─────────────────────────────────────────────────────────
-
-/// Import a local skill into the global registry and promote it to a normal
-/// project skill.  Returns the updated project JSON.
-#[tauri::command]
-pub fn import_local_skill(name: &str, skill_name: &str) -> Result<String, String> {
-    let raw = core::read_project(name)?;
-    let project: core::Project =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    let mut updated = sync::import_local_skill(&project, skill_name)?;
-    super::projects::sync_project_if_configured(name, &mut updated);
-    serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())
-}
-
-/// Copy all local skills to every agent's skill directory in the project.
-/// Returns the list of files written.
-#[tauri::command]
-pub fn sync_local_skills(name: &str) -> Result<String, String> {
-    let raw = core::read_project(name)?;
-    let project: core::Project =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    let written = sync::sync_local_skills_across_agents(&project)?;
-    serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
-}
-
 /// Reinstall all bundled default skills, overwriting existing on-disk copies.
 /// Useful for recovering after accidental edits or upgrading bundled skill content.
 #[tauri::command]
 pub fn reinstall_default_skills() -> Result<(), String> {
     core::install_default_skills_inner(true)
-}
-
-/// Read the SKILL.md content of a local skill from the project directory.
-/// Returns the raw file content as a string.
-#[tauri::command]
-pub fn read_local_skill(name: &str, skill_name: &str) -> Result<String, String> {
-    let raw = core::read_project(name)?;
-    let project: core::Project =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    sync::read_local_skill(&project, skill_name)
-}
-
-/// Save new content for a local skill, writing it to all agent directories
-/// where the skill already exists (or creating it if absent).
-/// Returns the list of files written as JSON.
-#[tauri::command]
-pub fn save_local_skill(name: &str, skill_name: &str, content: &str) -> Result<String, String> {
-    let raw = core::read_project(name)?;
-    let project: core::Project =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    let written = sync::save_local_skill(&project, skill_name, content)?;
-    serde_json::to_string_pretty(&written).map_err(|e| e.to_string())
 }
 
 // ── Skill Import ─────────────────────────────────────────────────────────────

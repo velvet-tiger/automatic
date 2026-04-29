@@ -268,10 +268,6 @@ pub struct Project {
     pub directory: String,
     #[serde(default)]
     pub skills: Vec<String>,
-    /// Skills that exist only in the project directory, not in the global
-    /// registry.  Discovered during autodetection but never auto-imported.
-    #[serde(default)]
-    pub local_skills: Vec<String>,
     #[serde(default)]
     pub mcp_servers: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -552,9 +548,21 @@ mod tests {
 
     #[test]
     fn custom_skills_absent_in_json_deserializes_as_none() {
-        let json = r#"{"name":"test","description":"","directory":"","skills":[],"local_skills":[],"mcp_servers":[],"providers":[],"agents":[],"created_at":"","updated_at":""}"#;
+        let json = r#"{"name":"test","description":"","directory":"","skills":[],"mcp_servers":[],"providers":[],"agents":[],"created_at":"","updated_at":""}"#;
         let project: Project = serde_json::from_str(json).expect("deserialize");
         assert!(project.custom_skills.is_none());
+    }
+
+    #[test]
+    fn legacy_local_skills_field_is_ignored_on_deserialize() {
+        // Old project files written before unification still contain a
+        // `local_skills` array. Serde ignores unknown fields by default, so
+        // these files load without error and the field is silently dropped on
+        // the next save. The on-disk SKILL.md content is later rediscovered by
+        // autodetect and promoted into `custom_skills`.
+        let json = r#"{"name":"test","directory":"","skills":[],"local_skills":["old-name"],"mcp_servers":[],"providers":[],"agents":[],"created_at":"","updated_at":""}"#;
+        let project: Project = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(project.skills, Vec::<String>::new());
     }
 
     // ── Resolved metadata fields ────────────────────────────────────────────

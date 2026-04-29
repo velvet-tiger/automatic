@@ -136,7 +136,6 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
 
     let project_skills_dir = sync_project_skills_step(
         &effective_dir,
-        project,
         &skill_contents,
         &all_selected_skill_names,
         &mut written_files,
@@ -176,18 +175,19 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
 
 fn sync_project_skills_step(
     dir: &PathBuf,
-    project: &Project,
     skill_contents: &[(String, String)],
     all_selected_skill_names: &[String],
     written_files: &mut Vec<String>,
 ) -> Result<PathBuf, String> {
     // Step 1: copy skills into the project's canonical .agents/skills/.
+    // `all_selected_skill_names` already includes both library-backed skills
+    // and project-scoped custom skills, so cleanup never deletes them.
     let project_skills_dir = dir.join(".agents").join("skills");
     agent::copy_skills_to_project(
         &project_skills_dir,
         skill_contents,
         all_selected_skill_names,
-        &project.local_skills,
+        &[],
         written_files,
     )?;
 
@@ -238,7 +238,7 @@ fn sync_agent_configs_step(
                         project_skills_dir,
                         skill_contents,
                         all_selected_skill_names,
-                        &project.local_skills,
+                        &[],
                         written_files,
                     )?;
                 }

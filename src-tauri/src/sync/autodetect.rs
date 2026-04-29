@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::agent;
-use crate::core::Project;
+use crate::core::{CustomSkill, Project};
 
 use super::helpers::add_unique;
 
@@ -72,6 +72,15 @@ pub(super) fn autodetect_inner(
     }
     skill_dirs.push(dir.join("skills")); // generic fallback
 
+    // Track names that are already accounted for as project-scoped custom skills,
+    // so the same on-disk SKILL.md does not get imported twice if it appears in
+    // more than one agent's skill_dirs (e.g. .claude/skills + .agents/skills).
+    let mut existing_custom_names: HashSet<String> = updated_project
+        .custom_skills
+        .as_ref()
+        .map(|skills| skills.iter().map(|s| s.name.clone()).collect())
+        .unwrap_or_default();
+
     for skill_base_dir in &skill_dirs {
         if !skill_base_dir.exists() {
             continue;
@@ -79,22 +88,46 @@ pub(super) fn autodetect_inner(
         if let Ok(entries) = fs::read_dir(skill_base_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_dir() {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        let skill_file = path.join("SKILL.md");
-                        if skill_file.exists() && crate::core::is_valid_name(name) {
-                            if global_skill_names.contains(name) {
-                                // Skill exists in the global registry — track
-                                // it as a normal (global) project skill.
-                                add_unique(&mut updated_project.skills, name);
-                            } else if !updated_project.skills.contains(&name.to_string()) {
-                                // Skill only exists locally in this project —
-                                // track it separately without importing.
-                                add_unique(&mut updated_project.local_skills, name);
-                            }
-                        }
-                    }
+                if !path.is_dir() {
+                    continue;
                 }
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                let skill_file = path.join("SKILL.md");
+                if !skill_file.exists() || !crate::core::is_valid_name(name) {
+                    continue;
+                }
+
+                if global_skill_names.contains(name) {
+                    // Skill exists in the global registry — track it as a
+                    // normal (library-backed) project skill. The library copy
+                    // is the source of truth for content.
+                    add_unique(&mut updated_project.skills, name);
+                    continue;
+                }
+
+                if updated_project.skills.iter().any(|s| s == name)
+                    || existing_custom_names.contains(name)
+                {
+                    continue;
+                }
+
+                // Project-scoped skill: read SKILL.md content from disk and
+                // promote it to a `custom_skill` so the content is portable in
+                // the project JSON and surfaces in the Skills UI.
+                let Ok(content) = fs::read_to_string(&skill_file) else {
+                    continue;
+                };
+                let custom = CustomSkill {
+                    name: name.to_string(),
+                    content,
+                };
+                updated_project
+                    .custom_skills
+                    .get_or_insert_with(Vec::new)
+                    .push(custom);
+                existing_custom_names.insert(name.to_string());
             }
         }
     }
@@ -176,5 +209,60 @@ mod tests {
             discovered_servers.is_empty(),
             "plain CLAUDE.md should not imply any MCP server configs"
         );
+    }
+
+    #[test]
+    fn project_local_skill_in_dot_agents_skills_promoted_to_custom_skill() {
+        // A SKILL.md found in <project>/.agents/skills/<name> that is not in the
+        // global library is promoted to a `custom_skill` with content read from
+        // disk, so the Skills UI surfaces it under "Project Skills".
+        let dir = tempdir().expect("tempdir");
+        let skill_dir = dir.path().join(".agents").join("skills").join("my-local");
+        fs::create_dir_all(&skill_dir).expect("mkdir");
+        fs::write(skill_dir.join("SKILL.md"), "# Local skill body").expect("write");
+
+        let project = Project {
+            name: "p".into(),
+            directory: dir.path().display().to_string(),
+            ..Default::default()
+        };
+
+        let (updated, _) = autodetect_inner(&project).expect("autodetect");
+
+        let custom = updated.custom_skills.expect("custom_skills populated");
+        let entry = custom
+            .iter()
+            .find(|s| s.name == "my-local")
+            .expect("my-local in custom_skills");
+        assert_eq!(entry.content, "# Local skill body");
+    }
+
+    #[test]
+    fn skill_seen_in_multiple_agent_dirs_only_promoted_once() {
+        // The same SKILL.md may appear at .claude/skills/<name> AND
+        // .agents/skills/<name> (e.g. a symlink). It should be added to
+        // custom_skills exactly once.
+        let dir = tempdir().expect("tempdir");
+        let claude_skill = dir.path().join(".claude").join("skills").join("dup");
+        let agents_skill = dir.path().join(".agents").join("skills").join("dup");
+        fs::create_dir_all(&claude_skill).expect("mkdir claude");
+        fs::create_dir_all(&agents_skill).expect("mkdir agents");
+        fs::write(claude_skill.join("SKILL.md"), "# dup").expect("write claude");
+        fs::write(agents_skill.join("SKILL.md"), "# dup").expect("write agents");
+
+        let project = Project {
+            name: "p".into(),
+            directory: dir.path().display().to_string(),
+            ..Default::default()
+        };
+
+        let (updated, _) = autodetect_inner(&project).expect("autodetect");
+
+        let count = updated
+            .custom_skills
+            .as_ref()
+            .map(|s| s.iter().filter(|s| s.name == "dup").count())
+            .unwrap_or(0);
+        assert_eq!(count, 1, "duplicate skill should only be added once");
     }
 }

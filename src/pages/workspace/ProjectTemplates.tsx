@@ -58,7 +58,6 @@ interface Project {
   description: string;
   directory: string;
   skills: string[];
-  local_skills: string[];
   mcp_servers: string[];
   providers: string[];
   agents: string[];

@@ -259,7 +259,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
                 &effective_dir,
                 &skill_contents,
                 &all_selected_skill_names,
-                &project.local_skills,
+                &[],
                 &mut files,
             );
             collect_agents_drift(
