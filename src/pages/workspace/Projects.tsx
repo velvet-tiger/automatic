@@ -4130,9 +4130,14 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
           mergedProviders = [...new Set([...mergedProviders, ...tmpl.providers])];
           const hasContent = !!(tmpl.unified_instruction && tmpl.unified_instruction.trim());
           const hasRules = (tmpl.unified_rules || []).length > 0;
+          // Collect pending entry for rules and/or content, but only switch to
+          // unified mode when there is actual instruction content — rules alone
+          // can be applied in per-agent mode without overwriting existing files.
           if (hasContent || hasRules) {
-            anyUnified = true;
             wizardPending.push({ content: tmpl.unified_instruction || "", rules: tmpl.unified_rules || [] });
+          }
+          if (hasContent) {
+            anyUnified = true;
           }
         }
         effectiveProject = {
@@ -4298,9 +4303,14 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       if (!mergedDescription) mergedDescription = tmpl.description || "";
       const hasContent = !!(tmpl.unified_instruction && tmpl.unified_instruction.trim());
       const hasRules = (tmpl.unified_rules || []).length > 0;
+      // Collect pending entry for rules and/or content, but only switch to
+      // unified mode when there is actual instruction content — rules alone
+      // can be applied in per-agent mode without overwriting existing files.
       if (hasContent || hasRules) {
-        anyUnified = true;
         pendingEntries.push({ content: tmpl.unified_instruction || "", rules: tmpl.unified_rules || [] });
+      }
+      if (hasContent) {
+        anyUnified = true;
       }
     }
 

@@ -658,10 +658,12 @@ export default function ProjectTemplates({
     const proj = allProjects.find((p) => p.name === projectName);
     if (!proj) return;
     try {
-      // Switch to unified mode when template has a unified instruction OR rules
+      // Only switch to unified mode when the template has actual instruction content.
+      // Rules alone do not justify the switch: they can be applied in per-agent mode
+      // via file_rules._project, and writing an empty unified file would overwrite
+      // existing per-agent instruction files with nothing.
       const hasUnifiedContent = !!(template.unified_instruction && template.unified_instruction.trim());
       const hasUnifiedRules = (template.unified_rules || []).length > 0;
-      const hasUnified = hasUnifiedContent || hasUnifiedRules;
       const updated: Project = {
         ...proj,
         description: proj.description || template.description,
@@ -675,14 +677,12 @@ export default function ProjectTemplates({
         ...(template.user_commands.length > 0
           ? { user_commands: [...new Set([...(proj.user_commands ?? []), ...template.user_commands])] }
           : {}),
-        ...(hasUnified ? { instruction_mode: "unified" } : {}),
+        ...(hasUnifiedContent ? { instruction_mode: "unified" } : {}),
       };
       await invoke("save_project", { name: projectName, data: JSON.stringify(updated, null, 2) });
 
-      // Apply unified instruction and/or rules to the project.
-      // Rules-only templates (no instruction content) are valid — rules still
-      // need to be persisted into file_rules and then written out.
-      if (hasUnified) {
+      // Apply rules and/or instruction content to the project.
+      if (hasUnifiedContent || hasUnifiedRules) {
         // Re-read the just-saved project so we have the exact on-disk state
         // (save_project may have synced additional fields) before mutating it.
         const latestRaw: string = await invoke("read_project", { name: projectName });
@@ -703,13 +703,16 @@ export default function ProjectTemplates({
           };
           await invoke("save_project", { name: projectName, data: JSON.stringify(withRules, null, 2) });
         }
-        // Write the content (may be empty string if rules-only) — backend fans
-        // out to all agent files and appends the rules section.
-        await invoke("save_project_file", {
-          name: projectName,
-          filename: "_unified",
-          content: template.unified_instruction || "",
-        });
+        // Only write instruction content if the template actually provides it.
+        // Skipping this for rules-only templates prevents overwriting existing
+        // per-agent instruction files with empty content.
+        if (hasUnifiedContent) {
+          await invoke("save_project_file", {
+            name: projectName,
+            filename: "_unified",
+            content: template.unified_instruction,
+          });
+        }
       }
 
       // Write project files to the project's directory (non-destructive: only if file doesn't exist)

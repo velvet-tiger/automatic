@@ -501,12 +501,19 @@ pub(crate) fn merge_templates_into_project(
 
         let has_content = !tmpl.unified_instruction.trim().is_empty();
         let has_rules = !tmpl.unified_rules.is_empty();
+        // Collect pending entry whenever there is content OR rules to apply.
+        // Rules alone are still returned so the frontend can persist them to
+        // file_rules._project — but they do NOT trigger a mode switch to
+        // "unified", because writing empty content in unified mode would
+        // overwrite existing per-agent instruction files.
         if has_content || has_rules {
-            any_unified = true;
             pending_unified.push(PendingUnifiedEntry {
                 content: tmpl.unified_instruction.clone(),
                 rules: tmpl.unified_rules.clone(),
             });
+        }
+        if has_content {
+            any_unified = true;
         }
 
         // Write template project files to the project directory.
@@ -822,6 +829,33 @@ mod tests {
         // instruction_mode should NOT be changed to "unified"
         assert_ne!(result.project.instruction_mode, "unified");
         assert!(result.pending_unified.is_empty());
+    }
+
+    #[test]
+    fn merge_does_not_switch_to_unified_for_rules_only_template() {
+        // Regression: a template with unified_rules but no unified_instruction was
+        // previously switching instruction_mode to "unified", which caused the sync
+        // engine to overwrite existing per-agent instruction files with empty content.
+        let mut project = empty_project();
+        project.instruction_mode = "per-agent".to_string();
+
+        let tmpl = ProjectTemplate {
+            name: "tmpl".into(),
+            unified_rules: vec!["automatic-service".into()],
+            ..Default::default()
+        };
+
+        let result =
+            merge_templates_into_project(&mut project, &[tmpl]).expect("merge should succeed");
+
+        assert_ne!(
+            result.project.instruction_mode, "unified",
+            "rules-only template must not switch instruction_mode to unified"
+        );
+        // Rules are still returned in pending_unified so the frontend can persist them.
+        assert_eq!(result.pending_unified.len(), 1);
+        assert_eq!(result.pending_unified[0].rules, vec!["automatic-service"]);
+        assert_eq!(result.pending_unified[0].content, "");
     }
 
     #[test]
