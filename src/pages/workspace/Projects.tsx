@@ -4221,6 +4221,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         // project we just successfully saved.
         wizardStubName.current = null;
         setIsCreating(false);
+        setProjectTab("summary");
+        setProjectGroup("summary");
         await loadProjects();
       } else {
         trackProjectUpdated(name, {
