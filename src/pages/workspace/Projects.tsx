@@ -3077,10 +3077,18 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       });
   }, [project?.tools?.join(",")]);
 
-  // Periodically check for configuration drift while a project tab is active
+  // Periodically check for configuration drift while a project tab is active.
+  //
+  // Note: this check runs even while `dirty` is true so that the per-project
+  // drift indicator (`driftByProject[name]`) stays in agreement with the
+  // background sweep that powers the projects-list badge.  The in-page drift
+  // banner and header indicator remain gated on `!dirty` separately, so the
+  // "save first" UX is unchanged — but the list badge no longer disagrees
+  // with the project page when an in-memory edit (e.g. an autodetect merge
+  // performed by `selectProject`) makes the project dirty on entry.
   useEffect(() => {
     const name = selectedName;
-    if (!name || !project || !project.directory || project.agents.length === 0 || dirty || isCreating) {
+    if (!name || !project || !project.directory || project.agents.length === 0 || isCreating) {
       return;
     }
 
@@ -3119,7 +3127,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     runCheck();
     const interval = setInterval(runCheck, 15_000);
     return () => clearInterval(interval);
-  }, [selectedName, project?.directory, project?.agents.length, dirty, isCreating]);
+  }, [selectedName, project?.directory, project?.agents.length, isCreating]);
 
   // Background drift check for all projects (for sidebar indicators)
   useEffect(() => {
@@ -5227,7 +5235,9 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
             )}
 
             {/* ── Drift warning banner ─────────────────────────────── */}
-            {driftReport?.drifted && !dirty && !isCreating && project.directory && project.agents.length > 0 && (
+            {/* Drift describes real on-disk state independent of any in-memory edits,
+                so the banner stays visible even when the project is `dirty`. */}
+            {driftReport?.drifted && !isCreating && project.directory && project.agents.length > 0 && (
               <div className="border-b border-warning/25 bg-warning/10">
                 <div className="flex items-center justify-between px-6 py-2 text-warning">
                   <div className="flex items-center gap-2 text-[12px]">

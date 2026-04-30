@@ -600,7 +600,24 @@ fn collect_skills_drift(
                     let disk_file = skill_dir.join(&skill_name).join("SKILL.md");
                     let rel_path = format!("{}/{}/SKILL.md", relative.display(), skill_name);
 
+                    // The bundled `automatic` skill documents the Automatic MCP
+                    // service itself.  Its content is fully owned by the app and
+                    // ships with each release — the user has no agency over it,
+                    // so reporting drift would only generate noise that resolves
+                    // on the next sync.  Auto-heal it silently and skip
+                    // reporting.
+                    let is_managed_skill = skill_name == crate::core::AUTOMATIC_SKILL_NAME;
+
                     if !disk_file.exists() {
+                        if is_managed_skill {
+                            if let Ok(content) = fs::read_to_string(&tmp_file) {
+                                if let Some(parent) = disk_file.parent() {
+                                    let _ = fs::create_dir_all(parent);
+                                }
+                                let _ = fs::write(&disk_file, content);
+                            }
+                            continue;
+                        }
                         out.push(DriftedFile {
                             path: rel_path,
                             reason: "missing".into(),
@@ -627,6 +644,10 @@ fn collect_skills_drift(
                         }
                     };
                     if expected != actual {
+                        if is_managed_skill {
+                            let _ = fs::write(&disk_file, &expected);
+                            continue;
+                        }
                         out.push(DriftedFile {
                             path: rel_path,
                             reason: "modified".into(),
