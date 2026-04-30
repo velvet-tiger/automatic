@@ -2572,7 +2572,23 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   // Project template state
   const [availableProjectTemplates, setAvailableProjectTemplates] = useState<ProjectTemplate[]>([]);
   const [showProjectTemplatePicker, setShowProjectTemplatePicker] = useState(false);
-  /** Names of templates currently selected in the picker (multi-select). */
+  /** The template name currently highlighted in the apply modal (single-select). */
+  const [templateApplySelection, setTemplateApplySelection] = useState<string | null>(null);
+  /** Result of the most recent successful apply, shown in the modal's confirmation view. */
+  const [templateApplyResult, setTemplateApplyResult] = useState<{
+    templateName: string;
+    added: {
+      agents: string[];
+      skills: string[];
+      mcp_servers: string[];
+      user_agents: string[];
+      user_commands: string[];
+      rules: string[];
+    };
+    hasUnifiedContent: boolean;
+    saveRequired: boolean;
+  } | null>(null);
+  /** Names of templates seeded into the new-project wizard so its panels can show provenance. */
   const [selectedProjectTemplates, setSelectedProjectTemplates] = useState<string[]>([]);
   // Pending unified instruction content + rules to write after next save (from template applies).
   // Each entry corresponds to one applied template; contents are concatenated on flush.
@@ -3275,7 +3291,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     }
   };
 
-  /** Toggle a template's selection in the multi-select picker without immediately applying it. */
+  /** Toggle a template's selection in the wizard's multi-select picker. */
   const toggleProjectTemplateSelection = (tmplName: string) => {
     setSelectedProjectTemplates((prev) =>
       prev.includes(tmplName) ? prev.filter((n) => n !== tmplName) : [...prev, tmplName]
@@ -3283,32 +3299,53 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   };
 
   /**
-   * Merge all currently-selected templates into the open project and close the picker.
-   * Delegates to the backend `apply_templates_to_project` command which handles
-   * all asset merging, deduplication, and project file writing.
+   * Merge a single template into the open project and switch the modal to a
+   * confirmation view summarising what was added. The backend command
+   * `apply_templates_to_project` performs all asset merging, deduplication,
+   * and project file writing.
    */
-  const applySelectedProjectTemplates = async () => {
-    if (!project || selectedProjectTemplates.length === 0) return;
+  const applyProjectTemplate = async (templateName: string) => {
+    if (!project || !templateName) return;
+
+    const before = project;
+    const tmpl = availableProjectTemplates.find((t) => t.name === templateName);
 
     try {
       const raw: string = await invoke("apply_templates_to_project", {
         projectName: project.name,
-        templateNames: selectedProjectTemplates,
+        templateNames: [templateName],
       });
       const result: { project: Project; pending_unified: { content: string; rules: string[] }[] } = JSON.parse(raw);
 
       setProject(result.project);
 
+      const hasUnifiedContent = !!(tmpl?.unified_instruction && tmpl.unified_instruction.trim());
       if (result.pending_unified.length > 0) {
         pendingUnifiedInstruction.current = result.pending_unified;
         setDirty(true);
       }
 
-      setShowProjectTemplatePicker(false);
+      const existingRules = (before.file_rules ?? {})["_project"] ?? [];
+      const added = {
+        agents: (tmpl?.agents ?? []).filter((a) => !before.agents.includes(a)),
+        skills: (tmpl?.skills ?? []).filter((s) => !before.skills.includes(s)),
+        mcp_servers: (tmpl?.mcp_servers ?? []).filter((m) => !before.mcp_servers.includes(m)),
+        user_agents: (tmpl?.user_agents ?? []).filter((a) => !(before.user_agents ?? []).includes(a)),
+        user_commands: (tmpl?.user_commands ?? []).filter((c) => !(before.user_commands ?? []).includes(c)),
+        rules: (tmpl?.unified_rules ?? []).filter((r) => !existingRules.includes(r)),
+      };
+
+      setTemplateApplyResult({
+        templateName,
+        added,
+        hasUnifiedContent,
+        saveRequired: result.pending_unified.length > 0,
+      });
+      setError(null);
     } catch (err: unknown) {
-      console.error("Failed to apply templates:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Failed to apply template "${templateName}": ${msg}`);
     }
-    // selectedProjectTemplates intentionally kept so the panel shows what was applied
   };
 
   const loadMemories = async (projectName: string) => {
@@ -4839,9 +4876,12 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                 {/* Apply Template button */}
                 {!isCreating && selectedName && (
                   <button
-                    onClick={() => setShowProjectTemplatePicker((v) => !v)}
+                    onClick={() => {
+                      setTemplateApplySelection(null);
+                      setShowProjectTemplatePicker(true);
+                    }}
                     title="Apply a project template"
-                    className={`flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded text-[12px] font-medium border border-border-strong hover:border-brand/40 transition-colors shadow-sm ${showProjectTemplatePicker ? "bg-brand/10 text-brand border-brand/40" : ""}`}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded text-[12px] font-medium border border-border-strong hover:border-brand/40 transition-colors shadow-sm"
                   >
                     <LayoutTemplate size={12} /> Apply Template
                   </button>
@@ -5242,74 +5282,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                     </div>
                   )}
                 </div>
-              </div>
-            )}
-
-            {/* ── Apply Template panel (shown from title bar button) ── */}
-            {!isCreating && showProjectTemplatePicker && (
-              <div className="border-b border-border-strong/40 bg-bg-input/50 px-6 py-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[12px] font-semibold text-text-base">Apply Project Templates</span>
-                  <button
-                    onClick={() => setShowProjectTemplatePicker(false)}
-                    className="text-[11px] text-text-muted hover:text-text-base transition-colors"
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-                {availableProjectTemplates.length === 0 ? (
-                  <p className="text-[12px] text-text-muted py-2">
-                    No project templates yet. Create one in the Project Templates section.
-                  </p>
-                ) : (
-                  <>
-                    <p className="text-[11px] text-text-muted mb-2">Select one or more templates — their assets will be merged into this project.</p>
-                    <div className="grid grid-cols-2 xl:grid-cols-3 gap-2 mb-3">
-                      {availableProjectTemplates.map((tmpl) => {
-                        const isSelected = selectedProjectTemplates.includes(tmpl.name);
-                        return (
-                          <button
-                            key={tmpl.name}
-                            onClick={() => toggleProjectTemplateSelection(tmpl.name)}
-                            className={`text-left px-3 py-2 rounded-md transition-colors flex items-start gap-2 border ${
-                              isSelected ? "bg-brand/15 border-brand/40" : "bg-bg-sidebar hover:bg-surface border-border-strong/30 hover:border-border-strong"
-                            }`}
-                          >
-                            <LayoutTemplate size={13} className={`mt-0.5 shrink-0 ${isSelected ? "text-brand" : "text-text-muted"}`} />
-                            <div className="min-w-0">
-                              <div className="text-[12px] font-medium text-text-base truncate">{tmpl.name}</div>
-                              {tmpl.description && <div className="text-[11px] text-text-muted truncate">{tmpl.description}</div>}
-                              <div className="flex items-center gap-2 mt-1">
-                                {tmpl.agents.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.agents.length} agents</span>}
-                                {tmpl.skills.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.skills.length} skills</span>}
-                                {tmpl.mcp_servers.length > 0 && <span className="text-[10px] text-text-muted">{tmpl.mcp_servers.length} MCP</span>}
-                              </div>
-                            </div>
-                            {isSelected && <Check size={12} className="text-brand shrink-0 mt-0.5 ml-auto" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className="flex items-center justify-end gap-3">
-                      {selectedProjectTemplates.length > 0 && (
-                        <button
-                          onClick={() => setSelectedProjectTemplates([])}
-                          className="text-[12px] text-text-muted hover:text-text-base transition-colors"
-                        >
-                          Clear selection
-                        </button>
-                      )}
-                      <button
-                        onClick={applySelectedProjectTemplates}
-                        disabled={selectedProjectTemplates.length === 0}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover disabled:opacity-40 disabled:cursor-not-allowed text-white text-[12px] font-medium rounded transition-colors"
-                      >
-                        <Check size={12} />
-                        Apply {selectedProjectTemplates.length > 0 ? `${selectedProjectTemplates.length} ` : ""}Template{selectedProjectTemplates.length !== 1 ? "s" : ""}
-                      </button>
-                    </div>
-                  </>
-                )}
               </div>
             )}
 
@@ -9482,6 +9454,30 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       />
     )}
 
+    {/* Apply-template modal */}
+    {showProjectTemplatePicker && project && !isCreating && (
+      <ApplyProjectTemplateModal
+        templates={[...availableProjectTemplates].sort((a, b) => a.name.localeCompare(b.name))}
+        selected={templateApplySelection}
+        onSelect={setTemplateApplySelection}
+        onCancel={() => {
+          setShowProjectTemplatePicker(false);
+          setTemplateApplySelection(null);
+          setTemplateApplyResult(null);
+        }}
+        onConfirm={() => {
+          if (!templateApplySelection) return;
+          applyProjectTemplate(templateApplySelection);
+        }}
+        result={templateApplyResult}
+        onAcknowledge={() => {
+          setShowProjectTemplatePicker(false);
+          setTemplateApplySelection(null);
+          setTemplateApplyResult(null);
+        }}
+      />
+    )}
+
     </>
   );
 }
@@ -9944,6 +9940,280 @@ function ProjectToolDetailPanel({ entry, projectDir, active, onAdd, onRemove }: 
         </div>
       </section>
       <ToolInfoSidebar entry={entry} active={active} onAdd={onAdd} onRemove={onRemove} />
+    </div>
+  );
+}
+
+// ── ApplyProjectTemplateModal ─────────────────────────────────────────────────
+
+function ApplyProjectTemplateModal({
+  templates,
+  selected,
+  onSelect,
+  onCancel,
+  onConfirm,
+  result,
+  onAcknowledge,
+}: {
+  templates: ProjectTemplate[];
+  selected: string | null;
+  onSelect: (name: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+  result: {
+    templateName: string;
+    added: {
+      agents: string[];
+      skills: string[];
+      mcp_servers: string[];
+      user_agents: string[];
+      user_commands: string[];
+      rules: string[];
+    };
+    hasUnifiedContent: boolean;
+    saveRequired: boolean;
+  } | null;
+  onAcknowledge: () => void;
+}) {
+  const [filter, setFilter] = useState("");
+
+  if (result) {
+    return (
+      <ApplyTemplateResultView result={result} onAcknowledge={onAcknowledge} />
+    );
+  }
+
+  const trimmed = filter.trim().toLowerCase();
+  const visible = trimmed
+    ? templates.filter(
+        (t) =>
+          t.name.toLowerCase().includes(trimmed) ||
+          (t.description ?? "").toLowerCase().includes(trimmed)
+      )
+    : templates;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/50" onClick={onCancel} />
+      <div className="relative bg-bg-input border border-border-strong rounded-xl shadow-2xl w-full max-w-md mx-4 flex flex-col max-h-[80vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border-strong/40 flex-shrink-0">
+          <h2 className="text-[15px] font-semibold text-text-base">Apply Project Template</h2>
+          <button
+            onClick={onCancel}
+            className="p-1 text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="px-5 pt-3 pb-2 flex-shrink-0">
+          <p className="text-[12px] text-text-muted leading-relaxed mb-3">
+            Select a template to apply to this project. Resources will only be added — existing
+            project configuration will not be overwritten or removed.
+          </p>
+          {templates.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-bg-base border border-border-strong/40 rounded-md">
+              <Search size={12} className="text-text-muted shrink-0" />
+              <input
+                type="text"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter templates..."
+                autoFocus
+                className="flex-1 bg-transparent outline-none text-[13px] text-text-base placeholder-text-muted/50"
+              />
+              {filter && (
+                <button
+                  onClick={() => setFilter("")}
+                  className="text-text-muted hover:text-text-base transition-colors"
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar px-3 pb-3 min-h-0">
+          {templates.length === 0 ? (
+            <div className="px-3 py-8 text-[12px] text-text-muted text-center">
+              No project templates yet. Create one in the Project Templates section.
+            </div>
+          ) : visible.length === 0 ? (
+            <div className="px-3 py-8 text-[12px] text-text-muted text-center">
+              No templates match.
+            </div>
+          ) : (
+            <ul className="space-y-1">
+              {visible.map((t) => {
+                const isSelected = selected === t.name;
+                return (
+                  <li key={t.name}>
+                    <button
+                      onClick={() => onSelect(t.name)}
+                      onDoubleClick={() => { onSelect(t.name); onConfirm(); }}
+                      className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                        isSelected
+                          ? "bg-brand/15 border border-brand/40"
+                          : "border border-transparent hover:bg-bg-sidebar"
+                      }`}
+                    >
+                      <LayoutTemplate
+                        size={14}
+                        className={`mt-0.5 flex-shrink-0 ${isSelected ? "text-brand" : "text-text-muted"}`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-medium text-text-base truncate">{t.name}</div>
+                        {t.description && (
+                          <div className="text-[11px] text-text-muted truncate">{t.description}</div>
+                        )}
+                        <div className="flex items-center gap-2 mt-1">
+                          {t.agents.length > 0 && (
+                            <span className="text-[10px] text-text-muted">{t.agents.length} agents</span>
+                          )}
+                          {t.skills.length > 0 && (
+                            <span className="text-[10px] text-text-muted">{t.skills.length} skills</span>
+                          )}
+                          {t.mcp_servers.length > 0 && (
+                            <span className="text-[10px] text-text-muted">{t.mcp_servers.length} MCP</span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border-strong/40 flex-shrink-0">
+          <button
+            onClick={onCancel}
+            className="flex h-[28px] items-center px-3 text-[12px] text-text-muted hover:text-text-base bg-bg-sidebar hover:bg-surface rounded transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!selected}
+            className="flex h-[28px] items-center gap-1.5 px-3 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+          >
+            <Check size={12} /> Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ApplyTemplateResultView({
+  result,
+  onAcknowledge,
+}: {
+  result: {
+    templateName: string;
+    added: {
+      agents: string[];
+      skills: string[];
+      mcp_servers: string[];
+      user_agents: string[];
+      user_commands: string[];
+      rules: string[];
+    };
+    hasUnifiedContent: boolean;
+    saveRequired: boolean;
+  };
+  onAcknowledge: () => void;
+}) {
+  const sections: { label: string; items: string[] }[] = [
+    { label: "Agents", items: result.added.agents },
+    { label: "Skills", items: result.added.skills },
+    { label: "MCP servers", items: result.added.mcp_servers },
+    { label: "Sub-agents", items: result.added.user_agents },
+    { label: "Commands", items: result.added.user_commands },
+    { label: "Rules", items: result.added.rules },
+  ].filter((s) => s.items.length > 0);
+
+  const totalAdded = sections.reduce((n, s) => n + s.items.length, 0);
+  const nothingChanged = totalAdded === 0 && !result.hasUnifiedContent;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/50" onClick={onAcknowledge} />
+      <div className="relative bg-bg-input border border-border-strong rounded-xl shadow-2xl w-full max-w-md mx-4 flex flex-col max-h-[80vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border-strong/40 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={16} className="text-icon-skill" />
+            <h2 className="text-[15px] font-semibold text-text-base">Template applied</h2>
+          </div>
+          <button
+            onClick={onAcknowledge}
+            className="p-1 text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 min-h-0">
+          <p className="text-[13px] text-text-base mb-3">
+            Applied template <span className="font-semibold">{result.templateName}</span> to this project.
+          </p>
+
+          {nothingChanged ? (
+            <p className="text-[12px] text-text-muted leading-relaxed">
+              No new resources were added — every item from this template was already present in
+              this project.
+            </p>
+          ) : (
+            <>
+              {totalAdded > 0 ? (
+                <div className="space-y-3">
+                  {sections.map((section) => (
+                    <div key={section.label}>
+                      <div className="text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-1.5">
+                        {section.label} <span className="text-text-muted/70">({section.items.length})</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {section.items.map((item) => (
+                          <span
+                            key={item}
+                            className="px-2 py-0.5 bg-bg-sidebar border border-border-strong/40 rounded text-[11px] text-text-base"
+                          >
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[12px] text-text-muted leading-relaxed mb-3">
+                  All resources from this template were already present in this project.
+                </p>
+              )}
+
+              {result.hasUnifiedContent && result.saveRequired && (
+                <div className="mt-4 px-3 py-2.5 bg-brand/10 border border-brand/30 rounded-md">
+                  <p className="text-[12px] text-text-base leading-relaxed">
+                    The template includes a unified instruction. Save the project to write it to disk.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end px-5 py-3 border-t border-border-strong/40 flex-shrink-0">
+          <button
+            onClick={onAcknowledge}
+            autoFocus
+            className="flex h-[28px] items-center px-4 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors shadow-sm"
+          >
+            OK
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
