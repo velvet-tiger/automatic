@@ -12,7 +12,6 @@ import {
   Trash2,
   LayoutTemplate,
   Copy,
-  ChevronDown,
   ScrollText,
   Edit2,
   Files,
@@ -20,6 +19,7 @@ import {
   Bot,
   Search,
   Terminal,
+  Folder,
 } from "lucide-react";
 
 interface TemplateProjectFile {
@@ -399,6 +399,7 @@ export default function ProjectTemplates({
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [showApplyPicker, setShowApplyPicker] = useState(false);
   const [applyStatus, setApplyStatus] = useState<string | null>(null);
+  const [applyTargetProject, setApplyTargetProject] = useState<string | null>(null);
 
   // Inline delete confirmation — holds the name awaiting confirmation
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -797,11 +798,6 @@ export default function ProjectTemplates({
       })
     : [];
 
-  // Projects not yet fully matching (candidates for apply)
-  const unappliedProjects = allProjects.filter(
-    (p) => !appliedProjects.some((ap) => ap.name === p.name)
-  );
-
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -997,68 +993,15 @@ export default function ProjectTemplates({
                       </button>
                     )}
                     {/* Apply to project */}
-                    <div className="relative">
-                      <button
-                        onClick={() => setShowApplyPicker(!showApplyPicker)}
-                        className="flex h-[26px] items-center gap-1.5 px-2.5 bg-brand hover:bg-brand-hover text-white rounded text-[11px] font-medium transition-colors shadow-sm"
-                      >
-                        Apply to project...
-                        <ChevronDown size={12} className={`transition-transform ${showApplyPicker ? "rotate-180" : ""}`} />
-                      </button>
-                      {showApplyPicker && (
-                        <div className="absolute right-0 top-full mt-1 w-56 bg-bg-input border border-border-strong/40 rounded-lg shadow-xl z-20 overflow-hidden">
-                          {allProjects.length === 0 ? (
-                            <div className="px-3 py-4 text-[12px] text-text-muted text-center">
-                              No projects yet
-                            </div>
-                          ) : (
-                            <>
-                              {unappliedProjects.length > 0 && (
-                                <div>
-                                  <div className="px-3 pt-2.5 pb-1 text-[10px] font-semibold text-text-muted uppercase tracking-wider">
-                                    Apply to
-                                  </div>
-                                  {unappliedProjects.map((p) => (
-                                    <button
-                                      key={p.name}
-                                      onClick={() => applyToProject(p.name)}
-                                      className="w-full text-left px-3 py-2 text-[13px] text-text-base hover:bg-bg-sidebar transition-colors"
-                                    >
-                                      {p.name}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                              {appliedProjects.length > 0 && (
-                                <div className={unappliedProjects.length > 0 ? "border-t border-border-strong/40" : ""}>
-                                  <div className="px-3 pt-2.5 pb-1 text-[10px] font-semibold text-text-muted uppercase tracking-wider">
-                                    Already applied
-                                  </div>
-                                  {appliedProjects.map((p) => (
-                                    <button
-                                      key={p.name}
-                                      onClick={() => applyToProject(p.name)}
-                                      className="w-full text-left px-3 py-2 text-[13px] text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors flex items-center justify-between"
-                                    >
-                                      <span>{p.name}</span>
-                                      <Check size={11} className="text-icon-skill" />
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </>
-                          )}
-                          <div className="border-t border-border-strong/40">
-                            <button
-                              onClick={() => setShowApplyPicker(false)}
-                              className="w-full px-3 py-2 text-[12px] text-text-muted hover:text-text-base text-left transition-colors"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                    <button
+                      onClick={() => {
+                        setApplyTargetProject(null);
+                        setShowApplyPicker(true);
+                      }}
+                      className="flex h-[26px] items-center gap-1.5 px-2.5 bg-brand hover:bg-brand-hover text-white rounded text-[11px] font-medium transition-colors shadow-sm"
+                    >
+                      Apply to project...
+                    </button>
                   </>
                 )}
                 {dirty && (
@@ -1074,7 +1017,7 @@ export default function ProjectTemplates({
             </div>
 
             {/* Body */}
-            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar" onClick={() => { setShowApplyPicker(false); setConfirmDelete(null); }}>
+            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar" onClick={() => { setConfirmDelete(null); }}>
               <div className="max-w-2xl space-y-8">
 
                 {/* Author */}
@@ -1358,6 +1301,154 @@ export default function ProjectTemplates({
             </button>
           </div>
         )}
+      </div>
+
+      {/* Apply-to-project modal */}
+      {showApplyPicker && template && (
+        <ApplyToProjectModal
+          projects={[...allProjects].sort((a, b) => a.name.localeCompare(b.name))}
+          appliedProjectNames={appliedProjects.map((p) => p.name)}
+          selected={applyTargetProject}
+          onSelect={setApplyTargetProject}
+          onCancel={() => {
+            setShowApplyPicker(false);
+            setApplyTargetProject(null);
+          }}
+          onConfirm={() => {
+            if (!applyTargetProject) return;
+            const target = applyTargetProject;
+            setApplyTargetProject(null);
+            applyToProject(target);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ApplyToProjectModal({
+  projects,
+  appliedProjectNames,
+  selected,
+  onSelect,
+  onCancel,
+  onConfirm,
+}: {
+  projects: Project[];
+  appliedProjectNames: string[];
+  selected: string | null;
+  onSelect: (name: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [filter, setFilter] = useState("");
+  const trimmed = filter.trim().toLowerCase();
+  const visible = trimmed
+    ? projects.filter((p) => p.name.toLowerCase().includes(trimmed))
+    : projects;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/50" onClick={onCancel} />
+      <div className="relative bg-bg-input border border-border-strong rounded-xl shadow-2xl w-full max-w-md mx-4 flex flex-col max-h-[80vh]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border-strong/40 flex-shrink-0">
+          <h2 className="text-[15px] font-semibold text-text-base">Apply Template to Project</h2>
+          <button
+            onClick={onCancel}
+            className="p-1 text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="px-5 pt-3 pb-2 flex-shrink-0">
+          <p className="text-[12px] text-text-muted leading-relaxed mb-3">
+            Select a project to apply this template to. Resources will only be added — existing
+            project configuration will not be overwritten or removed.
+          </p>
+          {projects.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-bg-base border border-border-strong/40 rounded-md">
+              <Search size={12} className="text-text-muted shrink-0" />
+              <input
+                type="text"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter projects..."
+                autoFocus
+                className="flex-1 bg-transparent outline-none text-[13px] text-text-base placeholder-text-muted/50"
+              />
+              {filter && (
+                <button
+                  onClick={() => setFilter("")}
+                  className="text-text-muted hover:text-text-base transition-colors"
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar px-3 pb-3 min-h-0">
+          {projects.length === 0 ? (
+            <div className="px-3 py-8 text-[12px] text-text-muted text-center">
+              No projects yet. Create a project first.
+            </div>
+          ) : visible.length === 0 ? (
+            <div className="px-3 py-8 text-[12px] text-text-muted text-center">
+              No projects match.
+            </div>
+          ) : (
+            <ul className="space-y-1">
+              {visible.map((p) => {
+                const isSelected = selected === p.name;
+                const alreadyApplied = appliedProjectNames.includes(p.name);
+                return (
+                  <li key={p.name}>
+                    <button
+                      onClick={() => onSelect(p.name)}
+                      onDoubleClick={() => { onSelect(p.name); onConfirm(); }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                        isSelected
+                          ? "bg-brand/15 border border-brand/40"
+                          : "border border-transparent hover:bg-bg-sidebar"
+                      }`}
+                    >
+                      <Folder size={14} className={isSelected ? "text-brand flex-shrink-0" : "text-text-muted flex-shrink-0"} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-medium text-text-base truncate">{p.name}</div>
+                        {p.directory && (
+                          <div className="text-[11px] text-text-muted truncate">{p.directory}</div>
+                        )}
+                      </div>
+                      {alreadyApplied && (
+                        <span className="flex items-center gap-1 text-[10px] text-icon-skill flex-shrink-0">
+                          <Check size={11} /> Applied
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border-strong/40 flex-shrink-0">
+          <button
+            onClick={onCancel}
+            className="flex h-[28px] items-center px-3 text-[12px] text-text-muted hover:text-text-base bg-bg-sidebar hover:bg-surface rounded transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!selected}
+            className="flex h-[28px] items-center gap-1.5 px-3 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+          >
+            <Check size={12} /> Apply
+          </button>
+        </div>
       </div>
     </div>
   );
