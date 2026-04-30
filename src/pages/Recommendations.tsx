@@ -78,9 +78,9 @@ interface Recommendation {
 interface RecommendationsProps {
   onNavigateToProject: (name: string, tab?: string) => void;
   onNavigateToSkillStoreWithResult?: (result: { id: string; name: string; source: string; installs: number }) => void;
-  onNavigateToMcpMarketplace?: (slug: string) => void;
-  onNavigateToTemplateMarketplace?: (templateName: string) => void;
-  onNavigateToCollectionMarketplace?: (query: string) => void;
+  onNavigateToDiscoverMcp?: (slug: string) => void;
+  onNavigateToDiscoverTemplates?: (templateName: string) => void;
+  onNavigateToDiscoverCollections?: (query: string) => void;
 }
 
 /** Sources whose individual records are replaced by a single rollup card. */

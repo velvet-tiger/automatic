@@ -132,7 +132,7 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
       countLabel: "connected",
       primaryAction: { label: "Manage MCP Servers", tab: "mcp" },
       secondaryActions: [
-        { label: "Browse MCP Marketplace", tab: "mcp-marketplace", icon: Store },
+        { label: "Discover MCP Servers", tab: "discover-mcp", icon: Store },
       ],
     },
     {
@@ -179,7 +179,7 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
       countLabel: "templates",
       primaryAction: { label: "Manage Templates", tab: "project-templates" },
       secondaryActions: [
-        { label: "Browse Marketplace", tab: "template-marketplace", icon: Store },
+        { label: "Discover Templates", tab: "discover-templates", icon: Store },
       ],
     },
   ];
@@ -292,7 +292,7 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
           })}
         </div>
 
-        {/* Marketplace callout */}
+        {/* Discover callout */}
         <div className="bg-bg-input border border-border-strong/40 rounded-xl p-6">
           <div className="flex items-start gap-4">
             <div className="p-3 bg-brand/10 rounded-lg shrink-0">
@@ -301,14 +301,14 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
             <div className="flex-1 min-w-0">
               <h3 className="text-[14px] font-semibold text-text-base mb-1">Extend your configuration</h3>
               <p className="text-[13px] text-text-muted leading-relaxed mb-4">
-                The Automatic marketplace offers community-built skills, project templates, and MCP server configs you can install with one click.
+                Discover community-built skills, project templates, and MCP server configs you can install with one click.
               </p>
               <div className="flex flex-wrap gap-2">
                 {[
                   { label: "Browse Skills", tab: "skill-store", icon: Code },
-                  { label: "Browse Templates", tab: "template-marketplace", icon: Layers },
-                  { label: "Browse MCP Servers", tab: "mcp-marketplace", icon: Server },
-                  { label: "Collections", tab: "collection-marketplace", icon: Store },
+                  { label: "Browse Templates", tab: "discover-templates", icon: Layers },
+                  { label: "Browse MCP Servers", tab: "discover-mcp", icon: Server },
+                  { label: "Collections", tab: "discover-collections", icon: Store },
                 ].map(({ label, tab, icon: Icon }) => (
                   <button
                     key={tab}

@@ -1203,7 +1203,7 @@ fn install_agent(source_dir: &Path, agent: &ManifestResource) -> Result<(), Stri
     fs::write(&dest, content).map_err(|e| format!("Failed to write agent: {}", e))
 }
 
-/// Install a collection: parse JSON and append to marketplace collections.
+/// Install a collection: parse JSON and append to Discover collections.
 fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<String, String> {
     let source_path = source_dir.join(&coll_ref.path);
     let content = fs::read_to_string(&source_path)
@@ -1218,12 +1218,12 @@ fn install_collection(source_dir: &Path, coll_ref: &CollectionRef) -> Result<Str
         .ok_or_else(|| format!("Collection at '{}' missing 'slug' field", coll_ref.path))?
         .to_string();
 
-    // Append to marketplace collections
-    let marketplace_dir = get_automatic_dir()?.join("marketplace");
-    fs::create_dir_all(&marketplace_dir)
-        .map_err(|e| format!("Failed to create marketplace directory: {}", e))?;
+    // Append to Discover collections
+    let discover_dir = get_automatic_dir()?.join("discover");
+    fs::create_dir_all(&discover_dir)
+        .map_err(|e| format!("Failed to create discover directory: {}", e))?;
 
-    let collections_path = marketplace_dir.join("collections.json");
+    let collections_path = discover_dir.join("collections.json");
     let mut collections: Vec<serde_json::Value> = if collections_path.exists() {
         let raw = fs::read_to_string(&collections_path)
             .map_err(|e| format!("Failed to read collections.json: {}", e))?;

@@ -500,7 +500,7 @@ function CollectionDetail({
                               </span>
                             ) : (
                               <span className="text-[10px] text-text-muted italic">
-                                see MCP Marketplace
+                                see Discover MCP Servers
                               </span>
                             )}
                           </div>
@@ -761,7 +761,7 @@ function CollectionCard({
 
 // ── Main component ────────────────────────────────────────────────────────
 
-export default function CollectionMarketplace({
+export default function DiscoverCollections({
   resetKey,
   initialQuery,
   onInitialQueryConsumed,
@@ -793,7 +793,7 @@ export default function CollectionMarketplace({
     onInitialQueryConsumed?.();
   }, [initialQuery, onInitialQueryConsumed]);
 
-  // Load collections catalogue from ~/.automatic/marketplace/collections.json
+  // Load collections catalogue from ~/.automatic/discover/collections.json
   const loadCollections = useCallback(async () => {
     setCollectionsLoading(true);
     try {

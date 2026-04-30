@@ -2,14 +2,14 @@ use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
-use super::marketplace_data::{
+use super::discover_data::{
     featured_community_path, read_collections_json, read_featured_community_json,
     read_mcp_servers_json,
 };
 
-// ── MCP Server Marketplace ────────────────────────────────────────────────────
+// ── MCP Server Discover ───────────────────────────────────────────────────────
 
-/// A featured MCP server entry from the marketplace catalogue.
+/// A featured MCP server entry from the Discover catalogue.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FeaturedMcpServer {
     pub slug: String,
@@ -39,11 +39,11 @@ fn load_featured_mcp_servers() -> Result<Vec<FeaturedMcpServer>, String> {
     serde_json::from_str(&json).map_err(|e| format!("Failed to parse featured MCP servers: {}", e))
 }
 
-/// List all featured MCP servers from the marketplace catalogue.
+/// List all featured MCP servers from the Discover catalogue.
 /// When `query` is blank, returns all entries.
 /// Otherwise, case-insensitive substring match across title, description,
 /// provider, classification, and slug.
-pub fn search_mcp_marketplace(query: &str) -> Result<String, String> {
+pub fn search_discover_mcp(query: &str) -> Result<String, String> {
     let servers = load_featured_mcp_servers()?;
     let q = query.trim().to_lowercase();
 
@@ -65,7 +65,7 @@ pub fn search_mcp_marketplace(query: &str) -> Result<String, String> {
     serde_json::to_string(&filtered).map_err(|e| e.to_string())
 }
 
-// ── Collections Marketplace ───────────────────────────────────────────────────
+// ── Collections Discover ──────────────────────────────────────────────────────
 
 /// A skill entry inside a collection.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -112,7 +112,7 @@ pub struct CollectionAuthor {
     pub repository_url: String,
 }
 
-/// A collection from the marketplace catalogue.
+/// A collection from the Discover catalogue.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Collection {
     pub id: String,
@@ -139,7 +139,7 @@ fn load_collections() -> Result<Vec<Collection>, String> {
     serde_json::from_str(&json).map_err(|e| format!("Failed to parse collections: {}", e))
 }
 
-/// List all collections from the marketplace catalogue.
+/// List all collections from the Discover catalogue.
 /// When `query` is blank, returns all entries.
 /// Otherwise, case-insensitive substring match across name, description, slug,
 /// tags, and the display names of contained skills.

@@ -7,7 +7,7 @@ import { handleExternalLinkClick } from "../lib/externalLinks";
  * Origins:
  *   - local  : created by the user locally
  *   - github : installed from a GitHub-hosted skill repo (skills.sh / SkillStore)
- *   - provider: installed from a named marketplace provider (MCP marketplace)
+ *   - provider: installed from a named Discover provider (MCP Discover)
  */
 export type AuthorInfo =
   | { type: "local" }

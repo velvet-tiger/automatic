@@ -305,11 +305,11 @@ struct AiRecommendationsOutput {
     recommendations: Vec<AiRecommendation>,
 }
 
-/// Canonicalised marketplace metadata for a validated recommendation.
+/// Canonicalised Discover metadata for a validated recommendation.
 ///
 /// `title` is the canonical display name we store on the recommendation row.
 /// `metadata` is a compact JSON blob used by the UI for precise deep-links.
-struct VerifiedMarketplaceItem {
+struct VerifiedDiscoverItem {
     title: String,
     metadata: String,
 }
@@ -330,10 +330,10 @@ fn normalize_slugish(s: &str) -> String {
         .join("-")
 }
 
-async fn verify_marketplace_recommendation(
+async fn verify_discover_recommendation(
     kind: &str,
     title: &str,
-) -> Result<Option<VerifiedMarketplaceItem>, String> {
+) -> Result<Option<VerifiedDiscoverItem>, String> {
     match kind {
         "skill" => {
             let results = crate::core::search_remote_skills(title).await?;
@@ -365,15 +365,15 @@ async fn verify_marketplace_recommendation(
                 "installs": skill.installs,
             });
 
-            Ok(Some(VerifiedMarketplaceItem {
+            Ok(Some(VerifiedDiscoverItem {
                 title: skill.name.clone(),
                 metadata: serde_json::to_string(&metadata).unwrap_or_default(),
             }))
         }
         "mcp_server" => {
-            let raw = crate::core::search_mcp_marketplace(title)?;
+            let raw = crate::core::search_discover_mcp(title)?;
             let items: Vec<Value> = serde_json::from_str(&raw)
-                .map_err(|e| format!("Failed to parse MCP marketplace results: {}", e))?;
+                .map_err(|e| format!("Failed to parse MCP Discover results: {}", e))?;
 
             let selected = items.iter().find(|item| {
                 let slug = item.get("slug").and_then(|v| v.as_str()).unwrap_or("");
@@ -410,7 +410,7 @@ async fn verify_marketplace_recommendation(
                 "provider": server.get("provider").and_then(|v| v.as_str()).unwrap_or_default(),
             });
 
-            Ok(Some(VerifiedMarketplaceItem {
+            Ok(Some(VerifiedDiscoverItem {
                 title: canonical_title,
                 metadata: serde_json::to_string(&metadata).unwrap_or_default(),
             }))
@@ -418,7 +418,7 @@ async fn verify_marketplace_recommendation(
         "template" => {
             let raw = crate::core::search_bundled_project_templates(title)?;
             let items: Vec<Value> = serde_json::from_str(&raw)
-                .map_err(|e| format!("Failed to parse template marketplace results: {}", e))?;
+                .map_err(|e| format!("Failed to parse template Discover results: {}", e))?;
 
             let selected = items.iter().find(|item| {
                 let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -461,7 +461,7 @@ async fn verify_marketplace_recommendation(
                     .unwrap_or_default(),
             });
 
-            Ok(Some(VerifiedMarketplaceItem {
+            Ok(Some(VerifiedDiscoverItem {
                 title: display_name,
                 metadata: serde_json::to_string(&metadata).unwrap_or_default(),
             }))
@@ -501,7 +501,7 @@ async fn verify_marketplace_recommendation(
                 "slug": slug,
             });
 
-            Ok(Some(VerifiedMarketplaceItem {
+            Ok(Some(VerifiedDiscoverItem {
                 title: collection
                     .get("name")
                     .and_then(|v| v.as_str())
@@ -510,7 +510,7 @@ async fn verify_marketplace_recommendation(
                 metadata: serde_json::to_string(&metadata).unwrap_or_default(),
             }))
         }
-        _ => Ok(Some(VerifiedMarketplaceItem {
+        _ => Ok(Some(VerifiedDiscoverItem {
             title: title.to_string(),
             metadata: String::new(),
         })),
@@ -714,7 +714,7 @@ will have the highest impact given the project's evident tech stack and workflow
     };
 
     // ── Phase 1: tool-assisted research ─────────────────────────────────────
-    // Let the model call list_skills, search_mcp_marketplace, etc. to gather
+    // Let the model call list_skills, search_discover_mcp, etc. to gather
     // facts.  We capture the full conversation history so we can pass it to
     // the structured-output call below.
 
@@ -723,8 +723,8 @@ will have the highest impact given the project's evident tech stack and workflow
         Your job is to analyse a project's current setup and identify the most \
         valuable additions from the available catalogue. \
         \
-        Use the list_skills, list_mcp_servers, search_skills_marketplace, \
-        search_mcp_marketplace, search_collections, and search_templates_marketplace \
+        Use the list_skills, list_mcp_servers, search_discover_skills, \
+        search_discover_mcp, search_collections, and search_discover_templates \
         tools to research what is available. \
         Only consider things that are genuinely relevant and not already configured. \
         After you have finished researching, write a brief plain-text summary of \
@@ -829,9 +829,9 @@ will have the highest impact given the project's evident tech stack and workflow
     for rec in &parsed.recommendations {
         let priority = RecommendationPriority::from_str(&rec.priority);
 
-        // For marketplace-backed kinds, only persist verified catalog items so
+        // For Discover-backed kinds, only persist verified catalog items so
         // UI links always resolve to a real entry.
-        let Some(verified) = verify_marketplace_recommendation(&rec.kind, &rec.title).await? else {
+        let Some(verified) = verify_discover_recommendation(&rec.kind, &rec.title).await? else {
             continue;
         };
 
@@ -959,7 +959,7 @@ fn build_project_state(proj: &crate::core::Project) -> String {
 }
 
 /// Phase 1: Run the AI with tools to gather facts (what is available in the
-/// marketplace).  Returns the raw text summary produced by the agentic loop.
+/// Discover catalogue).  Returns the raw text summary produced by the agentic loop.
 async fn run_research_phase(
     prompt: &str,
     system: &str,
@@ -1017,7 +1017,7 @@ async fn run_structured_phase(
 ///
 /// `metadata` is an optional JSON object (e.g. `{"id":"owner/repo/skill","source":"owner/repo",
 /// "name":"skill","installs":123}`) stored verbatim as a string on the recommendation
-/// so the frontend can deep-link to the exact marketplace item.
+/// so the frontend can deep-link to the exact Discover item.
 fn persist_targeted_suggestions(
     project: &str,
     kind: &str,
@@ -1105,7 +1105,7 @@ fn persist_targeted_suggestions(
 /// Ask the AI to suggest specific **skills** for this project.
 ///
 /// Two-phase approach:
-/// 1. Tool-use phase — explores the skill library and skills.sh marketplace.
+/// 1. Tool-use phase — explores the skill library and skills.sh Discover.
 /// 2. Structured output phase — produces a guaranteed-valid JSON list via JSON schema.
 ///
 /// Results are stored as `"automatic-ai-skills"` recommendations.
@@ -1134,10 +1134,10 @@ pub async fn ai_suggest_skills(project: &str) -> Result<Vec<Recommendation>, Str
     let research_prompt = format!(
         r#"{state}
 
-Use the list_skills and search_skills_marketplace tools to research what skills are
+Use the list_skills and search_discover_skills tools to research what skills are
 available — both locally installed and in the community registry (skills.sh).
 
-For each relevant skill you find via search_skills_marketplace, record its exact
+For each relevant skill you find via search_discover_skills, record its exact
 registry fields: id (e.g. "owner/repo/skill-name"), name, source (e.g. "owner/repo"),
 and installs count.
 
@@ -1150,7 +1150,7 @@ source, installs count, and a brief reason why each fits this project."#,
     );
 
     let research_system = "You are an expert AI-development advisor. \
-        Use the list_skills and search_skills_marketplace tools to explore what skills \
+        Use the list_skills and search_discover_skills tools to explore what skills \
         are available for the given project. Record each candidate skill's exact registry \
         fields (id, name, source, installs). Summarise your findings as plain text.";
 
@@ -1251,7 +1251,7 @@ pub async fn ai_suggest_mcp_servers(project: &str) -> Result<Vec<Recommendation>
     let research_prompt = format!(
         r#"{state}
 
-Use the list_mcp_servers and search_mcp_marketplace tools to research what MCP
+Use the list_mcp_servers and search_discover_mcp tools to research what MCP
 servers are available — both locally configured and in the featured catalogue.
 
 Identify 3–5 servers that are NOT already in the "MCP servers" list above and
@@ -1263,7 +1263,7 @@ reason why it fits this project."#,
     );
 
     let research_system = "You are an expert AI-development advisor. \
-        Use the list_mcp_servers and search_mcp_marketplace tools to explore what MCP \
+        Use the list_mcp_servers and search_discover_mcp tools to explore what MCP \
         servers are available for the given project. Summarise your findings as plain text.";
 
     let research = run_research_phase(&research_prompt, research_system, &working_dir).await?;

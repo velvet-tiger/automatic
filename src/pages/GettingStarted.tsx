@@ -47,7 +47,7 @@ function getOnboardingItems(
       show: !templateImported,
       label: "Import a template",
       description: "Start from a pre-built project setup.",
-      action: () => onNavigate("template-marketplace"),
+      action: () => onNavigate("discover-templates"),
       color: "text-icon-file-template",
     },
     {
@@ -61,7 +61,7 @@ function getOnboardingItems(
       show: mcpServerCount === 0,
       label: "Connect MCP servers",
       description: "Extend your agents with powerful integrations.",
-      action: () => onNavigate("mcp-marketplace"),
+      action: () => onNavigate("discover-mcp"),
       color: "text-icon-mcp",
     },
   ].filter((i) => i.show) as OnboardingItem[];
@@ -103,8 +103,8 @@ const USE_CASES: UseCase[] = [
     goal: "Find proven skills, pre-built project setups, and MCP servers that give your agents new capabilities.",
     actions: [
       { label: "Browse the skill library", tab: "skill-store" },
-      { label: "Explore project templates", tab: "template-marketplace" },
-      { label: "Connect MCP servers", tab: "mcp-marketplace" },
+      { label: "Explore project templates", tab: "discover-templates" },
+      { label: "Connect MCP servers", tab: "discover-mcp" },
     ],
   },
 ];
@@ -191,7 +191,7 @@ function DiscoverAndExtendSection({ onNavigate }: GettingStartedProps) {
             <div className="p-2 bg-icon-skill/10 rounded-lg border border-icon-skill/20 flex-shrink-0 group-hover:bg-icon-skill/20 transition-colors">
               <Code size={18} className="text-icon-skill" />
             </div>
-            <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">Skills Marketplace</h3>
+            <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">Discover Skills</h3>
           </div>
           <p className="text-[12px] text-text-muted leading-relaxed flex-1 mb-4">Discover and install pre-built skills, prompts, and workflows from the community.</p>
           <div className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-[12px] font-medium transition-all group/btn bg-bg-sidebar border border-transparent hover:border-border-strong/60 hover:bg-surface-hover text-icon-skill">
@@ -201,14 +201,14 @@ function DiscoverAndExtendSection({ onNavigate }: GettingStartedProps) {
         </button>
 
         <button
-          onClick={() => onNavigate("template-marketplace")}
+          onClick={() => onNavigate("discover-templates")}
           className="bg-bg-input border border-border-strong/40 rounded-xl p-5 text-left hover:border-icon-file-template/50 hover:bg-surface-hover transition-all group flex flex-col"
         >
           <div className="flex items-start gap-3 mb-3">
             <div className="p-2 bg-icon-file-template/10 rounded-lg border border-icon-file-template/20 flex-shrink-0 group-hover:bg-icon-file-template/20 transition-colors">
               <Layers size={18} className="text-icon-file-template" />
             </div>
-            <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">Templates Marketplace</h3>
+            <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">Discover Templates</h3>
           </div>
           <p className="text-[12px] text-text-muted leading-relaxed flex-1 mb-4">Explore project templates and file scaffolds to jumpstart your development.</p>
           <div className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-[12px] font-medium transition-all group/btn bg-bg-sidebar border border-transparent hover:border-border-strong/60 hover:bg-surface-hover text-icon-file-template">
@@ -218,14 +218,14 @@ function DiscoverAndExtendSection({ onNavigate }: GettingStartedProps) {
         </button>
 
         <button
-          onClick={() => onNavigate("mcp-marketplace")}
+          onClick={() => onNavigate("discover-mcp")}
           className="bg-bg-input border border-border-strong/40 rounded-xl p-5 text-left hover:border-icon-mcp/50 hover:bg-surface-hover transition-all group flex flex-col"
         >
           <div className="flex items-start gap-3 mb-3">
             <div className="p-2 bg-icon-mcp/10 rounded-lg border border-icon-mcp/20 flex-shrink-0 group-hover:bg-icon-mcp/20 transition-colors">
               <Server size={18} className="text-icon-mcp" />
             </div>
-            <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">MCP Servers Marketplace</h3>
+            <h3 className="text-[14px] font-semibold text-text-base leading-snug pt-1">Discover MCP Servers</h3>
           </div>
           <p className="text-[12px] text-text-muted leading-relaxed flex-1 mb-4">Connect AI-powered integrations and extend your agents with MCP servers.</p>
           <div className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-[12px] font-medium transition-all group/btn bg-bg-sidebar border border-transparent hover:border-border-strong/60 hover:bg-surface-hover text-icon-mcp">

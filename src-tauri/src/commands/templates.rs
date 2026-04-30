@@ -49,7 +49,7 @@ pub fn rename_project_template(old_name: &str, new_name: &str) -> Result<(), Str
     core::rename_project_template(old_name, new_name)
 }
 
-// ── Template Marketplace (bundled) ────────────────────────────────────────────
+// ── Discover Templates (bundled) ────────────────────────────────────────────
 
 #[tauri::command]
 pub fn list_bundled_project_templates() -> Result<String, String> {

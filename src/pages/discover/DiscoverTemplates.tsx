@@ -560,7 +560,7 @@ function TemplateDetail({
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function TemplateMarketplace({ resetKey, onNavigateToTemplate, initialTemplateName, onInitialTemplateConsumed }: { resetKey?: number; onNavigateToTemplate?: (name: string) => void; initialTemplateName?: string | null; onInitialTemplateConsumed?: () => void }) {
+export default function DiscoverTemplates({ resetKey, onNavigateToTemplate, initialTemplateName, onInitialTemplateConsumed }: { resetKey?: number; onNavigateToTemplate?: (name: string) => void; initialTemplateName?: string | null; onInitialTemplateConsumed?: () => void }) {
   const [allTemplates, setAllTemplates] = useState<BundledProjectTemplate[]>([]);
   const [results, setResults] = useState<BundledProjectTemplate[]>([]);
   const [query, setQuery] = useState("");
@@ -676,7 +676,7 @@ export default function TemplateMarketplace({ resetKey, onNavigateToTemplate, in
             <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-brand/10 border border-brand/20 flex items-center justify-center">
               <FolderOpen size={20} className="text-brand" strokeWidth={1.5} />
             </div>
-            <h2 className="text-[18px] font-semibold text-text-base mb-1.5">Template Marketplace</h2>
+            <h2 className="text-[18px] font-semibold text-text-base mb-1.5">Discover Templates</h2>
             <p className="text-[13px] text-text-muted leading-relaxed">
               Pre-built project configurations for common stacks. Import a template to add it to
               your Project Templates library, then apply it to any project.

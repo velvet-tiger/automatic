@@ -90,12 +90,12 @@ pub fn run() {
                     Err(_) => true, // can't read settings → safe to overwrite
                 };
 
-                // Seed (or refresh) the marketplace catalogue files in
-                // ~/.automatic/marketplace/.  `force_reinstall` mirrors the
+                // Seed (or refresh) the Discover catalogue files in
+                // ~/.automatic/discover/.  `force_reinstall` mirrors the
                 // bundled-skills version gate so the files are overwritten
                 // whenever the app ships a new release.
-                if let Err(e) = core::init_marketplace_files(force_reinstall) {
-                    eprintln!("[automatic] marketplace init error: {}", e);
+                if let Err(e) = core::init_discover_files(force_reinstall) {
+                    eprintln!("[automatic] discover init error: {}", e);
                 }
 
                 // One-time migration: any skill Automatic previously wrote to
@@ -270,7 +270,7 @@ pub fn run() {
             read_mcp_server_config,
             save_mcp_server_config,
             delete_mcp_server_config,
-            search_mcp_marketplace,
+            search_discover_mcp,
             search_collections,
             get_featured_community,
             get_projects,

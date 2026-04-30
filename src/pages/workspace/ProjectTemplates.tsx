@@ -43,7 +43,7 @@ interface ProjectTemplate {
   unified_instruction?: string;
   /** Rule IDs attached to the unified instruction */
   unified_rules?: string[];
-  /** Author/provider metadata — present on marketplace-imported templates. */
+  /** Author/provider metadata — present on Discover-imported templates. */
   _author?: AuthorDescriptor;
 }
 

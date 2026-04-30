@@ -80,7 +80,7 @@ interface McpServer {
   companion_skill?: CompanionSkill | null;
 }
 
-// servers is loaded asynchronously in the component via invoke("search_mcp_marketplace")
+// servers is loaded asynchronously in the component via invoke("search_discover_mcp")
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -212,11 +212,11 @@ function configName(server: McpServer): string {
   return server.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-/** Build a save-ready config JSON from marketplace data. Prefers local, falls back to remote.
+/** Build a save-ready config JSON from Discover data. Prefers local, falls back to remote.
  *  Embeds `_author` metadata so Automatic can display the provider in the MCP Servers view.
  */
 function buildConfig(server: McpServer): Record<string, unknown> {
-  // Author metadata derived from marketplace data
+  // Author metadata derived from Discover data
   const _author: Record<string, string> = { name: server.provider };
   if (server.repository_url) _author.repository_url = server.repository_url;
 
@@ -244,7 +244,7 @@ function buildConfig(server: McpServer): Record<string, unknown> {
   return { type: "stdio", command: "", _author };
 }
 
-export default function McpMarketplace({
+export default function DiscoverMcp({
   resetKey,
   initialSlug,
   onInitialSlugConsumed,
@@ -276,11 +276,11 @@ export default function McpMarketplace({
   const [skillInstallError, setSkillInstallError] = useState<string | null>(null);
   const [skillInstallNotice, setSkillInstallNotice] = useState<string | null>(null);
 
-  // Load marketplace catalogue from ~/.automatic/marketplace/mcp-servers.json
+  // Load Discover catalogue from ~/.automatic/discover/mcp-servers.json
   const loadServers = useCallback(async () => {
     setServersLoading(true);
     try {
-      const json: string = await invoke("search_mcp_marketplace", { query: "" });
+      const json: string = await invoke("search_discover_mcp", { query: "" });
       setServers(JSON.parse(json) as McpServer[]);
     } catch {
       // non-fatal: leave servers empty

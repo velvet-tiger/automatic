@@ -335,7 +335,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
 
   async function reinstallDefaults() {
     const confirmed = await ask(
-      "Reinstall all bundled defaults? This will overwrite your Rules, Templates, Skills, bundled agents, marketplace catalogues, and the Automatic MCP server with the versions shipped in this release. Projects and other data are not affected.",
+      "Reinstall all bundled defaults? This will overwrite your Rules, Templates, Skills, bundled agents, Discover catalogues, and the Automatic MCP server with the versions shipped in this release. Projects and other data are not affected.",
       { title: "Reinstall Defaults", kind: "warning" }
     );
 
@@ -346,7 +346,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
     const entryId = log("Reinstalling defaults…", "running");
     try {
       await invoke("reinstall_defaults");
-      update(entryId, "Defaults reinstalled — Rules, Templates, Skills, bundled agents, marketplace catalogues, and MCP server restored.", "success");
+      update(entryId, "Defaults reinstalled — Rules, Templates, Skills, bundled agents, Discover catalogues, and MCP server restored.", "success");
     } catch (e) {
       update(entryId, `Failed to reinstall defaults: ${e}`, "error");
     }
@@ -997,7 +997,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
 
                 <div className="mt-4">
                   <p className="text-[13px] text-text-muted mb-3 leading-relaxed">
-                    Overwrite bundled Rules, Templates, Skills, bundled agents, marketplace catalogues, and the Automatic MCP server with the versions shipped in this release. Projects and other data are not affected.
+                    Overwrite bundled Rules, Templates, Skills, bundled agents, Discover catalogues, and the Automatic MCP server with the versions shipped in this release. Projects and other data are not affected.
                   </p>
                   <button
                     onClick={reinstallDefaults}
@@ -1068,7 +1068,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
             </div>
 
             <p className="text-[12px] text-text-muted leading-relaxed mb-3">
-              This permanently deletes local Automatic data (projects registry, memories, activity, plugin/session files, and marketplace caches) and restores bundled defaults, including rules, templates, collections, and marketplace catalogues.
+              This permanently deletes local Automatic data (projects registry, memories, activity, plugin/session files, and Discover caches) and restores bundled defaults, including rules, templates, collections, and Discover catalogues.
             </p>
             <p className="text-[12px] text-text-muted leading-relaxed mb-3">
               To confirm, type <span className="font-mono text-text-base">erase</span> below.
@@ -1178,7 +1178,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                   <p>Automatic may make network requests for the following purposes:</p>
                   <ul className="list-disc list-inside mt-2 space-y-1.5 ml-2">
                     <li>Checking for application updates</li>
-                    <li>Browsing the Skill Store, Template Marketplace, and MCP Marketplace</li>
+                    <li>Browsing the Skill Store, Discover Templates, and Discover MCP Servers</li>
                     <li>Sending anonymous analytics (when opted in)</li>
                     <li>OAuth authentication for credential storage</li>
                   </ul>
@@ -1316,12 +1316,12 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                 </div>
 
                 <div>
-                  <h3 className="text-sm font-medium text-text-base mb-2">5. Marketplace &amp; Skills</h3>
+                  <h3 className="text-sm font-medium text-text-base mb-2">5. Discover &amp; Skills</h3>
                   <p>
-                    Skills, templates, and MCP server configurations available through the Automatic marketplace are
-                    provided by the community or by Velvet Tiger. Community-contributed content is provided
-                    as-is and may have its own license terms. You are responsible for reviewing the terms and
-                    suitability of any content you install.
+                    Skills, templates, and MCP server configurations available through Automatic's Discover
+                    section are provided by the community or by Velvet Tiger. Community-contributed content is
+                    provided as-is and may have its own license terms. You are responsible for reviewing the terms
+                    and suitability of any content you install.
                   </p>
                 </div>
 
@@ -1358,7 +1358,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                   <h3 className="text-sm font-medium text-text-base mb-2">9. Termination</h3>
                   <p>
                     You may stop using the Software at any time by uninstalling it. We reserve the right to suspend
-                    or terminate access to marketplace services or online features if you violate these Terms.
+                    or terminate access to Discover services or online features if you violate these Terms.
                     Termination does not affect your locally stored data.
                   </p>
                 </div>

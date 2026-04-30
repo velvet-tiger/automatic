@@ -260,7 +260,7 @@ pub async fn chat_structured(
 // ── Tool-use (agentic loop) ───────────────────────────────────────────────────
 
 /// Maximum agentic turns before we abort to prevent runaway loops.
-// Some recommendation research prompts require additional marketplace tool calls
+// Some recommendation research prompts require additional Discover tool calls
 // before the model can produce a final answer. A 10-turn cap is too tight and
 // can terminate otherwise valid runs.
 const MAX_TOOL_TURNS: usize = 20;
@@ -503,11 +503,11 @@ fn execute_read_mcp_server(input: &Value) -> String {
     }
 }
 
-// ── Marketplace tool definitions ─────────────────────────────────────────────
+// ── Discover tool definitions ────────────────────────────────────────────────
 
-fn search_skills_marketplace_tool_def() -> Value {
+fn search_discover_skills_tool_def() -> Value {
     json!({
-        "name": "search_skills_marketplace",
+        "name": "search_discover_skills",
         "description": "Search the skills.sh community registry for skills matching a query. \
             Returns skill names, install counts, and source repos. \
             Use this to discover skills that are not yet installed locally.",
@@ -524,9 +524,9 @@ fn search_skills_marketplace_tool_def() -> Value {
     })
 }
 
-fn search_mcp_marketplace_tool_def() -> Value {
+fn search_discover_mcp_tool_def() -> Value {
     json!({
-        "name": "search_mcp_marketplace",
+        "name": "search_discover_mcp",
         "description": "Search the featured MCP server catalogue for servers matching a query. \
             Returns title, description, provider, classification, and install config. \
             Use this to discover MCP servers available to add to a project.",
@@ -561,10 +561,10 @@ fn search_collections_tool_def() -> Value {
     })
 }
 
-fn search_templates_marketplace_tool_def() -> Value {
+fn search_discover_templates_tool_def() -> Value {
     json!({
-        "name": "search_templates_marketplace",
-        "description": "Search the bundled project template marketplace for templates matching a query. \
+        "name": "search_discover_templates",
+        "description": "Search the bundled project template Discover catalogue for templates matching a query. \
             Returns template names, descriptions, categories, required skills, and MCP servers.",
         "input_schema": {
             "type": "object",
@@ -579,21 +579,21 @@ fn search_templates_marketplace_tool_def() -> Value {
     })
 }
 
-// ── Marketplace tool executors ────────────────────────────────────────────────
+// ── Discover tool executors ──────────────────────────────────────────────────
 
-async fn execute_search_skills_marketplace(input: &Value) -> String {
+async fn execute_search_discover_skills(input: &Value) -> String {
     let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
     match crate::core::search_remote_skills(query).await {
         Ok(results) => serde_json::to_string_pretty(&results).unwrap_or_else(|_| "[]".to_string()),
-        Err(e) => format!("Error searching skills marketplace: {}", e),
+        Err(e) => format!("Error searching Discover skills: {}", e),
     }
 }
 
-fn execute_search_mcp_marketplace(input: &Value) -> String {
+fn execute_search_discover_mcp(input: &Value) -> String {
     let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    match crate::core::search_mcp_marketplace(query) {
+    match crate::core::search_discover_mcp(query) {
         Ok(json) => json,
-        Err(e) => format!("Error searching MCP marketplace: {}", e),
+        Err(e) => format!("Error searching Discover MCP: {}", e),
     }
 }
 
@@ -605,11 +605,11 @@ fn execute_search_collections(input: &Value) -> String {
     }
 }
 
-fn execute_search_templates_marketplace(input: &Value) -> String {
+fn execute_search_discover_templates(input: &Value) -> String {
     let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
     match crate::core::search_bundled_project_templates(query) {
         Ok(json) => json,
-        Err(e) => format!("Error searching templates marketplace: {}", e),
+        Err(e) => format!("Error searching Discover templates: {}", e),
     }
 }
 
@@ -1009,10 +1009,10 @@ async fn chat_with_tools_inner(
         read_template_tool_def(),
         list_mcp_servers_tool_def(),
         read_mcp_server_tool_def(),
-        search_skills_marketplace_tool_def(),
-        search_mcp_marketplace_tool_def(),
+        search_discover_skills_tool_def(),
+        search_discover_mcp_tool_def(),
         search_collections_tool_def(),
-        search_templates_marketplace_tool_def(),
+        search_discover_templates_tool_def(),
     ]);
     let client = reqwest::Client::new();
 
@@ -1108,10 +1108,10 @@ async fn chat_with_tools_inner(
                 "read_template" => execute_read_template(&tool_input),
                 "list_mcp_servers" => execute_list_mcp_servers(),
                 "read_mcp_server" => execute_read_mcp_server(&tool_input),
-                "search_skills_marketplace" => execute_search_skills_marketplace(&tool_input).await,
-                "search_mcp_marketplace" => execute_search_mcp_marketplace(&tool_input),
+                "search_discover_skills" => execute_search_discover_skills(&tool_input).await,
+                "search_discover_mcp" => execute_search_discover_mcp(&tool_input),
                 "search_collections" => execute_search_collections(&tool_input),
-                "search_templates_marketplace" => execute_search_templates_marketplace(&tool_input),
+                "search_discover_templates" => execute_search_discover_templates(&tool_input),
                 other => format!("Error: unknown tool '{}'.", other),
             };
 

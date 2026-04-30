@@ -9,7 +9,7 @@ import { initAnalytics, setAnalyticsEnabled, trackNavigation } from "./lib/analy
 import GettingStarted from "./pages/GettingStarted";
 
 import Skills from "./pages/workspace/Skills";
-import SkillStore from "./pages/marketplace/SkillStore";
+import SkillStore from "./pages/discover/SkillStore";
 import Projects from "./pages/workspace/Projects";
 import ProjectGroups from "./pages/workspace/ProjectGroups";
 import ProjectTemplates from "./pages/workspace/ProjectTemplates";
@@ -22,9 +22,9 @@ import Agents from "./pages/workspace/Agents";
 import Tools from "./pages/workspace/Tools";
 import Recommendations from "./pages/Recommendations";
 import Settings from "./pages/Settings";
-import TemplateMarketplace from "./pages/marketplace/TemplateMarketplace";
-import McpMarketplace from "./pages/marketplace/McpMarketplace";
-import CollectionMarketplace from "./pages/marketplace/CollectionMarketplace";
+import DiscoverTemplates from "./pages/discover/DiscoverTemplates";
+import DiscoverMcp from "./pages/discover/DiscoverMcp";
+import DiscoverCollections from "./pages/discover/DiscoverCollections";
 import FirstRunWizard from "./pages/FirstRunWizard";
 import { TaskLogProvider, useTaskLog } from "./contexts/TaskLogContext";
 import TaskLog from "./components/TaskLog";
@@ -41,13 +41,13 @@ import "./App.css";
 
 // ── Section / Tab mapping ────────────────────────────────────────────────────
 
-type Section = "start" | "workspace" | "library" | "marketplace" | "community";
+type Section = "start" | "workspace" | "library" | "discover" | "community";
 
 const SECTION_TABS: Record<Section, string[]> = {
   start: ["getting-started", "recommendations"],
   workspace: ["projects", "project-groups"],
   library: ["project-templates", "templates", "rules", "user-agents", "commands", "skills", "mcp", "agents", "tools"],
-  marketplace: ["collection-marketplace", "template-marketplace", "skill-store", "mcp-marketplace"],
+  discover: ["discover-collections", "discover-templates", "skill-store", "discover-mcp"],
   community: ["community-featured"],
 };
 
@@ -55,7 +55,7 @@ const DEFAULT_TAB: Record<Section, string> = {
   start: "getting-started",
   workspace: "projects",
   library: "project-templates",
-  marketplace: "collection-marketplace",
+  discover: "discover-collections",
   community: "community-featured",
 };
 
@@ -63,7 +63,7 @@ const SECTION_LABELS: Record<Section, string> = {
   start: "Start",
   workspace: "Workspace",
   library: "Library",
-  marketplace: "Marketplace",
+  discover: "Discover",
   community: "Community",
 };
 
@@ -145,7 +145,9 @@ function App() {
   const [activeSection, setActiveSection] = useState<Section>(() => {
     if (activeTab === "settings") {
       // When settings is active, restore last real section for the sidebar
-      const saved = localStorage.getItem("automatic.activeSection") as Section | null;
+      const rawSaved = localStorage.getItem("automatic.activeSection");
+      // Migrate legacy "marketplace" section id (renamed to "discover").
+      const saved = (rawSaved === "marketplace" ? "discover" : rawSaved) as Section | null;
       return saved && SECTION_TABS[saved] ? saved : "workspace";
     }
     return sectionForTab(activeTab);
@@ -157,7 +159,7 @@ function App() {
     start: false,
     workspace: false,
     library: false,
-    marketplace: false,
+    discover: false,
     community: true,
   };
 
@@ -174,7 +176,7 @@ function App() {
     const legacy = localStorage.getItem("automatic.sidebarCollapsed");
     if (legacy !== null) {
       const val = legacy === "true";
-      return { start: val, workspace: val, library: val, marketplace: val, community: true };
+      return { start: val, workspace: val, library: val, discover: val, community: true };
     }
     return { ...SIDEBAR_COLLAPSED_DEFAULTS };
   });
@@ -204,16 +206,16 @@ function App() {
   const [pendingCreateWithTemplate, setPendingCreateWithTemplate] = useState<string | null>(null);
   const [projectsResetKey, setProjectsResetKey] = useState(0);
   const [skillStoreResetKey, setSkillStoreResetKey] = useState(0);
-  const [templateMarketplaceResetKey, setTemplateMarketplaceResetKey] = useState(0);
-  const [mcpMarketplaceResetKey, setMcpMarketplaceResetKey] = useState(0);
-  const [collectionMarketplaceResetKey, setCollectionMarketplaceResetKey] = useState(0);
+  const [discoverTemplatesResetKey, setDiscoverTemplatesResetKey] = useState(0);
+  const [discoverMcpResetKey, setDiscoverMcpResetKey] = useState(0);
+  const [discoverCollectionsResetKey, setDiscoverCollectionsResetKey] = useState(0);
   const [pendingSkillStoreId, setPendingSkillStoreId] = useState<string | null>(null);
   const [pendingSkillStoreQuery, setPendingSkillStoreQuery] = useState<string | null>(null);
   const [pendingSkillStoreResult, setPendingSkillStoreResult] = useState<{ id: string; name: string; source: string; installs: number } | null>(null);
   const [pendingMcpSlug, setPendingMcpSlug] = useState<string | null>(null);
   const [pendingMcpQuery, setPendingMcpQuery] = useState<string | null>(null);
   const [pendingCollectionQuery, setPendingCollectionQuery] = useState<string | null>(null);
-  const [pendingMarketplaceTemplate, setPendingMarketplaceTemplate] = useState<string | null>(null);
+  const [pendingDiscoverTemplate, setPendingDiscoverTemplate] = useState<string | null>(null);
   const [pendingMcpServer, setPendingMcpServer] = useState<string | null>(null);
   const [pendingGroup, setPendingGroup] = useState<string | null>(null);
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
@@ -364,29 +366,29 @@ function App() {
     setActiveTabWithSection("skill-store");
   };
 
-  const navigateToMcpMarketplace = (slug: string) => {
+  const navigateToDiscoverMcp = (slug: string) => {
     setPendingMcpSlug(slug);
     setPendingMcpQuery(slug);
-    setActiveTabWithSection("mcp-marketplace");
+    setActiveTabWithSection("discover-mcp");
   };
 
-  const navigateToTemplateMarketplace = (templateName: string) => {
-    setPendingMarketplaceTemplate(templateName);
-    setActiveTabWithSection("template-marketplace");
+  const navigateToDiscoverTemplates = (templateName: string) => {
+    setPendingDiscoverTemplate(templateName);
+    setActiveTabWithSection("discover-templates");
   };
 
-  const navigateToCollectionMarketplace = (query: string) => {
+  const navigateToDiscoverCollections = (query: string) => {
     setPendingCollectionQuery(query);
-    setActiveTabWithSection("collection-marketplace");
+    setActiveTabWithSection("discover-collections");
   };
 
   // ── Tab click + double-click refresh ─────────────────────────────────────
   const REFRESHABLE_TABS: Record<string, () => void> = {
     "projects": () => setProjectsResetKey((k) => k + 1),
     "skill-store": () => setSkillStoreResetKey((k) => k + 1),
-    "template-marketplace": () => setTemplateMarketplaceResetKey((k) => k + 1),
-    "mcp-marketplace": () => setMcpMarketplaceResetKey((k) => k + 1),
-    "collection-marketplace": () => setCollectionMarketplaceResetKey((k) => k + 1),
+    "discover-templates": () => setDiscoverTemplatesResetKey((k) => k + 1),
+    "discover-mcp": () => setDiscoverMcpResetKey((k) => k + 1),
+    "discover-collections": () => setDiscoverCollectionsResetKey((k) => k + 1),
   };
 
   const handleTabClick = (id: string) => {
@@ -476,7 +478,7 @@ function App() {
         {/* Center: section toggle pill */}
         <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-0">
           <div className="flex items-center bg-bg-input border border-border-strong/40 rounded-lg p-0.5 pointer-events-auto">
-            {(["start", "workspace", "library", "marketplace", "community"] as const).map((section) => {
+            {(["start", "workspace", "library", "discover", "community"] as const).map((section) => {
               const isActive = activeSection === section && activeTab !== "settings" && activeTab !== "sync";
               return (
                 <button
@@ -508,20 +510,20 @@ function App() {
           )}
           {activeTab === "project-templates" && (
             <button
-              onClick={() => setActiveTabWithSection("template-marketplace")}
+              onClick={() => setActiveTabWithSection("discover-templates")}
               className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
             >
               <Store size={13} />
-              Template Marketplace
+              Discover Templates
             </button>
           )}
           {activeTab === "mcp" && (
             <button
-              onClick={() => setActiveTabWithSection("mcp-marketplace")}
+              onClick={() => setActiveTabWithSection("discover-mcp")}
               className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
             >
               <Store size={13} />
-              MCP Marketplace
+              Discover MCP Servers
             </button>
           )}
           <TaskLogToggleButton />
@@ -606,13 +608,13 @@ function App() {
             </div>
           )}
 
-          {/* ── Marketplace sidebar ─────────────────────────────────────── */}
-          {activeSection === "marketplace" && (
+          {/* ── Discover sidebar ────────────────────────────────────────── */}
+          {activeSection === "discover" && (
             <ul className="space-y-0.5">
-              <NavItem id="collection-marketplace" icon={PackageOpen} label="Collections" />
-              <NavItem id="template-marketplace" icon={Layers} label="Templates" />
+              <NavItem id="discover-collections" icon={PackageOpen} label="Collections" />
+              <NavItem id="discover-templates" icon={Layers} label="Templates" />
               <NavItem id="skill-store" icon={Puzzle} label="Skills" />
-              <NavItem id="mcp-marketplace" icon={Server} label="MCP Servers" />
+              <NavItem id="discover-mcp" icon={Server} label="MCP Servers" />
             </ul>
           )}
 
@@ -706,7 +708,7 @@ function App() {
                 onNavigateToMcpServer={navigateToMcpServer}
                 onNavigateToSkillStore={navigateToSkillStore}
                 onNavigateToSkillStoreWithResult={navigateToSkillStoreWithResult}
-                onNavigateToMcpMarketplace={navigateToMcpMarketplace}
+                onNavigateToDiscoverMcp={navigateToDiscoverMcp}
                 onNavigateToGroup={navigateToGroup}
                 onNavigateToCommand={navigateToCommand}
                 initialCreateWithTemplate={pendingCreateWithTemplate}
@@ -738,9 +740,9 @@ function App() {
               <Recommendations
                 onNavigateToProject={navigateToProject}
                 onNavigateToSkillStoreWithResult={navigateToSkillStoreWithResult}
-                onNavigateToMcpMarketplace={navigateToMcpMarketplace}
-                onNavigateToTemplateMarketplace={navigateToTemplateMarketplace}
-                onNavigateToCollectionMarketplace={navigateToCollectionMarketplace}
+                onNavigateToDiscoverMcp={navigateToDiscoverMcp}
+                onNavigateToDiscoverTemplates={navigateToDiscoverTemplates}
+                onNavigateToDiscoverCollections={navigateToDiscoverCollections}
               />
             </div>
           )}
@@ -777,20 +779,20 @@ function App() {
               />
             </div>
           )}
-          {activeTab === "template-marketplace" && (
+          {activeTab === "discover-templates" && (
             <div className="flex-1 h-full">
-              <TemplateMarketplace
-                resetKey={templateMarketplaceResetKey}
+              <DiscoverTemplates
+                resetKey={discoverTemplatesResetKey}
                 onNavigateToTemplate={navigateToTemplate}
-                initialTemplateName={pendingMarketplaceTemplate}
-                onInitialTemplateConsumed={() => setPendingMarketplaceTemplate(null)}
+                initialTemplateName={pendingDiscoverTemplate}
+                onInitialTemplateConsumed={() => setPendingDiscoverTemplate(null)}
               />
             </div>
           )}
-          {activeTab === "mcp-marketplace" && (
+          {activeTab === "discover-mcp" && (
             <div className="flex-1 h-full">
-              <McpMarketplace
-                resetKey={mcpMarketplaceResetKey}
+              <DiscoverMcp
+                resetKey={discoverMcpResetKey}
                 initialSlug={pendingMcpSlug}
                 onInitialSlugConsumed={() => setPendingMcpSlug(null)}
                 initialQuery={pendingMcpQuery}
@@ -799,10 +801,10 @@ function App() {
               />
             </div>
           )}
-          {activeTab === "collection-marketplace" && (
+          {activeTab === "discover-collections" && (
             <div className="flex-1 h-full">
-              <CollectionMarketplace
-                resetKey={collectionMarketplaceResetKey}
+              <DiscoverCollections
+                resetKey={discoverCollectionsResetKey}
                 initialQuery={pendingCollectionQuery}
                 onInitialQueryConsumed={() => setPendingCollectionQuery(null)}
               />

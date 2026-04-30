@@ -14,7 +14,7 @@ import {
   ArrowRight,
   ArrowLeft,
 } from "lucide-react";
-import featuredSkillsData from "../../../src-tauri/assets/marketplace/featured-skills.json";
+import featuredSkillsData from "../../../src-tauri/assets/discover/featured-skills.json";
 import { SkillAvatar } from "../../components/SkillAvatar";
 import {
   formatAssetScanResult,
@@ -723,7 +723,7 @@ export default function SkillStore({ resetKey, initialSkillId, onInitialSkillIdC
              className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-base transition-colors mb-2"
            >
              <ArrowLeft size={11} />
-             Skills Marketplace
+             Discover Skills
            </button>
           <div className="relative">
             <Search

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use super::marketplace_data::read_templates_json;
+use super::discover_data::read_templates_json;
 use super::*;
 
 // ── Project Templates ─────────────────────────────────────────────────────────
@@ -181,13 +181,13 @@ pub fn rename_project_template(old_name: &str, new_name: &str) -> Result<(), Str
     Ok(())
 }
 
-// ── Bundled Project Template Marketplace ─────────────────────────────────────
+// ── Bundled Project Template Discover ────────────────────────────────────────
 //
 // Templates shipped with the app, compiled in via `include_str!`.
-// These are served to the Template Marketplace UI without any network calls.
+// These are served to the Discover Templates UI without any network calls.
 // Users can import them into `~/.automatic/project_templates/` as editable copies.
 
-/// A bundled project template marketplace entry (richer than ProjectTemplate).
+/// A bundled project template Discover entry (richer than ProjectTemplate).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BundledProjectTemplate {
     pub name: String,
@@ -223,83 +223,83 @@ pub struct BundledProjectTemplate {
     pub skill_sources: HashMap<String, String>,
 }
 
-/// All bundled marketplace templates, compiled in at build time.
-/// `pub(super)` so `marketplace_data` can reference the raw strings for seeding.
+/// All bundled Discover templates, compiled in at build time.
+/// `pub(super)` so `discover_data` can reference the raw strings for seeding.
 pub(super) const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
     (
         "software-defaults",
-        include_str!("../../assets/marketplace/project-templates/software-defaults.json"),
+        include_str!("../../assets/discover/project-templates/software-defaults.json"),
     ),
     (
         "nextjs-saas-starter",
-        include_str!("../../assets/marketplace/project-templates/nextjs-saas-starter.json"),
+        include_str!("../../assets/discover/project-templates/nextjs-saas-starter.json"),
     ),
     (
         "laravel-api-backend",
-        include_str!("../../assets/marketplace/project-templates/laravel-api-backend.json"),
+        include_str!("../../assets/discover/project-templates/laravel-api-backend.json"),
     ),
     (
         "python-data-pipeline",
-        include_str!("../../assets/marketplace/project-templates/python-data-pipeline.json"),
+        include_str!("../../assets/discover/project-templates/python-data-pipeline.json"),
     ),
     (
         "tauri-desktop-app",
-        include_str!("../../assets/marketplace/project-templates/tauri-desktop-app.json"),
+        include_str!("../../assets/discover/project-templates/tauri-desktop-app.json"),
     ),
     (
         "terraform-aws-infrastructure",
         include_str!(
-            "../../assets/marketplace/project-templates/terraform-aws-infrastructure.json"
+            "../../assets/discover/project-templates/terraform-aws-infrastructure.json"
         ),
     ),
     (
         "react-component-library",
-        include_str!("../../assets/marketplace/project-templates/react-component-library.json"),
+        include_str!("../../assets/discover/project-templates/react-component-library.json"),
     ),
     (
         "django-web-app",
-        include_str!("../../assets/marketplace/project-templates/django-web-app.json"),
+        include_str!("../../assets/discover/project-templates/django-web-app.json"),
     ),
     (
         "fastapi-service",
-        include_str!("../../assets/marketplace/project-templates/fastapi-service.json"),
+        include_str!("../../assets/discover/project-templates/fastapi-service.json"),
     ),
     (
         "react-native-app",
-        include_str!("../../assets/marketplace/project-templates/react-native-app.json"),
+        include_str!("../../assets/discover/project-templates/react-native-app.json"),
     ),
     (
         "rust-cli-app",
-        include_str!("../../assets/marketplace/project-templates/rust-cli-app.json"),
+        include_str!("../../assets/discover/project-templates/rust-cli-app.json"),
     ),
     (
         "supabase-backend",
-        include_str!("../../assets/marketplace/project-templates/supabase-backend.json"),
+        include_str!("../../assets/discover/project-templates/supabase-backend.json"),
     ),
     (
         "graphql-api",
-        include_str!("../../assets/marketplace/project-templates/graphql-api.json"),
+        include_str!("../../assets/discover/project-templates/graphql-api.json"),
     ),
     (
         "docker-containerised-service",
         include_str!(
-            "../../assets/marketplace/project-templates/docker-containerised-service.json"
+            "../../assets/discover/project-templates/docker-containerised-service.json"
         ),
     ),
     (
         "ruby-on-rails-api",
-        include_str!("../../assets/marketplace/project-templates/ruby-on-rails-api.json"),
+        include_str!("../../assets/discover/project-templates/ruby-on-rails-api.json"),
     ),
 ];
 
-/// Return all bundled marketplace templates as JSON array.
-/// Reads from `~/.automatic/marketplace/templates.json` (disk is sole source of truth).
+/// Return all bundled Discover templates as JSON array.
+/// Reads from `~/.automatic/discover/templates.json` (disk is sole source of truth).
 pub fn list_bundled_project_templates() -> Result<String, String> {
     read_templates_json()
 }
 
-/// Return a single bundled marketplace template by name as JSON.
-/// Reads from `~/.automatic/marketplace/templates.json`.
+/// Return a single bundled Discover template by name as JSON.
+/// Reads from `~/.automatic/discover/templates.json`.
 pub fn read_bundled_project_template(name: &str) -> Result<String, String> {
     let json = read_templates_json()?;
     let templates: Vec<serde_json::Value> =
@@ -314,7 +314,7 @@ pub fn read_bundled_project_template(name: &str) -> Result<String, String> {
     Err(format!("Bundled template '{}' not found", name))
 }
 
-/// Import a bundled marketplace template into the user's local project templates.
+/// Import a bundled Discover template into the user's local project templates.
 /// If a template with the same name already exists it is overwritten.
 ///
 /// Install order:
@@ -546,7 +546,7 @@ fn union_vec(target: &mut Vec<String>, source: &[String]) {
 }
 
 /// Search bundled templates by query (matches name, display_name, description, tags, category).
-/// Reads from `~/.automatic/marketplace/templates.json`.
+/// Reads from `~/.automatic/discover/templates.json`.
 pub fn search_bundled_project_templates(query: &str) -> Result<String, String> {
     let json = read_templates_json()?;
     let templates: Vec<BundledProjectTemplate> =

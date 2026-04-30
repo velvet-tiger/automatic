@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { getToolPanel } from "../../plugins";
-import mcpServersData from "../../../src-tauri/assets/marketplace/featured-mcp-servers.json";
+import mcpServersData from "../../../src-tauri/assets/discover/featured-mcp-servers.json";
 import { SkillSelector } from "../../components/SkillSelector";
 import { AgentSelector } from "../../components/AgentSelector";
 import type { AgentOptions } from "../../components/AgentSelector";
@@ -478,8 +478,8 @@ interface ProjectsProps {
   /** Called when the user clicks "View" on an AI-suggested skill that has full metadata (id, name, source, installs).
    *  Navigates to the Skill Store and auto-selects the exact skill. */
   onNavigateToSkillStoreWithResult?: (result: { id: string; name: string; source: string; installs: number }) => void;
-  /** Called when the user clicks "View" on an AI-suggested MCP server — navigates to the MCP Marketplace. */
-  onNavigateToMcpMarketplace?: (slug: string) => void;
+  /** Called when the user clicks "View" on an AI-suggested MCP server — navigates to Discover MCP Servers. */
+  onNavigateToDiscoverMcp?: (slug: string) => void;
   /** Called when the user clicks on a project group name — navigates to the Project Groups page. */
   onNavigateToGroup?: (groupName: string) => void;
   /** Called when the user clicks "View in library" on a workspace command — navigates to the Commands page. */
@@ -2352,7 +2352,7 @@ function SkillAddButton({
 /**
  * Installs an AI-suggested MCP server config and adds it to the project.
  *
- * Looks up the server in the featured marketplace data by title/slug match,
+ * Looks up the server in the featured Discover data by title/slug match,
  * builds its config JSON, saves it via `save_mcp_server_config`, then notifies
  * the parent to add it to the project config.
  *
@@ -2374,7 +2374,7 @@ function McpAddButton({
     setState("loading");
     setErrorMsg(null);
 
-    // Find the server in the local marketplace catalogue by slug or title.
+    // Find the server in the local Discover catalogue by slug or title.
     const needle = rec.title.toLowerCase();
     const servers = mcpServersData as Array<{
       slug: string; name: string; title: string; provider: string;
@@ -2389,11 +2389,11 @@ function McpAddButton({
 
     if (!server) {
       setState("error");
-      setErrorMsg("Server not found in the marketplace catalogue. Use the MCP Marketplace to add it manually.");
+      setErrorMsg("Server not found in the Discover catalogue. Use Discover MCP Servers to add it manually.");
       return;
     }
 
-    // Build the config — same logic as McpMarketplace.buildConfig.
+    // Build the config — same logic as DiscoverMcp.buildConfig.
     const _author: Record<string, string> = { name: server.provider };
     if (server.repository_url) _author.repository_url = server.repository_url;
 
@@ -2414,7 +2414,7 @@ function McpAddButton({
       config = { type: "stdio", command: "", _author };
     }
 
-    // Derive the config key — same as McpMarketplace.configName.
+    // Derive the config key — same as DiscoverMcp.configName.
     const configKey = server.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
     try {
@@ -2484,7 +2484,7 @@ function getProjectRelativeDocPath(projectDirectory: string | undefined, path: s
   return normalizedPath.slice(prefix.length);
 }
 
-export default function Projects({ resetKey, initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToMcpMarketplace, onNavigateToGroup, onNavigateToCommand, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed, filterGroup = null }: ProjectsProps = {}) {
+export default function Projects({ resetKey, initialProject = null, onInitialProjectConsumed, initialProjectTab = null, onInitialProjectTabConsumed, onNavigateToSkill, onNavigateToMcpServer, onNavigateToSkillStore, onNavigateToSkillStoreWithResult, onNavigateToDiscoverMcp, onNavigateToGroup, onNavigateToCommand, initialCreateWithTemplate = null, onInitialCreateWithTemplateConsumed, filterGroup = null }: ProjectsProps = {}) {
   const { userId } = useCurrentUser();
   const { log, update } = useTaskLog();
   const LAST_PROJECT_KEY = "automatic.projects.selected";
@@ -8075,7 +8075,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                        {aiSkillsLoading && (
                          <div className="mt-2 bg-bg-input border border-border-strong/40 rounded-lg px-4 py-4 flex items-center gap-3">
                            <RefreshCw size={13} className="text-brand animate-spin flex-shrink-0" />
-                           <p className="text-[12px] text-text-muted">Searching the skill library and marketplace…</p>
+                           <p className="text-[12px] text-text-muted">Searching the skill library and Discover…</p>
                          </div>
                        )}
 
@@ -8260,9 +8260,9 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                   </div>
                                   <p className="text-[12px] text-text-muted leading-relaxed">{rec.body}</p>
                                   <div className="flex items-center gap-2 mt-2">
-                                    {onNavigateToMcpMarketplace && (
+                                    {onNavigateToDiscoverMcp && (
                                       <button
-                                        onClick={() => onNavigateToMcpMarketplace(rec.title)}
+                                        onClick={() => onNavigateToDiscoverMcp(rec.title)}
                                         className="text-[11px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded px-2 py-1 transition-colors flex items-center gap-1"
                                       >
                                         <Search size={10} /> View
@@ -9056,21 +9056,21 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                     />
                                   )}
 
-                                  {rec.kind === "mcp_server" && onNavigateToMcpMarketplace && (
+                                  {rec.kind === "mcp_server" && onNavigateToDiscoverMcp && (
                                     <button
                                       onClick={() => {
                                         if (rec.metadata) {
                                           try {
                                             const meta = JSON.parse(rec.metadata) as { slug?: string };
                                             if (meta.slug) {
-                                              onNavigateToMcpMarketplace(meta.slug);
+                                              onNavigateToDiscoverMcp(meta.slug);
                                               return;
                                             }
                                           } catch {
                                             // fall through to title
                                           }
                                         }
-                                        onNavigateToMcpMarketplace(rec.title);
+                                        onNavigateToDiscoverMcp(rec.title);
                                       }}
                                       className="text-[11px] font-medium text-text-muted hover:text-text-base border border-border-strong/50 rounded px-2 py-1 transition-colors flex items-center gap-1"
                                     >
