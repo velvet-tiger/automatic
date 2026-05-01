@@ -22,6 +22,7 @@ import Agents from "./pages/workspace/Agents";
 import Tools from "./pages/workspace/Tools";
 import Recommendations from "./pages/Recommendations";
 import Settings from "./pages/Settings";
+import Library from "./pages/library/Library";
 import Discover from "./pages/discover/Discover";
 import DiscoverTemplates from "./pages/discover/DiscoverTemplates";
 import DiscoverMcp from "./pages/discover/DiscoverMcp";
@@ -34,7 +35,7 @@ import UpdateToast from "./components/UpdateToast";
 import RemoteInstallDialog from "./components/RemoteInstallDialog";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Featured from "./pages/community/Featured";
-import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, PanelLeft, Star, RefreshCw } from "lucide-react";
+import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, PanelLeft, Star, RefreshCw } from "lucide-react";
 import { flag } from "./lib/flags";
 import CloudSync from "./pages/CloudSync";
 import graphLogo from "../logos/graph_5.svg";
@@ -47,7 +48,7 @@ type Section = "start" | "workspace" | "library" | "discover" | "community";
 const SECTION_TABS: Record<Section, string[]> = {
   start: ["getting-started", "recommendations"],
   workspace: ["projects", "project-groups"],
-  library: ["project-templates", "templates", "rules", "user-agents", "commands", "skills", "mcp", "agents", "tools"],
+  library: ["library-home", "project-templates", "templates", "rules", "user-agents", "commands", "skills", "mcp", "agents", "tools"],
   discover: ["discover-home", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
   community: ["community-featured"],
 };
@@ -55,7 +56,7 @@ const SECTION_TABS: Record<Section, string[]> = {
 const DEFAULT_TAB: Record<Section, string> = {
   start: "getting-started",
   workspace: "projects",
-  library: "project-templates",
+  library: "library-home",
   discover: "discover-home",
   community: "community-featured",
 };
@@ -593,6 +594,9 @@ function App() {
           {activeSection === "library" && (
             <div className="space-y-3">
               <div>
+                <ul className="space-y-0.5 mb-2">
+                  <NavItem id="library-home" icon={LibraryIcon} label="Overview" />
+                </ul>
                 <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">My Library</p>
                 <ul className="space-y-0.5">
                   <NavItem id="project-templates" icon={LayoutTemplate} label="Templates" />
@@ -726,6 +730,11 @@ function App() {
                 initialGroup={pendingGroup}
                 onInitialGroupConsumed={() => setPendingGroup(null)}
               />
+            </div>
+          )}
+          {activeTab === "library-home" && (
+            <div className="flex-1 h-full">
+              <Library onNavigate={setActiveTabWithSection} />
             </div>
           )}
           {activeTab === "project-templates" && (
