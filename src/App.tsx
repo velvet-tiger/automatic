@@ -399,7 +399,13 @@ function App() {
 
   const handleSectionClick = (section: Section) => {
     const tab = DEFAULT_TAB[section];
-    if (section === activeSection && activeTab === tab) return;
+    // If we're already on the destination tab, reset its internal state so
+    // e.g. clicking "Workspace" while inside a project returns to the project
+    // list rather than no-opping.
+    if (section === activeSection && activeTab === tab) {
+      REFRESHABLE_TABS[tab]?.();
+      return;
+    }
     setActiveSection(section);
     setActiveTab(tab);
     trackNavigation(tab);
