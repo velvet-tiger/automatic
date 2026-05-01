@@ -298,10 +298,6 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem("automatic.activeSection", activeSection);
-    // Save per-section last tab
-    if (activeTab !== "settings") {
-      localStorage.setItem(`automatic.lastTab.${activeSection}`, activeTab);
-    }
   }, [activeSection, activeTab]);
 
   // ── Section-aware tab setter ─────────────────────────────────────────────
@@ -402,10 +398,9 @@ function App() {
   };
 
   const handleSectionClick = (section: Section) => {
-    if (section === activeSection && activeTab !== "settings") return;
+    const tab = DEFAULT_TAB[section];
+    if (section === activeSection && activeTab === tab) return;
     setActiveSection(section);
-    const lastTab = localStorage.getItem(`automatic.lastTab.${section}`);
-    const tab = lastTab && SECTION_TABS[section].includes(lastTab) ? lastTab : DEFAULT_TAB[section];
     setActiveTab(tab);
     trackNavigation(tab);
   };
