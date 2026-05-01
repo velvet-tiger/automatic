@@ -22,6 +22,7 @@ import Agents from "./pages/workspace/Agents";
 import Tools from "./pages/workspace/Tools";
 import Recommendations from "./pages/Recommendations";
 import Settings from "./pages/Settings";
+import Discover from "./pages/discover/Discover";
 import DiscoverTemplates from "./pages/discover/DiscoverTemplates";
 import DiscoverMcp from "./pages/discover/DiscoverMcp";
 import DiscoverCollections from "./pages/discover/DiscoverCollections";
@@ -47,7 +48,7 @@ const SECTION_TABS: Record<Section, string[]> = {
   start: ["getting-started", "recommendations"],
   workspace: ["projects", "project-groups"],
   library: ["project-templates", "templates", "rules", "user-agents", "commands", "skills", "mcp", "agents", "tools"],
-  discover: ["discover-collections", "discover-templates", "skill-store", "discover-mcp"],
+  discover: ["discover-home", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
   community: ["community-featured"],
 };
 
@@ -55,7 +56,7 @@ const DEFAULT_TAB: Record<Section, string> = {
   start: "getting-started",
   workspace: "projects",
   library: "project-templates",
-  discover: "discover-collections",
+  discover: "discover-home",
   community: "community-featured",
 };
 
@@ -611,6 +612,7 @@ function App() {
           {/* ── Discover sidebar ────────────────────────────────────────── */}
           {activeSection === "discover" && (
             <ul className="space-y-0.5">
+              <NavItem id="discover-home" icon={Sparkles} label="Overview" />
               <NavItem id="discover-collections" icon={PackageOpen} label="Collections" />
               <NavItem id="discover-templates" icon={Layers} label="Templates" />
               <NavItem id="skill-store" icon={Puzzle} label="Skills" />
@@ -777,6 +779,11 @@ function App() {
                 initialSkillResult={pendingSkillStoreResult}
                 onInitialSkillResultConsumed={() => setPendingSkillStoreResult(null)}
               />
+            </div>
+          )}
+          {activeTab === "discover-home" && (
+            <div className="flex-1 h-full">
+              <Discover onNavigate={setActiveTabWithSection} />
             </div>
           )}
           {activeTab === "discover-templates" && (
