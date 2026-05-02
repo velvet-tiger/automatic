@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 
+use super::agents::GatewayConfig;
 use super::paths::get_automatic_dir;
 use super::types::AgentOptions;
 
@@ -90,6 +91,14 @@ pub struct Settings {
     /// removed). User toggles in the UI always write an explicit `Some(...)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_features_enabled: Option<bool>,
+    /// The active AI model provider ID (e.g. `"anthropic"`). When absent,
+    /// `"anthropic"` is used. Subsequent PRs add additional provider IDs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_agent: Option<String>,
+    /// Per-provider Cloudflare AI Gateway configuration, keyed by provider ID
+    /// (e.g. `"anthropic"`). Providers absent from this map have no gateway.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub agent_gateways: HashMap<String, GatewayConfig>,
 }
 
 fn default_analytics_enabled() -> bool {
@@ -110,6 +119,8 @@ impl Default for Settings {
             bundled_skills_version: None,
             whats_new_seen_version: None,
             agent_features_enabled: None,
+            active_agent: None,
+            agent_gateways: HashMap::new(),
         }
     }
 }

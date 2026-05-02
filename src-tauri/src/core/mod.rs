@@ -6,6 +6,7 @@ pub const KEYCHAIN_SERVICE: &str = "automatic_desktop_dev";
 #[cfg(not(debug_assertions))]
 pub const KEYCHAIN_SERVICE: &str = "automatic_desktop";
 
+pub mod agents;
 pub mod ai;
 mod app_plugins;
 mod asset_security;

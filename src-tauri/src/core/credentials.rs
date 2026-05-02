@@ -1,18 +1,13 @@
 use keyring::Entry;
 
+use super::agents::known_agents;
 use super::settings::{read_settings, write_settings};
 
 // ── API Keys ─────────────────────────────────────────────────────────────────
 
-/// Providers Automatic recognises for the in-app agent toggle.
-///
-/// Used to decide whether *any* key is stored when auto-flipping the
-/// `agent_features_enabled` setting on the first add and last delete.
-const KNOWN_PROVIDERS: &[&str] = &["anthropic"];
-
 /// Returns `true` if at least one known provider has a key in the keychain.
 fn any_known_api_key_stored() -> bool {
-    KNOWN_PROVIDERS.iter().any(|p| has_api_key(p))
+    known_agents().iter().any(|id| has_api_key(id.as_str()))
 }
 
 /// Best-effort write of `agent_features_enabled`. Errors reading or writing
@@ -33,7 +28,7 @@ pub fn save_api_key(provider: &str, key: &str) -> Result<(), String> {
     entry.set_password(key).map_err(|e| e.to_string())?;
 
     // Auto-enable agent features the first time a key is added.
-    if !had_keys_before && KNOWN_PROVIDERS.contains(&provider) {
+    if !had_keys_before && known_agents().iter().any(|id| id.as_str() == provider) {
         set_agent_features_enabled(true);
     }
     Ok(())
@@ -59,7 +54,7 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
     entry.delete_credential().map_err(|e| e.to_string())?;
 
     // Auto-disable agent features once no recognised keys remain.
-    if KNOWN_PROVIDERS.contains(&provider) && !any_known_api_key_stored() {
+    if known_agents().iter().any(|id| id.as_str() == provider) && !any_known_api_key_stored() {
         set_agent_features_enabled(false);
     }
     Ok(())

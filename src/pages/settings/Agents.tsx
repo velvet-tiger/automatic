@@ -53,10 +53,15 @@ export default function SettingsAgents() {
    * stored (preserves the pre-toggle behaviour for upgrading users).
    */
   const [enabledOverride, setEnabledOverride] = useState<boolean | null>(null);
+  /**
+   * The stored active agent ID. `null` means it has never been set; the
+   * effective active agent defaults to `"anthropic"` in that case.
+   */
+  const [activeAgent, setActiveAgent] = useState<string | null>(null);
 
   useEffect(() => {
     loadKeyStatus();
-    loadEnabledOverride();
+    loadSettings();
   }, []);
 
   const loadKeyStatus = async () => {
@@ -77,12 +82,16 @@ export default function SettingsAgents() {
     setKeyStates(states);
   };
 
-  const loadEnabledOverride = async () => {
+  const loadSettings = async () => {
     try {
-      const raw = await invoke<{ agent_features_enabled?: boolean | null }>("read_settings");
+      const raw = await invoke<{
+        agent_features_enabled?: boolean | null;
+        active_agent?: string | null;
+      }>("read_settings");
       setEnabledOverride(raw.agent_features_enabled ?? null);
+      setActiveAgent(raw.active_agent ?? null);
     } catch (e) {
-      console.error("Failed to read settings for agent_features_enabled", e);
+      console.error("Failed to read settings", e);
     }
   };
 
@@ -97,8 +106,22 @@ export default function SettingsAgents() {
     }
   };
 
+  const persistActiveAgent = async (agentId: string) => {
+    try {
+      const raw = await invoke<Record<string, unknown>>("read_settings");
+      raw.active_agent = agentId;
+      await invoke("write_settings", { settings: raw });
+      setActiveAgent(agentId);
+    } catch (e) {
+      console.error("Failed to write active_agent", e);
+    }
+  };
+
   const anyKeyStored = AGENTS.some((a) => keyStates[a.provider]?.stored);
   const featuresEnabled = enabledOverride ?? anyKeyStored;
+
+  const configuredAgents = AGENTS.filter((a) => keyStates[a.provider]?.stored);
+  const effectiveActiveAgent = activeAgent ?? "anthropic";
 
   const updateState = (provider: string, patch: Partial<KeyState>) => {
     setKeyStates((prev) => ({
@@ -121,7 +144,7 @@ export default function SettingsAgents() {
         saveStatus: "saved",
       });
       // The backend auto-enables features the first time a key is added.
-      await loadEnabledOverride();
+      await loadSettings();
       setTimeout(() => updateState(provider, { saveStatus: "idle" }), 2000);
     } catch (e) {
       console.error(`Failed to save API key for ${provider}`, e);
@@ -141,7 +164,7 @@ export default function SettingsAgents() {
         saveStatus: "idle",
       });
       // The backend auto-disables features when the last key is removed.
-      await loadEnabledOverride();
+      await loadSettings();
     } catch (e) {
       console.error(`Failed to delete API key for ${provider}`, e);
     }
@@ -184,6 +207,42 @@ export default function SettingsAgents() {
           />
         </div>
       </button>
+
+      {anyKeyStored && (
+        <section className="mb-6">
+          <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-3">
+            Active agent
+          </label>
+          <div className="rounded-lg border border-border-strong/40 bg-bg-input overflow-hidden divide-y divide-border-strong/20">
+            {configuredAgents.map((agent) => {
+              const isActive = effectiveActiveAgent === agent.provider;
+              return (
+                <button
+                  key={agent.id}
+                  onClick={() => persistActiveAgent(agent.provider)}
+                  className={`flex items-center gap-3 w-full px-3 py-2.5 text-left transition-colors ${
+                    isActive ? "bg-brand/10" : "hover:bg-surface-hover"
+                  }`}
+                >
+                  <AgentIcon agentId={agent.id} size={18} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-medium text-text-base">{agent.label}</div>
+                    <div className="text-[11px] text-text-muted">{agent.providerLabel}</div>
+                  </div>
+                  <div
+                    className={`w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 transition-colors ${
+                      isActive ? "border-brand bg-brand" : "border-border-strong/60 bg-transparent"
+                    }`}
+                  />
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-text-muted mt-2 leading-relaxed">
+            The selected agent powers all in-app AI features.
+          </p>
+        </section>
+      )}
 
       <div className="space-y-4">
         {AGENTS.map((agent) => {
