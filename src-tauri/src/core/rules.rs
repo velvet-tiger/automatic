@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use super::asset_security::{scan_text_asset_report, AssetKind};
 use super::paths::get_automatic_dir;
+use super::recently_added::{record_recently_added, remove_recently_added};
 
 // ── Rules ────────────────────────────────────────────────────────────────────
 
@@ -200,7 +201,10 @@ pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), St
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
 
-    let existing_author = fs::read_to_string(dir.join(format!("{}.json", machine_name)))
+    let rule_path = dir.join(format!("{}.json", machine_name));
+    let is_new = !rule_path.exists();
+
+    let existing_author = fs::read_to_string(&rule_path)
         .ok()
         .and_then(|raw| serde_json::from_str::<Rule>(&raw).ok())
         .and_then(|existing| existing._author);
@@ -212,8 +216,13 @@ pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), St
         _author: existing_author,
     };
     let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
-    let path = dir.join(format!("{}.json", machine_name));
-    fs::write(path, pretty).map_err(|e| e.to_string())
+    fs::write(&rule_path, pretty).map_err(|e| e.to_string())?;
+
+    if is_new {
+        record_recently_added("rules", machine_name);
+    }
+
+    Ok(())
 }
 
 pub fn delete_rule(machine_name: &str) -> Result<(), String> {
@@ -246,6 +255,8 @@ pub fn delete_rule(machine_name: &str) -> Result<(), String> {
         }
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
+
+    remove_recently_added("rules", machine_name);
 
     Ok(())
 }

@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
+import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, FileText, Check, ClipboardList } from "lucide-react";
@@ -19,6 +21,8 @@ import {
 
 export default function Templates() {
   const [templates, setTemplates] = useState<string[]>([]);
+  const [recentRefresh, setRecentRefresh] = useState(0);
+  const recentIds = useRecentlyAdded("templates", recentRefresh);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [templateContent, setTemplateContent] = useState("");
   const [isEditing, setIsEditing] = useState(false);
@@ -82,6 +86,7 @@ export default function Templates() {
       if (isCreating) {
         setIsCreating(false);
         await loadTemplates();
+        setRecentRefresh(prev => prev + 1);
       }
       setError(null);
       setCurrentScan(toAssetSecurityScanRecord(scan));
@@ -158,35 +163,47 @@ export default function Templates() {
                   <span className="text-[13px] text-text-base italic">New Instruction...</span>
                 </li>
               )}
-              {templates.map(name => {
-                const isActive = selectedTemplate === name && !isCreating;
+              {(() => {
+                const recentTemplates = templates.filter(n => recentIds.has(n));
+                const otherTemplates = templates.filter(n => !recentIds.has(n));
+                const renderTemplate = (name: string) => {
+                  const isActive = selectedTemplate === name && !isCreating;
+                  return (
+                    <li key={name} className="group relative">
+                      <button
+                        onClick={() => loadTemplateContent(name)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                          isActive
+                            ? "bg-bg-sidebar text-text-base"
+                            : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
+                        }`}
+                      >
+                        <div className={ICONS.fileTemplate.iconBox}>
+                          <ClipboardList size={15} className={ICONS.fileTemplate.iconColor} />
+                        </div>
+                        <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
+                          {name}
+                        </span>
+                      </button>
+                      <button
+                        onClick={(e) => handleDelete(name, e)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
+                        title="Delete Instruction"
+                      >
+                        <X size={12} />
+                      </button>
+                    </li>
+                  );
+                };
                 return (
-                  <li key={name} className="group relative">
-                    <button
-                      onClick={() => loadTemplateContent(name)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                        isActive
-                          ? "bg-bg-sidebar text-text-base"
-                          : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
-                      }`}
-                    >
-                      <div className={ICONS.fileTemplate.iconBox}>
-                        <ClipboardList size={15} className={ICONS.fileTemplate.iconColor} />
-                      </div>
-                      <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
-                        {name}
-                      </span>
-                    </button>
-                    <button
-                      onClick={(e) => handleDelete(name, e)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                      title="Delete Instruction"
-                    >
-                      <X size={12} />
-                    </button>
-                  </li>
+                  <>
+                    {recentTemplates.length > 0 && <RecentlyAddedSectionLabel />}
+                    {recentTemplates.map(renderTemplate)}
+                    {recentTemplates.length > 0 && otherTemplates.length > 0 && <RecentlyAddedDivider />}
+                    {otherTemplates.map(renderTemplate)}
+                  </>
                 );
-              })}
+              })()}
             </ul>
           )}
         </div>

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
+import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { MarkdownPreview } from "../../components/MarkdownPreview";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
@@ -459,6 +461,8 @@ interface SkillsProps {
 
 export default function Skills({ initialSkill = null, onInitialSkillConsumed, onNavigateToProject, onNavigateToTemplate }: SkillsProps = {}) {
   const [skills, setSkills] = useState<SkillEntry[]>([]);
+  const [recentRefresh, setRecentRefresh] = useState(0);
+  const recentIds = useRecentlyAdded("skills", recentRefresh);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [skillContent, setSkillContent] = useState("");
   const [isEditing, setIsEditing] = useState(false);
@@ -626,6 +630,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
         await loadSkillContent(newSkillName);
         setError(null);
         setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "skill") : null);
+        setRecentRefresh(prev => prev + 1);
       } catch (err: any) {
         setError(`Failed to save skill: ${err}`);
       }
@@ -865,132 +870,143 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                   </span>
                 </li>
               )}
-              {filteredSkills.map(skill => {
-                const isSelected = selectedSkill === skill.name && !isCreating;
-                const isRemote = !!skill.source;
-                const isExternalOnly = skill.sources.length > 0 && !skill.sources.includes("library");
-
-                return (
-                  <li key={skill.name} className="group">
-                    <button
-                      onClick={() => loadSkillContent(skill.name)}
-                      className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors ${
-                        isSelected ? "bg-bg-sidebar" : "hover:bg-bg-sidebar/50"
-                      }`}
-                    >
-                      <SkillAvatar name={skill.name} source={skill.source?.source} kind={skill.source?.kind} size={32} />
-                      <div className="flex-1 min-w-0">
-                      {/* Top row: name + action buttons */}
-                      <div className="flex items-center gap-2">
-                        <span className={`flex-1 text-[13px] font-medium truncate min-w-0 ${isSelected ? "text-text-base" : "text-text-base group-hover:text-text-base"}`}>
-                          {skill.name}
-                        </span>
-                        {/* Hover actions */}
-                        <span className="shrink-0 hidden group-hover:flex items-center gap-0.5">
-                          {skill.name !== "automatic" && !skill.plugin_id && (
-                          <span
-                            role="button"
-                            onClick={(e) => handleDelete(skill.name, e)}
-                            className="p-0.5 text-text-muted hover:text-danger rounded transition-colors"
-                            title="Delete"
-                          >
-                            <X size={11} />
+              {(() => {
+                const recentSkills = filteredSkills.filter(s => recentIds.has(s.name));
+                const otherSkills = filteredSkills.filter(s => !recentIds.has(s.name));
+                const renderSkill = (skill: SkillEntry) => {
+                  const isSelected = selectedSkill === skill.name && !isCreating;
+                  const isRemote = !!skill.source;
+                  const isExternalOnly = skill.sources.length > 0 && !skill.sources.includes("library");
+                  return (
+                    <li key={skill.name} className="group">
+                      <button
+                        onClick={() => loadSkillContent(skill.name)}
+                        className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors ${
+                          isSelected ? "bg-bg-sidebar" : "hover:bg-bg-sidebar/50"
+                        }`}
+                      >
+                        <SkillAvatar name={skill.name} source={skill.source?.source} kind={skill.source?.kind} size={32} />
+                        <div className="flex-1 min-w-0">
+                        {/* Top row: name + action buttons */}
+                        <div className="flex items-center gap-2">
+                          <span className={`flex-1 text-[13px] font-medium truncate min-w-0 ${isSelected ? "text-text-base" : "text-text-base group-hover:text-text-base"}`}>
+                            {skill.name}
                           </span>
+                          {/* Hover actions */}
+                          <span className="shrink-0 hidden group-hover:flex items-center gap-0.5">
+                            {skill.name !== "automatic" && !skill.plugin_id && (
+                            <span
+                              role="button"
+                              onClick={(e) => handleDelete(skill.name, e)}
+                              className="p-0.5 text-text-muted hover:text-danger rounded transition-colors"
+                              title="Delete"
+                            >
+                              <X size={11} />
+                            </span>
+                            )}
+                          </span>
+                        </div>
+
+                        {/* Bottom row: origin + location badges */}
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          {isRemote ? (
+                            <span className="flex items-center gap-1 text-[10px] text-success">
+                              <Globe size={9} />
+                              <span className="truncate max-w-[120px]">{skill.source!.source}</span>
+                            </span>
+                          ) : null}
+
+                          {isExternalOnly && (
+                            <span
+                              className="px-1 py-0.5 rounded bg-warning/10 text-[9px] text-warning"
+                              title="Skill lives outside Automatic's managed library. Import to sync it into projects."
+                            >
+                              External
+                            </span>
                           )}
-                        </span>
-                      </div>
 
-                      {/* Bottom row: origin + location badges */}
-                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                        {isRemote ? (
-                          <span className="flex items-center gap-1 text-[10px] text-success">
-                            <Globe size={9} />
-                            <span className="truncate max-w-[120px]">{skill.source!.source}</span>
-                          </span>
-                        ) : null}
-
-                        {isExternalOnly && (
-                          <span
-                            className="px-1 py-0.5 rounded bg-warning/10 text-[9px] text-warning"
-                            title="Skill lives outside Automatic's managed library. Import to sync it into projects."
-                          >
-                            External
-                          </span>
-                        )}
-
-                        {/* Source location badges */}
-                        {skill.sources && skill.sources.length > 0 && (
-                          <span className="flex items-center gap-1 text-[10px] text-text-muted">
-                            {skill.sources.map(src => {
-                              const label = src === "library"
-                                ? "library"
-                                : src === "agents"
-                                  ? "~/.agents"
-                                  : src === "claude"
-                                    ? "~/.claude"
-                                    : src;
-                              return (
-                                <button
-                                  key={src}
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    try {
-                                      const sources = await invoke<{ id: string; path: string }[]>("list_skill_directories");
-                                      const source = sources.find(s => s.id === src);
-                                      if (source) {
-                                        const skillDir = `${source.path}/${skill.name}`;
-                                        await openPath(skillDir);
+                          {/* Source location badges */}
+                          {skill.sources && skill.sources.length > 0 && (
+                            <span className="flex items-center gap-1 text-[10px] text-text-muted">
+                              {skill.sources.map(src => {
+                                const label = src === "library"
+                                  ? "library"
+                                  : src === "agents"
+                                    ? "~/.agents"
+                                    : src === "claude"
+                                      ? "~/.claude"
+                                      : src;
+                                return (
+                                  <button
+                                    key={src}
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      try {
+                                        const sources = await invoke<{ id: string; path: string }[]>("list_skill_directories");
+                                        const source = sources.find(s => s.id === src);
+                                        if (source) {
+                                          const skillDir = `${source.path}/${skill.name}`;
+                                          await openPath(skillDir);
+                                        }
+                                      } catch (err) {
+                                        console.error("Failed to open skill directory:", err);
                                       }
-                                    } catch (err) {
-                                      console.error("Failed to open skill directory:", err);
-                                    }
-                                  }}
-                                  className="px-1 py-0.5 rounded bg-bg-base/50 text-[9px] hover:bg-brand/20 hover:text-brand cursor-pointer transition-colors"
-                                  title={`Open ${label} skill folder`}
-                                >{label}
-                                </button>
-                              );
-                            })}
-                          </span>
-                        )}
+                                    }}
+                                    className="px-1 py-0.5 rounded bg-bg-base/50 text-[9px] hover:bg-brand/20 hover:text-brand cursor-pointer transition-colors"
+                                    title={`Open ${label} skill folder`}
+                                  >{label}
+                                  </button>
+                                );
+                              })}
+                            </span>
+                          )}
 
-                        {skill.collection && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setCollectionFilter(collectionFilter === skill.collection ? null : skill.collection!);
-                            }}
-                            className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-icon-file-template/10 text-[9px] text-icon-file-template hover:bg-icon-file-template/20 cursor-pointer transition-colors"
-                            title={`Collection: ${skill.collection}`}
-                          >
-                            <Tag size={8} />
-                            <span className="truncate max-w-[80px]">{skill.collection}</span>
-                          </button>
-                        )}
+                          {skill.collection && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCollectionFilter(collectionFilter === skill.collection ? null : skill.collection!);
+                              }}
+                              className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-icon-file-template/10 text-[9px] text-icon-file-template hover:bg-icon-file-template/20 cursor-pointer transition-colors"
+                              title={`Collection: ${skill.collection}`}
+                            >
+                              <Tag size={8} />
+                              <span className="truncate max-w-[80px]">{skill.collection}</span>
+                            </button>
+                          )}
 
-                        {skill.plugin_id && (
-                          <span
-                            className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-bg-base/50 text-[9px] text-text-muted"
-                            title={`Installed by plugin: ${skill.plugin_id}`}
-                          >
-                            <Puzzle size={8} />
-                            <span className="truncate max-w-[80px]">{skill.plugin_id}</span>
-                          </span>
-                        )}
+                          {skill.plugin_id && (
+                            <span
+                              className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-bg-base/50 text-[9px] text-text-muted"
+                              title={`Installed by plugin: ${skill.plugin_id}`}
+                            >
+                              <Puzzle size={8} />
+                              <span className="truncate max-w-[80px]">{skill.plugin_id}</span>
+                            </span>
+                          )}
 
-                        {skill.has_resources && (
-                          <span title="Has additional resources">
-                            <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" className="text-text-muted">
-                              <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
-                            </svg>
-                          </span>
-                        )}
-                      </div>
-                      </div>
-                    </button>
-                  </li>
+                          {skill.has_resources && (
+                            <span title="Has additional resources">
+                              <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" className="text-text-muted">
+                                <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
+                              </svg>
+                            </span>
+                          )}
+                        </div>
+                        </div>
+                      </button>
+                    </li>
+                  );
+                };
+                return (
+                  <>
+                    {recentSkills.length > 0 && <RecentlyAddedSectionLabel />}
+                    {recentSkills.map(renderSkill)}
+                    {recentSkills.length > 0 && otherSkills.length > 0 && <RecentlyAddedDivider />}
+                    {otherSkills.map(renderSkill)}
+                  </>
                 );
-              })}
+              })()}
             </ul>
           )}
         </div>
@@ -1457,6 +1473,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
           await loadSkills();
           setShowImportDialog(false);
           await loadSkillContent(skillName);
+          setRecentRefresh(prev => prev + 1);
         }}
       />
     </div>

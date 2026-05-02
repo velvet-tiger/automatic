@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
+import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, Terminal, Trash2, Check, Edit2, X } from "lucide-react";
@@ -68,6 +70,8 @@ interface CommandsProps {
 
 export default function Commands({ initialCommand = null, onInitialCommandConsumed }: CommandsProps = {}) {
   const [commands, setCommands] = useState<UserCommandEntry[]>([]);
+  const [recentRefresh, setRecentRefresh] = useState(0);
+  const recentIds = useRecentlyAdded("commands", recentRefresh);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editDescription, setEditDescription] = useState("");
   const [editBody, setEditBody] = useState("");
@@ -150,6 +154,7 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
         return;
       }
       const warnings = warningFindings(scan);
+      const isNew = isCreating;
       await invoke("save_user_command", { machineName: id, content });
       await loadCommands();
       setSelectedId(id);
@@ -159,6 +164,9 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
       setError(null);
       setCurrentScan(toAssetSecurityScanRecord(scan));
       setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "command") : null);
+      if (isNew) {
+        setRecentRefresh(prev => prev + 1);
+      }
     } catch (err: any) {
       setError(`Failed to save command: ${err}`);
     }
@@ -259,36 +267,48 @@ export default function Commands({ initialCommand = null, onInitialCommandConsum
                   <span className="text-[13px] text-text-base italic">New Command...</span>
                 </li>
               )}
-              {commands.map((entry) => {
-                const isActive = selectedId === entry.id && !isCreating;
-                return (
-                  <li key={entry.id} className="group relative">
-                    <button
-                      onClick={() => void loadCommand(entry.id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                        isActive ? "bg-bg-sidebar border border-brand/30" : "hover:bg-bg-sidebar/60 border border-transparent"
-                      }`}
-                    >
-                      <div className="w-8 h-8 rounded-md bg-icon-agent/15 flex items-center justify-center flex-shrink-0">
-                        <Terminal size={15} className="text-icon-agent" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[13px] font-medium text-text-base truncate">/{entry.id}</div>
-                        <div className="text-[11px] text-text-muted truncate mt-0.5">
-                          {entry.description || "No description"}
-                        </div>
-                      </div>
+              {(() => {
+                const recentCommands = commands.filter(c => recentIds.has(c.id));
+                const otherCommands = commands.filter(c => !recentIds.has(c.id));
+                const renderCommand = (entry: UserCommandEntry) => {
+                  const isActive = selectedId === entry.id && !isCreating;
+                  return (
+                    <li key={entry.id} className="group relative">
                       <button
-                        onClick={(e) => void handleDelete(entry.id, e)}
-                        className="opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-danger/10 rounded text-text-muted hover:text-danger"
-                        title="Delete"
+                        onClick={() => void loadCommand(entry.id)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                          isActive ? "bg-bg-sidebar border border-brand/30" : "hover:bg-bg-sidebar/60 border border-transparent"
+                        }`}
                       >
-                        <Trash2 size={12} />
+                        <div className="w-8 h-8 rounded-md bg-icon-agent/15 flex items-center justify-center flex-shrink-0">
+                          <Terminal size={15} className="text-icon-agent" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-medium text-text-base truncate">/{entry.id}</div>
+                          <div className="text-[11px] text-text-muted truncate mt-0.5">
+                            {entry.description || "No description"}
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => void handleDelete(entry.id, e)}
+                          className="opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-danger/10 rounded text-text-muted hover:text-danger"
+                          title="Delete"
+                        >
+                          <Trash2 size={12} />
+                        </button>
                       </button>
-                    </button>
-                  </li>
+                    </li>
+                  );
+                };
+                return (
+                  <>
+                    {recentCommands.length > 0 && <RecentlyAddedSectionLabel />}
+                    {recentCommands.map(renderCommand)}
+                    {recentCommands.length > 0 && otherCommands.length > 0 && <RecentlyAddedDivider />}
+                    {otherCommands.map(renderCommand)}
+                  </>
                 );
-              })}
+              })()}
             </ul>
           )}
         </div>

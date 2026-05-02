@@ -580,6 +580,8 @@ pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
     let library_dir = get_library_skills_dir()?;
     let skill_dir = library_dir.join(name);
 
+    let is_new = !skill_dir.join("SKILL.md").exists();
+
     if !skill_dir.exists() {
         fs::create_dir_all(&skill_dir).map_err(|e| e.to_string())?;
     }
@@ -587,6 +589,11 @@ pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
     let skill_path = skill_dir.join("SKILL.md");
     fs::write(skill_path, content).map_err(|e| e.to_string())?;
     let _ = record_skill_scan_state(name, &scan.to_record());
+
+    if is_new {
+        record_recently_added("skills", name);
+    }
+
     Ok(())
 }
 
@@ -607,6 +614,7 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
 
     let _ = remove_skill_source(name);
     let _ = remove_skill_collection(name);
+    remove_recently_added("skills", name);
 
     Ok(())
 }

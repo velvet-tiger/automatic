@@ -3,6 +3,7 @@ use std::fs;
 
 use super::asset_security::{enforce_text_asset, AssetKind};
 use super::paths::get_commands_dir;
+use super::recently_added::{record_recently_added, remove_recently_added};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserCommandEntry {
@@ -105,7 +106,14 @@ pub fn save_user_command(machine_name: &str, content: &str) -> Result<(), String
     }
 
     let path = dir.join(format!("{machine_name}.md"));
-    fs::write(&path, content).map_err(|e| e.to_string())
+    let is_new = !path.exists();
+    fs::write(&path, content).map_err(|e| e.to_string())?;
+
+    if is_new {
+        record_recently_added("commands", machine_name);
+    }
+
+    Ok(())
 }
 
 pub fn rename_user_command(old_name: &str, new_name: &str) -> Result<(), String> {
@@ -144,6 +152,7 @@ pub fn delete_user_command(machine_name: &str) -> Result<(), String> {
     if path.exists() {
         fs::remove_file(path).map_err(|e| e.to_string())?;
     }
+    remove_recently_added("commands", machine_name);
     Ok(())
 }
 

@@ -129,7 +129,14 @@ pub fn save_project_template(name: &str, data: &str) -> Result<(), String> {
     }
 
     let path = dir.join(format!("{}.json", name));
-    fs::write(path, pretty).map_err(|e| e.to_string())
+    let is_new = !path.exists();
+    fs::write(&path, pretty).map_err(|e| e.to_string())?;
+
+    if is_new {
+        record_recently_added("project_templates", name);
+    }
+
+    Ok(())
 }
 
 pub fn delete_project_template(name: &str) -> Result<(), String> {
@@ -141,6 +148,7 @@ pub fn delete_project_template(name: &str) -> Result<(), String> {
     if path.exists() {
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
+    remove_recently_added("project_templates", name);
     Ok(())
 }
 

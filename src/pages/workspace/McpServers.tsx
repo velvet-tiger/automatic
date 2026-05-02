@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
+import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { trackMcpServerCreated, trackMcpServerUpdated, trackMcpServerDeleted } from "../../lib/analytics";
 import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
@@ -360,6 +362,8 @@ interface McpServersProps {
 
 export default function McpServers({ initialServer = null, onInitialServerConsumed }: McpServersProps = {}) {
   const [servers, setServers] = useState<string[]>([]);
+  const [recentRefresh, setRecentRefresh] = useState(0);
+  const recentIds = useRecentlyAdded("mcp_servers", recentRefresh);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [config, setConfig] = useState<McpServerConfig | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -462,6 +466,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       if (isCreating) {
         setIsCreating(false);
         await loadServers();
+        setRecentRefresh(prev => prev + 1);
       }
       setError(null);
     } catch (err: any) {
@@ -561,37 +566,49 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                   <span className="text-[13px] text-text-base italic">New Server...</span>
                 </li>
               )}
-              {servers.map((name) => {
-                const isActive = selectedName === name && !isCreating;
+              {(() => {
+                const recentServers = servers.filter(n => recentIds.has(n));
+                const otherServers = servers.filter(n => !recentIds.has(n));
+                const renderServer = (name: string) => {
+                  const isActive = selectedName === name && !isCreating;
+                  return (
+                    <li key={name} className="group relative">
+                      <button
+                        onClick={() => selectServer(name)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                          isActive
+                            ? "bg-bg-sidebar text-text-base"
+                            : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
+                        }`}
+                      >
+                        <div className={ICONS.mcp.iconBox}>
+                          <Server size={15} className={ICONS.mcp.iconColor} />
+                        </div>
+                        <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
+                          {name}
+                        </span>
+                      </button>
+                      {name !== "automatic" && (
+                      <button
+                        onClick={(e) => handleDelete(name, e)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
+                        title="Delete Server"
+                      >
+                        <X size={12} />
+                      </button>
+                      )}
+                    </li>
+                  );
+                };
                 return (
-                  <li key={name} className="group relative">
-                    <button
-                      onClick={() => selectServer(name)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                        isActive
-                          ? "bg-bg-sidebar text-text-base"
-                          : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
-                      }`}
-                    >
-                      <div className={ICONS.mcp.iconBox}>
-                        <Server size={15} className={ICONS.mcp.iconColor} />
-                      </div>
-                      <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
-                        {name}
-                      </span>
-                    </button>
-                    {name !== "automatic" && (
-                    <button
-                      onClick={(e) => handleDelete(name, e)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                      title="Delete Server"
-                    >
-                      <X size={12} />
-                    </button>
-                    )}
-                  </li>
+                  <>
+                    {recentServers.length > 0 && <RecentlyAddedSectionLabel />}
+                    {recentServers.map(renderServer)}
+                    {recentServers.length > 0 && otherServers.length > 0 && <RecentlyAddedDivider />}
+                    {otherServers.map(renderServer)}
+                  </>
                 );
-              })}
+              })()}
             </ul>
           )}
         </div>

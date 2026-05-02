@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use super::asset_security::{enforce_text_asset, validate_relative_asset_path, AssetKind};
 use super::paths::{get_automatic_dir, get_library_skills_dir, is_valid_name};
+use super::recently_added::{record_recently_added, remove_recently_added};
 use super::skill_store::record_skill_source;
 use super::skills::record_skill_scan_state;
 
@@ -69,7 +70,14 @@ pub fn save_template(name: &str, content: &str) -> Result<(), String> {
     }
 
     let path = dir.join(format!("{}.md", name));
-    fs::write(path, content).map_err(|e| e.to_string())
+    let is_new = !path.exists();
+    fs::write(&path, content).map_err(|e| e.to_string())?;
+
+    if is_new {
+        record_recently_added("templates", name);
+    }
+
+    Ok(())
 }
 
 pub fn delete_template(name: &str) -> Result<(), String> {
@@ -82,6 +90,8 @@ pub fn delete_template(name: &str) -> Result<(), String> {
     if path.exists() {
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
+
+    remove_recently_added("templates", name);
 
     Ok(())
 }

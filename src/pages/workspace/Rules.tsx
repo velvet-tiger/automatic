@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
+import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, FileText, Check, ScrollText, RefreshCw, FolderGit2, Copy, Lock } from "lucide-react";
@@ -44,6 +46,8 @@ type SyncState = "needs-sync" | "syncing" | "synced" | "error";
 
 export default function Rules() {
   const [rules, setRules] = useState<RuleEntry[]>([]);
+  const [recentRefresh, setRecentRefresh] = useState(0);
+  const recentIds = useRecentlyAdded("rules", recentRefresh);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [ruleContent, setRuleContent] = useState("");
@@ -163,6 +167,7 @@ export default function Rules() {
         setError(null);
         setCurrentScan(toAssetSecurityScanRecord(scan));
         setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "rule") : null);
+        setRecentRefresh(prev => prev + 1);
       } catch (err: any) {
         setError(`Failed to save rule: ${err}`);
       }
@@ -343,40 +348,52 @@ export default function Rules() {
                   <span className="text-[13px] text-text-base italic">New Rule...</span>
                 </li>
               )}
-              {rules.map(entry => {
-                const isActive = selectedId === entry.id && !isCreating;
-                return (
-                  <li key={entry.id} className="group relative">
-                    <button
-                      onClick={() => loadRule(entry.id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                        isActive
-                          ? "bg-bg-sidebar text-text-base"
-                          : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
-                      }`}
-                    >
-                      <div className={ICONS.rule.iconBox}>
-                        <ScrollText size={15} className={ICONS.rule.iconColor} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className={`text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
-                          {entry.name}
-                        </div>
-                        <div className="text-[10px] text-text-muted truncate">{entry.id}</div>
-                      </div>
-                    </button>
-                    {!isDefaultRule(entry.id) && !entry.plugin_id && (
+              {(() => {
+                const recentRules = rules.filter(r => recentIds.has(r.id));
+                const otherRules = rules.filter(r => !recentIds.has(r.id));
+                const renderRule = (entry: RuleEntry) => {
+                  const isActive = selectedId === entry.id && !isCreating;
+                  return (
+                    <li key={entry.id} className="group relative">
                       <button
-                        onClick={(e) => handleDelete(entry.id, e)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                        title="Delete Rule"
+                        onClick={() => loadRule(entry.id)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                          isActive
+                            ? "bg-bg-sidebar text-text-base"
+                            : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
+                        }`}
                       >
-                        <X size={12} />
+                        <div className={ICONS.rule.iconBox}>
+                          <ScrollText size={15} className={ICONS.rule.iconColor} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className={`text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
+                            {entry.name}
+                          </div>
+                          <div className="text-[10px] text-text-muted truncate">{entry.id}</div>
+                        </div>
                       </button>
-                    )}
-                  </li>
+                      {!isDefaultRule(entry.id) && !entry.plugin_id && (
+                        <button
+                          onClick={(e) => handleDelete(entry.id, e)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
+                          title="Delete Rule"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </li>
+                  );
+                };
+                return (
+                  <>
+                    {recentRules.length > 0 && <RecentlyAddedSectionLabel />}
+                    {recentRules.map(renderRule)}
+                    {recentRules.length > 0 && otherRules.length > 0 && <RecentlyAddedDivider />}
+                    {otherRules.map(renderRule)}
+                  </>
                 );
-              })}
+              })()}
             </ul>
           )}
         </div>

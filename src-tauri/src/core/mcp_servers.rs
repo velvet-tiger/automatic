@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use super::env_crypto;
 use super::paths::{get_automatic_dir, is_valid_name};
+use super::recently_added::{record_recently_added, remove_recently_added};
 
 // ── MCP Servers ──────────────────────────────────────────────────────────────
 
@@ -101,8 +102,15 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     }
 
     let path = dir.join(format!("{}.json", name));
+    let is_new = !path.exists();
     let serialized = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    fs::write(path, serialized).map_err(|e| e.to_string())
+    fs::write(&path, serialized).map_err(|e| e.to_string())?;
+
+    if is_new {
+        record_recently_added("mcp_servers", name);
+    }
+
+    Ok(())
 }
 
 pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
@@ -115,6 +123,8 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     if path.exists() {
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
+
+    remove_recently_added("mcp_servers", name);
 
     Ok(())
 }

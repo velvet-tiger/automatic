@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
+import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, Check, MessagesSquare, Copy, Lock, FolderGit2 } from "lucide-react";
@@ -57,6 +59,8 @@ When invoked:
 
 export default function UserAgents() {
   const [agents, setAgents] = useState<UserAgentEntry[]>([]);
+  const [recentRefresh, setRecentRefresh] = useState(0);
+  const recentIds = useRecentlyAdded("user_agents", recentRefresh);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [agentContent, setAgentContent] = useState("");
@@ -142,6 +146,7 @@ export default function UserAgents() {
         setError(null);
         setCurrentScan(toAssetSecurityScanRecord(scan));
         setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "user agent") : null);
+        setRecentRefresh(prev => prev + 1);
       } catch (err: any) {
         setError(`Failed to save agent: ${err}`);
       }
@@ -264,40 +269,52 @@ export default function UserAgents() {
                   <span className="text-[13px] text-text-base italic">New Agent...</span>
                 </li>
               )}
-              {agents.map(entry => {
-                const isActive = selectedId === entry.id && !isCreating;
-                return (
-                  <li key={entry.id} className="group relative">
-                    <button
-                      onClick={() => loadAgent(entry.id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                        isActive
-                          ? "bg-bg-sidebar text-text-base"
-                          : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
-                      }`}
-                    >
-                      <div className="w-8 h-8 rounded-md bg-icon-agent/15 flex items-center justify-center flex-shrink-0">
-                        <MessagesSquare size={15} className="text-icon-agent" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className={`text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
-                          {entry.name}
-                        </div>
-                        <div className="text-[10px] text-text-muted truncate">{entry.id}</div>
-                      </div>
-                    </button>
-                    {!isBundledAgent(entry.id) && !isCodexAgent(entry.id) && (
+              {(() => {
+                const recentAgents = agents.filter(a => recentIds.has(a.id));
+                const otherAgents = agents.filter(a => !recentIds.has(a.id));
+                const renderAgent = (entry: UserAgentEntry) => {
+                  const isActive = selectedId === entry.id && !isCreating;
+                  return (
+                    <li key={entry.id} className="group relative">
                       <button
-                        onClick={(e) => handleDelete(entry.id, e)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                        title="Delete Agent"
+                        onClick={() => loadAgent(entry.id)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                          isActive
+                            ? "bg-bg-sidebar text-text-base"
+                            : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
+                        }`}
                       >
-                        <X size={12} />
+                        <div className="w-8 h-8 rounded-md bg-icon-agent/15 flex items-center justify-center flex-shrink-0">
+                          <MessagesSquare size={15} className="text-icon-agent" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className={`text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
+                            {entry.name}
+                          </div>
+                          <div className="text-[10px] text-text-muted truncate">{entry.id}</div>
+                        </div>
                       </button>
-                    )}
-                  </li>
+                      {!isBundledAgent(entry.id) && !isCodexAgent(entry.id) && (
+                        <button
+                          onClick={(e) => handleDelete(entry.id, e)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
+                          title="Delete Agent"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </li>
+                  );
+                };
+                return (
+                  <>
+                    {recentAgents.length > 0 && <RecentlyAddedSectionLabel />}
+                    {recentAgents.map(renderAgent)}
+                    {recentAgents.length > 0 && otherAgents.length > 0 && <RecentlyAddedDivider />}
+                    {otherAgents.map(renderAgent)}
+                  </>
                 );
-              })}
+              })()}
             </ul>
           )}
         </div>

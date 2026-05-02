@@ -87,6 +87,18 @@ pub fn scan_asset_content(
     Ok(core::scan_text_asset_result(asset_kind, &content))
 }
 
+// ── Recently Added ────────────────────────────────────────────────────────────
+
+/// Return the IDs of assets added to the library within the last 7 days,
+/// sorted most-recently-added first.
+///
+/// `asset_type` is one of: "skills", "rules", "templates", "user_agents",
+/// "commands", "mcp_servers", "project_templates".
+#[tauri::command]
+pub fn get_recently_added_items(asset_type: String) -> Vec<String> {
+    core::get_recently_added_ids(&asset_type)
+}
+
 // ── App Updates ───────────────────────────────────────────────────────────────
 
 /// Restart the application to apply a freshly-installed update.

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use super::asset_security::{enforce_text_asset, AssetKind};
 use super::paths::get_automatic_dir;
+use super::recently_added::{record_recently_added, remove_recently_added};
 // ── User Agents ──────────────────────────────────────────────────────────────
 
 /// A user-defined agent stored as Markdown with YAML frontmatter in
@@ -369,7 +370,12 @@ pub fn save_user_agent(machine_name: &str, name: &str, content: &str) -> Result<
     }
 
     let path = dir.join(format!("{}.md", machine_name));
+    let is_new = !path.exists();
     fs::write(&path, content).map_err(|e| e.to_string())?;
+
+    if is_new {
+        record_recently_added("user_agents", machine_name);
+    }
 
     Ok(())
 }
@@ -384,6 +390,8 @@ pub fn delete_user_agent(machine_name: &str) -> Result<(), String> {
     if path.exists() {
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
+
+    remove_recently_added("user_agents", machine_name);
 
     Ok(())
 }

@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ICONS } from "../../lib/icons";
+import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
+import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
 import { SkillSelector } from "../../components/SkillSelector";
 import { AgentSelector, AgentInfo } from "../../components/AgentSelector";
@@ -369,6 +371,8 @@ export default function ProjectTemplates({
   onNavigateToProject?: (projectName: string) => void;
 }) {
   const [templates, setTemplates] = useState<string[]>([]);
+  const [recentRefresh, setRecentRefresh] = useState(0);
+  const recentIds = useRecentlyAdded("project_templates", recentRefresh);
   // Map of template name → loaded data (for sidebar summaries)
   const [templateData, setTemplateData] = useState<Record<string, ProjectTemplate>>({});
 
@@ -600,6 +604,7 @@ export default function ProjectTemplates({
       if (isCreating) {
         setIsCreating(false);
         await loadTemplates();
+        setRecentRefresh(prev => prev + 1);
       } else {
         // Refresh sidebar data
         setTemplateData((prev) => ({ ...prev, [name]: toSave }));
@@ -844,69 +849,81 @@ export default function ProjectTemplates({
                   <span className="text-[13px] text-text-base italic">New Template...</span>
                 </li>
               )}
-              {templates.map((name) => {
-                const td = templateData[name];
-                const isActive = selectedName === name && !isCreating;
-                const accent = td ? templateAccent(td) : { bg: "bg-brand/15", icon: "text-brand" };
-                const skillCount = td?.skills.length ?? 0;
-                const mcpCount = td?.mcp_servers.length ?? 0;
-                const fileCount = td?.project_files?.length ?? 0;
-                const parts: string[] = [];
-                if (skillCount > 0) parts.push(`${skillCount} skill${skillCount !== 1 ? "s" : ""}`);
-                if (mcpCount > 0) parts.push(`${mcpCount} server${mcpCount !== 1 ? "s" : ""}`);
-                if (fileCount > 0) parts.push(`${fileCount} file${fileCount !== 1 ? "s" : ""}`);
+              {(() => {
+                const recentTemplates = templates.filter(n => recentIds.has(n));
+                const otherTemplates = templates.filter(n => !recentIds.has(n));
+                const renderTemplate = (name: string) => {
+                  const td = templateData[name];
+                  const isActive = selectedName === name && !isCreating;
+                  const accent = td ? templateAccent(td) : { bg: "bg-brand/15", icon: "text-brand" };
+                  const skillCount = td?.skills.length ?? 0;
+                  const mcpCount = td?.mcp_servers.length ?? 0;
+                  const fileCount = td?.project_files?.length ?? 0;
+                  const parts: string[] = [];
+                  if (skillCount > 0) parts.push(`${skillCount} skill${skillCount !== 1 ? "s" : ""}`);
+                  if (mcpCount > 0) parts.push(`${mcpCount} server${mcpCount !== 1 ? "s" : ""}`);
+                  if (fileCount > 0) parts.push(`${fileCount} file${fileCount !== 1 ? "s" : ""}`);
 
-                return (
-                  <li key={name} className="group relative">
-                    <button
-                      onClick={() => { if (!isCreating) selectTemplate(name); }}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                        isActive
-                          ? "bg-bg-sidebar text-text-base"
-                          : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
-                      }`}
-                    >
-                      <div className={`w-9 h-9 rounded-lg ${accent.bg} flex items-center justify-center flex-shrink-0`}>
-                        <LayoutTemplate size={16} className={accent.icon} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className={`text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
-                          {name}
+                  return (
+                    <li key={name} className="group relative">
+                      <button
+                        onClick={() => { if (!isCreating) selectTemplate(name); }}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                          isActive
+                            ? "bg-bg-sidebar text-text-base"
+                            : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
+                        }`}
+                      >
+                        <div className={`w-9 h-9 rounded-lg ${accent.bg} flex items-center justify-center flex-shrink-0`}>
+                          <LayoutTemplate size={16} className={accent.icon} />
                         </div>
-                        {parts.length > 0 && (
-                          <div className="text-[11px] text-text-muted mt-0.5">
-                            {parts.join(" · ")}
+                        <div className="flex-1 min-w-0">
+                          <div className={`text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
+                            {name}
                           </div>
-                        )}
-                      </div>
-                    </button>
-                    {confirmDelete === name ? (
-                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                          {parts.length > 0 && (
+                            <div className="text-[11px] text-text-muted mt-0.5">
+                              {parts.join(" · ")}
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                      {confirmDelete === name ? (
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                          <button
+                            onClick={(e) => handleDelete(name, e)}
+                            className="px-1.5 py-0.5 text-[11px] font-medium text-danger hover:bg-danger/15 rounded transition-colors"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setConfirmDelete(null); }}
+                            className="p-0.5 text-text-muted hover:text-text-base hover:bg-surface rounded transition-colors"
+                          >
+                            <X size={11} />
+                          </button>
+                        </div>
+                      ) : (
                         <button
                           onClick={(e) => handleDelete(name, e)}
-                          className="px-1.5 py-0.5 text-[11px] font-medium text-danger hover:bg-danger/15 rounded transition-colors"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
+                          title="Delete template"
                         >
-                          Delete
+                          <X size={12} />
                         </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setConfirmDelete(null); }}
-                          className="p-0.5 text-text-muted hover:text-text-base hover:bg-surface rounded transition-colors"
-                        >
-                          <X size={11} />
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={(e) => handleDelete(name, e)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                        title="Delete template"
-                      >
-                        <X size={12} />
-                      </button>
-                    )}
-                  </li>
+                      )}
+                    </li>
+                  );
+                };
+                return (
+                  <>
+                    {recentTemplates.length > 0 && <RecentlyAddedSectionLabel />}
+                    {recentTemplates.map(renderTemplate)}
+                    {recentTemplates.length > 0 && otherTemplates.length > 0 && <RecentlyAddedDivider />}
+                    {otherTemplates.map(renderTemplate)}
+                  </>
                 );
-              })}
+              })()}
             </ul>
           )}
         </div>

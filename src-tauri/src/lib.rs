@@ -394,6 +394,7 @@ pub fn run() {
             list_remote_sources,
             check_source_conflicts,
             handle_install_uri,
+            get_recently_added_items,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
