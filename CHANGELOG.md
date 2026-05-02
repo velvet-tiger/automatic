@@ -4,6 +4,31 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-05-02
+
+### Added
+
+- Master toggle to enable or disable all in-app AI agent features at once. (`cdf3c9a`)
+- Settings panel splits in-app Agents configuration from project Providers. (`8b17e0d`)
+- Recently added assets now appear at the top of workspace library lists. (`ed416fa`)
+- Library overview page with asset cards for skills, rules, templates, and MCP servers. (`467f483`)
+- Discover landing page with asset cards replacing the old Marketplace section. (`cb10489`)
+
+### Changed
+
+- Marketplace renamed to Discover throughout the UI and codebase. (`96c5c90`)
+- Apply Template panel replaced with a modal and confirmation view. (`54965c6`)
+- Apply-to-Project dropdown replaced with a searchable modal. (`45bb998`)
+
+### Fixed
+
+- Clicking the active section pill now resets in-tab state instead of doing nothing. (`19af064`)
+- Section pill navigation always lands on the section's overview page. (`77131bf`)
+- New projects always open on the Summary tab. (`fb67a77`)
+- Project list badge and project page drift badge now stay in sync; bundled `automatic` skill is auto-healed if it drifts. (`83ea36a`)
+- Rules-only templates no longer switch unified instruction mode or overwrite existing instructions. (`2270d8a`)
+- Local skills unified into `custom_skills` — removes the divergent `local_skills` field. (`5dfe9f7`)
+
 ## [1.5.1] - 2026-04-26
 
 ### Fixed
