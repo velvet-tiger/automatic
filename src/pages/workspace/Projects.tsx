@@ -2603,9 +2603,9 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [projectFileSaving, setProjectFileSaving] = useState(false);
   const [projectFileGenerating, setProjectFileGenerating] = useState(false);
   const [projectFileUpdating, setProjectFileUpdating] = useState(false);
-  // Whether an Anthropic API key is resolvable (env var or keychain).
+  // Whether the master "Agent features" toggle is effectively on.
   // Controls whether AI Generate buttons are enabled.
-  const [hasAnthropicKey, setHasAnthropicKey] = useState(false);
+  const [agentFeaturesEnabled, setAgentFeaturesEnabled] = useState(false);
   // Incremented whenever any project configuration is mutated (saved, synced,
   // instruction files written, etc.).  A useEffect watches this counter and
   // re-evaluates recommendations after every change.
@@ -2909,8 +2909,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     loadAvailableProjectTemplates();
     loadAvailableUserAgents();
     loadAvailableUserCommands();
-    // Check whether an API key is available through the full resolution chain.
-    invoke<boolean>("has_ai_key").then(setHasAnthropicKey).catch(() => setHasAnthropicKey(false));
+    // Effective state of the master Settings > Agents toggle.
+    invoke<boolean>("agent_features_enabled").then(setAgentFeaturesEnabled).catch(() => setAgentFeaturesEnabled(false));
     // Detect which editors are installed on this machine, then fetch real icons
     invoke<EditorInfo[]>("check_installed_editors").then((editors) => {
       setInstalledEditors(editors);
@@ -5888,15 +5888,15 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                  <span className="relative group/keytip">
                                    <button
                                      onClick={handleGenerateInstruction}
-                                     disabled={projectFileGenerating || !hasAnthropicKey}
+                                     disabled={projectFileGenerating || !agentFeaturesEnabled}
                                      className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                                    >
                                      <Sparkles size={12} className={projectFileGenerating ? "animate-pulse" : ""} />
                                      {projectFileGenerating ? "Generating…" : "Generate with AI"}
                                    </button>
-                                   {!hasAnthropicKey && (
+                                   {!agentFeaturesEnabled && (
                                      <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
-                                       Add your Anthropic API key to access
+                                       Enable Agent features to access
                                      </span>
                                    )}
                                  </span>
@@ -5962,15 +5962,15 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                     <span className="relative group/keytip">
                                       <button
                                         onClick={handleUpdateInstruction}
-                                        disabled={projectFileUpdating || projectFileGenerating || projectFileSaving || !hasAnthropicKey || !projectFileContent.trim()}
+                                        disabled={projectFileUpdating || projectFileGenerating || projectFileSaving || !agentFeaturesEnabled || !projectFileContent.trim()}
                                         className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                       >
                                         <RefreshCw size={10} className={projectFileUpdating ? "animate-spin text-brand" : ""} />
                                         {projectFileUpdating ? "Updating…" : "Update"}
                                       </button>
-                                      {!hasAnthropicKey && (
+                                      {!agentFeaturesEnabled && (
                                         <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
-                                          Add your Anthropic API key to access
+                                          Enable Agent features to access
                                         </span>
                                       )}
                                     </span>
@@ -5979,15 +5979,15 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                     <span className="relative group/keytip">
                                       <button
                                         onClick={handleGenerateInstruction}
-                                        disabled={projectFileGenerating || projectFileSaving || !hasAnthropicKey}
+                                        disabled={projectFileGenerating || projectFileSaving || !agentFeaturesEnabled}
                                         className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                       >
                                         <Sparkles size={10} className={projectFileGenerating ? "animate-pulse text-brand" : ""} />
                                         {projectFileGenerating ? "Generating…" : "Generate"}
                                       </button>
-                                      {!hasAnthropicKey && (
+                                      {!agentFeaturesEnabled && (
                                         <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
-                                          Add your Anthropic API key to access
+                                          Enable Agent features to access
                                         </span>
                                       )}
                                     </span>
@@ -6101,15 +6101,15 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                       <span className="relative group/keytip">
                         <button
                           onClick={handleGenerateContext}
-                          disabled={contextGenerating || !hasAnthropicKey}
+                          disabled={contextGenerating || !agentFeaturesEnabled}
                           className="px-3 py-1.5 bg-brand hover:bg-brand-hover text-white text-[12px] font-medium rounded shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <Sparkles size={12} className={contextGenerating ? "animate-pulse" : ""} />
                           {contextGenerating ? "Generating…" : "Generate with AI"}
                         </button>
-                        {!hasAnthropicKey && (
+                        {!agentFeaturesEnabled && (
                           <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
-                            Add your Anthropic API key to access
+                            Enable Agent features to access
                           </span>
                         )}
                       </span>
@@ -6158,15 +6158,15 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                         <span className="relative group/keytip">
                           <button
                             onClick={handleGenerateContext}
-                            disabled={contextGenerating || contextSaving || !hasAnthropicKey}
+                            disabled={contextGenerating || contextSaving || !agentFeaturesEnabled}
                             className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <Sparkles size={10} className={contextGenerating ? "animate-pulse text-brand" : ""} />
                             {contextGenerating ? "Generating…" : "Generate"}
                           </button>
-                          {!hasAnthropicKey && (
+                          {!agentFeaturesEnabled && (
                             <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
-                              Add your Anthropic API key to access
+                              Enable Agent features to access
                             </span>
                           )}
                         </span>

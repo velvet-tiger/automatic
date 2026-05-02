@@ -77,6 +77,19 @@ pub struct Settings {
     /// Used to determine whether a badge/indicator should be shown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whats_new_seen_version: Option<String>,
+    /// Master toggle for in-app AI features (Settings > Agents).
+    ///
+    /// `None` means the toggle has never been set explicitly — the effective
+    /// state follows whether any agent API key is stored, preserving the
+    /// pre-toggle behaviour for users who upgrade.
+    /// `Some(true)` enables in-app AI features; `Some(false)` disables them
+    /// even if a key is stored.
+    ///
+    /// Set automatically by `save_api_key` (to `Some(true)` on the first key
+    /// add) and `delete_api_key` (to `Some(false)` when the last key is
+    /// removed). User toggles in the UI always write an explicit `Some(...)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_features_enabled: Option<bool>,
 }
 
 fn default_analytics_enabled() -> bool {
@@ -96,6 +109,7 @@ impl Default for Settings {
             default_agent_options: HashMap::new(),
             bundled_skills_version: None,
             whats_new_seen_version: None,
+            agent_features_enabled: None,
         }
     }
 }
@@ -357,5 +371,47 @@ mod tests {
         let loaded = read_at(dir.path()).expect("read");
         assert!(loaded.getting_started.skill_installed);
         assert!(!loaded.getting_started.template_imported);
+    }
+
+    // ── Agent features toggle ─────────────────────────────────────────────────
+
+    #[test]
+    fn agent_features_enabled_defaults_to_none() {
+        let s = Settings::default();
+        assert_eq!(s.agent_features_enabled, None);
+    }
+
+    #[test]
+    fn agent_features_enabled_round_trips() {
+        let dir = tmp();
+        let mut s = Settings::default();
+        s.agent_features_enabled = Some(true);
+        write_at(dir.path(), &s).expect("write");
+        let loaded = read_at(dir.path()).expect("read");
+        assert_eq!(loaded.agent_features_enabled, Some(true));
+
+        s.agent_features_enabled = Some(false);
+        write_at(dir.path(), &s).expect("write");
+        let loaded = read_at(dir.path()).expect("read");
+        assert_eq!(loaded.agent_features_enabled, Some(false));
+    }
+
+    #[test]
+    fn legacy_settings_without_toggle_deserialise_to_none() {
+        let dir = tmp();
+        // Pre-toggle settings.json that lacks the field entirely.
+        let raw = r#"{"sync_mode":"symlink","analytics_enabled":true,"wizard_completed":true}"#;
+        fs::write(settings_path(dir.path()), raw).expect("write legacy");
+
+        let loaded = read_at(dir.path()).expect("read");
+        assert_eq!(loaded.agent_features_enabled, None);
+    }
+
+    #[test]
+    fn agent_features_enabled_none_is_omitted_from_serialised_json() {
+        let s = Settings::default();
+        let raw = serde_json::to_string(&s).expect("serialise");
+        // skip_serializing_if = "Option::is_none" should keep legacy files clean.
+        assert!(!raw.contains("agent_features_enabled"), "raw was: {raw}");
     }
 }

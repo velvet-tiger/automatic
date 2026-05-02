@@ -60,29 +60,56 @@ struct AnthropicErrorDetail {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/// Effective state of the master "Agent features" toggle.
+///
+/// * `Some(true)`  → enabled
+/// * `Some(false)` → disabled
+/// * `None`        → never set explicitly; derives from key presence so
+///   upgrading users keep their previous behaviour
+pub fn agent_features_enabled() -> bool {
+    let explicit = super::settings::read_settings()
+        .ok()
+        .and_then(|s| s.agent_features_enabled);
+    match explicit {
+        Some(value) => value,
+        None => super::credentials::has_api_key("anthropic"),
+    }
+}
+
 /// Resolve the API key to use for a request.
 ///
 /// Priority order:
-///   1. Key stored in the OS keychain (saved via Agents > Claude).
-///   2. The `api_key` argument (explicitly supplied by the caller).
+///   1. Master toggle: if `agent_features_enabled` is `Some(false)`, fail
+///      regardless of stored keys.
+///   2. Key stored in the OS keychain (saved via Settings > Agents).
+///   3. The `api_key` argument (explicitly supplied by the caller).
 ///
-/// Returns an error if no key is found.
+/// Returns an error if features are disabled or no key is found.
 pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
-    // 1. OS keychain (saved via Agents > Claude).
+    // 1. Master toggle gates all in-app AI calls.
+    if let Ok(settings) = super::settings::read_settings() {
+        if settings.agent_features_enabled == Some(false) {
+            return Err(
+                "Agent features are disabled. Enable them in Settings > Agents.".to_string(),
+            );
+        }
+    }
+
+    // 2. OS keychain (saved via Settings > Agents).
     if let Ok(k) = super::credentials::get_api_key("anthropic") {
         if !k.is_empty() {
             return Ok(k);
         }
     }
 
-    // 2. Explicit argument passed by the caller.
+    // 3. Explicit argument passed by the caller.
     if let Some(k) = explicit_key {
         if !k.is_empty() {
             return Ok(k.to_string());
         }
     }
 
-    Err("No Anthropic API key found. Add a key via Agents > Claude.".to_string())
+    Err("No Anthropic API key found. Add a key via Settings > Agents.".to_string())
 }
 
 /// Fetch the list of available model IDs from the Anthropic Models API.

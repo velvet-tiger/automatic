@@ -47,9 +47,16 @@ function defaultKeyState(): KeyState {
 
 export default function SettingsAgents() {
   const [keyStates, setKeyStates] = useState<Record<string, KeyState>>({});
+  /**
+   * The master toggle's stored value. `null` means it has never been set
+   * explicitly, in which case the effective state follows whether any key is
+   * stored (preserves the pre-toggle behaviour for upgrading users).
+   */
+  const [enabledOverride, setEnabledOverride] = useState<boolean | null>(null);
 
   useEffect(() => {
     loadKeyStatus();
+    loadEnabledOverride();
   }, []);
 
   const loadKeyStatus = async () => {
@@ -69,6 +76,29 @@ export default function SettingsAgents() {
     }
     setKeyStates(states);
   };
+
+  const loadEnabledOverride = async () => {
+    try {
+      const raw = await invoke<{ agent_features_enabled?: boolean | null }>("read_settings");
+      setEnabledOverride(raw.agent_features_enabled ?? null);
+    } catch (e) {
+      console.error("Failed to read settings for agent_features_enabled", e);
+    }
+  };
+
+  const persistEnabledOverride = async (value: boolean) => {
+    try {
+      const raw = await invoke<Record<string, unknown>>("read_settings");
+      raw.agent_features_enabled = value;
+      await invoke("write_settings", { settings: raw });
+      setEnabledOverride(value);
+    } catch (e) {
+      console.error("Failed to write agent_features_enabled", e);
+    }
+  };
+
+  const anyKeyStored = AGENTS.some((a) => keyStates[a.provider]?.stored);
+  const featuresEnabled = enabledOverride ?? anyKeyStored;
 
   const updateState = (provider: string, patch: Partial<KeyState>) => {
     setKeyStates((prev) => ({
@@ -90,6 +120,8 @@ export default function SettingsAgents() {
         revealed: false,
         saveStatus: "saved",
       });
+      // The backend auto-enables features the first time a key is added.
+      await loadEnabledOverride();
       setTimeout(() => updateState(provider, { saveStatus: "idle" }), 2000);
     } catch (e) {
       console.error(`Failed to save API key for ${provider}`, e);
@@ -108,6 +140,8 @@ export default function SettingsAgents() {
         revealed: false,
         saveStatus: "idle",
       });
+      // The backend auto-disables features when the last key is removed.
+      await loadEnabledOverride();
     } catch (e) {
       console.error(`Failed to delete API key for ${provider}`, e);
     }
@@ -121,6 +155,35 @@ export default function SettingsAgents() {
         recommendations, and the AI Playground. These are independent of the Providers used to
         configure your projects.
       </p>
+
+      <button
+        onClick={() => persistEnabledOverride(!featuresEnabled)}
+        className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all mb-6 ${
+          featuresEnabled
+            ? "border-brand bg-brand/10"
+            : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+        }`}
+      >
+        <div>
+          <div className="text-[13px] font-medium text-text-base">Agent features</div>
+          <div className="text-[12px] text-text-muted">
+            {featuresEnabled
+              ? "Enabled — in-app AI features are active"
+              : "Disabled — in-app AI features will not run"}
+          </div>
+        </div>
+        <div
+          className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors ${
+            featuresEnabled ? "bg-brand" : "bg-surface-active"
+          }`}
+        >
+          <div
+            className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+              featuresEnabled ? "left-5" : "left-0.5"
+            }`}
+          />
+        </div>
+      </button>
 
       <div className="space-y-4">
         {AGENTS.map((agent) => {

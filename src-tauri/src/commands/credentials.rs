@@ -22,11 +22,10 @@ pub fn delete_api_key(provider: &str) -> Result<(), String> {
     core::delete_api_key(provider)
 }
 
-/// Returns true if an AI key is resolvable through the full resolution chain
-/// (env var → .env file in debug → OS keychain). This matches the same logic
-/// used by `ai::resolve_api_key` so the frontend accurately reflects whether
-/// generation will actually succeed.
+/// Effective state of the master "Agent features" toggle. Used by the frontend
+/// to gate AI buttons / inputs purely on whether the user has agent features
+/// turned on, independent of whether an API key is currently stored.
 #[tauri::command]
-pub fn has_ai_key() -> bool {
-    core::ai::resolve_api_key(None).is_ok()
+pub fn agent_features_enabled() -> bool {
+    core::ai::agent_features_enabled()
 }

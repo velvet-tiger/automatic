@@ -170,16 +170,15 @@ export default function AiPlayground() {
   const [workingDir, setWorkingDir] = useState<string>("");
   const [projects, setProjects] = useState<Array<{ name: string; directory: string }>>([]);
   const [selectedProject, setSelectedProject] = useState<string>("");
-  const [hasAnthropicKey, setHasAnthropicKey] = useState(false);
+  const [agentFeaturesEnabled, setAgentFeaturesEnabled] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // ── Check API key availability and fetch available models ─────────────────
+  // ── Check Agent-features toggle and fetch available models ────────────────
 
   useEffect(() => {
-    // Check whether a key is resolvable (env var or keychain).
-    invoke<boolean>("has_ai_key")
-      .then(setHasAnthropicKey)
-      .catch(() => setHasAnthropicKey(false));
+    invoke<boolean>("agent_features_enabled")
+      .then(setAgentFeaturesEnabled)
+      .catch(() => setAgentFeaturesEnabled(false));
 
     invoke<string[]>("ai_list_models")
       .then((fetched) => {
@@ -426,14 +425,14 @@ export default function AiPlayground() {
           <span className="relative group/keytip shrink-0">
             <button
               onClick={send}
-              disabled={!input.trim() || loading || !hasAnthropicKey}
+              disabled={!input.trim() || loading || !agentFeaturesEnabled}
               className="flex items-center justify-center w-9 h-9 mb-0.5 rounded-lg bg-brand hover:bg-brand-hover text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Send size={15} />
             </button>
-            {!hasAnthropicKey && (
+            {!agentFeaturesEnabled && (
               <span className="pointer-events-none absolute bottom-full right-0 mb-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
-                Add your Anthropic API key to access
+                Enable Agent features to access
               </span>
             )}
           </span>
