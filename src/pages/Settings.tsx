@@ -13,9 +13,10 @@ import { MarkdownPreview } from "../components/MarkdownPreview";
 import TokenEstimator from "./utilities/TokenEstimator";
 import AiPlayground from "./utilities/AiPlayground";
 import { flag } from "../lib/flags";
-import { Bot, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw, Hash, FlaskConical, UserCircle, LogOut } from "lucide-react";
+import { Bot, Sparkles, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw, Hash, FlaskConical, UserCircle, LogOut } from "lucide-react";
+import SettingsAgents from "./settings/Agents";
 
-type SettingsPage = "account" | "sync" | "agents" | "appearance" | "app" | "plugins" | "support" | "token-estimator" | "ai-playground";
+type SettingsPage = "account" | "sync" | "providers" | "agents" | "appearance" | "app" | "plugins" | "support" | "token-estimator" | "ai-playground";
 
 interface AccountProfile {
   user_id: string;
@@ -53,10 +54,16 @@ const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; descripti
     description: "Sync mode & defaults",
   },
   {
-    id: "agents",
+    id: "providers",
     label: "Providers",
     icon: <Bot size={15} />,
     description: "Default providers",
+  },
+  {
+    id: "agents",
+    label: "Agents",
+    icon: <Sparkles size={15} />,
+    description: "API keys for in-app AI features",
   },
   {
     id: "appearance",
@@ -108,7 +115,7 @@ interface SettingsProps {
 
 export default function Settings({ onOpenWizard, initialPage, onInitialPageConsumed }: SettingsProps) {
   const [activePage, setActivePage] = useState<SettingsPage>(() => {
-    const valid: SettingsPage[] = ["account", "sync", "agents", "appearance", "app", "plugins", "support", "token-estimator", "ai-playground"];
+    const valid: SettingsPage[] = ["account", "sync", "providers", "agents", "appearance", "app", "plugins", "support", "token-estimator", "ai-playground"];
     if (initialPage && valid.includes(initialPage as SettingsPage)) {
       return initialPage as SettingsPage;
     }
@@ -117,7 +124,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
   // Handle deep-link navigation when initialPage changes after mount
   useEffect(() => {
     if (!initialPage) return;
-    const valid: SettingsPage[] = ["account", "sync", "agents", "appearance", "app", "plugins", "support", "token-estimator", "ai-playground"];
+    const valid: SettingsPage[] = ["account", "sync", "providers", "agents", "appearance", "app", "plugins", "support", "token-estimator", "ai-playground"];
     if (valid.includes(initialPage as SettingsPage)) {
       setActivePage(initialPage as SettingsPage);
     }
@@ -587,7 +594,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
           )}
 
           {/* ── Providers page ─────────────────────────────────────────── */}
-          {activePage === "agents" && (
+          {activePage === "providers" && (
             <div>
               <h2 className="text-lg font-medium mb-1 text-text-base">Providers</h2>
               <p className="text-[13px] text-text-muted mb-6">Configure default provider behaviour for new projects.</p>
@@ -611,6 +618,9 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
               </div>
             </div>
           )}
+
+          {/* ── Agents page ────────────────────────────────────────────── */}
+          {activePage === "agents" && <SettingsAgents />}
 
           {/* ── App page ────────────────────────────────────────────── */}
           {/* ── Plugins page ────────────────────────────────────────────── */}

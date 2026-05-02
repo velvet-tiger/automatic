@@ -18,7 +18,7 @@ import Templates from "./pages/workspace/Templates";
 import Rules from "./pages/workspace/Rules";
 import UserAgents from "./pages/workspace/UserAgents";
 import Commands from "./pages/workspace/Commands";
-import Agents from "./pages/workspace/Agents";
+import Providers from "./pages/workspace/Providers";
 import Tools from "./pages/workspace/Tools";
 import Recommendations from "./pages/Recommendations";
 import Settings from "./pages/Settings";
@@ -48,7 +48,7 @@ type Section = "start" | "workspace" | "library" | "discover" | "community";
 const SECTION_TABS: Record<Section, string[]> = {
   start: ["getting-started", "recommendations"],
   workspace: ["projects", "project-groups"],
-  library: ["library-home", "project-templates", "templates", "rules", "user-agents", "commands", "skills", "mcp", "agents", "tools"],
+  library: ["library-home", "project-templates", "templates", "rules", "user-agents", "commands", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
   community: ["community-featured"],
 };
@@ -607,7 +607,7 @@ function App() {
                   <NavItem id="commands" icon={Terminal} label="Commands" />
                   <NavItem id="skills" icon={Code} label="Skills" />
                   <NavItem id="mcp" icon={Server} label="MCP Servers" />
-                  <NavItem id="agents" icon={Bot} label="Providers" />
+                  <NavItem id="providers" icon={Bot} label="Providers" />
                   <NavItem id="tools" icon={Wrench} label="Tools" />
                 </ul>
               </div>
@@ -758,9 +758,9 @@ function App() {
               />
             </div>
           )}
-          {activeTab === "agents" && (
+          {activeTab === "providers" && (
             <div className="flex-1 h-full">
-              <Agents onNavigateToProject={navigateToProject} />
+              <Providers onNavigateToProject={navigateToProject} />
             </div>
           )}
           {activeTab === "tools" && (
