@@ -65,7 +65,7 @@ function CopyAllButton({ entries }: { entries: TaskLogEntry[] }) {
 
   function handleCopy() {
     const text = entries
-      .map((e) => `[${formatTime(e.timestamp)}] [${e.status}] ${e.message}`)
+      .map((e) => `[${formatTime(e.timestamp)}] [${e.status}]${e.agent ? ` [${e.agent}]` : ""} ${e.message}`)
       .join("\n");
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
@@ -146,6 +146,11 @@ export default function TaskLog() {
                   {formatTime(entry.timestamp)}
                 </span>
                 <StatusIcon status={entry.status} />
+                {entry.agent && (
+                  <span className="text-[10px] font-medium text-text-muted bg-surface-active px-1.5 py-0 rounded flex-shrink-0 leading-4">
+                    {entry.agent}
+                  </span>
+                )}
                 <span
                   className={[
                     "text-[12px] leading-4 flex-1 min-w-0",
@@ -154,7 +159,7 @@ export default function TaskLog() {
                 >
                   {entry.message}
                 </span>
-                <CopyButton text={`[${formatTime(entry.timestamp)}] [${entry.status}] ${entry.message}`} />
+                <CopyButton text={`[${formatTime(entry.timestamp)}] [${entry.status}]${entry.agent ? ` [${entry.agent}]` : ""} ${entry.message}`} />
               </div>
             ))
           )}

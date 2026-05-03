@@ -18,6 +18,17 @@ pub struct AiMessage {
 
 // ── Toggle + key resolution ───────────────────────────────────────────────────
 
+/// Resolve the currently configured active agent ID.
+///
+/// Reads `Settings::active_agent`; defaults to `"anthropic"` when unset so
+/// that existing users with a stored Anthropic key are unaffected.
+fn active_agent_id() -> String {
+    super::settings::read_settings()
+        .ok()
+        .and_then(|s| s.active_agent)
+        .unwrap_or_else(|| "anthropic".to_string())
+}
+
 /// Effective state of the master "Agent features" toggle.
 ///
 /// * `Some(true)`  → enabled
@@ -30,7 +41,9 @@ pub fn agent_features_enabled() -> bool {
         .and_then(|s| s.agent_features_enabled);
     match explicit {
         Some(value) => value,
-        None => super::credentials::has_api_key("anthropic"),
+        None => super::agents::known_agents()
+            .iter()
+            .any(|id| super::credentials::has_api_key(id.as_str())),
     }
 }
 
@@ -39,7 +52,7 @@ pub fn agent_features_enabled() -> bool {
 /// Priority order:
 ///   1. Master toggle: if `agent_features_enabled` is `Some(false)`, fail
 ///      regardless of stored keys.
-///   2. Key stored in the OS keychain (saved via Settings > Agents).
+///   2. Key stored in the OS keychain for the active agent.
 ///   3. The `api_key` argument (explicitly supplied by the caller).
 ///
 /// Returns an error if features are disabled or no key is found.
@@ -52,7 +65,8 @@ pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
         }
     }
 
-    if let Ok(k) = super::credentials::get_api_key("anthropic") {
+    let agent_id = active_agent_id();
+    if let Ok(k) = super::credentials::get_api_key(&agent_id) {
         if !k.is_empty() {
             return Ok(k);
         }
@@ -64,22 +78,23 @@ pub fn resolve_api_key(explicit_key: Option<&str>) -> Result<String, String> {
         }
     }
 
-    Err("No Anthropic API key found. Add a key via Settings > Agents.".to_string())
+    Err("No API key found for the active agent. Add a key via Settings > Agents.".to_string())
 }
 
 // ── Active client factory ─────────────────────────────────────────────────────
 
 /// Build the active agent client, applying any configured gateway routing.
 fn active_client(api_key: &str) -> Box<dyn AgentClientDyn> {
-    let gateway = load_active_gateway();
-    super::agents::active_client_with_key(api_key, gateway)
+    let agent_id = active_agent_id();
+    let gateway = load_active_gateway(&agent_id);
+    super::agents::active_client_with_key(&agent_id, api_key, gateway)
 }
 
-/// Read the AI Gateway config for the active agent from settings, if any.
-fn load_active_gateway() -> Option<GatewayConfig> {
+/// Read the AI Gateway config for the given agent from settings, if any.
+fn load_active_gateway(agent_id: &str) -> Option<GatewayConfig> {
     super::settings::read_settings()
         .ok()
-        .and_then(|s| s.agent_gateways.get("anthropic").cloned())
+        .and_then(|s| s.agent_gateways.get(agent_id).cloned())
 }
 
 // ── Public AI operations ──────────────────────────────────────────────────────
@@ -205,7 +220,8 @@ async fn chat_with_tools_inner(
     let key = resolve_api_key(api_key.as_deref())?;
     let client = active_client(&key);
 
-    let model_str = model.as_deref().unwrap_or("claude-sonnet-4-5");
+    let agent_id = active_agent_id();
+    let model_str = model.as_deref().unwrap_or_else(|| super::agents::default_model(&agent_id));
     let tokens = max_tokens.unwrap_or(4096);
     let turn_limit = max_turns_override.unwrap_or(MAX_TOOL_TURNS);
 

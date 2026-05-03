@@ -26,6 +26,9 @@ pub struct OpenAiCompatClient {
     base_url: String,
     extra_headers: Vec<(String, String)>,
     gateway: Option<GatewayConfig>,
+    /// Curated model list returned by `list_models`. When empty, `list_models`
+    /// returns an empty vec (providers with no static list or a live endpoint).
+    static_models: Vec<String>,
 }
 
 impl OpenAiCompatClient {
@@ -40,7 +43,14 @@ impl OpenAiCompatClient {
             base_url: base_url.into(),
             extra_headers,
             gateway,
+            static_models: vec![],
         }
+    }
+
+    /// Set a curated model list to be returned by `list_models`.
+    pub fn with_static_models(mut self, models: Vec<String>) -> Self {
+        self.static_models = models;
+        self
     }
 
     #[allow(dead_code)]
@@ -255,9 +265,11 @@ impl AgentClient for OpenAiCompatClient {
     }
 
     async fn list_models(&self) -> Result<Vec<String>, String> {
+        if !self.static_models.is_empty() {
+            return Ok(self.static_models.clone());
+        }
         // Not all OpenAI-compat providers expose a models endpoint.
-        // Return an empty list; callers should use a curated static list
-        // configured at registration time for providers that lack this API.
+        // Providers that need a live list should use a dedicated implementation.
         Ok(vec![])
     }
 }

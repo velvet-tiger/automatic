@@ -23,6 +23,8 @@ export interface TaskLogEntry {
   timestamp: Date;
   message: string;
   status: TaskLogStatus;
+  /** Display label of the agent that performed the operation (e.g. "Claude", "OpenAI"). */
+  agent?: string;
 }
 
 // Shape expected by the Rust backend (Date → ISO string).
@@ -31,6 +33,7 @@ interface PersistedEntry {
   timestamp: string;
   message: string;
   status: string;
+  agent?: string;
 }
 
 interface TaskLogContextValue {
@@ -42,7 +45,7 @@ interface TaskLogContextValue {
    */
   isManuallyOpened: boolean;
   /** Push a new log entry; returns its generated id. */
-  log: (message: string, status?: TaskLogStatus) => string;
+  log: (message: string, status?: TaskLogStatus, agent?: string) => string;
   /** Update an existing entry by id (e.g. change status from running → success). */
   update: (id: string, message: string, status: TaskLogStatus) => void;
   /** Clear all entries and hide the panel. */
@@ -75,6 +78,7 @@ function toPersistedEntry(entry: TaskLogEntry): PersistedEntry {
     timestamp: entry.timestamp.toISOString(),
     message: entry.message,
     status: entry.status,
+    ...(entry.agent !== undefined ? { agent: entry.agent } : {}),
   };
 }
 
@@ -84,6 +88,7 @@ function fromPersistedEntry(p: PersistedEntry): TaskLogEntry {
     timestamp: new Date(p.timestamp),
     message: p.message,
     status: (p.status as TaskLogStatus) ?? "info",
+    ...(p.agent !== undefined ? { agent: p.agent } : {}),
   };
 }
 
@@ -143,9 +148,9 @@ export function TaskLogProvider({ children, autoDismissDelay = 4000 }: TaskLogPr
   );
 
   const log = useCallback(
-    (message: string, status: TaskLogStatus = "info"): string => {
+    (message: string, status: TaskLogStatus = "info", agent?: string): string => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      const entry: TaskLogEntry = { id, timestamp: new Date(), message, status };
+      const entry: TaskLogEntry = { id, timestamp: new Date(), message, status, ...(agent !== undefined ? { agent } : {}) };
 
       cancelDismiss(); // opening a new entry cancels any pending auto-dismiss
       setIsVisible(true);

@@ -29,6 +29,14 @@ const AGENTS: AgentDefinition[] = [
     providerLabel: "Anthropic",
     placeholder: "sk-ant-...",
   },
+  {
+    id: "openai",
+    label: "OpenAI",
+    description: "OpenAI's GPT models. Powers file generation, insight generation, recommendations, and the AI Playground.",
+    provider: "openai",
+    providerLabel: "OpenAI",
+    placeholder: "sk-...",
+  },
 ];
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";

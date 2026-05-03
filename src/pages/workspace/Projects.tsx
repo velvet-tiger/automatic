@@ -224,6 +224,19 @@ function parseInvokeResult<T>(value: unknown): T {
   return value as T;
 }
 
+/** Map a Settings::active_agent ID to a human-readable display label. */
+function agentIdToLabel(id: string): string {
+  const labels: Record<string, string> = {
+    anthropic: "Claude",
+    openai: "OpenAI",
+    "github-models": "GitHub Models",
+    "workers-ai": "Workers AI",
+    zai: "Z.ai",
+    "opencode-zen": "OpenCode Zen",
+  };
+  return labels[id] ?? id;
+}
+
 interface DriftReport {
   drifted: boolean;
   agents: AgentDrift[];
@@ -2606,6 +2619,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   // Whether the master "Agent features" toggle is effectively on.
   // Controls whether AI Generate buttons are enabled.
   const [agentFeaturesEnabled, setAgentFeaturesEnabled] = useState(false);
+  // Display label of the currently active Automatic agent (e.g. "Claude", "OpenAI").
+  const [activeAgentLabel, setActiveAgentLabel] = useState<string>("Claude");
   // Incremented whenever any project configuration is mutated (saved, synced,
   // instruction files written, etc.).  A useEffect watches this counter and
   // re-evaluates recommendations after every change.
@@ -2911,6 +2926,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     loadAvailableUserCommands();
     // Effective state of the master Settings > Agents toggle.
     invoke<boolean>("agent_features_enabled").then(setAgentFeaturesEnabled).catch(() => setAgentFeaturesEnabled(false));
+    // Active agent display label for the task log.
+    invoke<{ active_agent?: string }>("read_settings")
+      .then((s) => setActiveAgentLabel(agentIdToLabel(s.active_agent ?? "anthropic")))
+      .catch(() => {});
     // Detect which editors are installed on this machine, then fetch real icons
     invoke<EditorInfo[]>("check_installed_editors").then((editors) => {
       setInstalledEditors(editors);
@@ -3529,7 +3548,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     if (!selectedName) return;
     setContextGenerating(true);
     setContextJsonError(null);
-    const entryId = log(`Analysing project "${selectedName}"…`, "running");
+    const entryId = log(`Analysing project "${selectedName}"…`, "running", activeAgentLabel);
     try {
       const generated: string = await invoke("ai_generate_context", { name: selectedName });
       // Pretty-print the returned JSON before putting it in the editor.
@@ -3736,7 +3755,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const handleUpdateAiRecommendations = async () => {
     if (!selectedName || aiRecsLoading) return;
     setAiRecsLoading(true);
-    const entryId = log(`Analysing recommendations for "${selectedName}"…`, "running");
+    const entryId = log(`Analysing recommendations for "${selectedName}"…`, "running", activeAgentLabel);
     try {
       const result = await invoke<{ recommendations: ProjectRecommendation[]; last_run_at: string }>(
         "ai_generate_project_recommendations",
@@ -3757,7 +3776,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const handleSuggestSkills = async () => {
     if (!selectedName || aiSkillsLoading) return;
     setAiSkillsLoading(true);
-    const entryId = log(`Suggesting skills for "${selectedName}"…`, "running");
+    const entryId = log(`Suggesting skills for "${selectedName}"…`, "running", activeAgentLabel);
     try {
       const recs = await invoke<ProjectRecommendation[]>("ai_suggest_skills", { project: selectedName });
       const skillRecs = recs.filter((r) => r.source === "automatic-ai-skills" && r.status === "pending");
@@ -3775,7 +3794,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const handleSuggestMcpServers = async () => {
     if (!selectedName || aiMcpLoading) return;
     setAiMcpLoading(true);
-    const entryId = log(`Suggesting MCP servers for "${selectedName}"…`, "running");
+    const entryId = log(`Suggesting MCP servers for "${selectedName}"…`, "running", activeAgentLabel);
     try {
       const recs = await invoke<ProjectRecommendation[]>("ai_suggest_mcp_servers", { project: selectedName });
       const mcpRecs = recs.filter((r) => r.source === "automatic-ai-mcp" && r.status === "pending");
@@ -3919,7 +3938,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       activeProjectFile === "_unified"
         ? (fileInfo?.agents?.join(" & ") ?? "shared instruction file")
         : activeProjectFile;
-    const entryId = log(`Generating instruction file for ${displayLabel}…`, "running");
+    const entryId = log(`Generating instruction file for ${displayLabel}…`, "running", activeAgentLabel);
     try {
       const generated: string = await invoke("ai_generate_instruction", {
         name: selectedName,
@@ -3945,7 +3964,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       activeProjectFile === "_unified"
         ? (fileInfo?.agents?.join(" & ") ?? "shared instruction file")
         : activeProjectFile;
-    const entryId = log(`Updating instruction file for ${displayLabel}…`, "running");
+    const entryId = log(`Updating instruction file for ${displayLabel}…`, "running", activeAgentLabel);
     try {
       const updated: string = await invoke("ai_update_instruction", {
         name: selectedName,

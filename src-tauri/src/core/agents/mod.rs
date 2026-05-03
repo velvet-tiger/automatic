@@ -8,6 +8,7 @@ pub use credential::{AgentCredential, GatewayConfig};
 pub use message::{ContentBlock, NeutralMessage, ToolDef};
 
 use clients::anthropic::AnthropicClient;
+use clients::openai_compat::OpenAiCompatClient;
 
 // ── AgentId ───────────────────────────────────────────────────────────────────
 
@@ -40,21 +41,51 @@ impl std::fmt::Display for AgentId {
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 /// All provider IDs that Automatic recognises for the in-app AI toggle and
-/// credential auto-enable logic.  Subsequent PRs add entries here.
+/// credential auto-enable logic.
 pub fn known_agents() -> Vec<AgentId> {
-    vec![AgentId::new("anthropic")]
+    vec![
+        AgentId::new("anthropic"),
+        AgentId::new("openai"),
+    ]
 }
 
-/// Construct the active agent's client using the supplied API key and optional
-/// gateway config.
+/// Default model ID for the given agent. Used when the caller does not supply
+/// an explicit model and the facade needs a provider-appropriate value.
+pub fn default_model(agent_id: &str) -> &'static str {
+    match agent_id {
+        "openai" => "gpt-4o-mini",
+        _ => "claude-sonnet-4-5",
+    }
+}
+
+/// Curated list of OpenAI models shown in the model picker.
+fn openai_static_models() -> Vec<String> {
+    vec![
+        "gpt-4o".into(),
+        "gpt-4o-mini".into(),
+        "gpt-4-turbo".into(),
+        "gpt-3.5-turbo".into(),
+        "o4-mini".into(),
+        "o3".into(),
+    ]
+}
+
+/// Construct the active agent's client using the supplied agent ID, API key,
+/// and optional gateway config.
 ///
-/// The active agent is determined by `Settings::active_agent`; when not set it
-/// defaults to `"anthropic"`.  For PR 1 only Anthropic is implemented; this
-/// function always returns an `AnthropicClient`.
+/// The active agent ID is determined by `Settings::active_agent`; when not set
+/// it defaults to `"anthropic"`. Each known ID maps to the appropriate client
+/// implementation. Unknown IDs fall back to Anthropic.
 pub fn active_client_with_key(
+    agent_id: &str,
     api_key: impl Into<String>,
     gateway: Option<GatewayConfig>,
 ) -> Box<dyn AgentClientDyn> {
-    // TODO(PR 2+): inspect active_agent setting and instantiate the correct client.
-    Box::new(AnthropicClient::new(api_key, gateway))
+    match agent_id {
+        "openai" => Box::new(
+            OpenAiCompatClient::new(api_key, "https://api.openai.com/v1", vec![], gateway)
+                .with_static_models(openai_static_models()),
+        ),
+        _ => Box::new(AnthropicClient::new(api_key, gateway)),
+    }
 }

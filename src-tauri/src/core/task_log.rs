@@ -20,6 +20,10 @@ pub struct PersistedTaskLogEntry {
     pub timestamp: String,
     pub message: String,
     pub status: String,
+    /// Display label of the Automatic agent that performed the operation
+    /// (e.g. `"Claude"`, `"OpenAI"`). Absent for non-AI entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 // ── File path ─────────────────────────────────────────────────────────────────
