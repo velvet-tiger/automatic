@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Check, Eye, EyeOff, Key, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Eye, EyeOff, Key, Trash2 } from "lucide-react";
 import { AgentIcon } from "../../components/AgentIcon";
 
 /**
@@ -387,16 +387,19 @@ export default function SettingsAgents() {
                 {state.stored && !state.editing && agentModels[agent.provider]?.length > 0 && (
                   <div className="border-t border-border-strong/20 px-3 py-2.5 flex items-center gap-2">
                     <span className="text-[11px] text-text-muted flex-shrink-0">Model</span>
-                    <select
-                      value={selectedModels[agent.provider] ?? ""}
-                      onChange={(e) => persistSelectedModel(agent.provider, e.target.value)}
-                      className="flex-1 text-[12px] text-text-base bg-bg-base border border-border-strong/40 rounded px-2 py-1 focus:outline-none focus:border-brand transition-colors"
-                    >
-                      <option value="">Default</option>
-                      {agentModels[agent.provider]!.map((m) => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
+                    <div className="relative flex-1">
+                      <select
+                        value={selectedModels[agent.provider] ?? ""}
+                        onChange={(e) => persistSelectedModel(agent.provider, e.target.value)}
+                        className="w-full appearance-none text-[12px] text-text-base bg-bg-input border border-border-strong/50 rounded-md px-2.5 pr-7 py-1 focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors"
+                      >
+                        <option value="">Default</option>
+                        {agentModels[agent.provider]!.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-muted" />
+                    </div>
                   </div>
                 )}
 
