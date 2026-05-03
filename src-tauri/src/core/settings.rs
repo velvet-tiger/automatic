@@ -95,10 +95,14 @@ pub struct Settings {
     /// `"anthropic"` is used. Subsequent PRs add additional provider IDs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_agent: Option<String>,
-    /// Per-provider Cloudflare AI Gateway configuration, keyed by provider ID
-    /// (e.g. `"anthropic"`). Providers absent from this map have no gateway.
+    /// Per-agent Cloudflare AI Gateway configuration, keyed by agent ID
+    /// (e.g. `"anthropic"`). Agents absent from this map have no gateway.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub agent_gateways: HashMap<String, GatewayConfig>,
+    /// User-selected model for each agent, keyed by agent ID. When absent for
+    /// an agent, the hardcoded default from `agents::default_model` is used.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub agent_models: HashMap<String, String>,
 }
 
 fn default_analytics_enabled() -> bool {
@@ -121,6 +125,7 @@ impl Default for Settings {
             agent_features_enabled: None,
             active_agent: None,
             agent_gateways: HashMap::new(),
+            agent_models: HashMap::new(),
         }
     }
 }

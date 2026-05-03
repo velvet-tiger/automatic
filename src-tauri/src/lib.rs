@@ -192,6 +192,7 @@ pub fn run() {
             ai_chat,
             ai_chat_with_tools,
             ai_list_models,
+            list_agent_models,
             resolve_author,
             read_profile,
             save_profile,

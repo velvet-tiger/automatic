@@ -18,6 +18,22 @@ pub struct AiMessage {
 
 // ── Toggle + key resolution ───────────────────────────────────────────────────
 
+/// Resolve the model to use for a request against `agent_id`.
+///
+/// Priority:
+///   1. `explicit` — caller-supplied model (e.g. from AI Playground).
+///   2. `Settings::agent_models[agent_id]` — user's saved preference.
+///   3. `agents::default_model(agent_id)` — hardcoded provider default.
+fn resolve_model<'a>(agent_id: &str, explicit: Option<&'a str>) -> String {
+    if let Some(m) = explicit {
+        return m.to_string();
+    }
+    super::settings::read_settings()
+        .ok()
+        .and_then(|s| s.agent_models.get(agent_id).cloned())
+        .unwrap_or_else(|| super::agents::default_model(agent_id).to_string())
+}
+
 /// Resolve the currently configured active agent ID.
 ///
 /// Reads `Settings::active_agent`; defaults to `"anthropic"` when unset so
@@ -120,9 +136,11 @@ pub async fn chat(
     max_tokens: Option<u32>,
 ) -> Result<String, String> {
     let key = resolve_api_key(api_key.as_deref())?;
+    let agent_id = active_agent_id();
+    let model_str = resolve_model(&agent_id, model.as_deref());
     let neutral = ai_messages_to_neutral(&messages);
     active_client(&key)
-        .chat_dyn(&neutral, model.as_deref(), system.as_deref(), max_tokens)
+        .chat_dyn(&neutral, Some(&model_str), system.as_deref(), max_tokens)
         .await
 }
 
@@ -140,9 +158,11 @@ pub async fn chat_structured(
     schema: Value,
 ) -> Result<String, String> {
     let key = resolve_api_key(api_key.as_deref())?;
+    let agent_id = active_agent_id();
+    let model_str = resolve_model(&agent_id, model.as_deref());
     let neutral = ai_messages_to_neutral(&messages);
     active_client(&key)
-        .chat_structured_dyn(&neutral, model.as_deref(), system.as_deref(), max_tokens, &schema)
+        .chat_structured_dyn(&neutral, Some(&model_str), system.as_deref(), max_tokens, &schema)
         .await
 }
 
@@ -221,7 +241,7 @@ async fn chat_with_tools_inner(
     let client = active_client(&key);
 
     let agent_id = active_agent_id();
-    let model_str = model.as_deref().unwrap_or_else(|| super::agents::default_model(&agent_id));
+    let model_str = resolve_model(&agent_id, model.as_deref());
     let tokens = max_tokens.unwrap_or(4096);
     let turn_limit = max_turns_override.unwrap_or(MAX_TOOL_TURNS);
 
@@ -235,7 +255,7 @@ async fn chat_with_tools_inner(
             .send_agentic_turn_dyn(
                 &history,
                 &tool_defs,
-                Some(model_str),
+                Some(model_str.as_str()),
                 system.as_deref(),
                 Some(tokens),
             )

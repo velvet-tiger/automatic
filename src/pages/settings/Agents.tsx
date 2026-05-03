@@ -92,6 +92,10 @@ function defaultKeyState(): KeyState {
 
 export default function SettingsAgents() {
   const [keyStates, setKeyStates] = useState<Record<string, KeyState>>({});
+  /** Cached model lists keyed by provider, loaded on demand when a key is stored. */
+  const [agentModels, setAgentModels] = useState<Record<string, string[]>>({});
+  /** User's selected model per provider, mirrors settings.agent_models. */
+  const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
   /**
    * The master toggle's stored value. `null` means it has never been set
    * explicitly, in which case the effective state follows whether any key is
@@ -125,6 +129,10 @@ export default function SettingsAgents() {
       states[provider] = { ...defaultKeyState(), stored };
     }
     setKeyStates(states);
+    // Pre-load model lists for all configured providers.
+    for (const { provider, stored } of results) {
+      if (stored) loadModelsForProvider(provider);
+    }
   };
 
   const loadSettings = async () => {
@@ -132,11 +140,35 @@ export default function SettingsAgents() {
       const raw = await invoke<{
         agent_features_enabled?: boolean | null;
         active_agent?: string | null;
+        agent_models?: Record<string, string> | null;
       }>("read_settings");
       setEnabledOverride(raw.agent_features_enabled ?? null);
       setActiveAgent(raw.active_agent ?? null);
+      setSelectedModels(raw.agent_models ?? {});
     } catch (e) {
       console.error("Failed to read settings", e);
+    }
+  };
+
+  const loadModelsForProvider = async (provider: string) => {
+    if (agentModels[provider]) return;
+    try {
+      const models = await invoke<string[]>("list_agent_models", { agentId: provider });
+      setAgentModels((prev) => ({ ...prev, [provider]: models }));
+    } catch {
+      // non-fatal — model selector stays hidden
+    }
+  };
+
+  const persistSelectedModel = async (provider: string, model: string) => {
+    try {
+      const raw = await invoke<Record<string, unknown>>("read_settings");
+      const existing = (raw.agent_models as Record<string, string> | undefined) ?? {};
+      raw.agent_models = { ...existing, [provider]: model };
+      await invoke("write_settings", { settings: raw });
+      setSelectedModels((prev) => ({ ...prev, [provider]: model }));
+    } catch (e) {
+      console.error("Failed to save model preference", e);
     }
   };
 
@@ -196,6 +228,7 @@ export default function SettingsAgents() {
       });
       // The backend auto-enables features the first time a key is added.
       await loadSettings();
+      loadModelsForProvider(provider);
       setTimeout(() => updateState(provider, { saveStatus: "idle" }), 2000);
     } catch (e) {
       console.error(`Failed to save API key for ${provider}`, e);
@@ -350,6 +383,22 @@ export default function SettingsAgents() {
                     </div>
                   )}
                 </div>
+
+                {state.stored && !state.editing && agentModels[agent.provider]?.length > 0 && (
+                  <div className="border-t border-border-strong/20 px-3 py-2.5 flex items-center gap-2">
+                    <span className="text-[11px] text-text-muted flex-shrink-0">Model</span>
+                    <select
+                      value={selectedModels[agent.provider] ?? ""}
+                      onChange={(e) => persistSelectedModel(agent.provider, e.target.value)}
+                      className="flex-1 text-[12px] text-text-base bg-bg-base border border-border-strong/40 rounded px-2 py-1 focus:outline-none focus:border-brand transition-colors"
+                    >
+                      <option value="">Default</option>
+                      {agentModels[agent.provider]!.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 {state.saveStatus === "saved" && !state.editing && (
                   <div className="px-3 pb-3">

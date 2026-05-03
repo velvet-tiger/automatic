@@ -57,7 +57,7 @@ pub fn known_agents() -> Vec<AgentId> {
 /// an explicit model and the facade needs a provider-appropriate value.
 pub fn default_model(agent_id: &str) -> &'static str {
     match agent_id {
-        "openai" => "gpt-4o-mini",
+        "openai" => "gpt-5.4",
         "github-models" => "openai/gpt-4.1",
         "zai" => "glm-4.7",
         "opencode-zen" => "claude-sonnet-4-6",
@@ -69,12 +69,21 @@ pub fn default_model(agent_id: &str) -> &'static str {
 /// Curated list of OpenAI models shown in the model picker.
 fn openai_static_models() -> Vec<String> {
     vec![
+        "gpt-5.4".into(),
+        "gpt-5.4-mini".into(),
+        "gpt-5.4-nano".into(),
+        "gpt-5.2".into(),
+        "gpt-5.1".into(),
+        "gpt-5".into(),
+        "gpt-5-mini".into(),
+        "gpt-4.1".into(),
+        "gpt-4.1-mini".into(),
         "gpt-4o".into(),
         "gpt-4o-mini".into(),
-        "gpt-4-turbo".into(),
-        "gpt-3.5-turbo".into(),
         "o4-mini".into(),
         "o3".into(),
+        "o3-mini".into(),
+        "o1".into(),
     ]
 }
 
@@ -186,5 +195,23 @@ pub fn active_client_with_key(
             )
         }
         _ => Box::new(AnthropicClient::new(api_key, gateway)),
+    }
+}
+
+/// Return the curated static model list for any agent without constructing a
+/// client or requiring an API key. Used by the Settings > Agents model picker.
+pub fn agent_static_models(agent_id: &str) -> Vec<String> {
+    match agent_id {
+        "openai" => openai_static_models(),
+        "github-models" => github_models_static_models(),
+        "zai" => zai_static_models(),
+        "opencode-zen" => opencode_zen_static_models(),
+        "workers-ai" => workers_ai_static_models(),
+        _ => vec![
+            "claude-opus-4-7".into(),
+            "claude-sonnet-4-6".into(),
+            "claude-sonnet-4-5".into(),
+            "claude-haiku-4-5".into(),
+        ],
     }
 }
