@@ -45,6 +45,14 @@ const AGENTS: AgentDefinition[] = [
     providerLabel: "GitHub / Copilot",
     placeholder: "ghp_...",
   },
+  {
+    id: "zai",
+    label: "Z.ai",
+    description: "Z.ai's GLM models via the OpenAI-compatible API. Powers file generation, insight generation, recommendations, and the AI Playground.",
+    provider: "zai",
+    providerLabel: "Z.ai",
+    placeholder: "API key",
+  },
 ];
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";

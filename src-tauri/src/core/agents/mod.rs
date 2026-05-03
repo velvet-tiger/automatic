@@ -47,6 +47,7 @@ pub fn known_agents() -> Vec<AgentId> {
         AgentId::new("anthropic"),
         AgentId::new("openai"),
         AgentId::new("github-models"),
+        AgentId::new("zai"),
     ]
 }
 
@@ -56,6 +57,7 @@ pub fn default_model(agent_id: &str) -> &'static str {
     match agent_id {
         "openai" => "gpt-4o-mini",
         "github-models" => "openai/gpt-4.1",
+        "zai" => "glm-4.7",
         _ => "claude-sonnet-4-5",
     }
 }
@@ -69,6 +71,16 @@ fn openai_static_models() -> Vec<String> {
         "gpt-3.5-turbo".into(),
         "o4-mini".into(),
         "o3".into(),
+    ]
+}
+
+/// Curated list of Z.ai models shown in the model picker.
+fn zai_static_models() -> Vec<String> {
+    vec![
+        "glm-4.7".into(),
+        "glm-4-plus".into(),
+        "glm-4-air".into(),
+        "glm-4-flash".into(),
     ]
 }
 
@@ -109,6 +121,10 @@ pub fn active_client_with_key(
                 gateway,
             )
             .with_static_models(github_models_static_models()),
+        ),
+        "zai" => Box::new(
+            OpenAiCompatClient::new(api_key, "https://api.z.ai/api/paas/v4", vec![], gateway)
+                .with_static_models(zai_static_models()),
         ),
         _ => Box::new(AnthropicClient::new(api_key, gateway)),
     }
