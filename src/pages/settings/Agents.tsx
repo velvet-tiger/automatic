@@ -55,6 +55,7 @@ const AGENTS: AgentDefinition[] = [
     provider: "openai",
     providerLabel: "OpenAI",
     placeholder: "sk-...",
+    supportsGateway: true,
   },
   {
     id: "github-models",

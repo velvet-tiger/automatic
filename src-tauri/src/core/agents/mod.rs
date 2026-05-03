@@ -155,7 +155,8 @@ pub fn active_client_with_key(
     match agent_id {
         "openai" => Box::new(
             OpenAiCompatClient::new(api_key, "https://api.openai.com/v1", vec![], gateway)
-                .with_static_models(openai_static_models()),
+                .with_static_models(openai_static_models())
+                .with_gateway_provider("openai"),
         ),
         "github-models" => Box::new(
             OpenAiCompatClient::new(
