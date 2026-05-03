@@ -49,6 +49,7 @@ pub fn known_agents() -> Vec<AgentId> {
         AgentId::new("github-models"),
         AgentId::new("zai"),
         AgentId::new("opencode-zen"),
+        AgentId::new("workers-ai"),
     ]
 }
 
@@ -60,6 +61,7 @@ pub fn default_model(agent_id: &str) -> &'static str {
         "github-models" => "openai/gpt-4.1",
         "zai" => "glm-4.7",
         "opencode-zen" => "claude-sonnet-4-6",
+        "workers-ai" => "@cf/meta/llama-3.1-8b-instruct",
         _ => "claude-sonnet-4-5",
     }
 }
@@ -73,6 +75,21 @@ fn openai_static_models() -> Vec<String> {
         "gpt-3.5-turbo".into(),
         "o4-mini".into(),
         "o3".into(),
+    ]
+}
+
+/// Curated list of Cloudflare Workers AI models shown in the model picker.
+///
+/// Not every Workers AI model supports tool calling. The default
+/// (`@cf/meta/llama-3.1-8b-instruct`) has been validated for the recommendations
+/// tool-loop. Validate any new default before shipping.
+fn workers_ai_static_models() -> Vec<String> {
+    vec![
+        "@cf/meta/llama-3.1-8b-instruct".into(),
+        "@cf/meta/llama-3.3-70b-instruct-fp8-fast".into(),
+        "@cf/google/gemma-3-12b-it".into(),
+        "@cf/mistral/mistral-7b-instruct-v0.1".into(),
+        "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b".into(),
     ]
 }
 
@@ -148,6 +165,26 @@ pub fn active_client_with_key(
             OpenAiCompatClient::new(api_key, "https://opencode.ai/zen/v1", vec![], gateway)
                 .with_static_models(opencode_zen_static_models()),
         ),
+        "workers-ai" => {
+            // Credentials are stored as {"token":"...","account_id":"..."} by the frontend.
+            let raw: String = api_key.into();
+            let (token, account_id) = serde_json::from_str::<serde_json::Value>(&raw)
+                .ok()
+                .and_then(|v| {
+                    let t = v.get("token")?.as_str()?.to_string();
+                    let a = v.get("account_id")?.as_str()?.to_string();
+                    Some((t, a))
+                })
+                .unwrap_or_else(|| (raw, String::new()));
+            let base_url = format!(
+                "https://api.cloudflare.com/client/v4/accounts/{}/ai/v1",
+                account_id
+            );
+            Box::new(
+                OpenAiCompatClient::new(token, base_url, vec![], gateway)
+                    .with_static_models(workers_ai_static_models()),
+            )
+        }
         _ => Box::new(AnthropicClient::new(api_key, gateway)),
     }
 }

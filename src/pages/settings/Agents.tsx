@@ -18,6 +18,8 @@ interface AgentDefinition {
   provider: string;
   providerLabel: string;
   placeholder: string;
+  /** When present, the credential card renders a second input for account ID. */
+  accountIdPlaceholder?: string;
 }
 
 const AGENTS: AgentDefinition[] = [
@@ -61,6 +63,15 @@ const AGENTS: AgentDefinition[] = [
     providerLabel: "OpenCode",
     placeholder: "API key",
   },
+  {
+    id: "workers-ai",
+    label: "Workers AI",
+    description: "Cloudflare Workers AI models via the OpenAI-compatible API. Powers file generation, insight generation, recommendations, and the AI Playground.",
+    provider: "workers-ai",
+    providerLabel: "Cloudflare",
+    placeholder: "Bearer token",
+    accountIdPlaceholder: "Account ID",
+  },
 ];
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -68,13 +79,15 @@ type SaveStatus = "idle" | "saving" | "saved" | "error";
 interface KeyState {
   stored: boolean;
   inputValue: string;
+  /** Second input value — used for account ID on TokenAndAccount providers (e.g. Workers AI). */
+  inputValue2: string;
   editing: boolean;
   revealed: boolean;
   saveStatus: SaveStatus;
 }
 
 function defaultKeyState(): KeyState {
-  return { stored: false, inputValue: "", editing: false, revealed: false, saveStatus: "idle" };
+  return { stored: false, inputValue: "", inputValue2: "", editing: false, revealed: false, saveStatus: "idle" };
 }
 
 export default function SettingsAgents() {
@@ -163,13 +176,20 @@ export default function SettingsAgents() {
 
   const saveKey = async (provider: string) => {
     const state = keyStates[provider];
+    const agent = AGENTS.find((a) => a.provider === provider);
+    const isTokenAndAccount = !!agent?.accountIdPlaceholder;
     if (!state || !state.inputValue.trim()) return;
+    if (isTokenAndAccount && !state.inputValue2.trim()) return;
     updateState(provider, { saveStatus: "saving" });
+    const key = isTokenAndAccount
+      ? JSON.stringify({ token: state.inputValue.trim(), account_id: state.inputValue2.trim() })
+      : state.inputValue.trim();
     try {
-      await invoke("save_api_key", { provider, key: state.inputValue.trim() });
+      await invoke("save_api_key", { provider, key });
       updateState(provider, {
         stored: true,
         inputValue: "",
+        inputValue2: "",
         editing: false,
         revealed: false,
         saveStatus: "saved",
@@ -190,6 +210,7 @@ export default function SettingsAgents() {
       updateState(provider, {
         stored: false,
         inputValue: "",
+        inputValue2: "",
         editing: false,
         revealed: false,
         saveStatus: "idle",
@@ -312,7 +333,7 @@ export default function SettingsAgents() {
                   {!state.editing && (
                     <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => updateState(agent.provider, { editing: true, inputValue: "", revealed: false })}
+                        onClick={() => updateState(agent.provider, { editing: true, inputValue: "", inputValue2: "", revealed: false })}
                         className="px-2.5 py-1 text-[11px] font-medium rounded border border-brand/50 text-brand hover:border-brand hover:bg-brand/15 transition-all"
                       >
                         {state.stored ? "Update" : "Add Key"}
@@ -343,45 +364,77 @@ export default function SettingsAgents() {
 
                 {state.editing && (
                   <div className="border-t border-border-strong/30 px-3 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 relative">
-                        <input
-                          type={state.revealed ? "text" : "password"}
-                          value={state.inputValue}
-                          onChange={(e) => updateState(agent.provider, { inputValue: e.target.value })}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && state.inputValue.trim()) saveKey(agent.provider);
-                            if (e.key === "Escape") updateState(agent.provider, { editing: false, inputValue: "", revealed: false });
-                          }}
-                          placeholder={agent.placeholder}
-                          autoFocus
-                          className="w-full text-[13px] text-text-base font-mono bg-bg-base border border-border-strong/40 rounded px-3 py-2 pr-9 focus:outline-none focus:border-brand transition-colors"
-                        />
-                        <button
-                          onClick={() => updateState(agent.provider, { revealed: !state.revealed })}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
-                          title={state.revealed ? "Hide" : "Reveal"}
-                          type="button"
-                        >
-                          {state.revealed ? <EyeOff size={13} /> : <Eye size={13} />}
-                        </button>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 relative">
+                          <input
+                            type={state.revealed ? "text" : "password"}
+                            value={state.inputValue}
+                            onChange={(e) => updateState(agent.provider, { inputValue: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") updateState(agent.provider, { editing: false, inputValue: "", inputValue2: "", revealed: false });
+                            }}
+                            placeholder={agent.placeholder}
+                            autoFocus
+                            className="w-full text-[13px] text-text-base font-mono bg-bg-base border border-border-strong/40 rounded px-3 py-2 pr-9 focus:outline-none focus:border-brand transition-colors"
+                          />
+                          <button
+                            onClick={() => updateState(agent.provider, { revealed: !state.revealed })}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
+                            title={state.revealed ? "Hide" : "Reveal"}
+                            type="button"
+                          >
+                            {state.revealed ? <EyeOff size={13} /> : <Eye size={13} />}
+                          </button>
+                        </div>
+                        {!agent.accountIdPlaceholder && (
+                          <>
+                            <button
+                              onClick={() => saveKey(agent.provider)}
+                              disabled={!state.inputValue.trim() || state.saveStatus === "saving"}
+                              className="px-3 py-2 text-[12px] font-medium rounded bg-brand text-white hover:bg-brand-active disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              {state.saveStatus === "saving" ? "Saving..." : "Save"}
+                            </button>
+                            <button
+                              onClick={() => updateState(agent.provider, { editing: false, inputValue: "", inputValue2: "", revealed: false })}
+                              className="px-2 py-2 text-[12px] text-text-muted hover:text-text-base transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        )}
                       </div>
-                      <button
-                        onClick={() => saveKey(agent.provider)}
-                        disabled={!state.inputValue.trim() || state.saveStatus === "saving"}
-                        className="px-3 py-2 text-[12px] font-medium rounded bg-brand text-white hover:bg-brand-active disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {state.saveStatus === "saving" ? "Saving..." : "Save"}
-                      </button>
-                      <button
-                        onClick={() => updateState(agent.provider, { editing: false, inputValue: "", revealed: false })}
-                        className="px-2 py-2 text-[12px] text-text-muted hover:text-text-base transition-colors"
-                      >
-                        Cancel
-                      </button>
+                      {agent.accountIdPlaceholder && (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={state.inputValue2}
+                            onChange={(e) => updateState(agent.provider, { inputValue2: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") updateState(agent.provider, { editing: false, inputValue: "", inputValue2: "", revealed: false });
+                            }}
+                            placeholder={agent.accountIdPlaceholder}
+                            className="flex-1 text-[13px] text-text-base font-mono bg-bg-base border border-border-strong/40 rounded px-3 py-2 focus:outline-none focus:border-brand transition-colors"
+                          />
+                          <button
+                            onClick={() => saveKey(agent.provider)}
+                            disabled={!state.inputValue.trim() || !state.inputValue2.trim() || state.saveStatus === "saving"}
+                            className="px-3 py-2 text-[12px] font-medium rounded bg-brand text-white hover:bg-brand-active disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {state.saveStatus === "saving" ? "Saving..." : "Save"}
+                          </button>
+                          <button
+                            onClick={() => updateState(agent.provider, { editing: false, inputValue: "", inputValue2: "", revealed: false })}
+                            className="px-2 py-2 text-[12px] text-text-muted hover:text-text-base transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <p className="text-[11px] text-text-muted mt-2 leading-relaxed">
-                      Your key is stored in the OS keychain and never written to disk.
+                      Your credentials are stored in the OS keychain and never written to disk.
                     </p>
                   </div>
                 )}
