@@ -4,6 +4,25 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-05-03
+
+### Added
+
+- Add multi-agent abstraction layer and active agent selector. (`da5fb26`)
+- Add OpenAI provider and agent label in task log. (`dd81a08`)
+- Add GitHub Models provider. (`439b71d`)
+- Add Z.ai provider. (`5c310fc`)
+- Add OpenCode Zen provider. (`9797846`)
+- Add Cloudflare Workers AI provider. (`11d02ab`)
+- Per-agent model selection in Settings and updated OpenAI model list. (`a6dafde`)
+- Add Cloudflare AI Gateway routing for Anthropic and Workers AI. (`8eb5b34`)
+- Extend AI Gateway support to OpenAI. (`a18c17a`)
+
+### Fixed
+
+- Show all agents in active agent selector; use codex icon for OpenAI. (`61b0de0`)
+- Style model selector dropdown to match app UI. (`c000d25`)
+
 ## [1.5.2] - 2026-05-02
 
 ### Added
