@@ -13,6 +13,7 @@ const AGENT_LOGO_MAP: Record<string, string> = {
   claude: "claude-code",
   cursor: "cursor",
   copilot: "copilot",
+  "github-models": "copilot",
   kilo: "kilo",
   cline: "cline",
   kiro: "kiro-cli",

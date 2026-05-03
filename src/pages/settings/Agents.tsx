@@ -37,6 +37,14 @@ const AGENTS: AgentDefinition[] = [
     providerLabel: "OpenAI",
     placeholder: "sk-...",
   },
+  {
+    id: "github-models",
+    label: "GitHub Models",
+    description: "OpenAI-compatible models hosted by GitHub via GitHub Copilot. Supports GPT-4.1 and other models for file generation, insight generation, recommendations, and the AI Playground.",
+    provider: "github-models",
+    providerLabel: "GitHub / Copilot",
+    placeholder: "ghp_...",
+  },
 ];
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";

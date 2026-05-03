@@ -46,6 +46,7 @@ pub fn known_agents() -> Vec<AgentId> {
     vec![
         AgentId::new("anthropic"),
         AgentId::new("openai"),
+        AgentId::new("github-models"),
     ]
 }
 
@@ -54,6 +55,7 @@ pub fn known_agents() -> Vec<AgentId> {
 pub fn default_model(agent_id: &str) -> &'static str {
     match agent_id {
         "openai" => "gpt-4o-mini",
+        "github-models" => "openai/gpt-4.1",
         _ => "claude-sonnet-4-5",
     }
 }
@@ -67,6 +69,19 @@ fn openai_static_models() -> Vec<String> {
         "gpt-3.5-turbo".into(),
         "o4-mini".into(),
         "o3".into(),
+    ]
+}
+
+/// Curated list of GitHub Models shown in the model picker.
+fn github_models_static_models() -> Vec<String> {
+    vec![
+        "openai/gpt-4.1".into(),
+        "openai/gpt-4o".into(),
+        "openai/gpt-4o-mini".into(),
+        "openai/o4-mini".into(),
+        "openai/o3".into(),
+        "meta/llama-3.3-70b-instruct".into(),
+        "mistral-ai/mistral-large-2411".into(),
     ]
 }
 
@@ -85,6 +100,15 @@ pub fn active_client_with_key(
         "openai" => Box::new(
             OpenAiCompatClient::new(api_key, "https://api.openai.com/v1", vec![], gateway)
                 .with_static_models(openai_static_models()),
+        ),
+        "github-models" => Box::new(
+            OpenAiCompatClient::new(
+                api_key,
+                "https://models.github.ai/inference",
+                vec![("X-GitHub-Api-Version".to_string(), "2026-03-10".to_string())],
+                gateway,
+            )
+            .with_static_models(github_models_static_models()),
         ),
         _ => Box::new(AnthropicClient::new(api_key, gateway)),
     }
