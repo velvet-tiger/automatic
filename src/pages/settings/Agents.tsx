@@ -53,6 +53,14 @@ const AGENTS: AgentDefinition[] = [
     providerLabel: "Z.ai",
     placeholder: "API key",
   },
+  {
+    id: "opencode-zen",
+    label: "OpenCode Zen",
+    description: "OpenCode Zen aggregates models from Anthropic, OpenAI, Google, and others under a single API key. Powers file generation, insight generation, recommendations, and the AI Playground.",
+    provider: "opencode-zen",
+    providerLabel: "OpenCode",
+    placeholder: "API key",
+  },
 ];
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";

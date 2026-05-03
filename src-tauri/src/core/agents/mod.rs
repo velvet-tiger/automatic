@@ -48,6 +48,7 @@ pub fn known_agents() -> Vec<AgentId> {
         AgentId::new("openai"),
         AgentId::new("github-models"),
         AgentId::new("zai"),
+        AgentId::new("opencode-zen"),
     ]
 }
 
@@ -58,6 +59,7 @@ pub fn default_model(agent_id: &str) -> &'static str {
         "openai" => "gpt-4o-mini",
         "github-models" => "openai/gpt-4.1",
         "zai" => "glm-4.7",
+        "opencode-zen" => "claude-sonnet-4-6",
         _ => "claude-sonnet-4-5",
     }
 }
@@ -81,6 +83,22 @@ fn zai_static_models() -> Vec<String> {
         "glm-4-plus".into(),
         "glm-4-air".into(),
         "glm-4-flash".into(),
+    ]
+}
+
+/// Curated model list for OpenCode Zen. Zen is an aggregator — it proxies
+/// requests to Anthropic, OpenAI, Google, and others under a single key.
+fn opencode_zen_static_models() -> Vec<String> {
+    vec![
+        "claude-sonnet-4-6".into(),
+        "claude-opus-4-7".into(),
+        "claude-haiku-4-5".into(),
+        "gpt-5.5".into(),
+        "gpt-5.4-mini".into(),
+        "gemini-3.1-pro".into(),
+        "gemini-3-flash".into(),
+        "kimi-k2.6".into(),
+        "qwen3.6-plus".into(),
     ]
 }
 
@@ -125,6 +143,10 @@ pub fn active_client_with_key(
         "zai" => Box::new(
             OpenAiCompatClient::new(api_key, "https://api.z.ai/api/paas/v4", vec![], gateway)
                 .with_static_models(zai_static_models()),
+        ),
+        "opencode-zen" => Box::new(
+            OpenAiCompatClient::new(api_key, "https://opencode.ai/zen/v1", vec![], gateway)
+                .with_static_models(opencode_zen_static_models()),
         ),
         _ => Box::new(AnthropicClient::new(api_key, gateway)),
     }

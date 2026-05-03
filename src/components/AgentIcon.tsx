@@ -14,6 +14,7 @@ const AGENT_LOGO_MAP: Record<string, string> = {
   cursor: "cursor",
   copilot: "copilot",
   "github-models": "copilot",
+  "opencode-zen": "opencode",
   kilo: "kilo",
   cline: "cline",
   kiro: "kiro-cli",
