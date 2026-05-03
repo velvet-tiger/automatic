@@ -191,7 +191,8 @@ pub fn active_client_with_key(
             );
             Box::new(
                 OpenAiCompatClient::new(token, base_url, vec![], gateway)
-                    .with_static_models(workers_ai_static_models()),
+                    .with_static_models(workers_ai_static_models())
+                    .with_gateway_provider("workers-ai/v1"),
             )
         }
         _ => Box::new(AnthropicClient::new(api_key, gateway)),

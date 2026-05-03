@@ -29,6 +29,14 @@ pub struct OpenAiCompatClient {
     /// Curated model list returned by `list_models`. When empty, `list_models`
     /// returns an empty vec (providers with no static list or a live endpoint).
     static_models: Vec<String>,
+    /// Provider path segment for Cloudflare AI Gateway URL construction.
+    ///
+    /// When `Some` and a `gateway` is configured, requests are routed through:
+    /// `https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/{segment}/chat/completions`
+    ///
+    /// Examples: `"openai"` for OpenAI, `"workers-ai/v1"` for Workers AI.
+    /// `None` means gateway URL rewriting is disabled for this client.
+    gateway_provider_segment: Option<String>,
 }
 
 impl OpenAiCompatClient {
@@ -44,6 +52,7 @@ impl OpenAiCompatClient {
             extra_headers,
             gateway,
             static_models: vec![],
+            gateway_provider_segment: None,
         }
     }
 
@@ -53,16 +62,11 @@ impl OpenAiCompatClient {
         self
     }
 
-    #[allow(dead_code)]
-    fn effective_base_url(&self, provider_segment: &str) -> String {
-        if let Some(gw) = &self.gateway {
-            format!(
-                "https://gateway.ai.cloudflare.com/v1/{}/{}/{}",
-                gw.account_id, gw.gateway_id, provider_segment
-            )
-        } else {
-            self.base_url.clone()
-        }
+    /// Set the Cloudflare AI Gateway provider path segment, enabling gateway
+    /// URL rewriting when a `GatewayConfig` is also present.
+    pub fn with_gateway_provider(mut self, segment: impl Into<String>) -> Self {
+        self.gateway_provider_segment = Some(segment.into());
+        self
     }
 
     fn client(&self) -> reqwest::Client {
@@ -87,8 +91,19 @@ impl OpenAiCompatClient {
         req
     }
 
+    fn effective_base_url(&self) -> String {
+        if let (Some(gw), Some(segment)) = (&self.gateway, &self.gateway_provider_segment) {
+            format!(
+                "https://gateway.ai.cloudflare.com/v1/{}/{}/{}",
+                gw.account_id, gw.gateway_id, segment
+            )
+        } else {
+            self.base_url.clone()
+        }
+    }
+
     async fn send_chat_request(&self, body: &Value) -> Result<(u16, String), String> {
-        let url = format!("{}/chat/completions", self.base_url);
+        let url = format!("{}/chat/completions", self.effective_base_url());
         let response = self
             .auth_request(self.client().post(&url))
             .json(body)

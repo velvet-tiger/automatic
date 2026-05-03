@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Check, ChevronDown, Eye, EyeOff, Key, Trash2 } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Key, Trash2 } from "lucide-react";
 import { AgentIcon } from "../../components/AgentIcon";
 
 /**
@@ -20,6 +20,22 @@ interface AgentDefinition {
   placeholder: string;
   /** When present, the credential card renders a second input for account ID. */
   accountIdPlaceholder?: string;
+  /** When true, the card shows a Cloudflare AI Gateway configuration section. */
+  supportsGateway?: boolean;
+}
+
+interface GatewayConfig {
+  account_id: string;
+  gateway_id: string;
+  cf_token?: string;
+}
+
+interface GatewayFormState {
+  expanded: boolean;
+  accountId: string;
+  gatewayId: string;
+  cfToken: string;
+  saveStatus: "idle" | "saving" | "saved" | "error";
 }
 
 const AGENTS: AgentDefinition[] = [
@@ -30,6 +46,7 @@ const AGENTS: AgentDefinition[] = [
     provider: "anthropic",
     providerLabel: "Anthropic",
     placeholder: "sk-ant-...",
+    supportsGateway: true,
   },
   {
     id: "openai",
@@ -71,6 +88,7 @@ const AGENTS: AgentDefinition[] = [
     providerLabel: "Cloudflare",
     placeholder: "Bearer token",
     accountIdPlaceholder: "Account ID",
+    supportsGateway: true,
   },
 ];
 
@@ -107,6 +125,10 @@ export default function SettingsAgents() {
    * effective active agent defaults to `"anthropic"` in that case.
    */
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
+  /** Gateway configs loaded from settings, keyed by provider. */
+  const [savedGateways, setSavedGateways] = useState<Record<string, GatewayConfig>>({});
+  /** Per-provider gateway form state (only relevant for supportsGateway agents). */
+  const [gatewayStates, setGatewayStates] = useState<Record<string, GatewayFormState>>({});
 
   useEffect(() => {
     loadKeyStatus();
@@ -141,10 +163,28 @@ export default function SettingsAgents() {
         agent_features_enabled?: boolean | null;
         active_agent?: string | null;
         agent_models?: Record<string, string> | null;
+        agent_gateways?: Record<string, GatewayConfig> | null;
       }>("read_settings");
       setEnabledOverride(raw.agent_features_enabled ?? null);
       setActiveAgent(raw.active_agent ?? null);
       setSelectedModels(raw.agent_models ?? {});
+      const gateways = raw.agent_gateways ?? {};
+      setSavedGateways(gateways);
+      // Pre-fill gateway form state from saved configs.
+      setGatewayStates((prev) => {
+        const next = { ...prev };
+        for (const provider of Object.keys(gateways)) {
+          const saved = gateways[provider];
+          next[provider] = {
+            expanded: false,
+            accountId: saved.account_id,
+            gatewayId: saved.gateway_id,
+            cfToken: saved.cf_token ?? "",
+            saveStatus: "idle",
+          };
+        }
+        return next;
+      });
     } catch (e) {
       console.error("Failed to read settings", e);
     }
@@ -191,6 +231,66 @@ export default function SettingsAgents() {
       setActiveAgent(agentId);
     } catch (e) {
       console.error("Failed to write active_agent", e);
+    }
+  };
+
+  const defaultGatewayState = (): GatewayFormState => ({
+    expanded: false,
+    accountId: "",
+    gatewayId: "",
+    cfToken: "",
+    saveStatus: "idle",
+  });
+
+  const updateGatewayState = (provider: string, patch: Partial<GatewayFormState>) => {
+    setGatewayStates((prev) => ({
+      ...prev,
+      [provider]: { ...(prev[provider] ?? defaultGatewayState()), ...patch },
+    }));
+  };
+
+  const saveGateway = async (provider: string) => {
+    const gs = gatewayStates[provider];
+    if (!gs || !gs.accountId.trim() || !gs.gatewayId.trim()) return;
+    updateGatewayState(provider, { saveStatus: "saving" });
+    try {
+      const raw = await invoke<Record<string, unknown>>("read_settings");
+      const existing = (raw.agent_gateways as Record<string, GatewayConfig> | undefined) ?? {};
+      const config: GatewayConfig = {
+        account_id: gs.accountId.trim(),
+        gateway_id: gs.gatewayId.trim(),
+        ...(gs.cfToken.trim() ? { cf_token: gs.cfToken.trim() } : {}),
+      };
+      raw.agent_gateways = { ...existing, [provider]: config };
+      await invoke("write_settings", { settings: raw });
+      setSavedGateways((prev) => ({ ...prev, [provider]: config }));
+      updateGatewayState(provider, { saveStatus: "saved", expanded: false });
+      setTimeout(() => updateGatewayState(provider, { saveStatus: "idle" }), 2000);
+    } catch (e) {
+      console.error("Failed to save gateway config", e);
+      updateGatewayState(provider, { saveStatus: "error" });
+      setTimeout(() => updateGatewayState(provider, { saveStatus: "idle" }), 3000);
+    }
+  };
+
+  const clearGateway = async (provider: string) => {
+    try {
+      const raw = await invoke<Record<string, unknown>>("read_settings");
+      const existing = { ...((raw.agent_gateways as Record<string, GatewayConfig> | undefined) ?? {}) };
+      delete existing[provider];
+      raw.agent_gateways = existing;
+      await invoke("write_settings", { settings: raw });
+      setSavedGateways((prev) => {
+        const next = { ...prev };
+        delete next[provider];
+        return next;
+      });
+      setGatewayStates((prev) => ({
+        ...prev,
+        [provider]: defaultGatewayState(),
+      }));
+    } catch (e) {
+      console.error("Failed to clear gateway config", e);
     }
   };
 
@@ -402,6 +502,84 @@ export default function SettingsAgents() {
                     </div>
                   </div>
                 )}
+
+                {agent.supportsGateway && state.stored && !state.editing && (() => {
+                  const gs = gatewayStates[agent.provider] ?? defaultGatewayState();
+                  const saved = savedGateways[agent.provider];
+                  return (
+                    <div className="border-t border-border-strong/20">
+                      <button
+                        onClick={() => updateGatewayState(agent.provider, { expanded: !gs.expanded })}
+                        className="flex items-center gap-2 w-full px-3 py-2.5 text-left hover:bg-surface-hover transition-colors"
+                      >
+                        {gs.expanded
+                          ? <ChevronDown size={11} className="text-text-muted flex-shrink-0" />
+                          : <ChevronRight size={11} className="text-text-muted flex-shrink-0" />
+                        }
+                        <span className="text-[11px] text-text-muted flex-1">Cloudflare AI Gateway</span>
+                        {saved ? (
+                          <span className="text-[11px] text-success font-medium">Active</span>
+                        ) : (
+                          <span className="text-[11px] text-text-muted">Off</span>
+                        )}
+                      </button>
+                      {gs.expanded && (
+                        <div className="px-3 pb-3 space-y-2">
+                          <input
+                            type="text"
+                            value={gs.accountId}
+                            onChange={(e) => updateGatewayState(agent.provider, { accountId: e.target.value })}
+                            placeholder="Account ID"
+                            className="w-full text-[12px] text-text-base bg-bg-base border border-border-strong/40 rounded px-3 py-2 focus:outline-none focus:border-brand transition-colors"
+                          />
+                          <input
+                            type="text"
+                            value={gs.gatewayId}
+                            onChange={(e) => updateGatewayState(agent.provider, { gatewayId: e.target.value })}
+                            placeholder="Gateway ID"
+                            className="w-full text-[12px] text-text-base bg-bg-base border border-border-strong/40 rounded px-3 py-2 focus:outline-none focus:border-brand transition-colors"
+                          />
+                          <input
+                            type="text"
+                            value={gs.cfToken}
+                            onChange={(e) => updateGatewayState(agent.provider, { cfToken: e.target.value })}
+                            placeholder="CF AIG Token (optional)"
+                            className="w-full text-[12px] text-text-base bg-bg-base border border-border-strong/40 rounded px-3 py-2 focus:outline-none focus:border-brand transition-colors"
+                          />
+                          <div className="flex items-center gap-2 pt-1">
+                            <button
+                              onClick={() => saveGateway(agent.provider)}
+                              disabled={!gs.accountId.trim() || !gs.gatewayId.trim() || gs.saveStatus === "saving"}
+                              className="px-3 py-1.5 text-[11px] font-medium rounded bg-brand text-white hover:bg-brand-active disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              {gs.saveStatus === "saving" ? "Saving..." : "Save"}
+                            </button>
+                            {saved && (
+                              <button
+                                onClick={() => clearGateway(agent.provider)}
+                                className="px-3 py-1.5 text-[11px] font-medium rounded border border-danger/50 text-danger hover:border-danger hover:bg-danger/10 transition-all"
+                              >
+                                Clear
+                              </button>
+                            )}
+                            <button
+                              onClick={() => updateGatewayState(agent.provider, { expanded: false })}
+                              className="px-2 py-1.5 text-[11px] text-text-muted hover:text-text-base transition-colors"
+                            >
+                              Cancel
+                            </button>
+                            {gs.saveStatus === "saved" && (
+                              <span className="text-[11px] text-success">Saved</span>
+                            )}
+                            {gs.saveStatus === "error" && (
+                              <span className="text-[11px] text-danger">Failed to save</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {state.saveStatus === "saved" && !state.editing && (
                   <div className="px-3 pb-3">
