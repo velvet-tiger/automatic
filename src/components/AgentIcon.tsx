@@ -23,6 +23,7 @@ const AGENT_LOGO_MAP: Record<string, string> = {
   droid: "droid",
   goose: "goose",
   codex: "codex",
+  openai: "codex",
   opencode: "opencode",
   zed: "zed",
 };

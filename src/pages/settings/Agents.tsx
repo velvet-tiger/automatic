@@ -152,7 +152,6 @@ export default function SettingsAgents() {
   const anyKeyStored = AGENTS.some((a) => keyStates[a.provider]?.stored);
   const featuresEnabled = enabledOverride ?? anyKeyStored;
 
-  const configuredAgents = AGENTS.filter((a) => keyStates[a.provider]?.stored);
   const effectiveActiveAgent = activeAgent ?? "anthropic";
 
   const updateState = (provider: string, patch: Partial<KeyState>) => {
@@ -246,20 +245,24 @@ export default function SettingsAgents() {
             Active agent
           </label>
           <div className="rounded-lg border border-border-strong/40 bg-bg-input overflow-hidden divide-y divide-border-strong/20">
-            {configuredAgents.map((agent) => {
+            {AGENTS.map((agent) => {
               const isActive = effectiveActiveAgent === agent.provider;
+              const hasKey = keyStates[agent.provider]?.stored ?? false;
               return (
                 <button
                   key={agent.id}
-                  onClick={() => persistActiveAgent(agent.provider)}
+                  onClick={() => hasKey ? persistActiveAgent(agent.provider) : undefined}
+                  disabled={!hasKey}
                   className={`flex items-center gap-3 w-full px-3 py-2.5 text-left transition-colors ${
-                    isActive ? "bg-brand/10" : "hover:bg-surface-hover"
+                    isActive ? "bg-brand/10" : hasKey ? "hover:bg-surface-hover" : "opacity-40 cursor-default"
                   }`}
                 >
                   <AgentIcon agentId={agent.id} size={18} />
                   <div className="flex-1 min-w-0">
                     <div className="text-[13px] font-medium text-text-base">{agent.label}</div>
-                    <div className="text-[11px] text-text-muted">{agent.providerLabel}</div>
+                    <div className="text-[11px] text-text-muted">
+                      {hasKey ? agent.providerLabel : "No key configured"}
+                    </div>
                   </div>
                   <div
                     className={`w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 transition-colors ${
