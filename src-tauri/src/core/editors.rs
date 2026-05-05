@@ -39,6 +39,17 @@ pub fn check_installed_editors() -> Vec<EditorInfo> {
             // Finder is always available on macOS
             installed: cfg!(target_os = "macos"),
         },
+        // ── AI Coding Agents (desktop apps) ─────────────────────────────
+        EditorInfo {
+            id: "claude".into(),
+            label: "Claude".into(),
+            installed: app_installed("/Applications/Claude.app", None),
+        },
+        EditorInfo {
+            id: "codex".into(),
+            label: "Codex".into(),
+            installed: app_installed("/Applications/Codex.app", None),
+        },
         EditorInfo {
             id: "vscode".into(),
             label: "VS Code".into(),
@@ -136,6 +147,23 @@ pub fn open_in_editor(editor_id: &str, path: &str) -> Result<(), String> {
                 .map_err(|e| format!("Failed to open Finder: {}", e))?;
             return Ok(());
         }
+        // ── AI Coding Agents (desktop apps) ─────────────────────────────
+        "claude" => {
+            // Claude Desktop accepts a directory via its `claude://` URL scheme.
+            // The user is shown a confirmation dialog inside Claude before the
+            // folder is adopted as the working directory — that is built into
+            // the app and cannot be bypassed from here.
+            let encoded = urlencoding::encode(path);
+            let url = format!("claude://code/new?folder={}", encoded);
+            std::process::Command::new("open")
+                .arg(&url)
+                .spawn()
+                .map_err(|e| format!("Failed to open Claude: {}", e))?;
+            return Ok(());
+        }
+        "codex" => std::process::Command::new("open")
+            .args(["-a", "Codex", path])
+            .spawn(),
         "vscode" => {
             // Prefer the CLI; fall back to `open -a`
             if which_available("code") {
@@ -283,6 +311,8 @@ pub fn open_in_editor(editor_id: &str, path: &str) -> Result<(), String> {
 pub fn get_editor_icon(editor_id: &str) -> Result<String, String> {
     let icns_path: &str = match editor_id {
         "finder" => "/System/Library/CoreServices/Finder.app/Contents/Resources/Finder.icns",
+        "claude" => "/Applications/Claude.app/Contents/Resources/electron.icns",
+        "codex" => "/Applications/Codex.app/Contents/Resources/electron.icns",
         "vscode" => "/Applications/Visual Studio Code.app/Contents/Resources/Code.icns",
         "cursor" => "/Applications/Cursor.app/Contents/Resources/Cursor.icns",
         "zed" => "/Applications/Zed.app/Contents/Resources/Zed.icns",
