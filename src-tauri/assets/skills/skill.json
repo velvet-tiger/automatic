@@ -105,6 +105,13 @@
       "description": "Create and maintain Automatic remote source packages — automatic.json manifests, skill.json references, collections, badges, and directory structure for publishing resources via git repositories.",
       "category": "development",
       "tags": ["automatic", "remote-sources", "packaging", "manifest", "skill-json", "publishing"]
+    },
+    {
+      "name": "claude-4-7",
+      "path": "./claude-4-7",
+      "description": "Voice, intellectual honesty, and collaboration patterns for Claude 4.7. Show reasoning as a shared path, bring your actual voice, and hold your views under pressure. Use as the default posture for substantive back-and-forth work.",
+      "category": "development",
+      "tags": ["claude", "voice", "collaboration", "reasoning", "behaviour"]
     }
   ]
 }
