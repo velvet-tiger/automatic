@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-05-06
+
+### Added
+
+- Add Claude and Codex desktop apps to the project "Open in" menu. (`45e8db3`)
+
 ## [1.6.0] - 2026-05-03
 
 ### Added
