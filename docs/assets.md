@@ -73,7 +73,7 @@ Reusable, named command definitions that a project or agent can invoke as a shor
 Model Context Protocol server configurations that connect agents to external services.
 
 - **Shape** — a JSON configuration entry (command, args, env, transport).
-- **Source locations** — curated registry in `src-tauri/featured-mcp-servers.json`, user library, or remote-source manifests.
+- **Source locations** — curated registry in `src-tauri/assets/discover/featured-mcp-servers.json`, user library, or remote-source manifests.
 - **Sync** — merged into each supported agent tool's MCP configuration file.
 
 ### Collections

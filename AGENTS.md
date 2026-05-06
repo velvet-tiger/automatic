@@ -71,7 +71,7 @@ npm run tauri [cmd]     # Direct Tauri CLI access
 - `src-tauri/assets/subagents/` — Agent-specific templates and config structures
 - `src-tauri/assets/templates/` — Markdown templates (Agent Project Brief, Session Context)
 - `src-tauri/languages/` — Language-specific module definitions (.mod files)
-- `src-tauri/featured-mcp-servers.json` — Curated MCP server registry
+- `src-tauri/assets/discover/featured-mcp-servers.json` — Curated MCP server registry
 - `src-tauri/collections.json` — Skill/server collection definitions
 
 **User Data Storage:**
