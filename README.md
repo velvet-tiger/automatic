@@ -1,6 +1,6 @@
 # Automatic
 
-Manage and sync your skills, MCP servers, rules, and project instructions. Works with Claude Code, Codex, Cursor, and 13 other agent tools.
+Manage and sync your skills, MCP servers, rules, and project instructions. Works with Claude Code, Codex, Cursor, and 12 other agent tools.
 
 <p>
   <a href="https://tryautomatic.app">Website</a>
@@ -129,7 +129,7 @@ Browse, search, and install community resources:
 
 ### Project Sync
 
-- Sync configuration into 16 supported agent tools with one click
+- Sync configuration into 15 supported agent tools with one click
 - Auto-detect installed agents and import their existing MCP server configs
 - Detect configuration drift when on-disk files diverge from saved state
 - Rebuild or recover configuration when drift is detected
@@ -180,28 +180,31 @@ Run the MCP server standalone with `automatic mcp-serve` or let the desktop app 
 
 ## Supported Agent Tools
 
-Automatic syncs configuration into 16 agent tools:
+Automatic syncs configuration into 15 agent tools. The matrix below reflects what each tool's configuration format actually supports — `✓` means Automatic writes that surface, `—` means the tool does not expose it (or manages it through a separate global config Automatic does not own).
 
-| Tool | Sync Support |
-|---|---|
-| Claude Code | Skills, MCP servers, rules, project instructions |
-| Cursor | MCP servers, rules |
-| Codex CLI | MCP servers, rules |
-| Cline | MCP servers, rules |
-| GitHub Copilot | MCP servers, rules |
-| Zed | MCP servers |
-| Warp | MCP servers |
-| Gemini CLI | MCP servers |
-| OpenCode | MCP servers |
-| Goose | MCP servers |
-| Junie | MCP servers |
-| Kilo Code | MCP servers |
-| Kiro | MCP servers |
-| Antigravity | MCP servers |
-| Droid | MCP servers |
-| Generic MCP | MCP servers |
+| Tool | Skills | Project instructions | MCP servers | Sub-agents | Commands |
+|---|---|---|---|---|---|
+| Claude Code | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Gemini CLI | ✓ | ✓ | ✓ | ✓ | ✓ |
+| OpenCode | ✓ | ✓ | ✓ | ✓ | ✓ |
+| GitHub Copilot | ✓ | ✓ | ✓ | — | ✓ |
+| Codex CLI | ✓ | ✓ | ✓ | ✓ | — |
+| Cursor | ✓ | ✓ | ✓ | ✓ | — |
+| Zed | ✓ | ✓ | ✓ | ✓ | — |
+| Droid | ✓ | ✓ | ✓ | — | — |
+| Junie | ✓ | ✓ | ✓ | — | — |
+| Kilo Code | ✓ | ✓ | ✓ | — | — |
+| Kiro | ✓ | ✓ | ✓ | — | — |
+| Antigravity | ✓ | ✓ | — | — | — |
+| Cline | ✓ | ✓ | — | — | — |
+| Goose | ✓ | ✓ | — | — | — |
+| Warp | ✓ | ✓ | — | — | — |
 
-The exact sync capabilities depend on each tool's configuration format. Automatic auto-detects installed tools and writes to their config directories.
+Notes:
+
+- **Rules** are injected into each tool's project-instructions file (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, etc.), so rules support follows the "Project instructions" column.
+- **Antigravity, Cline, Goose, and Warp** manage MCP servers through their own global app/CLI config rather than a project file. Automatic can discover those servers but does not write project-level MCP config for them.
+- Automatic auto-detects installed tools and writes to their config directories.
 
 ## Privacy and Security
 
@@ -267,7 +270,7 @@ Key source locations:
 - `src-tauri/src/sync/` — Sync engine with drift detection
 - `src-tauri/src/memory.rs` — Key-value memory storage
 - `src-tauri/src/context.rs` — AI context generation
-- `src-tauri/src/agent/` — Agent tool integrations (16 providers)
+- `src-tauri/src/agent/` — Agent tool integrations (15 providers)
 
 ## License
 
