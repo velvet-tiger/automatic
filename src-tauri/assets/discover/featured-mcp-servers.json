@@ -2383,5 +2383,25 @@
         }
       ]
     }
+  },
+  {
+    "slug": "spacelift",
+    "name": "io.spacelift/mcp",
+    "title": "Spacelift",
+    "description": "Manage Spacelift stacks, runs, and infrastructure via the GraphQL API. Replace <account-name> in the URL with your Spacelift account.",
+    "provider": "Spacelift",
+    "icon": "spacelift.io",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://docs.spacelift.io/integrations/api-development-with-mcp",
+    "remote": {
+      "transport": "http",
+      "url": "https://<account-name>.app.spacelift.io/mcp"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
   }
 ]
