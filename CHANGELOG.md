@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-05-06
+
+### Added
+
+- Add Claude 4.7 voice and collaboration skill — default skill capturing voice, intellectual honesty, and collaboration patterns. (`803e449`)
+
 ## [1.6.1] - 2026-05-06
 
 ### Added
