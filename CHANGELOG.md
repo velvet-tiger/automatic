@@ -4,6 +4,21 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-05-07
+
+### Added
+
+- Add Spacelift MCP server to the Discover catalogue. (`db99200`)
+
+### Docs
+
+- Correct README Supported Agent Tools matrix. (`522d5db`)
+- Add SECURITY.md. (`865c9d2`)
+
+### Chore
+
+- Remove stale duplicate MCP server registry from project root. (`d1c9af3`)
+
 ## [1.6.2] - 2026-05-06
 
 ### Added
