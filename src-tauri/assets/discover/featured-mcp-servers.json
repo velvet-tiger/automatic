@@ -2403,5 +2403,25 @@
       "method": "oauth",
       "env_vars": []
     }
+  },
+  {
+    "slug": "betterstack",
+    "name": "com.betterstack/mcp",
+    "title": "Better Stack",
+    "description": "Manage uptime monitoring, incidents, telemetry, and error tracking via the Better Stack MCP server. Authenticate with OAuth in the browser on first use.",
+    "provider": "Better Stack",
+    "icon": "betterstack.com",
+    "classification": "official",
+    "repository_url": null,
+    "docs_url": "https://betterstack.com/docs/getting-started/integrations/mcp/",
+    "remote": {
+      "transport": "http",
+      "url": "https://mcp.betterstack.com"
+    },
+    "local": null,
+    "auth": {
+      "method": "oauth",
+      "env_vars": []
+    }
   }
 ]
