@@ -1423,35 +1423,55 @@ function InstructionConflictModal({
   );
 }
 
-// ── UnifiedSourcePickerModal ─────────────────────────────────────────────────
+// ── SwitchToUnifiedModal ─────────────────────────────────────────────────────
 
-interface UnifiedSourcePickerModalProps {
+interface SwitchToUnifiedModalProps {
   candidates: UnifiedCandidate[];
   busy: boolean;
-  onPick: (filename: string) => void;
+  onConfirm: (filename: string) => void;
   onClose: () => void;
 }
 
 /**
- * Shown when the user toggles Unified mode but the per-agent instruction
- * files have divergent user content.  The user picks which file becomes the
- * canonical unified source; the other files will be overwritten with that
- * content.  Picking nothing dismisses without changing the mode.
+ * Two-stage modal shown whenever the user switches a project to unified
+ * instruction mode.  Stage 1 lets the user pick which existing file's content
+ * becomes the unified source; stage 2 warns which files will be overwritten
+ * before the change is committed.  Always presented (even when only one file
+ * has content) so the user is never silently surprised by an overwrite.
  */
-function UnifiedSourcePickerModal({
+function SwitchToUnifiedModal({
   candidates,
   busy,
-  onPick,
+  onConfirm,
   onClose,
-}: UnifiedSourcePickerModalProps) {
+}: SwitchToUnifiedModalProps) {
+  const allFilenames = useMemo(() => candidates.map((c) => c.filename), [candidates]);
+
+  // Pre-select the most-recently-modified non-empty file to help the user
+  // pick the right source on first render — they can still change it.
+  const initialSelection = useMemo<string | null>(() => {
+    const nonEmpty = candidates.filter((c) => c.exists && c.user_content.trim().length > 0);
+    if (nonEmpty.length === 0) {
+      return candidates.find((c) => c.exists)?.filename ?? candidates[0]?.filename ?? null;
+    }
+    const newest = nonEmpty.reduce((best, c) => {
+      const bestMs = best.modified_ms ?? 0;
+      const cMs = c.modified_ms ?? 0;
+      return cMs > bestMs ? c : best;
+    }, nonEmpty[0]);
+    return newest.filename;
+  }, [candidates]);
+
+  const [stage, setStage] = useState<"pick" | "confirm">("pick");
+  const [selected, setSelected] = useState<string | null>(initialSelection);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose(); };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [onClose, busy]);
 
-  const visible = candidates.filter((c) => c.exists);
-  const newestMs = visible.reduce<number | null>(
+  const newestMs = candidates.reduce<number | null>(
     (acc, c) => (c.modified_ms != null && (acc == null || c.modified_ms > acc) ? c.modified_ms : acc),
     null,
   );
@@ -1464,6 +1484,9 @@ function UnifiedSourcePickerModal({
       return "";
     }
   };
+
+  const selectedCandidate = candidates.find((c) => c.filename === selected) ?? null;
+  const targetFilenames = allFilenames.filter((f) => f !== selected);
 
   return (
     <div
@@ -1481,7 +1504,9 @@ function UnifiedSourcePickerModal({
               Switch To Unified Mode
             </span>
             <span className="text-border-strong">/</span>
-            <span className="text-[13px] text-text-base">Choose A Source File</span>
+            <span className="text-[13px] text-text-base">
+              {stage === "pick" ? "Choose A Source File" : "Confirm Overwrite"}
+            </span>
           </div>
           <button
             onClick={() => { if (!busy) onClose(); }}
@@ -1492,78 +1517,146 @@ function UnifiedSourcePickerModal({
           </button>
         </div>
 
-        <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
-          <div className="rounded-lg border border-warning/40 bg-warning/5 px-3 py-2.5">
-            <div className="flex items-start gap-2">
-              <AlertCircle size={14} className="text-warning mt-0.5 flex-shrink-0" />
-              <div className="text-[12px] text-text-base leading-relaxed">
-                <p className="font-medium text-warning mb-1">Your instruction files do not match.</p>
-                <p className="text-text-muted">
-                  Unified mode keeps a single shared body of instructions for every agent. Pick the
-                  file whose content should become the unified source. The content of the other
-                  files will be <span className="text-danger font-medium">overwritten</span> with
-                  the file you choose. This action cannot be undone from inside Automatic.
-                </p>
-              </div>
+        {stage === "pick" ? (
+          <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+            <p className="text-[12px] text-text-muted leading-relaxed">
+              Unified mode keeps a single shared body of instructions for every agent. Pick the
+              file whose content should become the unified source. On the next step you will see
+              exactly which other files will be replaced.
+            </p>
+
+            <div className="space-y-2">
+              {candidates.map((c) => {
+                const isSelected = selected === c.filename;
+                const isNewest = newestMs != null && c.modified_ms === newestMs;
+                const trimmed = c.user_content.trim();
+                const lineCount = trimmed ? c.user_content.split("\n").length : 0;
+                return (
+                  <button
+                    key={c.filename}
+                    type="button"
+                    onClick={() => { if (!busy) setSelected(c.filename); }}
+                    disabled={busy}
+                    className={`w-full text-left rounded-lg border overflow-hidden transition-colors disabled:opacity-50 ${
+                      isSelected
+                        ? "border-brand bg-brand/5"
+                        : "border-border-strong/40 bg-bg-base/40 hover:border-border-strong/70"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between px-3 py-2 bg-bg-input/60 border-b border-border-strong/30">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                            isSelected ? "border-brand bg-brand" : "border-text-muted"
+                          }`}
+                        >
+                          {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </span>
+                        <FileText size={13} className="text-text-muted flex-shrink-0" />
+                        <span className="text-[13px] font-mono text-text-base truncate">
+                          {c.filename}
+                        </span>
+                        {c.agent_labels.length > 0 && (
+                          <span className="text-[11px] text-text-muted truncate">
+                            · {c.agent_labels.join(", ")}
+                          </span>
+                        )}
+                        {!c.exists && (
+                          <span className="text-[10px] text-text-subtle uppercase tracking-wider px-1.5 py-0.5 rounded bg-bg-input border border-border-strong/40">
+                            Not on disk
+                          </span>
+                        )}
+                        {isNewest && c.exists && candidates.filter((x) => x.exists).length > 1 && (
+                          <span className="text-[10px] text-success uppercase tracking-wider px-1.5 py-0.5 rounded bg-success/10 border border-success/30">
+                            Newest
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <span className="text-[11px] text-text-muted">
+                          {lineCount} line{lineCount !== 1 ? "s" : ""}
+                        </span>
+                        {c.modified_ms != null && (
+                          <span className="text-[11px] text-text-subtle">
+                            {formatModified(c.modified_ms)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <pre className="max-h-48 overflow-y-auto bg-bg-base p-3 text-[12px] font-mono whitespace-pre-wrap leading-relaxed text-text-muted">
+                      {trimmed || (
+                        <em className="not-italic text-text-subtle">empty</em>
+                      )}
+                    </pre>
+                  </button>
+                );
+              })}
             </div>
           </div>
-
-          <div className="space-y-2">
-            {visible.map((c) => {
-              const isNewest = newestMs != null && c.modified_ms === newestMs;
-              const lineCount = c.user_content.trim() ? c.user_content.split("\n").length : 0;
-              return (
-                <div
-                  key={c.filename}
-                  className="rounded-lg border border-border-strong/40 overflow-hidden bg-bg-base/40"
-                >
-                  <div className="flex items-center justify-between px-3 py-2 bg-bg-input/60 border-b border-border-strong/30">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileText size={13} className="text-text-muted flex-shrink-0" />
-                      <span className="text-[13px] font-mono text-text-base truncate">
-                        {c.filename}
-                      </span>
-                      {c.agent_labels.length > 0 && (
-                        <span className="text-[11px] text-text-muted truncate">
-                          · {c.agent_labels.join(", ")}
-                        </span>
-                      )}
-                      {isNewest && visible.length > 1 && (
-                        <span className="text-[10px] text-success uppercase tracking-wider px-1.5 py-0.5 rounded bg-success/10 border border-success/30">
-                          Newest
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      <span className="text-[11px] text-text-muted">
-                        {lineCount} line{lineCount !== 1 ? "s" : ""}
-                      </span>
-                      {c.modified_ms != null && (
-                        <span className="text-[11px] text-text-subtle">
-                          {formatModified(c.modified_ms)}
-                        </span>
-                      )}
-                      <button
-                        onClick={() => { if (!busy) onPick(c.filename); }}
-                        disabled={busy}
-                        className="px-2.5 py-1 text-[11px] font-medium rounded border border-success/40 bg-success/10 hover:bg-success/20 hover:border-success/60 text-success transition-colors disabled:opacity-50"
-                      >
-                        Use this file
-                      </button>
-                    </div>
-                  </div>
-                  <pre className="max-h-48 overflow-y-auto bg-bg-base p-3 text-[12px] font-mono whitespace-pre-wrap leading-relaxed text-text-muted">
-                    {c.user_content.trim() || (
-                      <em className="not-italic text-text-subtle">empty</em>
-                    )}
-                  </pre>
+        ) : (
+          <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+            <div className="rounded-lg border border-warning/40 bg-warning/5 px-3 py-2.5">
+              <div className="flex items-start gap-2">
+                <AlertCircle size={14} className="text-warning mt-0.5 flex-shrink-0" />
+                <div className="text-[12px] text-text-base leading-relaxed">
+                  <p className="font-medium text-warning mb-1">
+                    This will overwrite all instruction files with the same content.
+                  </p>
+                  <p className="text-text-muted">
+                    Switching to unified mode will replace the files below with the content of{" "}
+                    <span className="font-mono text-text-base">{selected}</span>. This action cannot
+                    be undone from inside Automatic.
+                  </p>
                 </div>
-              );
-            })}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border-strong/40 bg-bg-base/40 overflow-hidden">
+              <div className="px-3 py-2 bg-bg-input/60 border-b border-border-strong/30 text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                Files To Be Replaced
+              </div>
+              <ul className="px-3 py-2 space-y-1">
+                {targetFilenames.length === 0 ? (
+                  <li className="text-[12px] text-text-subtle italic">
+                    No other files — only{" "}
+                    <span className="font-mono">{selected}</span> will be re-saved.
+                  </li>
+                ) : (
+                  targetFilenames.map((f) => (
+                    <li key={f} className="flex items-center gap-2 text-[12px] text-text-base">
+                      <FileText size={12} className="text-text-muted flex-shrink-0" />
+                      <span className="font-mono">{f}</span>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+
+            {selectedCandidate && (
+              <div className="rounded-lg border border-border-strong/40 bg-bg-base/40 overflow-hidden">
+                <div className="px-3 py-2 bg-bg-input/60 border-b border-border-strong/30 text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                  Source Content Preview · <span className="font-mono normal-case">{selected}</span>
+                </div>
+                <pre className="max-h-48 overflow-y-auto bg-bg-base p-3 text-[12px] font-mono whitespace-pre-wrap leading-relaxed text-text-muted">
+                  {selectedCandidate.user_content.trim() || (
+                    <em className="not-italic text-text-subtle">empty</em>
+                  )}
+                </pre>
+              </div>
+            )}
           </div>
-        </div>
+        )}
 
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border-strong flex-shrink-0">
+          {stage === "confirm" && (
+            <button
+              onClick={() => { if (!busy) setStage("pick"); }}
+              disabled={busy}
+              className="px-3 py-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors disabled:opacity-50"
+            >
+              Back
+            </button>
+          )}
           <button
             onClick={() => { if (!busy) onClose(); }}
             disabled={busy}
@@ -1571,6 +1664,23 @@ function UnifiedSourcePickerModal({
           >
             Cancel
           </button>
+          {stage === "pick" ? (
+            <button
+              onClick={() => { if (!busy && selected) setStage("confirm"); }}
+              disabled={busy || !selected}
+              className="px-3 py-1.5 text-[12px] font-medium rounded border border-brand/60 bg-brand/10 hover:bg-brand/20 text-brand transition-colors disabled:opacity-50"
+            >
+              Continue
+            </button>
+          ) : (
+            <button
+              onClick={() => { if (!busy && selected) onConfirm(selected); }}
+              disabled={busy || !selected}
+              className="px-3 py-1.5 text-[12px] font-medium rounded border border-danger/60 bg-danger/10 hover:bg-danger/20 text-danger transition-colors disabled:opacity-50"
+            >
+              {busy ? "Switching…" : "Confirm overwrite"}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -5761,10 +5871,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                             if (project.instruction_mode === "unified" || !selectedName) {
                               return;
                             }
-                            // Check whether the per-agent files agree before switching.
-                            // If they diverge, the user must choose which file becomes
-                            // the unified source — switching silently would let one
-                            // file's content overwrite the other on the next save.
                             let inspection: UnifiedInspection;
                             try {
                               const raw = await invoke<string>("inspect_unified_candidates", {
@@ -5775,16 +5881,21 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                               console.error("inspect_unified_candidates failed", e);
                               return;
                             }
-                            if (!inspection.consistent) {
-                              setUnifiedSourcePicker(inspection.candidates);
+                            // No instruction-capable agents (or no candidate files at all):
+                            // nothing to overwrite, switch silently.
+                            if (inspection.candidates.length === 0) {
+                              const updated = { ...project, instruction_mode: "unified", updated_at: new Date().toISOString() };
+                              setProject(updated);
+                              setDirty(false);
+                              await invoke("save_project", { name: selectedName, data: JSON.stringify(updated, null, 2) });
+                              await loadProjectFiles(selectedName);
+                              notifyProjectUpdated();
                               return;
                             }
-                            const updated = { ...project, instruction_mode: "unified", updated_at: new Date().toISOString() };
-                            setProject(updated);
-                            setDirty(false);
-                            await invoke("save_project", { name: selectedName, data: JSON.stringify(updated, null, 2) });
-                            await loadProjectFiles(selectedName);
-                            notifyProjectUpdated();
+                            // Always show the picker + confirmation flow so the user
+                            // sees what content becomes the source and which files
+                            // are about to be overwritten.
+                            setUnifiedSourcePicker(inspection.candidates);
                           }}
                           className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors ${
                             (project.instruction_mode || "per-agent") === "unified"
@@ -9453,10 +9564,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     )}
 
     {unifiedSourcePicker && selectedName && (
-      <UnifiedSourcePickerModal
+      <SwitchToUnifiedModal
         candidates={unifiedSourcePicker}
         busy={unifiedSourcePickerBusy}
-        onPick={async (filename) => {
+        onConfirm={async (filename) => {
           if (!project) {
             return;
           }
@@ -9481,7 +9592,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
             setUnifiedSourcePickerBusy(false);
           }
         }}
-        onClose={() => setUnifiedSourcePicker(null)}
+        onClose={() => { if (!unifiedSourcePickerBusy) setUnifiedSourcePicker(null); }}
       />
     )}
 

@@ -302,27 +302,40 @@ pub fn inspect_unified_candidates(name: &str) -> Result<String, String> {
 
 /// Switch a project to unified instruction mode.
 ///
-/// When `source_filename` matches one of the project's agent instruction
-/// files, that file's user-authored content is propagated to **every** agent
+/// `source_filename` must match one of the project's agent instruction files.
+/// That file's user-authored content is propagated to **every** agent
 /// instruction file — overwriting any divergent content elsewhere — so the
-/// project starts unified mode in a consistent state.  Pass an empty string
-/// (or any filename that does not match an agent file) to skip propagation;
-/// only the `instruction_mode` flag is updated and existing files are left
-/// untouched.  The frontend uses the empty path when it has already verified
-/// that the per-agent files agree, and the picker path when they disagree.
+/// project starts unified mode in a consistent state.
+///
+/// When the project has no agent instruction files, `source_filename` may be
+/// empty: only the `instruction_mode` flag is updated.  This permits switching
+/// projects with no instruction-capable agents without forcing a picker.
 #[tauri::command]
 pub fn switch_to_unified_mode(name: &str, source_filename: &str) -> Result<(), String> {
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
 
+    let agent_filenames = core::collect_agent_filenames(&project);
+
+    // Guard against the bug that motivated this command: silently switching to
+    // unified mode without picking a source file leaves the unified content
+    // empty, which then overwrites every per-agent file on the next save.
+    if !agent_filenames.is_empty()
+        && (source_filename.is_empty() || !agent_filenames.iter().any(|f| f == source_filename))
+    {
+        return Err(
+            "source_filename is required and must match one of the project's agent instruction files"
+                .to_string(),
+        );
+    }
+
     project.instruction_mode = "unified".to_string();
     project.updated_at = chrono::Utc::now().to_rfc3339();
     let updated_json = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
     core::save_project(name, &updated_json)?;
 
-    let agent_filenames = core::collect_agent_filenames(&project);
-    if !source_filename.is_empty() && agent_filenames.iter().any(|f| f == source_filename) {
+    if !source_filename.is_empty() {
         let user_content = core::read_project_file(&project.directory, source_filename)?;
         let touched = core::resolve_instruction_target_filenames(&project, "_unified");
         core::save_project_file_for_project(&project, "_unified", &user_content)?;
