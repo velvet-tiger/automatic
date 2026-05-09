@@ -1137,25 +1137,21 @@ impl AutomaticMcpServer {
 #[tool_handler]
 impl ServerHandler for AutomaticMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(
+        let server_info = Implementation::new("automatic", env!("CARGO_PKG_VERSION"))
+            .with_title("Automatic")
+            .with_description(
+                "Desktop hub for AI coding agents — skills, MCP configs, and project management",
+            )
+            .with_website_url("https://github.com/anomalyco/automatic");
+
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions(
                 "Automatic is a desktop hub for AI coding agents. \
                  Use these tools to retrieve API keys, discover and search skills, list MCP \
                  server configs, inspect projects, track active sessions, and sync project \
-                 configurations."
-                    .into(),
-            ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "automatic".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-                title: Some("Automatic".into()),
-                description: Some("Desktop hub for AI coding agents — skills, MCP configs, and project management".into()),
-                icons: None,
-                website_url: Some("https://github.com/anomalyco/automatic".into()),
-            },
-            ..Default::default()
-        }
+                 configurations.",
+            )
+            .with_server_info(server_info)
     }
 }
 

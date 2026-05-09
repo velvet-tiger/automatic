@@ -28,10 +28,8 @@ serde_json = "1"
 keyring = { version = "3.6.3", features = ["apple-native", "linux-native", "windows-native"] }
 dirs = "6.0.0"
 chrono = { version = "0.4", features = ["serde"] }
-rmcp = { version = "0.16", features = [
+rmcp = { version = "1.6", features = [
     "server", "transport-io",
-    "client", "transport-streamable-http-client-reqwest",
-    "auth", "reqwest-native-tls",
 ] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "net"] }
 url = "2"
