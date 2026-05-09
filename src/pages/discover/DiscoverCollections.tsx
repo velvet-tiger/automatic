@@ -916,7 +916,7 @@ export default function DiscoverCollections({
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search collections, skills, tags…"
                 autoFocus
-                className={`w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:${ACCENT_BORDER.replace("border-", "border-")} rounded-xl pl-11 pr-10 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm`}
+                className={`w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:${ACCENT_BORDER} rounded-xl pl-11 pr-10 py-3 text-[14px] text-text-base placeholder-text-muted/60 outline-none transition-colors shadow-sm`}
               />
               {query && (
                 <button

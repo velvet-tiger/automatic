@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { escapeYamlDoubleQuoted } from "../../lib/yaml";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
 import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { MarkdownPreview } from "../../components/MarkdownPreview";
@@ -320,7 +321,7 @@ function validateSkillDescription(value: string): string | null {
 /** Build the YAML frontmatter block from name + description. */
 function buildFrontmatter(name: string, description: string): string {
   // Wrap description in quotes if it contains a colon, to be safe YAML
-  const safeDesc = description.includes(":") ? `"${description.replace(/"/g, '\\"')}"` : description;
+  const safeDesc = description.includes(":") ? `"${escapeYamlDoubleQuoted(description)}"` : description;
   return `---\nname: ${name}\ndescription: ${safeDesc}\n---\n`;
 }
 

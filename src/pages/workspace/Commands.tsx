@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { escapeYamlDoubleQuoted } from "../../lib/yaml";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
 import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
@@ -41,7 +42,7 @@ function parseCommandContent(raw: string): { description: string; body: string }
 
 /** Rebuild full markdown from description + body. */
 function buildCommandContent(description: string, body: string): string {
-  const safeDesc = description.includes(":") ? `"${description.replace(/"/g, '\\"')}"` : description;
+  const safeDesc = description.includes(":") ? `"${escapeYamlDoubleQuoted(description)}"` : description;
   return `---\ndescription: ${safeDesc}\n---\n\n${body}`;
 }
 
