@@ -16,6 +16,37 @@ pub struct GatewayConfig {
     pub cf_token: Option<String>,
 }
 
+impl GatewayConfig {
+    /// Validate both IDs and construct the Cloudflare AI Gateway base URL for
+    /// the given provider path segment.
+    ///
+    /// Returns `Err` if either ID contains characters outside `[A-Za-z0-9_-]`,
+    /// which prevents path injection via user-supplied config values.
+    pub fn gateway_url(&self, provider_path: &str) -> Result<String, String> {
+        Self::validate_id(&self.account_id, "account_id")?;
+        Self::validate_id(&self.gateway_id, "gateway_id")?;
+        Ok(format!(
+            "https://gateway.ai.cloudflare.com/v1/{}/{}/{}",
+            self.account_id, self.gateway_id, provider_path
+        ))
+    }
+
+    fn validate_id(id: &str, field: &str) -> Result<(), String> {
+        if id.is_empty() {
+            return Err(format!("GatewayConfig: {field} must not be empty"));
+        }
+        if !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(format!(
+                "GatewayConfig: {field} contains invalid characters (only A-Z, a-z, 0-9, -, _ allowed)"
+            ));
+        }
+        Ok(())
+    }
+}
+
 // ── Agent credential ──────────────────────────────────────────────────────────
 
 /// Credential shape for a provider.

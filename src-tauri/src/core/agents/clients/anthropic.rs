@@ -68,14 +68,11 @@ impl AnthropicClient {
         }
     }
 
-    fn base_url(&self) -> String {
+    fn base_url(&self) -> Result<String, String> {
         if let Some(gw) = &self.gateway {
-            format!(
-                "https://gateway.ai.cloudflare.com/v1/{}/{}/anthropic/v1",
-                gw.account_id, gw.gateway_id
-            )
+            gw.gateway_url("anthropic/v1")
         } else {
-            "https://api.anthropic.com/v1".to_string()
+            Ok("https://api.anthropic.com/v1".to_string())
         }
     }
 
@@ -98,7 +95,7 @@ impl AnthropicClient {
     }
 
     async fn send_messages_request(&self, body: &Value) -> Result<(u16, String), String> {
-        let url = format!("{}/messages", self.base_url());
+        let url = format!("{}/messages", self.base_url()?);
         let response = self
             .auth_headers(self.client().post(&url))
             .json(body)
@@ -151,7 +148,7 @@ impl AgentClient for AnthropicClient {
         }
 
         let (status, body_text) = self.send_messages_request(&body).await?;
-        if status < 200 || status >= 300 {
+        if !(200..300).contains(&status) {
             return Err(Self::parse_error(&body_text, status));
         }
 
@@ -195,7 +192,7 @@ impl AgentClient for AnthropicClient {
         }
 
         let (status, body_text) = self.send_messages_request(&body).await?;
-        if status < 200 || status >= 300 {
+        if !(200..300).contains(&status) {
             return Err(Self::parse_error(&body_text, status));
         }
 
@@ -235,7 +232,7 @@ impl AgentClient for AnthropicClient {
         }
 
         let (status, body_text) = self.send_messages_request(&body).await?;
-        if status < 200 || status >= 300 {
+        if !(200..300).contains(&status) {
             return Err(Self::parse_error(&body_text, status));
         }
 
@@ -255,7 +252,7 @@ impl AgentClient for AnthropicClient {
     }
 
     async fn list_models(&self) -> Result<Vec<String>, String> {
-        let url = format!("{}/models", self.base_url());
+        let url = format!("{}/models", self.base_url()?);
         let response = self
             .auth_headers(self.client().get(&url))
             .query(&[("limit", "100")])
@@ -269,7 +266,7 @@ impl AgentClient for AnthropicClient {
             .await
             .map_err(|e| format!("Failed to read response body: {}", e))?;
 
-        if status < 200 || status >= 300 {
+        if !(200..300).contains(&status) {
             return Err(Self::parse_error(&body_text, status));
         }
 

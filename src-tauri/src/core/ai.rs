@@ -24,7 +24,7 @@ pub struct AiMessage {
 ///   1. `explicit` — caller-supplied model (e.g. from AI Playground).
 ///   2. `Settings::agent_models[agent_id]` — user's saved preference.
 ///   3. `agents::default_model(agent_id)` — hardcoded provider default.
-fn resolve_model<'a>(agent_id: &str, explicit: Option<&'a str>) -> String {
+fn resolve_model(agent_id: &str, explicit: Option<&str>) -> String {
     if let Some(m) = explicit {
         return m.to_string();
     }

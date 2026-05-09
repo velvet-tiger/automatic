@@ -91,19 +91,16 @@ impl OpenAiCompatClient {
         req
     }
 
-    fn effective_base_url(&self) -> String {
+    fn effective_base_url(&self) -> Result<String, String> {
         if let (Some(gw), Some(segment)) = (&self.gateway, &self.gateway_provider_segment) {
-            format!(
-                "https://gateway.ai.cloudflare.com/v1/{}/{}/{}",
-                gw.account_id, gw.gateway_id, segment
-            )
+            gw.gateway_url(segment)
         } else {
-            self.base_url.clone()
+            Ok(self.base_url.clone())
         }
     }
 
     async fn send_chat_request(&self, body: &Value) -> Result<(u16, String), String> {
-        let url = format!("{}/chat/completions", self.effective_base_url());
+        let url = format!("{}/chat/completions", self.effective_base_url()?);
         let response = self
             .auth_request(self.client().post(&url))
             .json(body)
@@ -174,7 +171,7 @@ impl AgentClient for OpenAiCompatClient {
         });
 
         let (status, body_text) = self.send_chat_request(&body).await?;
-        if status < 200 || status >= 300 {
+        if !(200..300).contains(&status) {
             return Err(Self::parse_error(&body_text, status));
         }
 
@@ -212,7 +209,7 @@ impl AgentClient for OpenAiCompatClient {
         });
 
         let (status, body_text) = self.send_chat_request(&body).await?;
-        if status < 200 || status >= 300 {
+        if !(200..300).contains(&status) {
             return Err(Self::parse_error(&body_text, status));
         }
 
@@ -245,7 +242,7 @@ impl AgentClient for OpenAiCompatClient {
         });
 
         let (status, body_text) = self.send_chat_request(&body).await?;
-        if status < 200 || status >= 300 {
+        if !(200..300).contains(&status) {
             return Err(Self::parse_error(&body_text, status));
         }
 
