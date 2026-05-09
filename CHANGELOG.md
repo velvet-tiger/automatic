@@ -4,6 +4,20 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-05-09
+
+### Added
+
+- Add Better Stack MCP server to the Discover catalogue. (`c5a13c7`)
+
+### Changed
+
+- Move all assets under `~/.automatic/library/` and align names with UI labels. (`af7f1bc`)
+
+### Fixed
+
+- Always confirm before switching to unified instruction mode. (`41ed1ca`)
+
 ## [1.6.3] - 2026-05-07
 
 ### Added
