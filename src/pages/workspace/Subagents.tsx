@@ -18,7 +18,7 @@ import {
   warningFindings,
 } from "../../lib/assetSecurity";
 
-interface UserAgentEntry {
+interface SubagentEntry {
   id: string;
   name: string;
   source?: string; // "automatic" | "local" | "codex" | "github"
@@ -57,8 +57,8 @@ When invoked:
 3. Provide clear, actionable responses
 `;
 
-export default function UserAgents() {
-  const [agents, setAgents] = useState<UserAgentEntry[]>([]);
+export default function Subagents() {
+  const [agents, setAgents] = useState<SubagentEntry[]>([]);
   const [recentRefresh, setRecentRefresh] = useState(0);
   const recentIds = useRecentlyAdded("user_agents", recentRefresh);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -79,7 +79,7 @@ export default function UserAgents() {
 
   const loadAgents = async () => {
     try {
-      const result: UserAgentEntry[] = await invoke("get_user_agents");
+      const result: SubagentEntry[] = await invoke("get_subagents");
       setAgents(result.sort((a, b) => a.name.localeCompare(b.name)));
       setError(null);
     } catch (err: any) {
@@ -89,7 +89,7 @@ export default function UserAgents() {
 
   const loadReferencingProjects = async (id: string) => {
     try {
-      const refs: ProjectRef[] = await invoke("get_projects_referencing_user_agent", { agentMachineName: id });
+      const refs: ProjectRef[] = await invoke("get_projects_referencing_subagent", { agentMachineName: id });
       setReferencingProjects(refs.sort((a, b) => a.name.localeCompare(b.name)));
     } catch (err: any) {
       console.error("Failed to load referencing projects:", err);
@@ -99,7 +99,7 @@ export default function UserAgents() {
 
   const loadAgent = async (id: string) => {
     try {
-      const raw: string = await invoke("read_user_agent", { machineName: id });
+      const raw: string = await invoke("read_subagent", { machineName: id });
       const agent: UserAgent = JSON.parse(raw);
       const scan = await scanAssetContent("user_agent", agent.content);
       setSelectedId(id);
@@ -135,8 +135,8 @@ export default function UserAgents() {
           return;
         }
         const warnings = warningFindings(scan);
-        await invoke("save_user_agent", { machineName: id, name, content: agentContent });
-        const newEntry: UserAgentEntry = { id, name };
+        await invoke("save_subagent", { machineName: id, name, content: agentContent });
+        const newEntry: SubagentEntry = { id, name };
         setAgents(prev => [...prev.filter(a => a.id !== id), newEntry].sort((a, b) => a.name.localeCompare(b.name)));
         setIsCreating(false);
         setIsEditing(false);
@@ -159,7 +159,7 @@ export default function UserAgents() {
           return;
         }
         const warnings = warningFindings(scan);
-        await invoke("save_user_agent", { machineName: selectedId, name: displayName, content: agentContent });
+        await invoke("save_subagent", { machineName: selectedId, name: displayName, content: agentContent });
         setIsEditing(false);
         setAgents(prev => prev.map(a => a.id === selectedId ? { ...a, name: displayName } : a).sort((a, b) => a.name.localeCompare(b.name)));
         setError(null);
@@ -176,7 +176,7 @@ export default function UserAgents() {
     const confirmed = await ask(`Delete agent "${id}"?`, { title: "Delete Agent", kind: "warning" });
     if (!confirmed) return;
     try {
-      await invoke("delete_user_agent", { machineName: id });
+      await invoke("delete_subagent", { machineName: id });
       if (selectedId === id) {
         setSelectedId(null);
         setDisplayName("");
@@ -216,11 +216,11 @@ export default function UserAgents() {
       suffix++;
     }
     try {
-      const raw: string = await invoke("read_user_agent", { machineName: id });
+      const raw: string = await invoke("read_subagent", { machineName: id });
       const agent: UserAgent = JSON.parse(raw);
       const dupName = agent.name;
-      await invoke("save_user_agent", { machineName: candidate, name: dupName, content: agent.content });
-      const newEntry: UserAgentEntry = { id: candidate, name: dupName };
+      await invoke("save_subagent", { machineName: candidate, name: dupName, content: agent.content });
+      const newEntry: SubagentEntry = { id: candidate, name: dupName };
       setAgents(prev => [...prev, newEntry].sort((a, b) => a.name.localeCompare(b.name)));
       await loadAgent(candidate);
       setIsEditing(true);
@@ -272,7 +272,7 @@ export default function UserAgents() {
               {(() => {
                 const recentAgents = agents.filter(a => recentIds.has(a.id));
                 const otherAgents = agents.filter(a => !recentIds.has(a.id));
-                const renderAgent = (entry: UserAgentEntry) => {
+                const renderAgent = (entry: SubagentEntry) => {
                   const isActive = selectedId === entry.id && !isCreating;
                   return (
                     <li key={entry.id} className="group relative">

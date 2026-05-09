@@ -2,13 +2,13 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::env_crypto;
-use super::paths::{get_automatic_dir, is_valid_name};
+use super::paths::{get_library_dir, is_valid_name};
 use super::recently_added::{record_recently_added, remove_recently_added};
 
 // ── MCP Servers ──────────────────────────────────────────────────────────────
 
 pub fn get_mcp_servers_dir() -> Result<PathBuf, String> {
-    Ok(get_automatic_dir()?.join("mcp_servers"))
+    Ok(get_library_dir()?.join("mcp_servers"))
 }
 
 pub fn list_mcp_server_configs() -> Result<Vec<String>, String> {

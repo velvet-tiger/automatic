@@ -1096,7 +1096,7 @@ fn install_rule(source_dir: &Path, rule: &ManifestResource) -> Result<(), String
 
     enforce_text_asset(AssetKind::Rule, &format!("rule '{}'", rule.name), &content)?;
 
-    let rules_dir = get_automatic_dir()?.join("rules");
+    let rules_dir = super::rules::get_rules_dir()?;
     fs::create_dir_all(&rules_dir)
         .map_err(|e| format!("Failed to create rules directory: {}", e))?;
 
@@ -1128,7 +1128,7 @@ fn install_template(source_dir: &Path, template: &ManifestResource) -> Result<()
     let _: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("Template '{}' is not valid JSON: {}", template.name, e))?;
 
-    let templates_dir = get_automatic_dir()?.join("project_templates");
+    let templates_dir = super::templates::get_templates_dir()?;
     fs::create_dir_all(&templates_dir)
         .map_err(|e| format!("Failed to create project_templates directory: {}", e))?;
 
@@ -1155,7 +1155,7 @@ fn install_mcp_server(source_dir: &Path, server: &ManifestResource) -> Result<()
     let _: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("MCP server '{}' is not valid JSON: {}", server.name, e))?;
 
-    let servers_dir = get_automatic_dir()?.join("mcp_servers");
+    let servers_dir = super::mcp_servers::get_mcp_servers_dir()?;
     fs::create_dir_all(&servers_dir)
         .map_err(|e| format!("Failed to create mcp_servers directory: {}", e))?;
 
@@ -1175,7 +1175,7 @@ fn install_command(source_dir: &Path, cmd: &ManifestResource) -> Result<(), Stri
         &content,
     )?;
 
-    let commands_dir = get_automatic_dir()?.join("commands");
+    let commands_dir = super::paths::get_commands_dir()?;
     fs::create_dir_all(&commands_dir)
         .map_err(|e| format!("Failed to create commands directory: {}", e))?;
 
@@ -1195,7 +1195,7 @@ fn install_agent(source_dir: &Path, agent: &ManifestResource) -> Result<(), Stri
         &content,
     )?;
 
-    let agents_dir = get_automatic_dir()?.join("agents");
+    let agents_dir = super::subagents::get_subagents_dir()?;
     fs::create_dir_all(&agents_dir)
         .map_err(|e| format!("Failed to create agents directory: {}", e))?;
 

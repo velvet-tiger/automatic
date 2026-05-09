@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::agent;
-use crate::core::{self, CustomAgent, CustomCommand, Project, UserAgent};
+use crate::core::{self, CustomAgent, CustomCommand, Project, Subagent};
 
 use super::autodetect::autodetect_inner;
 
@@ -243,18 +243,18 @@ fn match_global_user_command(
 
 fn load_global_user_agents() -> Result<Vec<GlobalUserAgent>, String> {
     let mut result = Vec::new();
-    for entry in core::list_user_agents()? {
-        let raw = match core::read_user_agent(&entry.id) {
+    for entry in core::list_subagents()? {
+        let raw = match core::read_subagent(&entry.id) {
             Ok(raw) => raw,
             Err(_) => continue,
         };
-        let user_agent = match serde_json::from_str::<UserAgent>(&raw) {
-            Ok(user_agent) => user_agent,
+        let subagent = match serde_json::from_str::<Subagent>(&raw) {
+            Ok(subagent) => subagent,
             Err(_) => continue,
         };
         result.push(GlobalUserAgent {
             id: entry.id,
-            content: user_agent.content,
+            content: subagent.content,
         });
     }
     Ok(result)

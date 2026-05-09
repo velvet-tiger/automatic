@@ -1,0 +1,347 @@
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
+import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
+import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { Plus, X, Edit2, FileText, Check, ClipboardList } from "lucide-react";
+import { ICONS } from "../../lib/icons";
+import { AuthorSection } from "../../components/AuthorPanel";
+import { TokenPill } from "../../components/TokenPill";
+import {
+  type AssetSecurityScanRecord,
+  formatAssetScanResult,
+  getAssetSecurityDismissButtonClass,
+  getAssetSecurityNoticeClass,
+  getAssetSecurityStatus,
+  scanAssetContent,
+  toAssetSecurityScanRecord,
+  warningFindings,
+} from "../../lib/assetSecurity";
+
+export default function Instructions() {
+  const [templates, setTemplates] = useState<string[]>([]);
+  const [recentRefresh, setRecentRefresh] = useState(0);
+  const recentIds = useRecentlyAdded("templates", recentRefresh);
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [templateContent, setTemplateContent] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [securityNotice, setSecurityNotice] = useState<string | null>(null);
+  const [currentScan, setCurrentScan] = useState<AssetSecurityScanRecord | null>(null);
+
+  useEffect(() => {
+    loadTemplates();
+  }, []);
+
+  const loadTemplates = async () => {
+    try {
+      const result: string[] = await invoke("get_instructions");
+      setTemplates(result.sort());
+      setError(null);
+    } catch (err: any) {
+      setError(`Failed to load templates: ${err}`);
+    }
+  };
+
+  const loadTemplateContent = async (name: string) => {
+    try {
+      const content: string = await invoke("read_instruction", { name });
+      const scan = await scanAssetContent("template", content);
+      setSelectedTemplate(name);
+      setTemplateContent(content);
+      setIsEditing(false);
+      setIsCreating(false);
+      setError(null);
+      setCurrentScan(toAssetSecurityScanRecord(scan));
+      setSecurityNotice(
+        scan.findings.length > 0
+          ? formatAssetScanResult(scan, "instruction", {
+              blockedHeader: "Dangerous content found in instruction:",
+            })
+          : null,
+      );
+    } catch (err: any) {
+      setError(`Failed to read template ${name}: ${err}`);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!selectedTemplate && !isCreating) return;
+    const name = isCreating ? newTemplateName.trim() : selectedTemplate!;
+    if (!name) return;
+    try {
+      const scan = await scanAssetContent("template", templateContent);
+      if (scan.blocked) {
+        setError(formatAssetScanResult(scan, "instruction"));
+        setSecurityNotice(null);
+        return;
+      }
+      const warnings = warningFindings(scan);
+      await invoke("save_instruction", { name, content: templateContent });
+      setIsEditing(false);
+      setSelectedTemplate(name);
+      if (isCreating) {
+        setIsCreating(false);
+        await loadTemplates();
+        setRecentRefresh(prev => prev + 1);
+      }
+      setError(null);
+      setCurrentScan(toAssetSecurityScanRecord(scan));
+      setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "instruction") : null);
+    } catch (err: any) {
+      setError(`Failed to save template: ${err}`);
+    }
+  };
+
+  const handleDelete = async (name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const confirmed = await ask(`Delete instruction "${name}"?`, { title: "Delete Instruction", kind: "warning" });
+    if (!confirmed) return;
+    try {
+      await invoke("delete_instruction", { name });
+      if (selectedTemplate === name) {
+        setSelectedTemplate(null);
+        setTemplateContent("");
+        setIsEditing(false);
+      }
+      await loadTemplates();
+      setError(null);
+      setSecurityNotice(null);
+      setCurrentScan(null);
+    } catch (err: any) {
+      setError(`Failed to delete template: ${err}`);
+    }
+  };
+
+  const startCreateNew = () => {
+    setSelectedTemplate(null);
+    setTemplateContent("");
+    setIsCreating(true);
+    setIsEditing(true);
+    setNewTemplateName("");
+    setSecurityNotice(null);
+    setCurrentScan(null);
+  };
+
+  const { label: scanStatusLabel, className: scanStatusClass } = getAssetSecurityStatus(currentScan, {
+    blockedLabel: "Danger",
+  });
+  const scanTimestamp = currentScan
+    ? new Date(currentScan.scanned_at).toLocaleString()
+    : null;
+  const securityNoticeToneClass = getAssetSecurityNoticeClass(currentScan);
+  const securityDismissButtonClass = getAssetSecurityDismissButtonClass(currentScan);
+
+  return (
+    <div className="flex h-full w-full bg-bg-base">
+      {/* Left Sidebar - Template List */}
+      <div className="w-64 flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50">
+        <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center bg-bg-base/30">
+          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Instructions</span>
+          <button
+            onClick={startCreateNew}
+            className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
+            title="Create New Instruction"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
+          {templates.length === 0 && !isCreating ? (
+            <div className="px-4 py-3 text-[13px] text-text-muted text-center">No instructions yet.</div>
+          ) : (
+            <ul className="space-y-1 px-2">
+              {isCreating && (
+                <li className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-bg-sidebar">
+                  <div className={ICONS.fileTemplate.iconBox}>
+                    <ClipboardList size={15} className={ICONS.fileTemplate.iconColor} />
+                  </div>
+                  <span className="text-[13px] text-text-base italic">New Instruction...</span>
+                </li>
+              )}
+              {(() => {
+                const recentTemplates = templates.filter(n => recentIds.has(n));
+                const otherTemplates = templates.filter(n => !recentIds.has(n));
+                const renderTemplate = (name: string) => {
+                  const isActive = selectedTemplate === name && !isCreating;
+                  return (
+                    <li key={name} className="group relative">
+                      <button
+                        onClick={() => loadTemplateContent(name)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                          isActive
+                            ? "bg-bg-sidebar text-text-base"
+                            : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
+                        }`}
+                      >
+                        <div className={ICONS.fileTemplate.iconBox}>
+                          <ClipboardList size={15} className={ICONS.fileTemplate.iconColor} />
+                        </div>
+                        <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
+                          {name}
+                        </span>
+                      </button>
+                      <button
+                        onClick={(e) => handleDelete(name, e)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
+                        title="Delete Instruction"
+                      >
+                        <X size={12} />
+                      </button>
+                    </li>
+                  );
+                };
+                return (
+                  <>
+                    {recentTemplates.length > 0 && <RecentlyAddedSectionLabel />}
+                    {recentTemplates.map(renderTemplate)}
+                    {recentTemplates.length > 0 && otherTemplates.length > 0 && <RecentlyAddedDivider />}
+                    {otherTemplates.map(renderTemplate)}
+                  </>
+                );
+              })()}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {/* Right Area - Editor/Viewer */}
+      <div className="flex-1 flex flex-col min-w-0 bg-bg-base">
+        {error && (
+          <div className="border-b border-red-300/80 bg-red-50 p-3 text-[13px] text-red-950 flex items-center justify-between">
+            <div className="whitespace-pre-wrap">{error}</div>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-900/70 hover:text-red-950 transition-colors"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+        {securityNotice && (
+          <div className={`${securityNoticeToneClass} p-3 text-[13px] border-b flex items-center justify-between`}>
+            <div className="whitespace-pre-wrap">{securityNotice}</div>
+            <button
+              onClick={() => setSecurityNotice(null)}
+              className={securityDismissButtonClass}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
+        {(selectedTemplate || isCreating) ? (
+          <div className="flex-1 flex flex-col h-full">
+            {/* Header */}
+            <div className="h-11 px-6 border-b border-border-strong/40 flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <FileText size={14} className={ICONS.fileTemplate.iconColor} />
+                {isCreating ? (
+                  <input
+                    type="text"
+                    placeholder="instruction-name (no spaces/slashes)"
+                    value={newTemplateName}
+                    onChange={(e) => setNewTemplateName(e.target.value)}
+                    autoFocus
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-64"
+                  />
+                ) : (
+                  <h3 className="text-[14px] font-medium text-text-base">{selectedTemplate}</h3>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <TokenPill text={templateContent} />
+                {!isEditing ? (
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
+                  >
+                    <Edit2 size={12} /> Edit
+                  </button>
+                ) : (
+                  <>
+                    {!isCreating && (
+                      <button
+                        onClick={() => {
+                          setIsEditing(false);
+                          loadTemplateContent(selectedTemplate!);
+                        }}
+                        className="px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    <button
+                      onClick={handleSave}
+                      disabled={isCreating && !newTemplateName.trim()}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    >
+                      <Check size={12} /> Save
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {!isEditing && (
+              <div className="px-6 py-2.5 border-b border-border-strong/40 flex items-center gap-2 shrink-0 bg-bg-input/20">
+                <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase">
+                  Current Security Scan
+                </span>
+                <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium ${scanStatusClass}`}>
+                  {scanStatusLabel}
+                </span>
+                <span className="text-[11px] text-text-muted">
+                  {scanTimestamp ? scanTimestamp : "No scan yet"}
+                </span>
+              </div>
+            )}
+
+            {/* Editor Body */}
+            <div className="flex-1 flex flex-col relative min-h-0">
+              {isEditing ? (
+                <LineNumberedTextarea
+                  value={templateContent}
+                  onChange={setTemplateContent}
+                  className="flex-1"
+                  placeholder="Write your instruction content here in Markdown..."
+                />
+              ) : (
+                <>
+                  {/* Author section */}
+                  <div className="px-6 pt-4 pb-3 border-b border-border-strong/40 shrink-0">
+                    <AuthorSection descriptor={{ type: "local" }} />
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-6 font-mono text-[13px] whitespace-pre-wrap text-text-base leading-relaxed custom-scrollbar">
+                    {templateContent || <span className="text-text-muted italic">This instruction is empty. Click edit to add content.</span>}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+              <ClipboardList size={24} className={ICONS.fileTemplate.iconColor} strokeWidth={1.5} />
+            </div>
+            <h2 className="text-lg font-medium text-text-base mb-2">No Instruction Selected</h2>
+            <p className="text-[14px] text-text-muted mb-8 leading-relaxed max-w-sm">
+              Instructions are reusable project files, providing the base context for all actions taken in your project.
+            </p>
+            <button
+              onClick={startCreateNew}
+              className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
+            >
+              Create Instruction
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

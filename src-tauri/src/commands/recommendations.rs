@@ -416,7 +416,7 @@ async fn verify_discover_recommendation(
             }))
         }
         "template" => {
-            let raw = crate::core::search_bundled_project_templates(title)?;
+            let raw = crate::core::search_bundled_templates(title)?;
             let items: Vec<Value> = serde_json::from_str(&raw)
                 .map_err(|e| format!("Failed to parse template Discover results: {}", e))?;
 

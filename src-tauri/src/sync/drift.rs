@@ -725,8 +725,8 @@ fn collect_agents_drift(
 
     // Add user agent names (from workspace registry)
     for name in user_agent_names {
-        if let Ok(content) = crate::core::read_user_agent(name) {
-            if let Ok(agent) = serde_json::from_str::<crate::core::UserAgent>(&content) {
+        if let Ok(content) = crate::core::read_subagent(name) {
+            if let Ok(agent) = serde_json::from_str::<crate::core::Subagent>(&content) {
                 if let Some(machine_name) = extract_agent_machine_name(&agent.content) {
                     expected_names.insert(machine_name);
                 } else {
@@ -766,8 +766,8 @@ fn collect_agents_drift(
 
     // Check for missing/modified user agent files
     for name in user_agent_names {
-        if let Ok(content) = crate::core::read_user_agent(name) {
-            if let Ok(agent) = serde_json::from_str::<crate::core::UserAgent>(&content) {
+        if let Ok(content) = crate::core::read_subagent(name) {
+            if let Ok(agent) = serde_json::from_str::<crate::core::Subagent>(&content) {
                 let machine_name = extract_agent_machine_name(&agent.content)
                     .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
                 let converted_content =

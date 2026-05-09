@@ -583,7 +583,7 @@ export default function DiscoverTemplates({ resetKey, onNavigateToTemplate, init
   useEffect(() => {
     (async () => {
       try {
-        const raw: string = await invoke("list_bundled_project_templates");
+        const raw: string = await invoke("list_bundled_templates");
         const templates: BundledProjectTemplate[] = JSON.parse(raw);
         templates.sort((a, b) => a.display_name.localeCompare(b.display_name));
         setAllTemplates(templates);
@@ -592,7 +592,7 @@ export default function DiscoverTemplates({ resetKey, onNavigateToTemplate, init
         console.error("Failed to load bundled templates:", err);
       }
       try {
-        const localNames: string[] = await invoke("get_project_templates");
+        const localNames: string[] = await invoke("get_templates");
         setImportedNames(new Set(localNames));
       } catch { /* non-fatal */ }
       setLoading(false);
@@ -614,7 +614,7 @@ export default function DiscoverTemplates({ resetKey, onNavigateToTemplate, init
     async (q: string) => {
       if (!q.trim()) { setResults(allTemplates); return; }
       try {
-        const raw: string = await invoke("search_bundled_project_templates", { query: q });
+        const raw: string = await invoke("search_bundled_templates", { query: q });
         setResults(JSON.parse(raw));
       } catch {
         const lower = q.toLowerCase();
@@ -641,7 +641,7 @@ export default function DiscoverTemplates({ resetKey, onNavigateToTemplate, init
     setImporting(true);
     setImportError(null);
     try {
-      await invoke("import_bundled_project_template", { name: selected.name });
+      await invoke("import_bundled_template", { name: selected.name });
       setImportedNames((prev) => new Set([...prev, selected.name]));
     } catch (err: any) {
       setImportError(`Import failed: ${err}`);

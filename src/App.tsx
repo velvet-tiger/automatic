@@ -12,11 +12,11 @@ import Skills from "./pages/workspace/Skills";
 import SkillStore from "./pages/discover/SkillStore";
 import Projects from "./pages/workspace/Projects";
 import ProjectGroups from "./pages/workspace/ProjectGroups";
-import ProjectTemplates from "./pages/workspace/ProjectTemplates";
-import McpServers from "./pages/workspace/McpServers";
 import Templates from "./pages/workspace/Templates";
+import McpServers from "./pages/workspace/McpServers";
+import Instructions from "./pages/workspace/Instructions";
 import Rules from "./pages/workspace/Rules";
-import UserAgents from "./pages/workspace/UserAgents";
+import Subagents from "./pages/workspace/Subagents";
 import Commands from "./pages/workspace/Commands";
 import Providers from "./pages/workspace/Providers";
 import Tools from "./pages/workspace/Tools";
@@ -48,7 +48,7 @@ type Section = "start" | "workspace" | "library" | "discover" | "community";
 const SECTION_TABS: Record<Section, string[]> = {
   start: ["getting-started", "recommendations"],
   workspace: ["projects", "project-groups"],
-  library: ["library-home", "project-templates", "templates", "rules", "user-agents", "commands", "skills", "mcp", "providers", "tools"],
+  library: ["library-home", "templates", "instructions", "rules", "subagents", "commands", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
   community: ["community-featured"],
 };
@@ -316,7 +316,7 @@ function App() {
 
   const navigateToTemplate = (templateName: string) => {
     setPendingTemplate(templateName);
-    setActiveTabWithSection("project-templates");
+    setActiveTabWithSection("templates");
   };
 
   const navigateToSkill = (skillName: string) => {
@@ -511,7 +511,7 @@ function App() {
               Skill Store
             </button>
           )}
-          {activeTab === "project-templates" && (
+          {activeTab === "templates" && (
             <button
               onClick={() => setActiveTabWithSection("discover-templates")}
               className="flex h-[26px] items-center gap-1.5 px-2.5 rounded-md text-[11px] font-medium bg-brand hover:bg-brand-hover text-white shadow-sm transition-colors border border-transparent"
@@ -600,10 +600,10 @@ function App() {
                 </ul>
                 <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">My Library</p>
                 <ul className="space-y-0.5">
-                  <NavItem id="project-templates" icon={LayoutTemplate} label="Templates" />
-                  <NavItem id="templates" icon={ClipboardList} label="Instructions" />
+                  <NavItem id="templates" icon={LayoutTemplate} label="Templates" />
+                  <NavItem id="instructions" icon={ClipboardList} label="Instructions" />
                   <NavItem id="rules" icon={ScrollText} label="Rules" />
-                  <NavItem id="user-agents" icon={MessagesSquare} label="Sub-Agents" />
+                  <NavItem id="subagents" icon={MessagesSquare} label="Sub-Agents" />
                   <NavItem id="commands" icon={Terminal} label="Commands" />
                   <NavItem id="skills" icon={Code} label="Skills" />
                   <NavItem id="mcp" icon={Server} label="MCP Servers" />
@@ -738,9 +738,9 @@ function App() {
               <Library onNavigate={setActiveTabWithSection} />
             </div>
           )}
-          {activeTab === "project-templates" && (
+          {activeTab === "templates" && (
             <div className="flex-1 h-full">
-              <ProjectTemplates
+              <Templates
                 initialTemplate={pendingTemplate}
                 onCreateProjectFromTemplate={navigateToCreateWithTemplate}
                 onNavigateToProject={navigateToProject}
@@ -832,9 +832,9 @@ function App() {
               <Featured onNavigateToTab={setActiveTabWithSection} onNavigateToSettings={navigateToSettings} />
             </div>
           )}
-          {activeTab === "templates" && (
+          {activeTab === "instructions" && (
             <div className="flex-1 h-full">
-              <Templates />
+              <Instructions />
             </div>
           )}
           {activeTab === "rules" && (
@@ -842,9 +842,9 @@ function App() {
               <Rules />
             </div>
           )}
-          {activeTab === "user-agents" && (
+          {activeTab === "subagents" && (
             <div className="flex-1 h-full">
-              <UserAgents />
+              <Subagents />
             </div>
           )}
           {activeTab === "commands" && (

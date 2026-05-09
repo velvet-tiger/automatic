@@ -142,7 +142,7 @@ export default function Discover({ onNavigate }: DiscoverProps) {
         invoke<string>("search_collections", { query: "" })
       );
       const templates = await safeCount(() =>
-        invoke<string>("list_bundled_project_templates")
+        invoke<string>("list_bundled_templates")
       );
       const mcp = await safeCount(() =>
         invoke<string>("search_discover_mcp", { query: "" })

@@ -111,6 +111,20 @@ pub fn run() {
                     Err(e) => eprintln!("[automatic] skill library migration error: {}", e),
                 }
 
+                // Move legacy top-level library directories under
+                // `~/.automatic/library/`, renaming the three that didn't
+                // match the user-facing UI labels (templates → instructions,
+                // project_templates → templates, agents → subagents).
+                // Idempotent and safe on every restart.
+                match core::migrate_top_level_to_library() {
+                    Ok(moved) if !moved.is_empty() => eprintln!(
+                        "[automatic] migrated library layout: {:?}",
+                        moved
+                    ),
+                    Ok(_) => {}
+                    Err(e) => eprintln!("[automatic] library layout migration error: {}", e),
+                }
+
                 if let Err(e) = core::install_default_skills_inner(force_reinstall) {
                     eprintln!("[automatic] skill install error: {}", e);
                 } else if force_reinstall {
@@ -132,14 +146,14 @@ pub fn run() {
                     }
                 }
 
-                if let Err(e) = core::install_default_templates() {
-                    eprintln!("[automatic] template install error: {}", e);
+                if let Err(e) = core::install_default_instructions() {
+                    eprintln!("[automatic] instruction install error: {}", e);
                 }
                 if let Err(e) = core::install_default_rules() {
                     eprintln!("[automatic] rule install error: {}", e);
                 }
-                if let Err(e) = core::install_default_user_agents() {
-                    eprintln!("[automatic] user agent install error: {}", e);
+                if let Err(e) = core::install_default_subagents() {
+                    eprintln!("[automatic] sub-agent install error: {}", e);
                 }
                 match core::install_plugin_marketplace() {
                     Ok(msg) => eprintln!("[automatic] plugin startup: {}", msg),
@@ -232,25 +246,25 @@ pub fn run() {
             get_skill_collections,
             set_skill_collection,
             remove_skill_collection,
-            get_templates,
-            read_template,
-            save_template,
-            delete_template,
+            get_instructions,
+            read_instruction,
+            save_instruction,
+            delete_instruction,
             get_rules,
             read_rule,
             save_rule,
             delete_rule,
             get_projects_referencing_rule,
             sync_rule_to_project,
-            get_project_templates,
-            read_project_template,
-            save_project_template,
-            delete_project_template,
-            rename_project_template,
-            list_bundled_project_templates,
-            read_bundled_project_template,
-            import_bundled_project_template,
-            search_bundled_project_templates,
+            get_templates,
+            read_template,
+            save_template,
+            delete_template,
+            rename_template,
+            list_bundled_templates,
+            read_bundled_template,
+            import_bundled_template,
+            search_bundled_templates,
             check_template_dependencies,
             apply_templates_to_project,
             get_project_file_info,
@@ -375,11 +389,11 @@ pub fn run() {
             add_feature_update,
             get_feature_updates,
             estimate_tokens,
-            get_user_agents,
-            read_user_agent,
-            save_user_agent,
-            delete_user_agent,
-            get_projects_referencing_user_agent,
+            get_subagents,
+            read_subagent,
+            save_subagent,
+            delete_subagent,
+            get_projects_referencing_subagent,
             get_user_commands,
             read_user_command,
             save_user_command,

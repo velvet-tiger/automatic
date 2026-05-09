@@ -277,7 +277,7 @@ fn sync_plugin_skills(manifests: &[PluginManifest], state: &PluginState) {
                 .collect();
 
             if !bundled_names.is_empty() {
-                if let Err(e) = super::templates::install_skills_from_bundle(&bundled_names) {
+                if let Err(e) = super::install_skills_from_bundle(&bundled_names) {
                     eprintln!(
                         "[automatic] failed to install bundled skills for plugin '{}': {}",
                         manifest.id, e

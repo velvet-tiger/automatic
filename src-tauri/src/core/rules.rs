@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::asset_security::{scan_text_asset_report, AssetKind};
-use super::paths::get_automatic_dir;
+use super::paths::get_library_dir;
 use super::recently_added::{record_recently_added, remove_recently_added};
 
 // ── Rules ────────────────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ pub fn is_valid_machine_name(name: &str) -> bool {
 }
 
 pub fn get_rules_dir() -> Result<PathBuf, String> {
-    Ok(get_automatic_dir()?.join("rules"))
+    Ok(get_library_dir()?.join("rules"))
 }
 
 pub fn list_rules() -> Result<Vec<RuleEntry>, String> {

@@ -682,7 +682,7 @@ fn execute_search_collections(input: &Value) -> String {
 
 fn execute_search_discover_templates(input: &Value) -> String {
     let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    match crate::core::search_bundled_project_templates(query) {
+    match crate::core::search_bundled_templates(query) {
         Ok(json) => json,
         Err(e) => format!("Error searching Discover templates: {}", e),
     }

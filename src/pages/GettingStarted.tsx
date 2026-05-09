@@ -89,9 +89,9 @@ const USE_CASES: UseCase[] = [
     title: "Standardise context across projects",
     goal: "Capture your settings and share them across every agent and project.",
     actions: [
-      { label: "Create reusable instructions", tab: "templates" },
+      { label: "Create reusable instructions", tab: "instructions" },
       { label: "Define shared rules", tab: "rules" },
-      { label: "Build project templates", tab: "project-templates" },
+      { label: "Build project templates", tab: "templates" },
     ],
   },
   {

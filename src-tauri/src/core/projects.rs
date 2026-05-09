@@ -266,7 +266,7 @@ fn enrich_resolved_rules(project: &mut Project) {
 fn enrich_resolved_agents(project: &mut Project) {
     let mut resolved = HashMap::new();
     for machine_name in &project.user_agents {
-        let Ok(content) = read_user_agent(machine_name) else {
+        let Ok(content) = read_subagent(machine_name) else {
             continue;
         };
         // Extract display name from frontmatter, fall back to machine name.

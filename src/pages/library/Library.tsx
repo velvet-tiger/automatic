@@ -106,7 +106,7 @@ const STYLE_MCP = {
 
 const ASSET_CARDS: AssetCard[] = [
   {
-    tab: "project-templates",
+    tab: "templates",
     title: "Project Templates",
     description:
       "Reusable project bundles — skills, MCP servers, rules, and instructions packaged together — that you can apply to new or existing projects.",
@@ -117,7 +117,7 @@ const ASSET_CARDS: AssetCard[] = [
     ctaLabel: "Manage templates",
   },
   {
-    tab: "templates",
+    tab: "instructions",
     title: "Instructions",
     description:
       "Reusable text blocks you can reference inside agent sessions for recurring prompts, checklists, and structured workflows.",
@@ -139,7 +139,7 @@ const ASSET_CARDS: AssetCard[] = [
     ctaLabel: "Manage rules",
   },
   {
-    tab: "user-agents",
+    tab: "subagents",
     title: "Sub-Agents",
     description:
       "Specialised agent personas with their own context, tools, and instructions — invoked from primary agent sessions for focused tasks.",
@@ -232,10 +232,10 @@ export default function Library({ onNavigate }: LibraryProps) {
         providers,
         tools,
       ] = await Promise.all([
-        safeArrayLength(() => invoke<string[]>("get_project_templates")),
         safeArrayLength(() => invoke<string[]>("get_templates")),
+        safeArrayLength(() => invoke<string[]>("get_instructions")),
         safeArrayLength(() => invoke<unknown[]>("get_rules")),
-        safeArrayLength(() => invoke<unknown[]>("get_user_agents")),
+        safeArrayLength(() => invoke<unknown[]>("get_subagents")),
         safeArrayLength(() => invoke<unknown[]>("get_user_commands")),
         safeArrayLength(() => invoke<unknown[]>("get_skills")),
         safeArrayLength(() => invoke<string[]>("list_mcp_server_configs")),

@@ -164,9 +164,9 @@ pub fn reset_settings() -> Result<(), String> {
 pub fn reinstall_defaults() -> Result<(), String> {
     super::init_discover_files(true)?;
     super::install_default_rules_inner(true)?;
-    super::install_default_templates_inner(true)?;
+    super::install_default_instructions_inner(true)?;
     super::install_default_skills_inner(true)?;
-    super::install_default_user_agents_inner(true)?;
+    super::install_default_subagents_inner(true)?;
     super::ensure_automatic_in_global_mcp()?;
     Ok(())
 }
@@ -183,9 +183,9 @@ pub fn erase_app_data() -> Result<(), String> {
     write_settings(&Settings::default())?;
     super::init_discover_files(false)?;
     super::install_default_rules()?;
-    super::install_default_templates()?;
+    super::install_default_instructions()?;
     super::install_default_skills()?;
-    super::install_default_user_agents()?;
+    super::install_default_subagents()?;
 
     Ok(())
 }

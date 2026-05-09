@@ -100,7 +100,7 @@ interface CustomSkill {
   content: string;
 }
 
-interface UserAgentEntry {
+interface SubagentEntry {
   id: string;
   name: string;
 }
@@ -2877,7 +2877,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [customAgentEditContent, setCustomAgentEditContent] = useState("");
 
   // Workspace agents state (user_agents from global registry)
-  const [availableUserAgents, setAvailableUserAgents] = useState<UserAgentEntry[]>([]);
+  const [availableUserAgents, setAvailableUserAgents] = useState<SubagentEntry[]>([]);
   const [userAgentAdding, setUserAgentAdding] = useState(false);
   const [userAgentSearch, setUserAgentSearch] = useState("");
 
@@ -3269,7 +3269,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   const loadAvailableUserAgents = async () => {
     try {
-      const result: UserAgentEntry[] = await invoke("get_user_agents");
+      const result: SubagentEntry[] = await invoke("get_subagents");
       setAvailableUserAgents(result.sort((a, b) => a.name.localeCompare(b.name)));
     } catch {
       // User agents may not exist yet
@@ -3287,7 +3287,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   const loadAvailableTemplates = async () => {
     try {
-      const result: string[] = await invoke("get_templates");
+      const result: string[] = await invoke("get_instructions");
       setAvailableTemplates(result.sort());
     } catch {
       // Templates may not exist yet
@@ -3305,10 +3305,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   const loadAvailableProjectTemplates = async () => {
     try {
-      const names: string[] = await invoke("get_project_templates");
+      const names: string[] = await invoke("get_templates");
       const loaded: ProjectTemplate[] = await Promise.all(
         names.map(async (name) => {
-          const raw: string = await invoke("read_project_template", { name });
+          const raw: string = await invoke("read_template", { name });
           return JSON.parse(raw) as ProjectTemplate;
         })
       );
@@ -3918,7 +3918,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   const handleApplyTemplate = async (templateName: string) => {
     try {
-      const content: string = await invoke("read_template", { name: templateName });
+      const content: string = await invoke("read_instruction", { name: templateName });
       setProjectFileContent(content);
       setProjectFileDirty(true);
       setProjectFileEditing(true);

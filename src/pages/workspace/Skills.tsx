@@ -556,7 +556,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
         invoke<string>("read_skill", { name }),
         invoke<SkillResources>("get_skill_resources", { name }),
         invoke<string[]>("get_projects"),
-        invoke<string[]>("get_project_templates"),
+        invoke<string[]>("get_templates"),
       ]);
       const scan = await scanAssetContent("skill", content);
       setSelectedSkill(name);
@@ -572,7 +572,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
             .catch(() => null)
         )),
         Promise.all(templateNames.map(n =>
-          invoke<string>("read_project_template", { name: n })
+          invoke<string>("read_template", { name: n })
             .then(raw => { const t = JSON.parse(raw); return { name: n, skills: Array.isArray(t.skills) ? t.skills as string[] : [] }; })
             .catch(() => null)
         )),

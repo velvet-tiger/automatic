@@ -294,8 +294,8 @@ pub(crate) fn sync_user_agents(
 
     // Write each selected agent
     for name in user_agent_names {
-        if let Ok(content) = crate::core::read_user_agent(name) {
-            let user_agent: crate::core::UserAgent =
+        if let Ok(content) = crate::core::read_subagent(name) {
+            let user_agent: crate::core::Subagent =
                 serde_json::from_str(&content).map_err(|e| e.to_string())?;
             let machine_name = extract_agent_machine_name(&user_agent.content)
                 .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
@@ -341,7 +341,7 @@ pub(crate) fn sync_user_agents(
 mod tests {
     use super::*;
     use crate::agent::ClaudeCode;
-    use crate::core::{save_user_agent, CustomAgent};
+    use crate::core::{save_subagent, CustomAgent};
     use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
 
@@ -414,12 +414,12 @@ mod tests {
         let agents_dir = project.path().join("agents");
         fs::create_dir_all(&agents_dir).expect("create agents dir");
 
-        save_user_agent(
+        save_subagent(
             "reviewer-agent",
             "Reviewer Agent",
             "---\nname: Reviewer Agent\n---\n\nReview thoroughly.\n",
         )
-        .expect("save reviewer agent");
+        .expect("save reviewer subagent");
 
         let stale_path = agents_dir.join("stale-agent.md");
         fs::write(&stale_path, "---\nname: Stale Agent\n---\n\nOld content.\n")

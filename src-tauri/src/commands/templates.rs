@@ -1,6 +1,10 @@
 use crate::core;
 
-// ── Instruction Templates ────────────────────────────────────────────────────
+// ── Templates ────────────────────────────────────────────────────────────────
+//
+// Project starter templates that bundle skills, MCP servers, sub-agents,
+// instructions, and project files. Stored as JSON at
+// `~/.automatic/library/templates/`.
 
 #[tauri::command]
 pub fn get_templates() -> Result<Vec<String>, String> {
@@ -13,8 +17,8 @@ pub fn read_template(name: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn save_template(name: &str, content: &str) -> Result<(), String> {
-    core::save_template(name, content)
+pub fn save_template(name: &str, data: &str) -> Result<(), String> {
+    core::save_template(name, data)
 }
 
 #[tauri::command]
@@ -22,49 +26,26 @@ pub fn delete_template(name: &str) -> Result<(), String> {
     core::delete_template(name)
 }
 
-// ── Project Templates ─────────────────────────────────────────────────────────
+#[tauri::command]
+pub fn rename_template(old_name: &str, new_name: &str) -> Result<(), String> {
+    core::rename_template(old_name, new_name)
+}
+
+// ── Discover Templates (bundled) ─────────────────────────────────────────────
 
 #[tauri::command]
-pub fn get_project_templates() -> Result<Vec<String>, String> {
-    core::list_project_templates()
+pub fn list_bundled_templates() -> Result<String, String> {
+    core::list_bundled_templates()
 }
 
 #[tauri::command]
-pub fn read_project_template(name: &str) -> Result<String, String> {
-    core::read_project_template(name)
+pub fn read_bundled_template(name: &str) -> Result<String, String> {
+    core::read_bundled_template(name)
 }
 
 #[tauri::command]
-pub fn save_project_template(name: &str, data: &str) -> Result<(), String> {
-    core::save_project_template(name, data)
-}
-
-#[tauri::command]
-pub fn delete_project_template(name: &str) -> Result<(), String> {
-    core::delete_project_template(name)
-}
-
-#[tauri::command]
-pub fn rename_project_template(old_name: &str, new_name: &str) -> Result<(), String> {
-    core::rename_project_template(old_name, new_name)
-}
-
-// ── Discover Templates (bundled) ────────────────────────────────────────────
-
-#[tauri::command]
-pub fn list_bundled_project_templates() -> Result<String, String> {
-    core::list_bundled_project_templates()
-}
-
-#[tauri::command]
-pub fn read_bundled_project_template(name: &str) -> Result<String, String> {
-    core::read_bundled_project_template(name)
-}
-
-#[tauri::command]
-pub async fn import_bundled_project_template(name: String) -> Result<(), String> {
-    core::import_bundled_project_template(&name).await?;
-    // Mark getting-started flag; best-effort — never block the import.
+pub async fn import_bundled_template(name: String) -> Result<(), String> {
+    core::import_bundled_template(&name).await?;
     if let Err(e) = core::mark_template_imported() {
         eprintln!("[automatic] Failed to mark template_imported flag: {}", e);
     }
@@ -72,12 +53,12 @@ pub async fn import_bundled_project_template(name: String) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn search_bundled_project_templates(query: &str) -> Result<String, String> {
-    core::search_bundled_project_templates(query)
+pub fn search_bundled_templates(query: &str) -> Result<String, String> {
+    core::search_bundled_templates(query)
 }
 
 /// Check which skills / MCP servers a bundled template requires are missing
-/// locally.  Bundled skills are flagged as installable without a network call.
+/// locally. Bundled skills are flagged as installable without a network call.
 #[tauri::command]
 pub fn check_template_dependencies(name: String) -> Result<String, String> {
     core::check_template_dependencies(&name)

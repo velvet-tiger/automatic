@@ -32,7 +32,7 @@ const SEED_COLLECTIONS: &str = include_str!("../../assets/discover/collections.j
 // Individual template JSON files are held in project_templates::BUNDLED_TEMPLATES;
 // we re-export that slice here so the seeding logic can aggregate it without a
 // circular dependency.
-pub(super) use super::project_templates::BUNDLED_TEMPLATES;
+pub(super) use super::templates::BUNDLED_TEMPLATES;
 
 // ── Directory helpers ─────────────────────────────────────────────────────────
 

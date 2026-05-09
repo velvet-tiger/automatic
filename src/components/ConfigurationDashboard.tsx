@@ -57,8 +57,8 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
         invoke<unknown[]>("get_skills").catch(() => [] as unknown[]),
         invoke<string[]>("list_mcp_server_configs").catch(() => [] as string[]),
         invoke<unknown[]>("get_rules").catch(() => [] as unknown[]),
+        invoke<string[]>("get_instructions").catch(() => [] as string[]),
         invoke<string[]>("get_templates").catch(() => [] as string[]),
-        invoke<string[]>("get_project_templates").catch(() => [] as string[]),
       ]);
 
       let agentCount = 0;
@@ -162,11 +162,11 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
       borderHoverClass: "hover:border-icon-file-template/50",
       count: counts.templates ?? null,
       countLabel: "saved",
-      primaryAction: { label: "Manage Instructions", tab: "templates" },
+      primaryAction: { label: "Manage Instructions", tab: "instructions" },
       secondaryActions: [],
     },
     {
-      id: "project-templates",
+      id: "templates",
       label: "Project Templates",
       description: "Scaffold new projects from pre-built configuration bundles.",
       helpText:
@@ -177,7 +177,7 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
       borderHoverClass: "hover:border-icon-file-template/50",
       count: counts.projectTemplates ?? null,
       countLabel: "templates",
-      primaryAction: { label: "Manage Templates", tab: "project-templates" },
+      primaryAction: { label: "Manage Templates", tab: "templates" },
       secondaryActions: [
         { label: "Discover Templates", tab: "discover-templates", icon: Store },
       ],
@@ -219,9 +219,9 @@ export default function ConfigurationDashboard({ onNavigate }: ConfigurationDash
           {[
             { label: "New Skill", tab: "skills", icon: Code },
             { label: "New Rule", tab: "rules", icon: ScrollText },
-            { label: "New Instruction", tab: "templates", icon: LayoutTemplate },
+            { label: "New Instruction", tab: "instructions", icon: LayoutTemplate },
             { label: "Add MCP Server", tab: "mcp", icon: Server },
-            { label: "New Project Template", tab: "project-templates", icon: Layers },
+            { label: "New Project Template", tab: "templates", icon: Layers },
           ].map(({ label, tab }) => (
             <button
               key={tab}

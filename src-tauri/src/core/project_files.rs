@@ -812,42 +812,45 @@ mod tests {
 
     #[test]
     fn save_always_includes_mandatory_rule_even_with_no_file_rules() {
-        let dir = tmp();
-        let project = make_project(dir.path().to_str().unwrap(), &["opencode"]);
-        // project.file_rules is empty — no rules configured by the user.
+        let home = tmp();
+        crate::core::paths::with_test_home(home.path().to_path_buf(), || {
+            crate::core::install_default_rules().expect("install bundled rules");
 
-        save_project_file_for_project(&project, "AGENTS.md", "# Instructions").expect("save");
+            let dir = tmp();
+            let project = make_project(dir.path().to_str().unwrap(), &["opencode"]);
+            save_project_file_for_project(&project, "AGENTS.md", "# Instructions").expect("save");
 
-        let on_disk = fs::read_to_string(dir.path().join("AGENTS.md")).expect("read");
-        assert!(
-            on_disk.contains("<!-- automatic:rules:start -->"),
-            "Mandatory rule should be injected even with no configured rules, but found: {:?}",
-            on_disk
-        );
-        // The automatic-service rule content should be present (it is resolved
-        // from the global registry via read_rule_content, which may not be
-        // available in tests — but the rules section markers should be).
+            let on_disk = fs::read_to_string(dir.path().join("AGENTS.md")).expect("read");
+            assert!(
+                on_disk.contains("<!-- automatic:rules:start -->"),
+                "Mandatory rule should be injected even with no configured rules, but found: {:?}",
+                on_disk
+            );
+        });
     }
 
     #[test]
     fn save_does_not_duplicate_mandatory_rule_when_already_configured() {
-        let dir = tmp();
-        let mut project = make_project(dir.path().to_str().unwrap(), &["opencode"]);
-        // User has already added automatic-service to their rules.
-        project.file_rules.insert(
-            "_project".to_string(),
-            vec!["automatic-service".to_string()],
-        );
+        let home = tmp();
+        crate::core::paths::with_test_home(home.path().to_path_buf(), || {
+            crate::core::install_default_rules().expect("install bundled rules");
 
-        save_project_file_for_project(&project, "AGENTS.md", "# Instructions").expect("save");
+            let dir = tmp();
+            let mut project = make_project(dir.path().to_str().unwrap(), &["opencode"]);
+            project.file_rules.insert(
+                "_project".to_string(),
+                vec!["automatic-service".to_string()],
+            );
 
-        let on_disk = fs::read_to_string(dir.path().join("AGENTS.md")).expect("read");
-        // The rules section should appear exactly once.
-        let marker_count = on_disk.matches("<!-- automatic:rules:start -->").count();
-        assert_eq!(
-            marker_count, 1,
-            "Rules section should appear exactly once, found {} in: {:?}",
-            marker_count, on_disk
-        );
+            save_project_file_for_project(&project, "AGENTS.md", "# Instructions").expect("save");
+
+            let on_disk = fs::read_to_string(dir.path().join("AGENTS.md")).expect("read");
+            let marker_count = on_disk.matches("<!-- automatic:rules:start -->").count();
+            assert_eq!(
+                marker_count, 1,
+                "Rules section should appear exactly once, found {} in: {:?}",
+                marker_count, on_disk
+            );
+        });
     }
 }

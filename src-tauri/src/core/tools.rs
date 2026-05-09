@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::paths::{get_automatic_dir, is_valid_name};
+use super::paths::{get_library_dir, is_valid_name};
 
 // ── Tool types ────────────────────────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ pub struct ToolEntry {
 // ── Storage ───────────────────────────────────────────────────────────────────
 
 pub fn get_tools_dir() -> Result<PathBuf, String> {
-    Ok(get_automatic_dir()?.join("tools"))
+    Ok(get_library_dir()?.join("tools"))
 }
 
 /// Return all registered tool names (filename stems, no extension).

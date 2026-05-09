@@ -316,10 +316,10 @@ fn read_rules() -> Result<Vec<DiskAsset>, String> {
 }
 
 fn read_templates() -> Result<Vec<DiskAsset>, String> {
-    let names = super::templates::list_templates().unwrap_or_default();
+    let names = super::instructions::list_instructions().unwrap_or_default();
     let mut out = Vec::with_capacity(names.len());
     for name in names {
-        let content = match super::templates::read_template(&name) {
+        let content = match super::instructions::read_instruction(&name) {
             Ok(s) => s,
             Err(_) => continue,
         };
@@ -335,14 +335,14 @@ fn read_templates() -> Result<Vec<DiskAsset>, String> {
 }
 
 fn read_sub_agents() -> Result<Vec<DiskAsset>, String> {
-    let entries = super::user_agents::list_user_agents().unwrap_or_default();
+    let entries = super::subagents::list_subagents().unwrap_or_default();
     let mut out = Vec::with_capacity(entries.len());
     for entry in entries {
         // Codex-derived sub-agents are synthetic — don't upload them.
         if entry.id.starts_with("codex-") {
             continue;
         }
-        let raw = match super::user_agents::read_user_agent(&entry.id) {
+        let raw = match super::subagents::read_subagent(&entry.id) {
             Ok(s) => s,
             Err(_) => continue,
         };
@@ -425,10 +425,10 @@ fn read_collections() -> Result<Vec<DiskAsset>, String> {
 }
 
 fn read_project_templates() -> Result<Vec<DiskAsset>, String> {
-    let names = super::project_templates::list_project_templates().unwrap_or_default();
+    let names = super::templates::list_templates().unwrap_or_default();
     let mut out = Vec::with_capacity(names.len());
     for name in names {
-        let raw = match super::project_templates::read_project_template(&name) {
+        let raw = match super::templates::read_template(&name) {
             Ok(s) => s,
             Err(_) => continue,
         };
@@ -510,12 +510,12 @@ fn delete_asset(kind: &str, machine_name: &str) -> Result<(), String> {
     match kind {
         "skill" => super::skills::delete_skill(machine_name),
         "rule" => super::rules::delete_rule(machine_name),
-        "template" => super::templates::delete_template(machine_name),
-        "sub_agent" => super::user_agents::delete_user_agent(machine_name),
+        "template" => super::instructions::delete_instruction(machine_name),
+        "sub_agent" => super::subagents::delete_subagent(machine_name),
         "command" => super::commands::delete_user_command(machine_name),
         "mcp_server" => super::mcp_servers::delete_mcp_server_config(machine_name),
         "collection" => delete_collection_asset(machine_name),
-        "project_template" => super::project_templates::delete_project_template(machine_name),
+        "project_template" => super::templates::delete_template(machine_name),
         _ => Ok(()),
     }
 }
@@ -591,8 +591,8 @@ fn write_template_asset(machine_name: &str, payload: &Value) -> Result<(), Strin
     let content = payload
         .get("content")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "template payload missing `content`".to_string())?;
-    super::templates::save_template(machine_name, content)
+        .ok_or_else(|| "instruction payload missing `content`".to_string())?;
+    super::instructions::save_instruction(machine_name, content)
 }
 
 fn write_sub_agent_asset(machine_name: &str, payload: &Value) -> Result<(), String> {
@@ -604,13 +604,13 @@ fn write_sub_agent_asset(machine_name: &str, payload: &Value) -> Result<(), Stri
     // existing local display name, then to machine_name.
     let display_name = extract_frontmatter_name(content)
         .or_else(|| {
-            super::user_agents::read_user_agent(machine_name)
+            super::subagents::read_subagent(machine_name)
                 .ok()
                 .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
                 .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
         })
         .unwrap_or_else(|| machine_name.to_string());
-    super::user_agents::save_user_agent(machine_name, &display_name, content)
+    super::subagents::save_subagent(machine_name, &display_name, content)
 }
 
 fn write_command_asset(machine_name: &str, payload: &Value) -> Result<(), String> {
@@ -729,7 +729,7 @@ fn write_project_template_asset(machine_name: &str, payload: &Value) -> Result<(
         .ok_or_else(|| "project_template payload missing `content`".to_string())?;
     let data = serde_json::to_string(content)
         .map_err(|e| format!("failed to serialise project_template: {}", e))?;
-    super::project_templates::save_project_template(machine_name, &data)
+    super::templates::save_template(machine_name, &data)
 }
 
 /// Extract the `name:` field from a Markdown-with-YAML-frontmatter sub-agent
@@ -1231,7 +1231,7 @@ mod tests {
             write_rule_asset("my-rule", &payload).expect("write rule");
 
             let raw =
-                fs::read_to_string(home.join(".automatic-dev/rules/my-rule.json")).unwrap();
+                fs::read_to_string(home.join(".automatic-dev/library/rules/my-rule.json")).unwrap();
             let v: Value = serde_json::from_str(&raw).unwrap();
             assert_eq!(v["content"].as_str().unwrap(), "Do the thing");
             // Display name falls back to machine name when no prior rule exists.
@@ -1262,7 +1262,7 @@ mod tests {
             write_template_asset("my-template", &payload).expect("write template");
 
             let body =
-                fs::read_to_string(home.join(".automatic-dev/templates/my-template.md")).unwrap();
+                fs::read_to_string(home.join(".automatic-dev/library/instructions/my-template.md")).unwrap();
             assert_eq!(body, "# Template body");
         });
     }
@@ -1274,7 +1274,7 @@ mod tests {
             write_command_asset("my-cmd", &payload).expect("write command");
 
             let body =
-                fs::read_to_string(home.join(".automatic-dev/commands/my-cmd.md")).unwrap();
+                fs::read_to_string(home.join(".automatic-dev/library/commands/my-cmd.md")).unwrap();
             assert!(body.contains("body"));
         });
     }
@@ -1286,7 +1286,7 @@ mod tests {
             let payload = json!({ "content": content });
             write_sub_agent_asset("my-agent", &payload).expect("write");
 
-            let raw = super::super::user_agents::read_user_agent("my-agent").unwrap();
+            let raw = super::super::subagents::read_subagent("my-agent").unwrap();
             let v: Value = serde_json::from_str(&raw).unwrap();
             assert_eq!(v["name"].as_str().unwrap(), "Friendly Name");
         });
@@ -1411,15 +1411,15 @@ mod tests {
     #[test]
     fn delete_asset_dispatches_to_the_right_kind() {
         with_temp_home(|home| {
-            super::super::templates::save_template("to-delete", "# gone soon")
-                .expect("seed template");
+            super::super::instructions::save_instruction("to-delete", "# gone soon")
+                .expect("seed instruction");
             assert!(home
-                .join(".automatic-dev/templates/to-delete.md")
+                .join(".automatic-dev/library/instructions/to-delete.md")
                 .exists());
 
             delete_asset("template", "to-delete").expect("delete");
             assert!(!home
-                .join(".automatic-dev/templates/to-delete.md")
+                .join(".automatic-dev/library/instructions/to-delete.md")
                 .exists());
         });
     }

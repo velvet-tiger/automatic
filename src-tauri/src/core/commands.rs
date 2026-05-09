@@ -205,7 +205,7 @@ mod tests {
             let err = result.expect_err("unsafe command should be blocked");
             assert!(err.contains("prompt-override"), "unexpected error: {err}");
             assert!(!home
-                .join(".automatic-dev/commands/dangerous-command.md")
+                .join(".automatic-dev/library/commands/dangerous-command.md")
                 .exists());
         });
     }
