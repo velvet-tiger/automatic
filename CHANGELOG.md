@@ -4,6 +4,10 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Pin `@tauri-apps/plugin-dialog` to `^2.7` to resolve version mismatch with Rust crate `tauri-plugin-dialog v2.7.1`, which broke production builds.
+
 ## [1.7.0] - 2026-05-09
 
 ### Added
