@@ -6,8 +6,10 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { trackMcpServerCreated, trackMcpServerUpdated, trackMcpServerDeleted } from "../../lib/analytics";
 import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
 import { KvEditor, inputClass, smallInputClass, addBtnClass } from "../../components/KvField";
+import McpServerImportDialog from "../../components/McpServerImportDialog";
 import {
   Plus,
+  ClipboardPaste,
   X,
   Server,
   Check,
@@ -371,6 +373,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [opencodeWarning, setOpencodeWarning] = useState<string[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Inline add state
   const [newArg, setNewArg] = useState("");
@@ -541,6 +544,13 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
             MCP Servers
           </span>
           <div className="flex items-center gap-1">
+            <button
+              onClick={() => setImportOpen(true)}
+              className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
+              title="Import MCP Server from JSON"
+            >
+              <ClipboardPaste size={14} />
+            </button>
             <button
               onClick={startCreate}
               className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
@@ -999,6 +1009,18 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
           </div>
         )}
       </div>
+
+      <McpServerImportDialog
+        isOpen={importOpen}
+        existingNames={servers}
+        onClose={() => setImportOpen(false)}
+        onImported={async (names) => {
+          await loadServers();
+          setRecentRefresh((prev) => prev + 1);
+          const first = names[0];
+          if (first) await selectServer(first);
+        }}
+      />
     </div>
   );
 }
