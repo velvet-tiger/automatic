@@ -390,13 +390,22 @@ pub fn sync_rules_to_automatic_instructions(
 /// Build the index section that is injected into the main instruction file when
 /// `instructions_index_mode` is enabled.  Lists all rule files with their
 /// relative path from the project root.
+///
+/// Duplicate rule machine names are collapsed to a single entry (preserving
+/// first occurrence).  This is a defensive layer: `ensure_automatic_rules` is
+/// the primary dedup site, but pinning the contract here protects against any
+/// future caller that bypasses it.
 pub fn build_index_section(
     rule_names: &[String],
     custom_rules: &[crate::core::CustomRule],
 ) -> String {
     let mut entries: Vec<String> = Vec::new();
+    let mut seen_rule_names: HashSet<&str> = HashSet::new();
 
     for machine_name in rule_names {
+        if !seen_rule_names.insert(machine_name.as_str()) {
+            continue;
+        }
         entries.push(format!(
             "- [{}]({}/{}.md)",
             machine_name_to_display(machine_name),
@@ -1237,6 +1246,24 @@ mod tests {
         }];
         let result = build_index_section(&[], &custom);
         assert_eq!(result, "");
+    }
+
+    #[test]
+    fn build_index_collapses_duplicate_rule_names() {
+        // Pins the defensive contract: even if a caller hands us a list
+        // with duplicates (bypassing `ensure_automatic_rules`), the rendered
+        // index must list each rule once.
+        let rules = vec![
+            "automatic-process".to_string(),
+            "automatic-process".to_string(),
+        ];
+        let result = build_index_section(&rules, &[]);
+        let occurrences = result.matches("automatic-process.md").count();
+        assert_eq!(
+            occurrences, 1,
+            "duplicate rule names must collapse to a single index entry; got: {}",
+            result
+        );
     }
 
     // ── sync_rules_to_automatic_instructions ────────────────────────────────

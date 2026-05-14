@@ -42,6 +42,13 @@ pub fn ensure_mandatory_rules(rules: &[String]) -> Vec<String> {
 /// This always includes the Automatic service rule. When the project has
 /// repo-local commands configured, it also includes the commands discovery
 /// rule so agents know to consult `.agents/commands-index.md`.
+///
+/// The returned list is deduplicated, preserving the first occurrence of
+/// each rule name. This is a defensive safety net: a duplicate rule name
+/// has no defined renderer semantics (each rule maps to one file) so any
+/// duplicate that reaches here is silently collapsed before it can leak
+/// into a project's AGENTS.md / CLAUDE.md index or be written twice to
+/// `.automatic/instructions/`.
 pub fn ensure_automatic_rules(rules: &[String], has_commands: bool) -> Vec<String> {
     let mut result = ensure_mandatory_rules(rules);
 
@@ -54,6 +61,8 @@ pub fn ensure_automatic_rules(rules: &[String], has_commands: bool) -> Vec<Strin
         result.insert(insert_at, COMMANDS_RULE.to_string());
     }
 
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    result.retain(|rule| seen.insert(rule.clone()));
     result
 }
 
@@ -462,7 +471,13 @@ fn migrate_checklist_to_process(rules_dir: &Path) -> Result<(), String> {
             if config_path.exists() {
                 if let Ok(config_raw) = fs::read_to_string(&config_path) {
                     if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&config_raw) {
-                        if replace_rule_in_file_rules(&mut config, OLD, NEW) {
+                        // Rename pass + repair pass for already-damaged arrays.
+                        // Both calls are idempotent, so combining their `changed`
+                        // flags with `|` (not `||`) ensures the dedupe runs even
+                        // when the rename was a no-op.
+                        let renamed = replace_rule_in_file_rules(&mut config, OLD, NEW);
+                        let deduped = dedupe_file_rules(&mut config);
+                        if renamed || deduped {
                             if let Ok(pretty) = serde_json::to_string_pretty(&config) {
                                 let _ = fs::write(&config_path, pretty);
                             }
@@ -479,7 +494,9 @@ fn migrate_checklist_to_process(rules_dir: &Path) -> Result<(), String> {
 
         // No project directory or config file there — update the registry entry
         // directly (legacy / no-directory projects).
-        if replace_rule_in_file_rules(&mut value, OLD, NEW) {
+        let renamed = replace_rule_in_file_rules(&mut value, OLD, NEW);
+        let deduped = dedupe_file_rules(&mut value);
+        if renamed || deduped {
             if let Ok(pretty) = serde_json::to_string_pretty(&value) {
                 let _ = fs::write(&registry_path, pretty);
             }
@@ -489,10 +506,16 @@ fn migrate_checklist_to_process(rules_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Replace all occurrences of `old_rule` with `new_rule` inside the
-/// `file_rules` map of a JSON project value.
+/// Replace occurrences of `old_rule` with `new_rule` inside the `file_rules`
+/// map of a JSON project value, without producing duplicate entries.
 ///
-/// Returns `true` if any replacement was made.
+/// Per array:
+/// - If `new_rule` already appears, any `old_rule` entries are removed
+///   (the slot is already occupied — preserve the existing `new_rule`
+///   position).
+/// - Otherwise `old_rule` entries are renamed to `new_rule` in place.
+///
+/// Returns `true` if any array was modified.
 fn replace_rule_in_file_rules(
     project: &mut serde_json::Value,
     old_rule: &str,
@@ -508,13 +531,57 @@ fn replace_rule_in_file_rules(
 
     let mut changed = false;
     for rules in file_rules.values_mut() {
-        if let Some(arr) = rules.as_array_mut() {
+        let Some(arr) = rules.as_array_mut() else {
+            continue;
+        };
+
+        let new_already_present = arr.iter().any(|e| e.as_str() == Some(new_rule));
+
+        if new_already_present {
+            let before = arr.len();
+            arr.retain(|e| e.as_str() != Some(old_rule));
+            if arr.len() != before {
+                changed = true;
+            }
+        } else {
             for entry in arr.iter_mut() {
                 if entry.as_str() == Some(old_rule) {
                     *entry = serde_json::Value::String(new_rule.to_string());
                     changed = true;
                 }
             }
+        }
+    }
+    changed
+}
+
+/// Dedupe every array in `file_rules`, preserving first occurrence of each
+/// entry.  Returns `true` if any array shrank.
+///
+/// This repairs already-damaged `project.json` files where a prior buggy
+/// migration left duplicate rule names in `file_rules`.
+fn dedupe_file_rules(project: &mut serde_json::Value) -> bool {
+    let file_rules = match project
+        .get_mut("file_rules")
+        .and_then(|v| v.as_object_mut())
+    {
+        Some(m) => m,
+        None => return false,
+    };
+
+    let mut changed = false;
+    for rules in file_rules.values_mut() {
+        let Some(arr) = rules.as_array_mut() else {
+            continue;
+        };
+        let before = arr.len();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        arr.retain(|entry| match entry.as_str() {
+            Some(s) => seen.insert(s.to_string()),
+            None => true,
+        });
+        if arr.len() != before {
+            changed = true;
         }
     }
     changed
@@ -862,5 +929,162 @@ mod tests {
         let rules = vec![MANDATORY_RULE.to_string(), COMMANDS_RULE.to_string()];
         let result = ensure_automatic_rules(&rules, true);
         assert_eq!(result, rules);
+    }
+
+    #[test]
+    fn ensure_automatic_rules_collapses_duplicate_user_rule() {
+        // A duplicated user rule in `file_rules` (e.g. left behind by a buggy
+        // migration) must not leak through to the rendered index.
+        let rules = vec![
+            "automatic-process".to_string(),
+            "automatic-process".to_string(),
+        ];
+        let result = ensure_automatic_rules(&rules, false);
+        assert_eq!(
+            result,
+            vec![
+                MANDATORY_RULE.to_string(),
+                "automatic-process".to_string(),
+            ],
+            "duplicate user rule should be collapsed; mandatory rule still prepended once"
+        );
+    }
+
+    #[test]
+    fn ensure_automatic_rules_preserves_first_occurrence_order() {
+        let rules = vec![
+            "alpha".to_string(),
+            "beta".to_string(),
+            "alpha".to_string(),
+            "gamma".to_string(),
+        ];
+        let result = ensure_automatic_rules(&rules, false);
+        assert_eq!(
+            result,
+            vec![
+                MANDATORY_RULE.to_string(),
+                "alpha".to_string(),
+                "beta".to_string(),
+                "gamma".to_string(),
+            ]
+        );
+    }
+
+    // ── replace_rule_in_file_rules ──────────────────────────────────────────
+
+    #[test]
+    fn replace_rule_renames_when_new_absent() {
+        let mut project = serde_json::json!({
+            "file_rules": { "_project": ["automatic-checklist", "other"] }
+        });
+        let changed = replace_rule_in_file_rules(
+            &mut project,
+            "automatic-checklist",
+            "automatic-process",
+        );
+        assert!(changed);
+        assert_eq!(
+            project["file_rules"]["_project"],
+            serde_json::json!(["automatic-process", "other"])
+        );
+    }
+
+    #[test]
+    fn replace_rule_drops_old_when_new_already_present() {
+        // The exact case that produced the duplicate in the wild:
+        // both names exist, so renaming would create
+        // ["automatic-process", "automatic-process"]. We must drop the old
+        // name instead.
+        let mut project = serde_json::json!({
+            "file_rules": { "_project": ["automatic-checklist", "automatic-process"] }
+        });
+        let changed = replace_rule_in_file_rules(
+            &mut project,
+            "automatic-checklist",
+            "automatic-process",
+        );
+        assert!(changed);
+        assert_eq!(
+            project["file_rules"]["_project"],
+            serde_json::json!(["automatic-process"])
+        );
+    }
+
+    #[test]
+    fn replace_rule_is_noop_when_neither_present() {
+        let mut project = serde_json::json!({
+            "file_rules": { "_project": ["automatic-process", "other"] }
+        });
+        let changed = replace_rule_in_file_rules(
+            &mut project,
+            "automatic-checklist",
+            "automatic-process",
+        );
+        assert!(!changed, "no checklist entry — nothing to change");
+        assert_eq!(
+            project["file_rules"]["_project"],
+            serde_json::json!(["automatic-process", "other"])
+        );
+    }
+
+    #[test]
+    fn replace_rule_processes_multiple_arrays() {
+        let mut project = serde_json::json!({
+            "file_rules": {
+                "_project": ["automatic-checklist"],
+                "AGENTS.md": ["automatic-checklist", "automatic-process"],
+            }
+        });
+        let changed = replace_rule_in_file_rules(
+            &mut project,
+            "automatic-checklist",
+            "automatic-process",
+        );
+        assert!(changed);
+        assert_eq!(
+            project["file_rules"]["_project"],
+            serde_json::json!(["automatic-process"])
+        );
+        assert_eq!(
+            project["file_rules"]["AGENTS.md"],
+            serde_json::json!(["automatic-process"])
+        );
+    }
+
+    // ── dedupe_file_rules ───────────────────────────────────────────────────
+
+    #[test]
+    fn dedupe_file_rules_collapses_duplicates_preserving_order() {
+        let mut project = serde_json::json!({
+            "file_rules": { "_project": ["a", "b", "a", "c", "b"] }
+        });
+        let changed = dedupe_file_rules(&mut project);
+        assert!(changed);
+        assert_eq!(
+            project["file_rules"]["_project"],
+            serde_json::json!(["a", "b", "c"])
+        );
+    }
+
+    #[test]
+    fn dedupe_file_rules_is_noop_when_already_unique() {
+        let mut project = serde_json::json!({
+            "file_rules": { "_project": ["a", "b", "c"] }
+        });
+        let changed = dedupe_file_rules(&mut project);
+        assert!(!changed);
+        assert_eq!(
+            project["file_rules"]["_project"],
+            serde_json::json!(["a", "b", "c"])
+        );
+    }
+
+    #[test]
+    fn dedupe_file_rules_handles_missing_field() {
+        // Legacy / pointer-style entries with no `file_rules` must not panic
+        // and must report no change.
+        let mut project = serde_json::json!({ "name": "demo", "directory": "/tmp" });
+        let changed = dedupe_file_rules(&mut project);
+        assert!(!changed);
     }
 }
