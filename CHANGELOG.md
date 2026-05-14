@@ -4,9 +4,19 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-05-14
+
+### Added
+
+- Import MCP servers from a pasted JSON snippet. (`07a83a8`)
+
 ### Fixed
 
-- Pin `@tauri-apps/plugin-dialog` to `^2.7` to resolve version mismatch with Rust crate `tauri-plugin-dialog v2.7.1`, which broke production builds.
+- Prevent and repair duplicate rule entries in the auto-generated instruction index. The `automatic-checklist` → `automatic-process` migration could leave `["automatic-process", "automatic-process"]` in `file_rules`, causing the rendered AGENTS.md / CLAUDE.md index to list the same rule twice. The migration now drops the old name when the new one is already present, repairs already-damaged `project.json` files in place, and the renderer deduplicates defensively. (`dd20912`)
+- Resolve Dependabot security alerts across npm and Rust dependencies. (`3d84f4d`)
+- Resolve three CodeQL alerts in YAML escaping and `className` handling. (`14e400c`)
+- Validate `GatewayConfig` IDs before URL construction. (`a792976`)
+- Pin `@tauri-apps/plugin-dialog` to `^2.7` to resolve version mismatch with Rust crate `tauri-plugin-dialog v2.7.1`, which broke production builds. (`4068153`)
 
 ## [1.7.0] - 2026-05-09
 
