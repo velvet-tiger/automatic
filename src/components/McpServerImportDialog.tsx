@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { X, ClipboardPaste, Loader2, CheckCircle2, AlertTriangle, FileText } from "lucide-react";
+import { X, ClipboardPaste, Loader2, CheckCircle2, AlertTriangle, FileText, ChevronDown } from "lucide-react";
 import { trackMcpServerCreated } from "../lib/analytics";
 
 /**
@@ -12,6 +12,16 @@ const RESERVED_NAMES = new Set(["automatic"]);
 /** Matches the Rust `is_valid_name` rule in src-tauri/src/core/paths.rs. */
 function isValidName(name: string): boolean {
   return name.length > 0 && !name.includes("/") && !name.includes("\\") && name !== "." && name !== "..";
+}
+
+/**
+ * Normalize a name for similarity matching: strip every non-alphanumeric
+ * character and lowercase. Lets `betterstack`, `better-stack`, and
+ * `Better_Stack` collapse to the same key so we can flag logical duplicates
+ * that live under different filenames.
+ */
+function normalizeForMatch(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 type ConflictAction = "skip" | "overwrite" | "rename";
@@ -180,6 +190,13 @@ interface RowComputed {
   effectiveName: string;
   /** True when the original name collides with an existing Library entry. */
   conflicts: boolean;
+  /**
+   * Existing library entry that matched the pasted name under slug-insensitive
+   * comparison. Only set when there is a conflict. Equals `entry.originalName`
+   * for exact matches; differs for slug-only matches (e.g. `better-stack`
+   * matching pasted `betterstack`).
+   */
+  matchedExistingName: string | null;
   /** Validation error preventing import, or null when row is importable. */
   error: string | null;
   /** True when the row will be sent to the backend on Import. */
@@ -188,7 +205,7 @@ interface RowComputed {
 
 function computeRow(
   entry: ParsedEntry,
-  existing: Set<string>,
+  existing: Map<string, string>,
   singleBareName: string,
   requiresName: boolean,
 ): RowComputed {
@@ -198,18 +215,22 @@ function computeRow(
       ? entry.renameTo.trim()
       : entry.originalName;
 
-  const conflicts = !requiresName && existing.has(entry.originalName);
+  const matchedExistingName = requiresName
+    ? null
+    : existing.get(normalizeForMatch(entry.originalName)) ?? null;
+  const conflicts = matchedExistingName !== null;
 
   // Config shape errors apply regardless of name choice.
   const shapeError = validateConfigShape(entry.config);
   if (shapeError) {
-    return { effectiveName, conflicts, error: shapeError, willImport: false };
+    return { effectiveName, conflicts, matchedExistingName, error: shapeError, willImport: false };
   }
 
   if (effectiveName.length === 0) {
     return {
       effectiveName,
       conflicts,
+      matchedExistingName,
       error: requiresName ? "Enter a name for this server." : "Rename to a non-empty value.",
       willImport: false,
     };
@@ -218,6 +239,7 @@ function computeRow(
     return {
       effectiveName,
       conflicts,
+      matchedExistingName,
       error: `Invalid name "${effectiveName}". Names cannot contain '/' or '\\' and cannot be '.' or '..'.`,
       willImport: false,
     };
@@ -226,6 +248,7 @@ function computeRow(
     return {
       effectiveName,
       conflicts,
+      matchedExistingName,
       error: `"${effectiveName}" is reserved for the built-in Automatic server.`,
       willImport: false,
     };
@@ -233,20 +256,25 @@ function computeRow(
 
   // Conflict handling.
   if (conflicts && entry.action === "skip") {
-    return { effectiveName, conflicts, error: null, willImport: false };
+    return { effectiveName, conflicts, matchedExistingName, error: null, willImport: false };
   }
   if (conflicts && entry.action === "rename") {
-    if (existing.has(effectiveName) && effectiveName !== entry.originalName) {
+    // A renamed entry must not collide with any existing library name under
+    // slug-insensitive comparison either — otherwise the user is just moving
+    // the conflict, not resolving it.
+    const renameCollision = existing.get(normalizeForMatch(effectiveName));
+    if (renameCollision !== undefined && renameCollision !== matchedExistingName) {
       return {
         effectiveName,
         conflicts,
+        matchedExistingName,
         error: `"${effectiveName}" already exists in the Library — pick a different name.`,
         willImport: false,
       };
     }
   }
 
-  return { effectiveName, conflicts, error: null, willImport: true };
+  return { effectiveName, conflicts, matchedExistingName, error: null, willImport: true };
 }
 
 export default function McpServerImportDialog({
@@ -263,7 +291,16 @@ export default function McpServerImportDialog({
   const [importing, setImporting] = useState(false);
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
 
-  const existing = useMemo(() => new Set(existingNames), [existingNames]);
+  // Indexed by the slug-insensitive form of each existing name. The value
+  // preserves the original (display) name so the UI can render `Exists as
+  // <name>` when a paste matches under normalization but not exact spelling.
+  const existing = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const name of existingNames) {
+      map.set(normalizeForMatch(name), name);
+    }
+    return map;
+  }, [existingNames]);
 
   // Re-parse whenever the pasted text changes.
   useEffect(() => {
@@ -389,7 +426,7 @@ export default function McpServerImportDialog({
             </div>
           )}
 
-          {entries.length > 0 && (
+          {entries.length > 0 && !outcome && (
             <div className="space-y-2">
               <p className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
                 {entries.length === 1 ? "Detected server" : `Detected ${entries.length} servers`}
@@ -424,7 +461,9 @@ export default function McpServerImportDialog({
                             </span>
                             {row.conflicts && (
                               <span className="text-[10px] uppercase tracking-wider text-warning bg-warning/10 px-1.5 py-0.5 rounded">
-                                Exists
+                                {row.matchedExistingName && row.matchedExistingName !== entry.originalName
+                                  ? `Exists as ${row.matchedExistingName}`
+                                  : "Exists"}
                               </span>
                             )}
                           </div>
@@ -438,17 +477,29 @@ export default function McpServerImportDialog({
                           )}
                         </div>
 
-                        {row.conflicts && !requiresName && (
-                          <select
-                            value={entry.action}
-                            onChange={(e) => updateEntry(i, { action: e.target.value as ConflictAction })}
-                            className="shrink-0 px-2 py-1 rounded-md bg-bg-input border border-border-strong/40 text-[12px] text-text-base focus:border-brand outline-none"
-                          >
-                            <option value="skip">Skip</option>
-                            <option value="overwrite">Overwrite</option>
-                            <option value="rename">Rename…</option>
-                          </select>
-                        )}
+                        {row.conflicts && !requiresName && (() => {
+                          // Overwrite only makes sense for exact-name conflicts —
+                          // a slug-only match would write to a different filename
+                          // than the matched existing entry, leaving both in place.
+                          const exactMatch = row.matchedExistingName === entry.originalName;
+                          return (
+                            <div className="relative shrink-0">
+                              <select
+                                value={entry.action}
+                                onChange={(e) => updateEntry(i, { action: e.target.value as ConflictAction })}
+                                className="h-7 min-w-[110px] appearance-none rounded-md border border-border-strong/50 bg-bg-input px-2.5 pr-7 text-[12px] text-text-base shadow-none focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60"
+                              >
+                                <option value="skip">Skip</option>
+                                {exactMatch && <option value="overwrite">Overwrite</option>}
+                                <option value="rename">Rename…</option>
+                              </select>
+                              <ChevronDown
+                                size={12}
+                                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-muted"
+                              />
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {row.conflicts && entry.action === "rename" && !requiresName && (
