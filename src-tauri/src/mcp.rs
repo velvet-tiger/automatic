@@ -155,6 +155,31 @@ pub struct DeleteRuleParams {
     pub machine_name: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct AttachRuleParams {
+    /// The project name as registered in Automatic.
+    pub project: String,
+    /// The rule's machine name. Must already exist in the library.
+    pub machine_name: String,
+    /// Target instruction file key. Use a filename like `"CLAUDE.md"` or
+    /// `"AGENTS.md"` to attach the rule to a single agent's instruction file.
+    /// Use `"_project"` to inject the rule into every agent file. Omit when
+    /// the project is in unified instruction mode — `"_unified"` is used
+    /// automatically. In per-agent mode the field is required.
+    pub file: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct DetachRuleParams {
+    /// The project name as registered in Automatic.
+    pub project: String,
+    /// The rule's machine name. Mandatory rules cannot be detached.
+    pub machine_name: String,
+    /// Target instruction file key. Same semantics as `automatic_attach_rule`:
+    /// optional in unified mode, required in per-agent mode.
+    pub file: Option<String>,
+}
+
 // ── Feature Tool Parameter Types ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -284,6 +309,44 @@ fn validate_project(project: &str) -> Result<(), String> {
             "Unknown project '{}'. Valid project names are: {}. \
              Call automatic_list_projects to confirm the correct name before retrying.",
             project, list
+        ))
+    }
+}
+
+/// Resolve the `file_rules` key for a rule attach/detach operation.
+///
+/// Returns the explicit `file` parameter when provided; otherwise falls back
+/// to `"_unified"` in unified instruction mode, or errors with a list of the
+/// project's existing keys in per-agent mode so the caller can pick one.
+fn resolve_file_rules_key(
+    project: &crate::core::Project,
+    file: Option<&str>,
+) -> Result<String, String> {
+    if let Some(key) = file {
+        return Ok(key.to_string());
+    }
+    if project.instruction_mode == "unified" {
+        return Ok("_unified".to_string());
+    }
+    let existing: Vec<&String> = project.file_rules.keys().collect();
+    if existing.is_empty() {
+        Err(format!(
+            "Project '{}' is in per-agent instruction mode and has no \
+             file_rules entries yet. Specify the `file` parameter — pass a \
+             filename like \"CLAUDE.md\" or \"AGENTS.md\", or \"_project\" \
+             to inject the rule into every agent file.",
+            project.name
+        ))
+    } else {
+        let keys = existing
+            .iter()
+            .map(|k| format!("\"{}\"", k))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(format!(
+            "Project '{}' is in per-agent instruction mode — specify the \
+             `file` parameter. Existing keys for this project: {}.",
+            project.name, keys
         ))
     }
 }
@@ -538,9 +601,10 @@ impl AutomaticMcpServer {
     #[tool(
         name = "automatic_get_project_context",
         description = "Read the project context for a registered project. Returns commands, entry points, \
-                       architecture concepts, conventions, gotchas, and a documentation index merged from \
-                       .automatic/context.json and .automatic/docs.json in the project directory. Returns \
-                       an empty context (all sections present but empty) when the files do not exist yet."
+                       architecture concepts, conventions, gotchas, a documentation index merged from \
+                       .automatic/context.json and .automatic/docs.json, and the list of rules currently \
+                       attached to each instruction file. Returns an empty context (all sections present \
+                       but empty) when the source files do not exist yet."
     )]
     async fn get_project_context(
         &self,
@@ -586,7 +650,7 @@ impl AutomaticMcpServer {
                 if cmd_count + ep_count + concept_count + conv_count + gotcha_count + doc_count == 0
                 {
                     summary.push_str(
-                        "No context defined yet (.automatic/context.json is absent or empty).\n",
+                        "No context defined yet (.automatic/context.json is absent or empty).\n\n",
                     );
                 } else {
                     summary.push_str(&format!(
@@ -597,6 +661,24 @@ impl AutomaticMcpServer {
                     match serde_json::to_string_pretty(&ctx) {
                         Ok(json) => summary.push_str(&json),
                         Err(e) => summary.push_str(&format!("(serialisation error: {})", e)),
+                    }
+                    summary.push_str("\n\n");
+                }
+
+                // Attached rules — sourced from project.file_rules so agents
+                // can discover which rules are active without an extra call.
+                summary.push_str("## Attached rules\n\n");
+                if project.file_rules.is_empty() {
+                    summary.push_str("No rules attached to this project.\n");
+                } else {
+                    let mut keys: Vec<&String> = project.file_rules.keys().collect();
+                    keys.sort();
+                    for key in keys {
+                        let rules = &project.file_rules[key];
+                        if rules.is_empty() {
+                            continue;
+                        }
+                        summary.push_str(&format!("- `{}`: {}\n", key, rules.join(", ")));
                     }
                 }
 
@@ -767,6 +849,174 @@ impl AutomaticMcpServer {
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to delete rule '{}': {}",
                 machine_name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_attach_rule",
+        description = "Attach a rule to a project's instruction file so the \
+                       rule's content is injected on next sync. Idempotent — \
+                       attaching an already-attached rule reports success. \
+                       Does not trigger a sync; call automatic_sync_project \
+                       afterwards to write changes to disk."
+    )]
+    async fn attach_rule(
+        &self,
+        params: Parameters<AttachRuleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let project_name = &params.0.project;
+        let machine_name = &params.0.machine_name;
+
+        if let Err(e) = validate_project(project_name) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        if crate::core::read_rule(machine_name).is_err() {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Rule '{}' does not exist in the library. Call \
+                 automatic_list_rules to see available rules.",
+                machine_name
+            ))]));
+        }
+
+        let project_json = match crate::core::read_project(project_name) {
+            Ok(j) => j,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to read project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+        let mut project: crate::core::Project = match serde_json::from_str(&project_json) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to parse project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+
+        let key = match resolve_file_rules_key(&project, params.0.file.as_deref()) {
+            Ok(k) => k,
+            Err(e) => return Ok(CallToolResult::error(vec![Content::text(e)])),
+        };
+
+        let entries = project.file_rules.entry(key.clone()).or_default();
+        if entries.iter().any(|r| r == machine_name) {
+            return Ok(CallToolResult::success(vec![Content::text(format!(
+                "Rule '{}' is already attached to project '{}' under '{}'.",
+                machine_name, project_name, key
+            ))]));
+        }
+        entries.push(machine_name.to_string());
+
+        let new_json = match serde_json::to_string(&project) {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to serialise project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+        match crate::core::save_project(project_name, &new_json) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Attached rule '{}' to project '{}' under '{}'. Call \
+                 automatic_sync_project to write the change to disk.",
+                machine_name, project_name, key
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to save project '{}': {}",
+                project_name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_detach_rule",
+        description = "Detach a rule from a project's instruction file. \
+                       Mandatory rules (e.g. `automatic-service`) cannot be \
+                       detached. Idempotent — detaching a rule that is not \
+                       attached reports success. Does not trigger a sync."
+    )]
+    async fn detach_rule(
+        &self,
+        params: Parameters<DetachRuleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let project_name = &params.0.project;
+        let machine_name = &params.0.machine_name;
+
+        if let Err(e) = validate_project(project_name) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        if crate::core::is_mandatory_rule(machine_name) {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Cannot detach rule '{}' — it is required by Automatic and \
+                 is re-added automatically on save.",
+                machine_name
+            ))]));
+        }
+
+        let project_json = match crate::core::read_project(project_name) {
+            Ok(j) => j,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to read project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+        let mut project: crate::core::Project = match serde_json::from_str(&project_json) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to parse project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+
+        let key = match resolve_file_rules_key(&project, params.0.file.as_deref()) {
+            Ok(k) => k,
+            Err(e) => return Ok(CallToolResult::error(vec![Content::text(e)])),
+        };
+
+        let removed = match project.file_rules.get_mut(&key) {
+            Some(entries) => {
+                let before = entries.len();
+                entries.retain(|r| r != machine_name);
+                before != entries.len()
+            }
+            None => false,
+        };
+
+        if !removed {
+            return Ok(CallToolResult::success(vec![Content::text(format!(
+                "Rule '{}' was not attached to project '{}' under '{}'.",
+                machine_name, project_name, key
+            ))]));
+        }
+
+        let new_json = match serde_json::to_string(&project) {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to serialise project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+        match crate::core::save_project(project_name, &new_json) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Detached rule '{}' from project '{}' under '{}'. Call \
+                 automatic_sync_project to write the change to disk.",
+                machine_name, project_name, key
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to save project '{}': {}",
+                project_name, e
             ))])),
         }
     }
