@@ -117,6 +117,44 @@ pub struct GetRelatedProjectsParams {
     pub project: String,
 }
 
+// ── Rule Tool Parameter Types ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ReadRuleParams {
+    /// The rule's machine name (lowercase letters, digits, and hyphens; must
+    /// start with a letter; no consecutive or trailing hyphens).
+    pub machine_name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct CreateRuleParams {
+    /// The rule's machine name (lowercase letters, digits, and hyphens; must
+    /// start with a letter; no consecutive or trailing hyphens). Must not
+    /// already exist — use `automatic_update_rule` to modify an existing rule.
+    pub machine_name: String,
+    /// Human-readable display name shown in the Automatic UI.
+    pub name: String,
+    /// Markdown content of the rule.
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct UpdateRuleParams {
+    /// The rule's machine name. Must already exist.
+    pub machine_name: String,
+    /// New display name. Omit to leave the current name unchanged.
+    pub name: Option<String>,
+    /// New markdown content. Omit to leave the current content unchanged.
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct DeleteRuleParams {
+    /// The rule's machine name. Mandatory rules (e.g. `automatic-service`)
+    /// and plugin-provided rules cannot be deleted and will return an error.
+    pub machine_name: String,
+}
+
 // ── Feature Tool Parameter Types ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -567,6 +605,168 @@ impl AutomaticMcpServer {
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to load project context for '{}': {}",
                 params.0.project, e
+            ))])),
+        }
+    }
+
+    // ── Rules tools ──────────────────────────────────────────────────────
+
+    #[tool(
+        name = "automatic_list_rules",
+        description = "List every rule in the Automatic library. Returns an \
+                       array of objects with `id` (machine name), `name` \
+                       (display name), and optional `plugin_id` for \
+                       plugin-provided rules that cannot be deleted."
+    )]
+    async fn list_rules(&self) -> Result<CallToolResult, McpError> {
+        match crate::core::list_rules() {
+            Ok(rules) => {
+                let json =
+                    serde_json::to_string_pretty(&rules).unwrap_or_else(|_| "[]".to_string());
+                Ok(CallToolResult::success(vec![Content::text(json)]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to list rules: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_read_rule",
+        description = "Read a rule by machine name. Returns the full rule \
+                       JSON (`name`, `content`, optional `plugin_id`)."
+    )]
+    async fn read_rule(
+        &self,
+        params: Parameters<ReadRuleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::core::read_rule(&params.0.machine_name) {
+            Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to read rule '{}': {}",
+                params.0.machine_name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_create_rule",
+        description = "Create a new rule in the Automatic library. Fails if a \
+                       rule with the same machine name already exists — use \
+                       `automatic_update_rule` to modify an existing rule. \
+                       Machine name must be lowercase letters, digits, and \
+                       hyphens only, starting with a letter."
+    )]
+    async fn create_rule(
+        &self,
+        params: Parameters<CreateRuleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let machine_name = &params.0.machine_name;
+
+        if crate::core::read_rule(machine_name).is_ok() {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Rule '{}' already exists. Use automatic_update_rule to modify it.",
+                machine_name
+            ))]));
+        }
+
+        match crate::core::save_rule(machine_name, &params.0.name, &params.0.content) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Created rule '{}'.",
+                machine_name
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to create rule '{}': {}",
+                machine_name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_update_rule",
+        description = "Update an existing rule's display name and/or content. \
+                       Fails if the rule does not exist or is provided by a \
+                       plugin. Omit a field to leave it unchanged; at least \
+                       one of `name` or `content` must be provided."
+    )]
+    async fn update_rule(
+        &self,
+        params: Parameters<UpdateRuleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let machine_name = &params.0.machine_name;
+
+        if params.0.name.is_none() && params.0.content.is_none() {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "Provide at least one of `name` or `content` to update.".to_string(),
+            )]));
+        }
+
+        // Load the existing rule so unspecified fields are preserved and we
+        // can refuse plugin-owned rules with a clear message.
+        let existing_raw = match crate::core::read_rule(machine_name) {
+            Ok(raw) => raw,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Cannot update rule '{}': {}",
+                    machine_name, e
+                ))]));
+            }
+        };
+        let existing: crate::core::Rule = match serde_json::from_str(&existing_raw) {
+            Ok(rule) => rule,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to parse existing rule '{}': {}",
+                    machine_name, e
+                ))]));
+            }
+        };
+
+        if existing.plugin_id.is_some() {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Cannot update rule '{}' — it is provided by a plugin.",
+                machine_name
+            ))]));
+        }
+
+        let new_name = params.0.name.as_deref().unwrap_or(&existing.name);
+        let new_content = params.0.content.as_deref().unwrap_or(&existing.content);
+
+        match crate::core::save_rule(machine_name, new_name, new_content) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Updated rule '{}'.",
+                machine_name
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to update rule '{}': {}",
+                machine_name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_delete_rule",
+        description = "Delete a rule from the Automatic library. Mandatory \
+                       rules (e.g. `automatic-service`) and plugin-provided \
+                       rules cannot be deleted. Note that this removes the \
+                       rule from the library but does not detach it from any \
+                       project — projects referencing the deleted rule will \
+                       silently skip it on next sync."
+    )]
+    async fn delete_rule(
+        &self,
+        params: Parameters<DeleteRuleParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let machine_name = &params.0.machine_name;
+        match crate::core::delete_rule(machine_name) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Deleted rule '{}'.",
+                machine_name
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to delete rule '{}': {}",
+                machine_name, e
             ))])),
         }
     }
