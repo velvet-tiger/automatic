@@ -1584,7 +1584,7 @@ impl AutomaticMcpServer {
     }
 }
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for AutomaticMcpServer {
     fn get_info(&self) -> ServerInfo {
         let server_info = Implementation::new("automatic", env!("CARGO_PKG_VERSION"))
