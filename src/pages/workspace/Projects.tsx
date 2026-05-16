@@ -2808,6 +2808,11 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     return "summary";
   }
 
+  /** True when the given group belongs to the secondary (controls) bar. */
+  function isSecondaryGroup(group: ProjectGroup): boolean {
+    return PROJECT_CONTROLS.some((c) => c.id === group);
+  }
+
   const [projectTab, setProjectTab] = useState<ProjectTab>("summary");
   const [projectGroup, setProjectGroup] = useState<ProjectGroup>("summary");
 
@@ -2820,6 +2825,12 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   // When non-null, a top-level tool tab is active (overrides projectGroup/projectTab indicators).
   const [activeToolName, setActiveToolName] = useState<string | null>(null);
 
+  // The view to restore when the user closes a secondary (controls bar) view via the X button.
+  // Captured on entry into a secondary group; not updated while navigating between secondary items.
+  const [returnView, setReturnView] = useState<{ group: ProjectGroup; tool: string | null }>(
+    { group: "summary", tool: null },
+  );
+
   function loadToolEntries() {
     setToolEntriesLoading(true);
     invoke<ProjectToolEntry[]>("list_tools_with_detection")
@@ -2829,6 +2840,11 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
   /** Switch to a group; auto-select first sub-tab (or "summary") */
   function selectGroup(group: ProjectGroup) {
+    // Capture the view to return to when entering a secondary group from a non-secondary one.
+    // Navigating between secondary items does not overwrite this.
+    if (isSecondaryGroup(group) && !isSecondaryGroup(projectGroup)) {
+      setReturnView({ group: projectGroup, tool: activeToolName });
+    }
     setActiveToolName(null);
     setProjectGroup(group);
     if (group === "summary") {
@@ -2877,6 +2893,15 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     // Deactivate static group/tab highlights.
     setProjectGroup("summary");
     setProjectTab("summary");
+  }
+
+  /** Close the active secondary view and restore the view that was active before it was opened. */
+  function closeSecondaryView() {
+    if (returnView.tool !== null) {
+      selectTopLevelTool(returnView.tool);
+    } else {
+      selectGroup(returnView.group);
+    }
   }
 
   // Memory state
@@ -5788,7 +5813,23 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
 
             {/* Tab bar + content (hidden while in new-project setup) */}
             {!isCreating && <>
-            {/* Primary group tabs */}
+            {/* When a secondary (controls bar) view is active, replace the primary tab strip
+                with a thin bar containing only the close button. */}
+            {activeToolName === null && isSecondaryGroup(projectGroup) && (
+              <div className="flex items-center justify-end px-6 py-1 border-b border-border-strong/40 bg-bg-input/20 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={closeSecondaryView}
+                  aria-label="Close and return to previous view"
+                  title="Close"
+                  className="p-1 text-text-muted hover:text-text-base transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+            {/* Primary group tabs — hidden when a secondary (controls bar) view is active. */}
+            {!(activeToolName === null && isSecondaryGroup(projectGroup)) && (
             <div className="flex items-center gap-0 px-6 border-b border-border-strong/40 flex-shrink-0">
               {PROJECT_GROUPS.map((group) => (
                 <button
@@ -5825,8 +5866,9 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   )}
                 </button>
               ))}
-              
+
             </div>
+            )}
             {/* Secondary sub-tabs (only shown when a static group with sub-tabs is active) */}
             {activeToolName === null && projectGroup !== "summary" && (() => {
               const activeGroup =
