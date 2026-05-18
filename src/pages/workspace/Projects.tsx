@@ -3740,12 +3740,22 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   };
 
   const handleBrowseDocPath = async (): Promise<void> => {
-    const picked: string | null = await invoke("open_directory_dialog");
+    let picked: string | null = null;
+    try {
+      picked = await invoke<string | null>("open_directory_dialog");
+    } catch (err) {
+      console.error("open_directory_dialog failed:", err);
+    }
     if (picked) setDocNewPath(picked);
   };
 
   const handleBrowseDocFile = async (): Promise<void> => {
-    const picked: string | null = await invoke("open_file_dialog");
+    let picked: string | null = null;
+    try {
+      picked = await invoke<string | null>("open_file_dialog");
+    } catch (err) {
+      console.error("open_file_dialog failed:", err);
+    }
     if (picked) setDocNewPath(picked);
   };
 
@@ -5212,7 +5222,12 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   {/* Directory path — click to change */}
                   <button
                     onClick={async () => {
-                      const selected: string | null = await invoke("open_directory_dialog");
+                      let selected: string | null = null;
+                      try {
+                        selected = await invoke<string | null>("open_directory_dialog");
+                      } catch (err) {
+                        console.error("open_directory_dialog failed:", err);
+                      }
                       if (selected) updateField("directory", selected);
                     }}
                     className="mt-1 flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text-base font-mono transition-colors group"
@@ -5274,7 +5289,12 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                 <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
                   <button
                     onClick={async () => {
-                      const selected: string | null = await invoke("open_directory_dialog");
+                      let selected: string | null = null;
+                      try {
+                        selected = await invoke<string | null>("open_directory_dialog");
+                      } catch (err) {
+                        console.error("open_directory_dialog failed:", err);
+                      }
                       if (!selected || !project || !selectedName) return;
                       const updatedProject = { ...project, directory: selected, directory_missing: false };
                       setProject(updatedProject);
@@ -5519,9 +5539,14 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           />
                           <button
                             onClick={async () => {
-                              const selected: string | null = await invoke("open_directory_dialog");
+                              let selected: string | null = null;
+                              try {
+                                selected = await invoke<string | null>("open_directory_dialog");
+                              } catch (err) {
+                                console.error("open_directory_dialog failed:", err);
+                              }
                               if (!selected) return;
-                              const folderName = selected.split("/").filter(Boolean).pop() ?? "";
+                              const folderName = selected.split(/[\\/]/).filter(Boolean).pop() ?? "";
                               const name = newName.trim() || folderName;
                               setNewName(name);
                               updateField("directory", selected);
@@ -7816,7 +7841,12 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                         <div>
                                           <button
                                             onClick={async () => {
-                                              const selected: string | null = await invoke("open_directory_dialog");
+                                              let selected: string | null = null;
+                                              try {
+                                                selected = await invoke<string | null>("open_directory_dialog");
+                                              } catch (err) {
+                                                console.error("open_directory_dialog failed:", err);
+                                              }
                                               if (selected) updateField("directory", selected);
                                             }}
                                             className="text-brand hover:text-brand-hover transition-colors font-medium"
