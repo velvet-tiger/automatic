@@ -4,6 +4,14 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-05-18
+
+### Fixed
+
+- Native folder/file picker dialogs now work on Windows and Linux. The `open_directory_dialog` and `open_file_dialog` commands previously returned `"not implemented on this platform"` outside macOS, so the wizard "Browse" button and similar buttons in Projects did nothing visible. All three platforms now share a single `tauri-plugin-dialog`-backed implementation. (`ada298c`)
+- Wizard project-name extraction now handles Windows backslash paths. The "Where is this project?" Browse flow previously split selected paths on `/` only, so on Windows the auto-filled project name was the full path. (`ada298c`)
+- Frontend `invoke("open_directory_dialog" | "open_file_dialog")` call sites now log failures via `console.error` instead of silently swallowing rejections, so future picker errors are visible in the dev console. (`ada298c`)
+
 ## [1.8.0] - 2026-05-14
 
 ### Added
