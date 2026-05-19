@@ -277,6 +277,7 @@ pub fn run() {
             get_instruction_file_conflicts,
             ai_generate_instruction,
             ai_update_instruction,
+            ai_generate_library_asset,
             read_doc_note,
             save_doc_note,
             delete_doc_note,

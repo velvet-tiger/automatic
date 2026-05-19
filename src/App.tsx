@@ -21,6 +21,7 @@ import Commands from "./pages/workspace/Commands";
 import Providers from "./pages/workspace/Providers";
 import LibraryTools from "./pages/workspace/Tools";
 import ToolsHome from "./pages/tools/ToolsHome";
+import LibraryGenerator from "./pages/tools/LibraryGenerator";
 import TokenEstimator from "./pages/utilities/TokenEstimator";
 import AiPlayground from "./pages/utilities/AiPlayground";
 import Recommendations from "./pages/Recommendations";
@@ -53,7 +54,7 @@ const SECTION_TABS: Record<Section, string[]> = {
   workspace: ["projects", "project-groups"],
   library: ["library-home", "templates", "instructions", "rules", "subagents", "commands", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "community-featured", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
-  tools: ["tools-home", "token-estimator", "ai-playground"],
+  tools: ["tools-home", "library-generator", "token-estimator", "ai-playground"],
 };
 
 const DEFAULT_TAB: Record<Section, string> = {
@@ -633,6 +634,7 @@ function App() {
           {activeSection === "tools" && (
             <ul className="space-y-0.5">
               <NavItem id="tools-home" icon={Wrench} label="Overview" />
+              <NavItem id="library-generator" icon={Sparkles} label="Library Generator" />
               <NavItem id="token-estimator" icon={Hash} label="Token Estimator" />
               {flag("ai_playground") && (
                 <NavItem id="ai-playground" icon={FlaskConical} label="AI Playground" />
@@ -779,6 +781,11 @@ function App() {
           {activeTab === "tools-home" && (
             <div className="flex-1 h-full">
               <ToolsHome onNavigate={setActiveTabWithSection} />
+            </div>
+          )}
+          {activeTab === "library-generator" && (
+            <div className="flex-1 h-full">
+              <LibraryGenerator />
             </div>
           )}
           {activeTab === "token-estimator" && (

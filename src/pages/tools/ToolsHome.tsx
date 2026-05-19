@@ -1,4 +1,4 @@
-import { ArrowRight, FlaskConical, Hash, Wrench } from "lucide-react";
+import { ArrowRight, FlaskConical, Hash, Sparkles, Wrench } from "lucide-react";
 import { flag } from "../../lib/flags";
 
 interface ToolsHomeProps {
@@ -21,6 +21,21 @@ interface ToolCard {
 }
 
 const BASE_CARDS: ToolCard[] = [
+  {
+    tab: "library-generator",
+    title: "Library Generator",
+    description:
+      "Generate a new skill, command, rule, or sub-agent from a short description, then review and save.",
+    icon: Sparkles,
+    classes: {
+      cardHover: "hover:border-brand/50",
+      iconBg: "bg-brand/10",
+      iconBgHover: "group-hover:bg-brand/20",
+      iconBorder: "border-brand/20",
+      iconText: "text-brand",
+      ctaText: "text-brand",
+    },
+  },
   {
     tab: "token-estimator",
     title: "Token Estimator",
