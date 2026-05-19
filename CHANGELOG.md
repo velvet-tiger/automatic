@@ -4,6 +4,17 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-05-19
+
+### Added
+
+- Library Generator: AI-authored skills, commands, rules, and sub-agents can now be generated from inside the app. Adds a `LibraryGeneratorPanel` UI, a new `tools/LibraryGenerator` page, and backend `ai_generate` command/core wiring. (`ec815d7`)
+- Top-level Tools section in the primary navigation, with Token Estimator and AI Playground entries surfaced from a new `ToolsHome` page. (`1767dd6`)
+
+### Changed
+
+- Featured content is now nested under Discover instead of sitting as a top-level Community tab. (`c7c7044`)
+
 ## [1.8.2] - 2026-05-18
 
 ### Fixed
