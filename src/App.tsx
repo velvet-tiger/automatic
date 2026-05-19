@@ -43,14 +43,13 @@ import "./App.css";
 
 // ── Section / Tab mapping ────────────────────────────────────────────────────
 
-type Section = "start" | "workspace" | "library" | "discover" | "community";
+type Section = "start" | "workspace" | "library" | "discover";
 
 const SECTION_TABS: Record<Section, string[]> = {
   start: ["getting-started", "recommendations"],
   workspace: ["projects", "project-groups"],
   library: ["library-home", "templates", "instructions", "rules", "subagents", "commands", "skills", "mcp", "providers", "tools"],
-  discover: ["discover-home", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
-  community: ["community-featured"],
+  discover: ["discover-home", "community-featured", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
 };
 
 const DEFAULT_TAB: Record<Section, string> = {
@@ -58,7 +57,6 @@ const DEFAULT_TAB: Record<Section, string> = {
   workspace: "projects",
   library: "library-home",
   discover: "discover-home",
-  community: "community-featured",
 };
 
 const SECTION_LABELS: Record<Section, string> = {
@@ -66,7 +64,6 @@ const SECTION_LABELS: Record<Section, string> = {
   workspace: "Workspace",
   library: "Library",
   discover: "Discover",
-  community: "Community",
 };
 
 function sectionForTab(tabId: string): Section {
@@ -148,21 +145,20 @@ function App() {
     if (activeTab === "settings") {
       // When settings is active, restore last real section for the sidebar
       const rawSaved = localStorage.getItem("automatic.activeSection");
-      // Migrate legacy "marketplace" section id (renamed to "discover").
-      const saved = (rawSaved === "marketplace" ? "discover" : rawSaved) as Section | null;
+      // Migrate legacy section ids: "marketplace" -> "discover", "community" -> "discover".
+      const normalised = rawSaved === "marketplace" || rawSaved === "community" ? "discover" : rawSaved;
+      const saved = normalised as Section | null;
       return saved && SECTION_TABS[saved] ? saved : "workspace";
     }
     return sectionForTab(activeTab);
   });
 
   // ── Per-section sidebar collapsed state ────────────────────────────────────
-  // Sections default to expanded, except community which defaults to collapsed.
   const SIDEBAR_COLLAPSED_DEFAULTS: Record<Section, boolean> = {
     start: false,
     workspace: false,
     library: false,
     discover: false,
-    community: true,
   };
 
   const [sidebarBySection, setSidebarBySection] = useState<Record<Section, boolean>>(() => {
@@ -170,15 +166,17 @@ function App() {
       const saved = localStorage.getItem("automatic.sidebarBySection");
       if (saved) {
         const parsed = JSON.parse(saved) as Record<string, boolean>;
-        // Merge with defaults so new sections get their default value
-        return { ...SIDEBAR_COLLAPSED_DEFAULTS, ...parsed } as Record<Section, boolean>;
+        // Merge with defaults so new sections get their default value.
+        // The legacy "community" key is intentionally dropped via destructure.
+        const { community: _community, ...rest } = parsed;
+        return { ...SIDEBAR_COLLAPSED_DEFAULTS, ...rest } as Record<Section, boolean>;
       }
     } catch { /* ignore parse errors */ }
     // Migrate legacy single-value setting
     const legacy = localStorage.getItem("automatic.sidebarCollapsed");
     if (legacy !== null) {
       const val = legacy === "true";
-      return { start: val, workspace: val, library: val, discover: val, community: true };
+      return { start: val, workspace: val, library: val, discover: val };
     }
     return { ...SIDEBAR_COLLAPSED_DEFAULTS };
   });
@@ -481,7 +479,7 @@ function App() {
         {/* Center: section toggle pill */}
         <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-0">
           <div className="flex items-center bg-bg-input border border-border-strong/40 rounded-lg p-0.5 pointer-events-auto">
-            {(["start", "workspace", "library", "discover", "community"] as const).map((section) => {
+            {(["start", "workspace", "library", "discover"] as const).map((section) => {
               const isActive = activeSection === section && activeTab !== "settings" && activeTab !== "sync";
               return (
                 <button
@@ -618,17 +616,11 @@ function App() {
           {activeSection === "discover" && (
             <ul className="space-y-0.5">
               <NavItem id="discover-home" icon={Sparkles} label="Overview" />
+              <NavItem id="community-featured" icon={Star} label="Featured" />
               <NavItem id="discover-collections" icon={PackageOpen} label="Collections" />
               <NavItem id="discover-templates" icon={Layers} label="Templates" />
               <NavItem id="skill-store" icon={Puzzle} label="Skills" />
               <NavItem id="discover-mcp" icon={Server} label="MCP Servers" />
-            </ul>
-          )}
-
-          {/* ── Community sidebar ──────────────────────────────────────── */}
-          {activeSection === "community" && (
-            <ul className="space-y-0.5">
-              <NavItem id="community-featured" icon={Star} label="Featured" />
             </ul>
           )}
 
