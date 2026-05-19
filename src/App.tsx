@@ -19,7 +19,10 @@ import Rules from "./pages/workspace/Rules";
 import Subagents from "./pages/workspace/Subagents";
 import Commands from "./pages/workspace/Commands";
 import Providers from "./pages/workspace/Providers";
-import Tools from "./pages/workspace/Tools";
+import LibraryTools from "./pages/workspace/Tools";
+import ToolsHome from "./pages/tools/ToolsHome";
+import TokenEstimator from "./pages/utilities/TokenEstimator";
+import AiPlayground from "./pages/utilities/AiPlayground";
 import Recommendations from "./pages/Recommendations";
 import Settings from "./pages/Settings";
 import Library from "./pages/library/Library";
@@ -35,7 +38,7 @@ import UpdateToast from "./components/UpdateToast";
 import RemoteInstallDialog from "./components/RemoteInstallDialog";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Featured from "./pages/community/Featured";
-import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, PanelLeft, Star, RefreshCw } from "lucide-react";
+import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, PanelLeft, Star, RefreshCw, Hash, FlaskConical } from "lucide-react";
 import { flag } from "./lib/flags";
 import CloudSync from "./pages/CloudSync";
 import graphLogo from "../logos/graph_5.svg";
@@ -43,13 +46,14 @@ import "./App.css";
 
 // ── Section / Tab mapping ────────────────────────────────────────────────────
 
-type Section = "start" | "workspace" | "library" | "discover";
+type Section = "start" | "workspace" | "library" | "discover" | "tools";
 
 const SECTION_TABS: Record<Section, string[]> = {
   start: ["getting-started", "recommendations"],
   workspace: ["projects", "project-groups"],
   library: ["library-home", "templates", "instructions", "rules", "subagents", "commands", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "community-featured", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
+  tools: ["tools-home", "token-estimator", "ai-playground"],
 };
 
 const DEFAULT_TAB: Record<Section, string> = {
@@ -57,6 +61,7 @@ const DEFAULT_TAB: Record<Section, string> = {
   workspace: "projects",
   library: "library-home",
   discover: "discover-home",
+  tools: "tools-home",
 };
 
 const SECTION_LABELS: Record<Section, string> = {
@@ -64,6 +69,7 @@ const SECTION_LABELS: Record<Section, string> = {
   workspace: "Workspace",
   library: "Library",
   discover: "Discover",
+  tools: "Tools",
 };
 
 function sectionForTab(tabId: string): Section {
@@ -136,8 +142,6 @@ function App() {
     // Migrate from removed tabs
     if (saved === "activity" || saved === "configuration" || saved === "dashboard") return "getting-started";
     if (saved === "support") return "settings";
-    // Migrate utilities into settings
-    if (saved === "token-estimator" || saved === "ai-playground") return "settings";
     return saved || "getting-started";
   });
 
@@ -159,6 +163,7 @@ function App() {
     workspace: false,
     library: false,
     discover: false,
+    tools: false,
   };
 
   const [sidebarBySection, setSidebarBySection] = useState<Record<Section, boolean>>(() => {
@@ -176,7 +181,7 @@ function App() {
     const legacy = localStorage.getItem("automatic.sidebarCollapsed");
     if (legacy !== null) {
       const val = legacy === "true";
-      return { start: val, workspace: val, library: val, discover: val };
+      return { start: val, workspace: val, library: val, discover: val, tools: val };
     }
     return { ...SIDEBAR_COLLAPSED_DEFAULTS };
   });
@@ -479,7 +484,7 @@ function App() {
         {/* Center: section toggle pill */}
         <div className="absolute left-0 right-0 flex items-center justify-center pointer-events-none z-0">
           <div className="flex items-center bg-bg-input border border-border-strong/40 rounded-lg p-0.5 pointer-events-auto">
-            {(["start", "workspace", "library", "discover"] as const).map((section) => {
+            {(["start", "workspace", "library", "discover", "tools"] as const).map((section) => {
               const isActive = activeSection === section && activeTab !== "settings" && activeTab !== "sync";
               return (
                 <button
@@ -624,6 +629,17 @@ function App() {
             </ul>
           )}
 
+          {/* ── Tools sidebar ───────────────────────────────────────────── */}
+          {activeSection === "tools" && (
+            <ul className="space-y-0.5">
+              <NavItem id="tools-home" icon={Wrench} label="Overview" />
+              <NavItem id="token-estimator" icon={Hash} label="Token Estimator" />
+              {flag("ai_playground") && (
+                <NavItem id="ai-playground" icon={FlaskConical} label="AI Playground" />
+              )}
+            </ul>
+          )}
+
         </nav>
 
         {/* Sidebar footer — dev theme switcher (dev builds only) */}
@@ -757,7 +773,22 @@ function App() {
           )}
           {activeTab === "tools" && (
             <div className="flex-1 h-full">
-              <Tools />
+              <LibraryTools />
+            </div>
+          )}
+          {activeTab === "tools-home" && (
+            <div className="flex-1 h-full">
+              <ToolsHome onNavigate={setActiveTabWithSection} />
+            </div>
+          )}
+          {activeTab === "token-estimator" && (
+            <div className="flex-1 h-full">
+              <TokenEstimator />
+            </div>
+          )}
+          {flag("ai_playground") && activeTab === "ai-playground" && (
+            <div className="flex-1 h-full">
+              <AiPlayground />
             </div>
           )}
           {activeTab === "skills" && (
