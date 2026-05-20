@@ -5184,33 +5184,6 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
               </div>
             )}
 
-            {/* ── Project controls bar (Configuration, Insights, Activity, Memory) ── */}
-            {!isCreating && (
-              <div className="flex items-center justify-end gap-0 px-6 border-b border-border-strong/20 bg-bg-input/20 flex-shrink-0">
-                {PROJECT_CONTROLS.map((ctrl) => (
-                  <button
-                    key={ctrl.id}
-                    onClick={() => selectGroup(ctrl.id)}
-                    className={`px-3 py-1.5 text-[12px] font-medium transition-colors relative flex items-center gap-1.5 ${
-                      activeToolName === null && projectGroup === ctrl.id
-                        ? "text-text-base"
-                        : "text-text-muted hover:text-text-base"
-                    }`}
-                  >
-                    {ctrl.label}
-                    {ctrl.id === "insights" && recsDisplayCount > 0 && (
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
-                        {recsDisplayCount}
-                      </span>
-                    )}
-                    {activeToolName === null && projectGroup === ctrl.id && (
-                      <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-
             {/* ── Project title ───────────────────────────────────── */}
             {!isCreating && (
               <div className="px-6 pt-5 pb-4 border-b border-border-strong/40 flex-shrink-0 flex items-start justify-between gap-4">
@@ -9592,6 +9565,33 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
             </div>
             )}
             </>}
+
+            {/* ── Project controls bar (Configuration, Insights, Activity, Memory) — pinned to bottom ── */}
+            {!isCreating && (
+              <div className="flex items-center justify-end gap-0 px-6 border-t border-border-strong/20 bg-bg-input/20 flex-shrink-0">
+                {PROJECT_CONTROLS.map((ctrl) => (
+                  <button
+                    key={ctrl.id}
+                    onClick={() => selectGroup(ctrl.id)}
+                    className={`px-3 py-1.5 text-[12px] font-medium transition-colors relative flex items-center gap-1.5 ${
+                      activeToolName === null && projectGroup === ctrl.id
+                        ? "text-text-base"
+                        : "text-text-muted hover:text-text-base"
+                    }`}
+                  >
+                    {ctrl.label}
+                    {ctrl.id === "insights" && recsDisplayCount > 0 && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
+                        {recsDisplayCount}
+                      </span>
+                    )}
+                    {activeToolName === null && projectGroup === ctrl.id && (
+                      <span className="absolute top-0 left-0 right-0 h-[2px] bg-brand rounded-b" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           /* Empty state */
