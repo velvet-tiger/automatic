@@ -5039,38 +5039,52 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                 )}
                 {/* Rebuild button */}
                 {!isCreating && selectedName && (
-                  <button
-                    onClick={handleRebuild}
-                    title="Rebuild Automatic state from current project files"
-                    className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
-                  >
-                    <RotateCcw size={12} /> Rebuild
-                  </button>
+                  <span className="relative group/keytip">
+                    <button
+                      onClick={handleRebuild}
+                      aria-label="Rebuild"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded border border-border-strong transition-colors shadow-sm"
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                    <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                      Rebuild
+                    </span>
+                  </span>
                 )}
                 {/* Apply Template button */}
                 {!isCreating && selectedName && (
-                  <button
-                    onClick={() => {
-                      setTemplateApplySelection(null);
-                      setShowProjectTemplatePicker(true);
-                    }}
-                    title="Apply a project template"
-                    className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded text-[12px] font-medium border border-border-strong hover:border-brand/40 transition-colors shadow-sm"
-                  >
-                    <LayoutTemplate size={12} /> Apply Template
-                  </button>
+                  <span className="relative group/keytip">
+                    <button
+                      onClick={() => {
+                        setTemplateApplySelection(null);
+                        setShowProjectTemplatePicker(true);
+                      }}
+                      aria-label="Apply Template"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded border border-border-strong hover:border-brand/40 transition-colors shadow-sm"
+                    >
+                      <LayoutTemplate size={12} />
+                    </button>
+                    <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                      Apply Template
+                    </span>
+                  </span>
                 )}
                 {/* Open in editor dropdown — only shown when a directory is set */}
                 {!isCreating && project.directory && (
-                  <div className="relative" ref={openInDropdownRef}>
+                  <div className="relative group/keytip" ref={openInDropdownRef}>
                     <button
                       onClick={() => setOpenInDropdownOpen((v) => !v)}
-                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-surface-hover text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
-                      title="Open project in an editor"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-surface-hover text-text-base rounded border border-border-strong transition-colors shadow-sm"
+                      aria-label="Open in editor"
                     >
-                      <FolderOpen size={12} /> Open in
-                      <ChevronDown size={11} className={`transition-transform ${openInDropdownOpen ? "rotate-180" : ""}`} />
+                      <FolderOpen size={12} />
                     </button>
+                    {!openInDropdownOpen && (
+                      <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                        Open in
+                      </span>
+                    )}
                     {openInDropdownOpen && (
                       <div className="absolute right-0 top-full mt-1 w-44 bg-bg-input border border-border-strong/40 rounded-lg shadow-xl z-50 py-1 overflow-hidden">
                         {installedEditors.filter((e) => e.installed).map((editor) => (
@@ -5096,13 +5110,18 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   </div>
                 )}
                 {!isCreating && selectedName && (
-                  <button
-                    onClick={() => handleRemove(selectedName)}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded text-[12px] font-medium border border-border-strong hover:border-danger/40 transition-colors shadow-sm"
-                    title="Remove project from Automatic"
-                  >
-                    <Trash2 size={12} /> Remove
-                  </button>
+                  <span className="relative group/keytip">
+                    <button
+                      onClick={() => handleRemove(selectedName)}
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded border border-border-strong hover:border-danger/40 transition-colors shadow-sm"
+                      aria-label="Remove project"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                    <span className="pointer-events-none absolute top-full right-0 mt-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                      Remove
+                    </span>
+                  </span>
                 )}
                 {/* Sync / in-sync indicator — shown when project has directory + agents configured */}
                 {!dirty && project.directory && project.agents.length > 0 && (
