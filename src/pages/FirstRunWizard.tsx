@@ -142,7 +142,7 @@ function StepIndicator({ current }: { current: number }) {
                   active
                     ? "text-text-base font-medium"
                     : done
-                      ? "text-brand"
+                      ? "text-text-base"
                       : "text-text-muted"
                 }`}
               >
