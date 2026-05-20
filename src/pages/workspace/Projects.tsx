@@ -5043,7 +5043,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                     <button
                       onClick={handleRebuild}
                       aria-label="Rebuild"
-                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded border border-border-strong transition-colors"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded transition-colors"
                     >
                       <RotateCcw size={12} />
                     </button>
@@ -5061,7 +5061,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                         setShowProjectTemplatePicker(true);
                       }}
                       aria-label="Apply Template"
-                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded border border-border-strong hover:border-brand/40 transition-colors"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded transition-colors"
                     >
                       <LayoutTemplate size={12} />
                     </button>
@@ -5075,7 +5075,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   <div className="relative group/keytip" ref={openInDropdownRef}>
                     <button
                       onClick={() => setOpenInDropdownOpen((v) => !v)}
-                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-surface-hover text-text-base rounded border border-border-strong transition-colors"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-surface-hover text-text-base rounded transition-colors"
                       aria-label="Open in editor"
                     >
                       <FolderOpen size={12} />
@@ -5113,7 +5113,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   <span className="relative group/keytip">
                     <button
                       onClick={() => handleRemove(selectedName)}
-                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded border border-border-strong hover:border-danger/40 transition-colors"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded transition-colors"
                       aria-label="Remove project"
                     >
                       <Trash2 size={12} />
@@ -5128,7 +5128,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   syncStatus === "syncing" ? (
                     <button
                       disabled
-                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input text-brand rounded text-[12px] font-medium border border-brand/30 transition-colors shadow-sm opacity-80 cursor-not-allowed"
+                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input text-brand rounded text-[12px] font-medium transition-colors opacity-80 cursor-not-allowed"
                       title="Synchronising…"
                     >
                       <RefreshCw size={12} className="animate-spin" /> Syncing…
@@ -5136,7 +5136,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   ) : driftReport?.drifted ? (
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-warning/10 text-warning rounded text-[12px] font-medium border border-border-strong hover:border-warning/60 transition-colors shadow-sm"
+                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-warning/10 text-warning rounded text-[12px] font-medium transition-colors"
                       title="Configuration has drifted — click to sync"
                     >
                       <RefreshCw size={12} /> Sync Configs
@@ -5144,7 +5144,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   ) : driftReport && !driftReport.drifted ? (
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-success/10 text-success rounded text-[12px] font-medium border border-border-strong hover:border-success/40 transition-colors shadow-sm"
+                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-success/10 text-success rounded text-[12px] font-medium transition-colors"
                       title="Configuration is up to date — click to force sync"
                     >
                       <Check size={12} /> In Sync
@@ -5153,7 +5153,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                     /* driftReport === null: not yet checked */
                     <button
                       onClick={handleSync}
-                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded text-[12px] font-medium border border-border-strong transition-colors shadow-sm"
+                      className="flex items-center gap-1.5 px-3 py-1 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
                       title="Sync agent configurations"
                     >
                       <RefreshCw size={12} /> Sync Configs
