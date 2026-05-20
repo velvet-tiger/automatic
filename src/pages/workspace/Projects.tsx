@@ -7777,10 +7777,10 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           onView={() => selectTab("custom_agents")}
                         />
                         <SummaryMetricCard
-                          icon={<Terminal size={13} className="text-text-base" />}
+                          icon={<Terminal size={13} className="text-icon-command" />}
                           label="Commands"
                           count={totalCommands}
-                          accentClass="bg-text-muted/10"
+                          accentClass="bg-icon-command/10"
                           onView={() => selectTab("commands")}
                         />
                       </div>

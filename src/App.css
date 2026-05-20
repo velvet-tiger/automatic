@@ -38,6 +38,7 @@
   --color-icon-mcp: var(--icon-mcp);
   --color-icon-file-template: var(--icon-file-template);
   --color-icon-rule: var(--icon-rule);
+  --color-icon-command: var(--icon-command);
 
   --color-success: var(--success);
   --color-success-light: var(--success-light);
@@ -111,6 +112,7 @@
   --icon-mcp: var(--brand);
   --icon-file-template: var(--brand);
   --icon-rule: var(--brand);
+  --icon-command: var(--brand);
 }
 
 [data-theme="corporate-dark"] {
@@ -125,6 +127,7 @@
   --icon-mcp: #d4d4d4;
   --icon-file-template: #d4d4d4;
   --icon-rule: #d4d4d4;
+  --icon-command: #d4d4d4;
 
   /* Avatar palette — monochrome grey shades to match the no-colour theme */
   --avatar-0: #4a4a4a;
@@ -174,6 +177,7 @@
   --icon-mcp: var(--warning);
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
+  --icon-command: var(--brand-active);
 
   /* Avatar palette — matches type colors but uses readable darker variants for white text */
   --avatar-0: var(--brand-active);   /* Agent (deeper cyan) */
@@ -229,6 +233,7 @@
   --icon-mcp: var(--warning);
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
+  --icon-command: var(--brand-active);
 
   /* Avatar palette — synthwave magenta/purple tones */
   --avatar-0: var(--brand);
@@ -277,6 +282,7 @@
   --icon-mcp: var(--warning);
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
+  --icon-command: var(--brand-active);
 
   /* Avatar palette — coral/orange and slate tones */
   --avatar-0: var(--brand);
@@ -331,6 +337,7 @@
   --icon-mcp: var(--warning);
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
+  --icon-command: var(--brand-active);
 
   /* Avatar palette — pale blues and teals */
   --avatar-0: var(--brand);
@@ -387,6 +394,7 @@
   --icon-mcp: #6b6b6b;
   --icon-file-template: #8a8a8a;
   --icon-rule: #5a5a5a;
+  --icon-command: #4a4a4a;
 
   /* Avatar palette — monochrome grey shades for the no-colour light theme */
   --avatar-0: #3a3a3a;
@@ -439,6 +447,7 @@
   --icon-mcp: var(--warning);
   --icon-file-template: var(--accent);
   --icon-rule: var(--accent-hover);
+  --icon-command: var(--brand-active);
 
   /* Avatar palette — tracks the semantic colors selected for the types */
   --avatar-0: var(--brand);        /* Agent */
