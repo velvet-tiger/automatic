@@ -5043,7 +5043,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                     <button
                       onClick={handleRebuild}
                       aria-label="Rebuild"
-                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded border border-border-strong transition-colors shadow-sm"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-surface-hover text-text-muted hover:text-text-base rounded border border-border-strong transition-colors"
                     >
                       <RotateCcw size={12} />
                     </button>
@@ -5061,7 +5061,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                         setShowProjectTemplatePicker(true);
                       }}
                       aria-label="Apply Template"
-                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded border border-border-strong hover:border-brand/40 transition-colors shadow-sm"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded border border-border-strong hover:border-brand/40 transition-colors"
                     >
                       <LayoutTemplate size={12} />
                     </button>
@@ -5075,7 +5075,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   <div className="relative group/keytip" ref={openInDropdownRef}>
                     <button
                       onClick={() => setOpenInDropdownOpen((v) => !v)}
-                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-surface-hover text-text-base rounded border border-border-strong transition-colors shadow-sm"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-surface-hover text-text-base rounded border border-border-strong transition-colors"
                       aria-label="Open in editor"
                     >
                       <FolderOpen size={12} />
@@ -5113,7 +5113,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   <span className="relative group/keytip">
                     <button
                       onClick={() => handleRemove(selectedName)}
-                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded border border-border-strong hover:border-danger/40 transition-colors shadow-sm"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded border border-border-strong hover:border-danger/40 transition-colors"
                       aria-label="Remove project"
                     >
                       <Trash2 size={12} />
