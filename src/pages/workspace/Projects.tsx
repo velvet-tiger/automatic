@@ -78,6 +78,7 @@ import {
   Layers,
   MessagesSquare,
   EyeOff,
+  Webhook,
 } from "lucide-react";
 
 interface CustomRule {
@@ -137,6 +138,8 @@ interface Project {
   user_agents?: string[];
   /** Workspace command names selected for this project. Written to .agents/commands and then synced into provider command directories. */
   user_commands?: string[];
+  /** Hook machine names selected for this project. Each hook's target agent is in its library record; the sync engine groups by agent. */
+  hooks?: string[];
   /** Inline custom commands stored directly in this project. */
   custom_commands?: CustomCommand[];
   /** Inline custom skills stored directly in this project. Written to skill directories on sync. */
@@ -154,12 +157,30 @@ interface Project {
   directory_missing?: boolean;
 }
 
+interface AgentCapabilities {
+  skills: boolean;
+  instructions: boolean;
+  mcp_servers: boolean;
+  agents: boolean;
+  commands: boolean;
+  hooks: boolean;
+}
+
 interface AgentInfo {
   id: string;
   label: string;
   description: string;
   /** Non-null when this agent cannot have MCP config written by Automatic. */
   mcp_note: string | null;
+  capabilities?: AgentCapabilities;
+}
+
+interface HookEntry {
+  id: string;
+  name: string;
+  agent: string;
+  event: string;
+  plugin_id?: string | null;
 }
 
 interface DriftedFile {
@@ -461,6 +482,7 @@ function emptyProject(name: string): Project {
     agents: [],
     user_agents: [],
     user_commands: [],
+    hooks: [],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     file_rules: {},
@@ -2736,8 +2758,8 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "commands" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools" | "settings";
-  type ProjectGroup = "summary" | "project_file" | "rules" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "configuration" | "instructions" | "documentation" | "memory" | "activity" | "insights";
+  type ProjectTab = "summary" | "agents" | "commands" | "hooks" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools" | "settings";
+  type ProjectGroup = "summary" | "project_file" | "rules" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "hooks" | "configuration" | "instructions" | "documentation" | "memory" | "activity" | "insights";
 
   const PROJECT_GROUPS: {
     id: ProjectGroup;
@@ -2751,6 +2773,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     { id: "mcp_servers", label: "MCP", tabs: [{ id: "mcp_servers", label: "MCP" }] },
     { id: "custom_agents", label: "Agents", tabs: [{ id: "custom_agents", label: "Agents" }] },
     { id: "commands", label: "Commands", tabs: [{ id: "commands", label: "Commands" }] },
+    { id: "hooks", label: "Hooks", tabs: [{ id: "hooks", label: "Hooks" }] },
     {
       id: "instructions",
       label: "Context",
@@ -3016,6 +3039,11 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   const [userCommandAdding, setUserCommandAdding] = useState(false);
   const [userCommandSearch, setUserCommandSearch] = useState("");
 
+  // Hooks state (lifecycle hooks from the global library, keyed by hook id)
+  const [availableHooks, setAvailableHooks] = useState<HookEntry[]>([]);
+  const [hookAdding, setHookAdding] = useState(false);
+  const [hookSearch, setHookSearch] = useState("");
+
   // Custom command editing state (for project-local commands)
   const [customCommandEditingIdx, setCustomCommandEditingIdx] = useState<number | null>(null);
   const [customCommandEditName, setCustomCommandEditName] = useState("");
@@ -3054,6 +3082,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
     loadAvailableProjectTemplates();
     loadAvailableUserAgents();
     loadAvailableUserCommands();
+    loadAvailableHooks();
     // Effective state of the master Settings > Agents toggle.
     invoke<boolean>("agent_features_enabled").then(setAgentFeaturesEnabled).catch(() => setAgentFeaturesEnabled(false));
     // Active agent display label for the task log.
@@ -3138,7 +3167,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
   // After a project is selected via initialProject, switch to the requested tab.
   useEffect(() => {
     if (!initialProjectTab) return;
-    const validTabs = ["summary", "agents", "skills", "mcp_servers", "commands", "custom_agents", "groups", "project_file", "rules", "context", "memory", "activity", "recommendations", "settings"] as const;
+    const validTabs = ["summary", "agents", "skills", "mcp_servers", "commands", "hooks", "custom_agents", "groups", "project_file", "rules", "context", "memory", "activity", "recommendations", "settings"] as const;
     type ProjectTab = typeof validTabs[number];
     if (validTabs.includes(initialProjectTab as ProjectTab)) {
       selectTab(initialProjectTab as ProjectTab);
@@ -3412,6 +3441,15 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       setAvailableUserCommands(result.sort((a, b) => a.id.localeCompare(b.id)));
     } catch {
       // Commands may not exist yet
+    }
+  };
+
+  const loadAvailableHooks = async () => {
+    try {
+      const result: HookEntry[] = await invoke("get_hooks");
+      setAvailableHooks(result.sort((a, b) => a.id.localeCompare(b.id)));
+    } catch {
+      // Hooks may not exist yet
     }
   };
 
@@ -4187,6 +4225,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         user_agents: stored.user_agents || [],
         custom_commands: stored.custom_commands || [],
         user_commands: stored.user_commands || [],
+        hooks: stored.hooks || [],
         custom_skills: [...storedCustomSkills, ...newCustomSkills],
         mode: stored.mode === 'silent' ? 'silent' : 'normal',
         directory_missing: stored.directory_missing === true,
@@ -4261,6 +4300,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         user_agents: parsed.user_agents || [],
         custom_commands: parsed.custom_commands || [],
         user_commands: parsed.user_commands || [],
+        hooks: parsed.hooks || [],
         custom_skills: parsed.custom_skills || [],
         tools: parsed.tools || [],
         instructions_index_mode: parsed.instructions_index_mode || false,
@@ -7415,6 +7455,270 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   );
                 })()}
 
+                {/* ── Hooks tab ────────────────────────────────────────────── */}
+                {projectTab === "hooks" && (() => {
+                  const attachedHookIds = project.hooks ?? [];
+
+                  // Set of agent ids on this project that actually support
+                  // hooks. Hooks bound to an agent outside this set are still
+                  // listed in the picker (with a warning chip) so the user can
+                  // see why a hook would do nothing on this project, but they
+                  // can also be attached — sync silently skips them.
+                  const projectAgentIds = new Set(project.agents);
+                  const hookCapableAgentIds = new Set(
+                    availableAgents
+                      .filter((a) => a.capabilities?.hooks)
+                      .map((a) => a.id),
+                  );
+                  const projectHasHookCapableAgent = project.agents.some((id) =>
+                    hookCapableAgentIds.has(id),
+                  );
+
+                  const matchesSearch = (entry: HookEntry) => {
+                    const q = hookSearch.toLowerCase();
+                    if (!q) return true;
+                    return (
+                      entry.id.toLowerCase().includes(q) ||
+                      entry.name.toLowerCase().includes(q) ||
+                      entry.event.toLowerCase().includes(q) ||
+                      entry.agent.toLowerCase().includes(q)
+                    );
+                  };
+
+                  const isCompatible = (entry: HookEntry) =>
+                    projectAgentIds.has(entry.agent) &&
+                    hookCapableAgentIds.has(entry.agent);
+
+                  const pickerCandidates = availableHooks
+                    .filter((h) => !attachedHookIds.includes(h.id))
+                    .filter(matchesSearch);
+
+                  const compatibleCandidates = pickerCandidates.filter(isCompatible);
+                  const incompatibleCandidates = pickerCandidates.filter(
+                    (h) => !isCompatible(h),
+                  );
+
+                  return (
+                    <div className="space-y-8">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h2 className="text-[15px] font-semibold text-text-base">Hooks</h2>
+                          <p className="text-[12px] text-text-muted mt-1">
+                            Lifecycle hooks that run on agent events. Synced
+                            per-agent into the project's settings on next sync.
+                          </p>
+                        </div>
+                        {attachedHookIds.length > 0 && (
+                          <span className="text-[11px] text-brand bg-brand/10 px-2 py-0.5 rounded border border-brand/20">
+                            {attachedHookIds.length} hook{attachedHookIds.length === 1 ? "" : "s"}
+                          </span>
+                        )}
+                      </div>
+
+                      {!projectHasHookCapableAgent && (
+                        <div className="rounded-lg border border-border-strong/40 bg-bg-input px-4 py-3 text-[12px] text-text-muted">
+                          None of this project's agents support hooks today.
+                          Add Claude Code or Codex CLI under{" "}
+                          <button
+                            onClick={() => selectTab("agents")}
+                            className="text-brand hover:underline"
+                          >
+                            Configuration → Providers
+                          </button>{" "}
+                          to enable hook syncing.
+                        </div>
+                      )}
+
+                      <section>
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1 bg-icon-skill/10 rounded">
+                              <Webhook size={12} className="text-icon-skill" />
+                            </div>
+                            <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Attached Hooks</span>
+                            {attachedHookIds.length > 0 && (
+                              <span className="text-[10px] bg-bg-sidebar border border-border-strong/40 rounded-full px-1.5 py-0.5 text-text-muted leading-none">
+                                {attachedHookIds.length}
+                              </span>
+                            )}
+                          </div>
+                          <div className="relative">
+                            <button
+                              onClick={() => setHookAdding(!hookAdding)}
+                              className="flex items-center gap-1 text-[12px] text-brand hover:text-brand-hover transition-colors font-medium"
+                            >
+                              <Plus size={12} /> Add from Library
+                            </button>
+                            {hookAdding && (
+                              <div className="absolute right-0 top-full mt-1 w-80 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-80 overflow-y-auto">
+                                <div className="p-2 border-b border-border-strong/40">
+                                  <input
+                                    type="text"
+                                    value={hookSearch}
+                                    onChange={(e) => setHookSearch(e.target.value)}
+                                    placeholder="Search hooks..."
+                                    className="w-full bg-bg-input border border-border-strong/40 focus:border-brand rounded px-2 py-1 text-[12px] text-text-base placeholder-text-muted/50 outline-none"
+                                    autoFocus
+                                  />
+                                </div>
+                                <div className="py-1">
+                                  {availableHooks.length === 0 ? (
+                                    <div className="px-3 py-2 text-[12px] text-text-muted italic">
+                                      No hooks in the library yet.
+                                    </div>
+                                  ) : pickerCandidates.length === 0 ? (
+                                    <div className="px-3 py-2 text-[12px] text-text-muted italic">
+                                      All hooks already attached.
+                                    </div>
+                                  ) : (
+                                    <>
+                                      {compatibleCandidates.map((hook) => (
+                                        <button
+                                          key={hook.id}
+                                          onClick={() => {
+                                            setProject({
+                                              ...project,
+                                              hooks: [...attachedHookIds, hook.id],
+                                            });
+                                            setDirty(true);
+                                            setHookAdding(false);
+                                            setHookSearch("");
+                                          }}
+                                          className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-input text-left transition-colors"
+                                        >
+                                          <Webhook size={14} className="text-text-muted flex-shrink-0" />
+                                          <div className="min-w-0 flex-1">
+                                            <div className="text-[12px] font-medium text-text-base truncate">
+                                              {hook.name}
+                                            </div>
+                                            <div className="text-[11px] text-text-muted truncate">
+                                              {hook.agent} · {hook.event}
+                                            </div>
+                                          </div>
+                                        </button>
+                                      ))}
+                                      {incompatibleCandidates.length > 0 && (
+                                        <>
+                                          <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-text-muted/70">
+                                            Not compatible with this project
+                                          </div>
+                                          {incompatibleCandidates.map((hook) => {
+                                            const reason = !projectAgentIds.has(hook.agent)
+                                              ? `${hook.agent} not in this project`
+                                              : "agent does not support hooks";
+                                            return (
+                                              <button
+                                                key={hook.id}
+                                                onClick={() => {
+                                                  setProject({
+                                                    ...project,
+                                                    hooks: [...attachedHookIds, hook.id],
+                                                  });
+                                                  setDirty(true);
+                                                  setHookAdding(false);
+                                                  setHookSearch("");
+                                                }}
+                                                className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-input text-left transition-colors opacity-60"
+                                                title={reason}
+                                              >
+                                                <Webhook size={14} className="text-text-muted flex-shrink-0" />
+                                                <div className="min-w-0 flex-1">
+                                                  <div className="text-[12px] font-medium text-text-base truncate">
+                                                    {hook.name}
+                                                  </div>
+                                                  <div className="text-[11px] text-text-muted truncate">
+                                                    {hook.agent} · {hook.event} — {reason}
+                                                  </div>
+                                                </div>
+                                              </button>
+                                            );
+                                          })}
+                                        </>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {attachedHookIds.length === 0 ? (
+                          <div className="text-[12px] text-text-muted/60 italic py-4 text-center">
+                            No hooks attached. Add hooks from your library to
+                            run scripts on agent lifecycle events for this project.
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {attachedHookIds.map((hookId) => {
+                              const hook = availableHooks.find((h) => h.id === hookId);
+                              const missing = !hook;
+                              const incompatible =
+                                !!hook && !isCompatible(hook);
+                              return (
+                                <div
+                                  key={hookId}
+                                  className="bg-bg-input border border-border-strong/40 rounded-lg group hover:border-border-strong transition-colors"
+                                >
+                                  <div className="flex items-center gap-3 px-3 py-2.5">
+                                    <Webhook size={14} className="flex-shrink-0 text-text-muted" />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-[13px] font-medium text-text-base truncate flex items-center gap-2">
+                                        {hook?.name ?? hookId}
+                                        {missing && (
+                                          <span className="text-[10px] text-warning bg-warning/10 border border-warning/30 rounded px-1.5 py-0.5">
+                                            Missing from library
+                                          </span>
+                                        )}
+                                        {!missing && incompatible && (
+                                          <span className="text-[10px] text-text-muted bg-bg-sidebar border border-border-strong/40 rounded px-1.5 py-0.5">
+                                            Skipped on sync
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-[11px] text-text-muted truncate">
+                                        {hook
+                                          ? `${hook.agent} · ${hook.event}`
+                                          : "Hook was deleted or never existed — remove this entry."}
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        const updated = attachedHookIds.filter((id) => id !== hookId);
+                                        setProject({
+                                          ...project,
+                                          hooks: updated.length > 0 ? updated : undefined,
+                                        });
+                                        setDirty(true);
+                                      }}
+                                      className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                                      title="Remove"
+                                    >
+                                      <X size={12} />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </section>
+
+                      {dirty && (
+                        <div className="flex justify-end">
+                          <button
+                            onClick={handleSave}
+                            disabled={syncStatus === "syncing"}
+                            className="flex items-center gap-1.5 px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors disabled:opacity-50"
+                          >
+                            <Check size={13} /> {syncStatus === "syncing" ? "Saving..." : "Save Changes"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* ── Agents tab (custom_agents) ───────────────────────────── */}
                 {projectTab === "custom_agents" && (() => {
                   const customAgents: CustomAgent[] = project.custom_agents || [];
@@ -7736,6 +8040,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                   const totalRules = ((project.file_rules || {})["_project"] || []).length + (project.custom_rules?.length ?? 0);
                   const totalSubAgents = (project.user_agents?.length ?? 0) + (project.custom_agents?.length ?? 0);
                   const totalCommands = (project.user_commands?.length ?? 0) + (project.custom_commands?.length ?? 0);
+                  const totalHooks = project.hooks?.length ?? 0;
                   const memoryCount = Object.keys(memories).length;
                   const hasInstructionFiles = projectFiles.some((file) => file.exists);
                   const instructionStatus = !project.directory || project.agents.length === 0
@@ -7782,6 +8087,13 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                           count={totalCommands}
                           accentClass="bg-icon-command/10"
                           onView={() => selectTab("commands")}
+                        />
+                        <SummaryMetricCard
+                          icon={<Webhook size={13} className="text-icon-skill" />}
+                          label="Hooks"
+                          count={totalHooks}
+                          accentClass="bg-icon-skill/10"
+                          onView={() => selectTab("hooks")}
                         />
                       </div>
 
