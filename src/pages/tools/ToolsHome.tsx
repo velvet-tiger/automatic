@@ -1,4 +1,4 @@
-import { ArrowRight, FlaskConical, Hash, Sparkles, Wrench } from "lucide-react";
+import { ArrowRight, FlaskConical, Hash, Lightbulb, Sparkles, Wrench } from "lucide-react";
 import { flag } from "../../lib/flags";
 
 interface ToolsHomeProps {
@@ -49,6 +49,21 @@ const BASE_CARDS: ToolCard[] = [
       iconBorder: "border-icon-skill/20",
       iconText: "text-icon-skill",
       ctaText: "text-icon-skill",
+    },
+  },
+  {
+    tab: "recommendations",
+    title: "Insights",
+    description:
+      "Review tailored recommendations for skills, MCP servers, templates, and collections based on your projects.",
+    icon: Lightbulb,
+    classes: {
+      cardHover: "hover:border-icon-rule/50",
+      iconBg: "bg-icon-rule/10",
+      iconBgHover: "group-hover:bg-icon-rule/20",
+      iconBorder: "border-icon-rule/20",
+      iconText: "text-icon-rule",
+      ctaText: "text-icon-rule",
     },
   },
 ];

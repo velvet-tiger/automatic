@@ -50,11 +50,11 @@ import "./App.css";
 type Section = "start" | "workspace" | "library" | "discover" | "tools";
 
 const SECTION_TABS: Record<Section, string[]> = {
-  start: ["getting-started", "recommendations"],
+  start: ["getting-started"],
   workspace: ["projects", "project-groups"],
   library: ["library-home", "templates", "instructions", "rules", "subagents", "commands", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "community-featured", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
-  tools: ["tools-home", "library-generator", "token-estimator", "ai-playground"],
+  tools: ["tools-home", "library-generator", "token-estimator", "ai-playground", "recommendations"],
 };
 
 const DEFAULT_TAB: Record<Section, string> = {
@@ -575,7 +575,6 @@ function App() {
           {activeSection === "start" && (
             <ul className="space-y-0.5">
               <NavItem id="getting-started" icon={Sparkles} label="Getting Started" />
-              <NavItem id="recommendations" icon={Lightbulb} label="Insights" />
             </ul>
           )}
 
@@ -639,6 +638,7 @@ function App() {
               {flag("ai_playground") && (
                 <NavItem id="ai-playground" icon={FlaskConical} label="AI Playground" />
               )}
+              <NavItem id="recommendations" icon={Lightbulb} label="Insights" />
             </ul>
           )}
 
