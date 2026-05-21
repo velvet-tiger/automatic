@@ -158,6 +158,21 @@ pub struct SkillSource {
     /// registry entries are not broken.
     #[serde(default = "default_skill_source_kind")]
     pub kind: String,
+    /// Hex-encoded SHA256 of the SKILL.md content recorded when the skill was
+    /// imported.  Used to detect upstream changes (and to distinguish a local
+    /// edit from an upstream update).  Optional — absent for skills imported
+    /// before this field was added or for bundled skills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_sha: Option<String>,
+    /// The version reported by the publisher's `skill.json` at install time,
+    /// if any.  Lets us show a "vX → vY" upgrade hint when the upstream
+    /// version increments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_version: Option<String>,
+    /// ISO 8601 timestamp of when this record was first written or last
+    /// refreshed from the remote (e.g. on import or update).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_at: Option<String>,
 }
 
 fn default_skill_source_kind() -> String {
@@ -627,6 +642,9 @@ mod tests {
                 source: "owner/repo".into(),
                 id: "owner/repo/my-skill".into(),
                 kind: "github".into(),
+                installed_sha: None,
+                installed_version: None,
+                installed_at: None,
             },
         );
         project

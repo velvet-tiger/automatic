@@ -217,6 +217,9 @@ pub fn list_skills() -> Result<Vec<SkillEntry>, String> {
                         source: repo.clone(),
                         id: format!("{repo}/{name}"),
                         kind: "github".to_string(),
+                        installed_sha: None,
+                        installed_version: None,
+                        installed_at: None,
                     })
             });
 

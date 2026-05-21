@@ -52,6 +52,24 @@ interface SkillSource {
   source: string; // "owner/repo"
   id: string;     // "owner/repo/skill-name"
   kind?: string;  // "github" | "bundled"
+  // Install-time metadata used by the "is this skill out of date?" check.
+  // All optional — absent for skills imported before this feature shipped
+  // and for bundled skills.
+  installed_sha?: string;
+  installed_version?: string;
+  installed_at?: string;
+}
+
+// Mirrors `core::skill_store::SkillUpdateStatus` on the Rust side.
+interface SkillUpdateStatus {
+  status: "up_to_date" | "update_available" | "local_modified" | "unknown";
+  installed_sha?: string;
+  local_sha?: string;
+  remote_sha?: string;
+  installed_version?: string;
+  remote_version?: string;
+  installed_at?: string;
+  reason?: string;
 }
 
 interface SkillEntry {
@@ -135,6 +153,65 @@ function parseFrontmatter(raw: string): { meta: Frontmatter; body: string } {
   return { meta, body: match[2]!.trimStart() };
 }
 
+// ── Remote update badge ───────────────────────────────────────────────────────
+//
+// Rendered when a GitHub-sourced skill's local copy can be compared against
+// the upstream. We deliberately stay quiet for "unknown" — the user didn't
+// ask for an update check, so a noisy "couldn't verify" message would be
+// worse than nothing.
+
+function formatInstalledAt(iso?: string): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function SkillUpdateBadge({ status }: { status: SkillUpdateStatus }) {
+  const installedAt = formatInstalledAt(status.installed_at);
+  const versionPair =
+    status.installed_version && status.remote_version && status.installed_version !== status.remote_version
+      ? `${status.installed_version} → ${status.remote_version}`
+      : null;
+
+  if (status.status === "up_to_date") {
+    return (
+      <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-text-muted">
+        <Check size={11} className="text-emerald-500" />
+        <span>Up to date with source</span>
+        {installedAt && (
+          <span className="text-text-muted/70">· installed {installedAt}</span>
+        )}
+      </div>
+    );
+  }
+
+  if (status.status === "update_available") {
+    return (
+      <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-warning/10 border border-warning/30 text-warning">
+        <Download size={11} />
+        <span>Update available{versionPair ? ` (${versionPair})` : ""}</span>
+      </div>
+    );
+  }
+
+  if (status.status === "local_modified") {
+    return (
+      <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-text-muted">
+        <Edit2 size={11} />
+        <span>Locally modified — diverged from source</span>
+      </div>
+    );
+  }
+
+  // "unknown" — render nothing.
+  return null;
+}
+
 // ── Skill preview — frontmatter header + companion resources + markdown body ──
 
 interface SkillPreviewProps {
@@ -188,6 +265,36 @@ function SkillPreview({ content, source, sources, resources, license }: SkillPre
   // Collapse all when skill changes
   useEffect(() => { setExpandedDirs(new Set()); }, [content]);
 
+  // ── Remote update check ────────────────────────────────────────────────
+  // Only GitHub-sourced skills can be checked: bundled skills are shipped
+  // with the app, and local skills have no upstream.  The check is best-
+  // effort and the badge stays hidden on any error so the preview is not
+  // dominated by a network-level concern.
+  const [updateStatus, setUpdateStatus] = useState<SkillUpdateStatus | "loading" | null>(null);
+  const checkableName = meta.name;
+  const canCheckUpdate = source?.kind === "github" && !!checkableName;
+
+  useEffect(() => {
+    if (!canCheckUpdate || !checkableName) {
+      setUpdateStatus(null);
+      return;
+    }
+    let cancelled = false;
+    setUpdateStatus("loading");
+    invoke<SkillUpdateStatus>("check_skill_update", { name: checkableName })
+      .then((result) => {
+        if (!cancelled) setUpdateStatus(result);
+      })
+      .catch(() => {
+        // Hide the badge on failure — a transient network blip should not
+        // look like a permanent "unknown" state.
+        if (!cancelled) setUpdateStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canCheckUpdate, checkableName, content]);
+
   return (
     <div>
       {/* ── Metadata header ───────────────────────────────────────────── */}
@@ -202,6 +309,12 @@ function SkillPreview({ content, source, sources, resources, license }: SkillPre
         {/* Author section — always shown */}
         <div className={displayLicense ? "mb-2" : "mb-4"}>
           <AuthorSection descriptor={authorDescriptor} />
+          {canCheckUpdate && updateStatus && updateStatus !== "loading" && (
+            <SkillUpdateBadge status={updateStatus} />
+          )}
+          {canCheckUpdate && updateStatus === "loading" && (
+            <p className="mt-2 text-[11px] text-text-muted/70">Checking for updates…</p>
+          )}
         </div>
 
         {/* License badge */}

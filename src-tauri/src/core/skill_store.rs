@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
 
@@ -401,6 +402,54 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
     Err(format!("Could not fetch SKILL.md for '{}'", name))
 }
 
+/// Best-effort lookup of the publisher-side version for a single skill in a
+/// GitHub source. Tries `main` then `master` for `skill.json` at the repo
+/// root, parses the manifest, finds the entry whose `name` matches `name`,
+/// and returns its `version` (falling back to the package-level `version` if
+/// the skill entry has no override).
+///
+/// Returns `Ok(None)` when no `skill.json` exists, the network call fails,
+/// or no matching skill entry is present. This is intentionally tolerant —
+/// it is used to enrich install metadata, not to validate the import.
+pub async fn fetch_remote_skill_version(source: &str, name: &str) -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()?;
+
+    for branch in &["main", "master"] {
+        let url = format!(
+            "https://raw.githubusercontent.com/{}/{}/skill.json",
+            source, branch
+        );
+        let resp = match client
+            .get(&url)
+            .header("User-Agent", "automatic-desktop/1.0")
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => r,
+            _ => continue,
+        };
+        let text = match resp.text().await {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let manifest: SkillsJson = match serde_json::from_str(&text) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if let Some(entry) = manifest.skills.iter().find(|s| s.name == name) {
+            return entry
+                .version
+                .clone()
+                .or_else(|| Some(manifest.version.clone()));
+        }
+    }
+
+    None
+}
+
 // ── Skills Registry (~/.automatic/skills.json) ───────────────────────────────────
 //
 // Tracks the remote origin of skills imported from skills.sh.
@@ -443,7 +492,28 @@ fn write_skill_sources(
 /// Record that a skill was imported from a remote source, or is bundled with
 /// the app.  `kind` is "github" for registry-imported skills, "bundled" for
 /// skills shipped with Automatic.
+///
+/// Existing call sites that do not have install metadata (e.g. bundled skills,
+/// project imports, drift-recovery paths) continue to use this entry point;
+/// new install paths should use `record_skill_source_with_meta` so the
+/// "is this skill out of date?" check has something to compare against.
 pub fn record_skill_source(name: &str, source: &str, id: &str, kind: &str) -> Result<(), String> {
+    record_skill_source_with_meta(name, source, id, kind, None, None, None)
+}
+
+/// Variant of `record_skill_source` that also persists install metadata used
+/// by the update-check feature: a SHA256 of the content as fetched, the
+/// publisher-side version from `skill.json` if present, and an ISO 8601
+/// timestamp marking when the record was written.
+pub fn record_skill_source_with_meta(
+    name: &str,
+    source: &str,
+    id: &str,
+    kind: &str,
+    installed_sha: Option<String>,
+    installed_version: Option<String>,
+    installed_at: Option<String>,
+) -> Result<(), String> {
     let mut registry = read_skill_sources()?;
     registry.insert(
         name.to_string(),
@@ -451,9 +521,27 @@ pub fn record_skill_source(name: &str, source: &str, id: &str, kind: &str) -> Re
             source: source.to_string(),
             id: id.to_string(),
             kind: kind.to_string(),
+            installed_sha,
+            installed_version,
+            installed_at,
         },
     );
     write_skill_sources(&registry)
+}
+
+/// Hex-encoded SHA256 of the given content. Used to capture the canonical
+/// state of an imported skill so we can later distinguish "no change",
+/// "upstream changed", and "locally edited".
+pub fn sha256_hex(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    let digest = hasher.finalize();
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Current ISO 8601 timestamp (UTC) suitable for `installed_at`.
+pub fn now_iso8601() -> String {
+    chrono::Utc::now().to_rfc3339()
 }
 
 /// Remove the remote origin record for a skill (called on delete).
@@ -461,6 +549,141 @@ pub fn remove_skill_source(name: &str) -> Result<(), String> {
     let mut registry = read_skill_sources()?;
     registry.remove(name);
     write_skill_sources(&registry)
+}
+
+// ── Update check ────────────────────────────────────────────────────────────
+
+/// Outcome of comparing a locally-installed skill against its GitHub source.
+///
+/// The `status` string is the part the UI keys off; the other fields are
+/// supporting detail for the badge / tooltip:
+///
+/// - `up_to_date` — local content matches the install SHA and matches the
+///   remote SHA (or, when install SHA is missing, local matches remote).
+/// - `update_available` — the remote SKILL.md differs from what we recorded
+///   at install time, and the user has not edited the local copy.
+/// - `local_modified` — the user has edited the local copy since import.
+///   We do not surface "and the remote also moved" yet because the UI just
+///   needs to tell the user "your copy diverges from the source".
+/// - `unknown` — we couldn't tell. The `reason` field explains why
+///   (e.g. bundled skill, not a remote skill, network failure, ambiguous
+///   remote content). The UI should hide the badge in this case.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkillUpdateStatus {
+    /// One of "up_to_date", "update_available", "local_modified", "unknown".
+    pub status: String,
+    /// The hex SHA recorded at install time (if any).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_sha: Option<String>,
+    /// The hex SHA of the current local SKILL.md.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_sha: Option<String>,
+    /// The hex SHA of the current remote SKILL.md.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_sha: Option<String>,
+    /// Version recorded at install time (from `skill.json`, if any).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_version: Option<String>,
+    /// Version reported by the current `skill.json` at the remote.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_version: Option<String>,
+    /// When this skill was last imported / refreshed locally.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_at: Option<String>,
+    /// Free-text explanation, shown when `status == "unknown"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl SkillUpdateStatus {
+    fn unknown(reason: impl Into<String>) -> Self {
+        SkillUpdateStatus {
+            status: "unknown".into(),
+            installed_sha: None,
+            local_sha: None,
+            remote_sha: None,
+            installed_version: None,
+            remote_version: None,
+            installed_at: None,
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+/// Compare a locally-installed skill against its GitHub origin.
+///
+/// We only support `kind == "github"` here: bundled skills are versioned with
+/// the app binary and "updates" are not a meaningful concept for them.
+///
+/// Logic:
+/// 1. Read local SKILL.md and the recorded `SkillSource`.
+/// 2. If the skill has no source, or `kind != "github"`, return `unknown`.
+/// 3. Fetch the remote SKILL.md and (optionally) `skill.json` version.
+/// 4. Compare:
+///    - If `installed_sha` is present and matches local but differs from
+///      remote → `update_available`.
+///    - If `installed_sha` is present and local differs from `installed_sha`
+///      → `local_modified` (the user has edited the file in the library).
+///    - If `installed_sha` is absent (skill was imported before this feature
+///      shipped), fall back to comparing local SHA against remote SHA — this
+///      cannot distinguish a local edit from an upstream change, so a "diff"
+///      result is reported as `update_available`. The frontend should make
+///      this caveat visible.
+pub async fn check_skill_update(name: &str) -> Result<SkillUpdateStatus, String> {
+    let registry = read_skill_sources()?;
+    let source = match registry.get(name) {
+        Some(s) => s.clone(),
+        None => return Ok(SkillUpdateStatus::unknown("Skill has no recorded source.")),
+    };
+
+    if source.kind != "github" {
+        return Ok(SkillUpdateStatus::unknown(format!(
+            "Skill source kind '{}' does not support update checks.",
+            source.kind
+        )));
+    }
+
+    let local_content = super::read_skill(name)
+        .map_err(|e| format!("Failed to read local skill '{}': {}", name, e))?;
+    let local_sha = sha256_hex(&local_content);
+
+    // Network call. Bubble up the error so the UI can show "Couldn't check
+    // for updates" instead of silently claiming the skill is up to date.
+    let remote_content = fetch_remote_skill_content(&source.source, name)
+        .await
+        .map_err(|e| format!("Could not fetch remote skill: {}", e))?;
+    let remote_sha = sha256_hex(&remote_content);
+    let remote_version = fetch_remote_skill_version(&source.source, name).await;
+
+    let status = if let Some(installed_sha) = source.installed_sha.as_deref() {
+        if local_sha == installed_sha && remote_sha == installed_sha {
+            "up_to_date"
+        } else if local_sha == installed_sha && remote_sha != installed_sha {
+            "update_available"
+        } else if local_sha != installed_sha {
+            // User-edited copy. We do not currently flag a concurrent
+            // upstream update here — the user has already diverged, so
+            // "your copy is modified" is the more important signal.
+            "local_modified"
+        } else {
+            "unknown"
+        }
+    } else if local_sha == remote_sha {
+        "up_to_date"
+    } else {
+        "update_available"
+    };
+
+    Ok(SkillUpdateStatus {
+        status: status.to_string(),
+        installed_sha: source.installed_sha,
+        local_sha: Some(local_sha),
+        remote_sha: Some(remote_sha),
+        installed_version: source.installed_version,
+        remote_version,
+        installed_at: source.installed_at,
+        reason: None,
+    })
 }
 
 // ── Repository Import ───────────────────────────────────────────────────────────
@@ -554,7 +777,18 @@ pub async fn import_skill_from_repository(
                 super::save_skill(&actual_name, &content)?;
 
                 let id = format!("{}/{}", source, actual_name);
-                record_skill_source(&actual_name, &source, &id, "github")?;
+                let installed_sha = Some(sha256_hex(&content));
+                let installed_version = fetch_remote_skill_version(&source, &actual_name).await;
+                let installed_at = Some(now_iso8601());
+                record_skill_source_with_meta(
+                    &actual_name,
+                    &source,
+                    &id,
+                    "github",
+                    installed_sha,
+                    installed_version,
+                    installed_at,
+                )?;
                 let _ = super::set_skill_collection(&actual_name, &source);
 
                 return Ok(vec![ImportedSkillFromRepo {
@@ -608,6 +842,12 @@ pub async fn import_skill_from_repository(
         let mut imported = Vec::new();
         for skill_entry in &manifest.skills {
             let name = &skill_entry.name;
+            // Per-skill version override falls back to the package-level
+            // version per the skills-json spec.
+            let manifest_version = skill_entry
+                .version
+                .clone()
+                .or_else(|| Some(manifest.version.clone()));
             match fetch_remote_skill_content(&source, name).await {
                 Ok(content) => {
                     let actual_name =
@@ -619,7 +859,15 @@ pub async fn import_skill_from_repository(
                     }
 
                     let id = format!("{}/{}", source, actual_name);
-                    let _ = record_skill_source(&actual_name, &source, &id, "github");
+                    let _ = record_skill_source_with_meta(
+                        &actual_name,
+                        &source,
+                        &id,
+                        "github",
+                        Some(sha256_hex(&content)),
+                        manifest_version.clone(),
+                        Some(now_iso8601()),
+                    );
                     let _ = super::set_skill_collection(&actual_name, &source);
 
                     imported.push(ImportedSkillFromRepo {

@@ -815,6 +815,9 @@ mod tests {
                 source: "owner/repo".into(),
                 id: "owner/repo/my-skill".into(),
                 kind: "github".into(),
+                installed_sha: None,
+                installed_version: None,
+                installed_at: None,
             },
         );
         project
