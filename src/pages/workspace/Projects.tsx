@@ -302,6 +302,7 @@ interface ProjectTemplate {
   agents: string[];
   user_agents: string[];
   user_commands: string[];
+  hooks: string[];
   project_files: TemplateProjectFile[];
   unified_instruction?: string;
   unified_rules?: string[];
@@ -2723,6 +2724,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
       mcp_servers: string[];
       user_agents: string[];
       user_commands: string[];
+      hooks: string[];
       rules: string[];
     };
     hasUnifiedContent: boolean;
@@ -3527,6 +3529,7 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
         mcp_servers: (tmpl?.mcp_servers ?? []).filter((m) => !before.mcp_servers.includes(m)),
         user_agents: (tmpl?.user_agents ?? []).filter((a) => !(before.user_agents ?? []).includes(a)),
         user_commands: (tmpl?.user_commands ?? []).filter((c) => !(before.user_commands ?? []).includes(c)),
+        hooks: (tmpl?.hooks ?? []).filter((h) => !(before.hooks ?? []).includes(h)),
         rules: (tmpl?.unified_rules ?? []).filter((r) => !existingRules.includes(r)),
       };
 
@@ -10508,6 +10511,7 @@ function ApplyProjectTemplateModal({
       mcp_servers: string[];
       user_agents: string[];
       user_commands: string[];
+      hooks: string[];
       rules: string[];
     };
     hasUnifiedContent: boolean;
@@ -10659,6 +10663,7 @@ function ApplyTemplateResultView({
       mcp_servers: string[];
       user_agents: string[];
       user_commands: string[];
+      hooks: string[];
       rules: string[];
     };
     hasUnifiedContent: boolean;
@@ -10672,6 +10677,7 @@ function ApplyTemplateResultView({
     { label: "MCP servers", items: result.added.mcp_servers },
     { label: "Sub-agents", items: result.added.user_agents },
     { label: "Commands", items: result.added.user_commands },
+    { label: "Hooks", items: result.added.hooks },
     { label: "Rules", items: result.added.rules },
   ].filter((s) => s.items.length > 0);
 

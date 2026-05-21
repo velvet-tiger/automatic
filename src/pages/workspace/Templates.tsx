@@ -22,6 +22,7 @@ import {
   Search,
   Terminal,
   Folder,
+  Webhook,
 } from "lucide-react";
 
 interface TemplateProjectFile {
@@ -40,6 +41,8 @@ interface ProjectTemplate {
   user_agents: string[];
   /** Workspace command names to include when this template is applied to a project. */
   user_commands: string[];
+  /** Hook machine names to include when this template is applied to a project. */
+  hooks: string[];
   project_files: TemplateProjectFile[];
   /** Single unified project instruction content (written to CLAUDE.md / AGENTS.md etc.) */
   unified_instruction?: string;
@@ -65,6 +68,15 @@ interface Project {
   agents: string[];
   user_agents?: string[];
   user_commands?: string[];
+  hooks?: string[];
+}
+
+interface HookEntry {
+  id: string;
+  name: string;
+  agent: string;
+  event: string;
+  plugin_id?: string | null;
 }
 
 const SIDEBAR_MIN = 180;
@@ -347,8 +359,151 @@ function CommandSelector({
   );
 }
 
+function HookSelector({
+  hookIds,
+  available,
+  onAdd,
+  onRemove,
+}: {
+  hookIds: string[];
+  available: HookEntry[];
+  onAdd: (id: string) => void;
+  onRemove: (idx: number) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const unadded = available.filter((a) => !hookIds.includes(a.id));
+  const filtered = search.trim()
+    ? unadded.filter(
+        (a) =>
+          a.id.toLowerCase().includes(search.toLowerCase()) ||
+          a.name.toLowerCase().includes(search.toLowerCase()) ||
+          a.event.toLowerCase().includes(search.toLowerCase()) ||
+          a.agent.toLowerCase().includes(search.toLowerCase()),
+      )
+    : unadded;
+
+  function handleAdd(id: string) {
+    onAdd(id);
+    setAdding(false);
+    setSearch("");
+  }
+
+  function handleCancel() {
+    setAdding(false);
+    setSearch("");
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Webhook size={13} className="text-icon-skill" />
+          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
+            Hooks
+          </span>
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); setAdding(true); }}
+          className="text-[11px] text-brand hover:text-text-base flex items-center gap-1 px-2 py-1 rounded border border-brand/50 hover:border-brand hover:bg-brand/15 transition-all"
+        >
+          <Plus size={11} /> Add
+        </button>
+      </div>
+
+      {hookIds.length === 0 && !adding && (
+        <p className="text-[12px] text-text-muted italic pl-1">No hooks configured.</p>
+      )}
+
+      <div className="space-y-2">
+        {hookIds.map((id, idx) => {
+          const hook = available.find((a) => a.id === id);
+          return (
+            <div key={id} className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+              <div className="flex items-center gap-3 px-3 py-3 group">
+                <Webhook size={20} className="text-icon-skill flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-medium text-text-base truncate">
+                    {hook?.name ?? id}
+                  </div>
+                  <div className="text-[11px] text-text-muted truncate">
+                    {hook ? `${hook.agent} · ${hook.event}` : "Hook missing from library"}
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onRemove(idx); }}
+                  className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded flex-shrink-0"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {adding && (
+        <div className="mt-2 bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border-strong/40">
+            <Search size={12} className="text-text-muted shrink-0" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") handleCancel();
+                if (e.key === "Enter" && filtered.length === 1) handleAdd(filtered[0]!.id);
+              }}
+              placeholder="Search hooks..."
+              autoFocus
+              className="flex-1 bg-transparent outline-none text-[13px] text-text-base placeholder-text-muted/50"
+            />
+            {search && (
+              <button onClick={() => setSearch("")} className="text-text-muted hover:text-text-base transition-colors">
+                <X size={11} />
+              </button>
+            )}
+          </div>
+          <div className="max-h-48 overflow-y-auto custom-scrollbar py-1">
+            {filtered.length > 0 ? (
+              filtered.map((a) => (
+                <button
+                  key={a.id}
+                  onClick={() => handleAdd(a.id)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-sidebar text-left transition-colors"
+                >
+                  <Webhook size={14} className="text-icon-skill flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] text-text-base font-medium truncate">{a.name}</div>
+                    <div className="text-[11px] text-text-muted truncate">
+                      {a.agent} · {a.event}
+                    </div>
+                  </div>
+                </button>
+              ))
+            ) : (
+              <p className="text-[12px] text-text-muted italic px-3 py-3">
+                {unadded.length === 0 ? "All hooks already added." : "No hooks match."}
+              </p>
+            )}
+          </div>
+          <div className="border-t border-border-strong/40 px-3 py-2 flex items-center justify-between">
+            <span className="text-[11px] text-text-muted">
+              {filtered.length} of {unadded.length} hook{unadded.length !== 1 ? "s" : ""}
+            </span>
+            <button onClick={handleCancel} className="text-[11px] text-text-muted hover:text-text-base transition-colors">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function emptyTemplate(name: string): ProjectTemplate {
-  return { name, description: "", skills: [], mcp_servers: [], providers: [], agents: [], user_agents: [], user_commands: [], project_files: [], unified_instruction: "", unified_rules: ["automatic-service"] };
+  return { name, description: "", skills: [], mcp_servers: [], providers: [], agents: [], user_agents: [], user_commands: [], hooks: [], project_files: [], unified_instruction: "", unified_rules: ["automatic-service"] };
 }
 
 // Derive a colour for the sidebar icon box based on what's in the template
@@ -390,6 +545,7 @@ export default function Templates({
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
   const [availableUserAgents, setAvailableUserAgents] = useState<{ id: string; name: string }[]>([]);
   const [availableUserCommands, setAvailableUserCommands] = useState<UserCommandEntry[]>([]);
+  const [availableHooks, setAvailableHooks] = useState<HookEntry[]>([]);
   const [availableSkills, setAvailableSkills] = useState<string[]>([]);
   const [availableMcpServers, setAvailableMcpServers] = useState<string[]>([]);
   const [availableFileTemplates, setAvailableFileTemplates] = useState<string[]>([]);
@@ -445,6 +601,7 @@ export default function Templates({
     loadAvailableAgents();
     loadAvailableUserAgents();
     loadAvailableUserCommands();
+    loadAvailableHooks();
     loadAvailableSkills();
     loadAvailableMcpServers();
     loadAvailableFileTemplates();
@@ -509,6 +666,14 @@ export default function Templates({
     } catch { /* ignore */ }
   };
 
+  const loadAvailableHooks = async () => {
+    try {
+      const result: HookEntry[] = await invoke("get_hooks");
+      result.sort((a, b) => a.id.localeCompare(b.id));
+      setAvailableHooks(result);
+    } catch { /* ignore */ }
+  };
+
   const loadAvailableSkills = async () => {
     try {
       const result: { name: string }[] = await invoke("get_skills");
@@ -568,6 +733,7 @@ export default function Templates({
         agents: parsed.agents || [],
         user_agents: parsed.user_agents || [],
         user_commands: parsed.user_commands || [],
+        hooks: parsed.hooks || [],
         project_files: parsed.project_files || [],
         unified_instruction: parsed.unified_instruction || "",
         unified_rules: parsed.unified_rules === undefined ? ["automatic-service"] : parsed.unified_rules,
@@ -683,6 +849,9 @@ export default function Templates({
         ...(template.user_commands.length > 0
           ? { user_commands: [...new Set([...(proj.user_commands ?? []), ...template.user_commands])] }
           : {}),
+        ...(template.hooks.length > 0
+          ? { hooks: [...new Set([...(proj.hooks ?? []), ...template.hooks])] }
+          : {}),
         ...(hasUnifiedContent ? { instruction_mode: "unified" } : {}),
       };
       await invoke("save_project", { name: projectName, data: JSON.stringify(updated, null, 2) });
@@ -778,7 +947,7 @@ export default function Templates({
     }
   };
 
-  type ListField = "skills" | "mcp_servers" | "providers" | "agents" | "user_agents" | "user_commands";
+  type ListField = "skills" | "mcp_servers" | "providers" | "agents" | "user_agents" | "user_commands" | "hooks";
 
   const addItem = (key: ListField, item: string) => {
     if (!template || !item.trim()) return;
@@ -1080,6 +1249,14 @@ export default function Templates({
                   available={availableUserCommands}
                   onAdd={(id) => addItem("user_commands", id)}
                   onRemove={(idx) => removeItem("user_commands", idx)}
+                />
+
+                {/* Hooks */}
+                <HookSelector
+                  hookIds={template.hooks}
+                  available={availableHooks}
+                  onAdd={(id) => addItem("hooks", id)}
+                  onRemove={(idx) => removeItem("hooks", idx)}
                 />
 
                 {/* Unified Project Instruction */}

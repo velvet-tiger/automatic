@@ -59,6 +59,13 @@ pub struct ProjectTemplate {
     /// during sync before any agent-specific linking or conversion happens.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub user_commands: Vec<String>,
+    /// Hook machine names (from `~/.automatic/library/hooks/`) to include when
+    /// this template is applied to a project.  These map to the project's
+    /// `hooks` field; each hook's target agent is in its own library record,
+    /// so the sync engine groups them by agent and dispatches to whichever
+    /// agent on the project supports hooks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<String>,
     /// Author/provider metadata.  Mirrors the `_author` convention used by
     /// MCP server configs.  Stored as a raw JSON value so it round-trips
     /// without a dedicated struct — shape: `{ type, name?, url?, repo?, ... }`.
@@ -215,6 +222,9 @@ pub struct BundledProjectTemplate {
     /// Workspace command names to include when this template is imported.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub user_commands: Vec<String>,
+    /// Hook machine names to include when this template is imported.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<String>,
     /// Optional icon filename (png or svg) relative to the template-icons asset
     /// directory, e.g. "nextjs.svg". Served at /template-icons/<icon> in the
     /// frontend. When absent the UI falls back to the first letter of the name.
@@ -355,6 +365,7 @@ pub async fn import_bundled_template(name: &str) -> Result<(), String> {
         unified_rules: bundled.unified_rules,
         user_agents: Vec::new(),
         user_commands: bundled.user_commands,
+        hooks: bundled.hooks,
         _author: bundled._author,
     };
 
@@ -502,6 +513,7 @@ pub(crate) fn merge_templates_into_project(
         union_vec(&mut project.providers, &tmpl.providers);
         union_vec(&mut project.user_agents, &tmpl.user_agents);
         union_vec(&mut project.user_commands, &tmpl.user_commands);
+        union_vec(&mut project.hooks, &tmpl.hooks);
 
         if project.description.is_empty() && !tmpl.description.is_empty() {
             project.description.clone_from(&tmpl.description);
@@ -716,6 +728,7 @@ mod tests {
             agents: vec!["claude".into()],
             user_agents: vec!["researcher".into()],
             user_commands: vec!["lint".into()],
+            hooks: vec!["log-session".into()],
             ..Default::default()
         };
 
@@ -732,6 +745,7 @@ mod tests {
         assert_eq!(result.project.agents, vec!["claude"]);
         assert_eq!(result.project.user_agents, vec!["researcher"]);
         assert_eq!(result.project.user_commands, vec!["lint"]);
+        assert_eq!(result.project.hooks, vec!["log-session"]);
         assert_eq!(result.project.description, "A template");
     }
 
