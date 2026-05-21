@@ -359,6 +359,7 @@ pub fn run() {
             import_remote_skill,
             get_skill_sources,
             check_skill_update,
+            update_skill_from_source,
             get_project_memories,
             store_memory,
             get_memory,

@@ -686,6 +686,66 @@ pub async fn check_skill_update(name: &str) -> Result<SkillUpdateStatus, String>
     })
 }
 
+/// Re-fetch a remote skill from its recorded source and overwrite the local
+/// copy.  Refreshes install metadata so a subsequent update check will see
+/// the new SHA / version / timestamp.
+///
+/// This is the "Update Now" entry point.  It is intentionally idempotent —
+/// running it on a skill that is already up to date will simply rewrite the
+/// same content and bump `installed_at`.  That is by design: skill
+/// versioning at the publisher level is still maturing and the user may
+/// want to force a re-fetch (e.g. after a publisher rewrote the upstream
+/// without bumping the version field in `skill.json`).
+///
+/// Returns the freshly-computed `SkillUpdateStatus` so the UI can refresh
+/// its badge without making a second network round-trip.
+pub async fn update_skill_from_source(name: &str) -> Result<SkillUpdateStatus, String> {
+    let registry = read_skill_sources()?;
+    let source = registry
+        .get(name)
+        .cloned()
+        .ok_or_else(|| format!("Skill '{}' has no recorded source.", name))?;
+
+    if source.kind != "github" {
+        return Err(format!(
+            "Skill source kind '{}' does not support remote updates.",
+            source.kind
+        ));
+    }
+
+    let remote_content = fetch_remote_skill_content(&source.source, name)
+        .await
+        .map_err(|e| format!("Could not fetch remote skill: {}", e))?;
+
+    super::save_skill(name, &remote_content)
+        .map_err(|e| format!("Failed to save updated skill: {}", e))?;
+
+    let remote_sha = sha256_hex(&remote_content);
+    let remote_version = fetch_remote_skill_version(&source.source, name).await;
+    let installed_at = now_iso8601();
+
+    record_skill_source_with_meta(
+        name,
+        &source.source,
+        &source.id,
+        "github",
+        Some(remote_sha.clone()),
+        remote_version.clone(),
+        Some(installed_at.clone()),
+    )?;
+
+    Ok(SkillUpdateStatus {
+        status: "up_to_date".to_string(),
+        installed_sha: Some(remote_sha.clone()),
+        local_sha: Some(remote_sha.clone()),
+        remote_sha: Some(remote_sha),
+        installed_version: remote_version.clone(),
+        remote_version,
+        installed_at: Some(installed_at),
+        reason: None,
+    })
+}
+
 // ── Repository Import ───────────────────────────────────────────────────────────
 
 /// Parse a GitHub repository URL and extract the owner/repo pair.

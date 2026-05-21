@@ -61,3 +61,13 @@ pub fn get_skill_sources() -> Result<String, String> {
 pub async fn check_skill_update(name: String) -> Result<core::SkillUpdateStatus, String> {
     core::check_skill_update(&name).await
 }
+
+/// Re-fetch a remote skill from its recorded source, overwrite the local
+/// copy, refresh install metadata, and sync every project that references
+/// the skill so the new content propagates immediately.
+#[tauri::command]
+pub async fn update_skill_from_source(name: String) -> Result<core::SkillUpdateStatus, String> {
+    let status = core::update_skill_from_source(&name).await?;
+    sync_projects_referencing_skill(&name);
+    Ok(status)
+}

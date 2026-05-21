@@ -180,7 +180,7 @@ function SkillUpdateBadge({ status }: { status: SkillUpdateStatus }) {
 
   if (status.status === "up_to_date") {
     return (
-      <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-text-muted">
+      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-text-muted">
         <Check size={11} className="text-emerald-500" />
         <span>Up to date with source</span>
         {installedAt && (
@@ -192,7 +192,7 @@ function SkillUpdateBadge({ status }: { status: SkillUpdateStatus }) {
 
   if (status.status === "update_available") {
     return (
-      <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-warning/10 border border-warning/30 text-warning">
+      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-warning/10 border border-warning/30 text-warning">
         <Download size={11} />
         <span>Update available{versionPair ? ` (${versionPair})` : ""}</span>
       </div>
@@ -201,7 +201,7 @@ function SkillUpdateBadge({ status }: { status: SkillUpdateStatus }) {
 
   if (status.status === "local_modified") {
     return (
-      <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-text-muted">
+      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-text-muted">
         <Edit2 size={11} />
         <span>Locally modified — diverged from source</span>
       </div>
@@ -220,6 +220,9 @@ interface SkillPreviewProps {
   sources?: string[];
   resources?: SkillResources | null;
   license?: string;
+  /** Called after a successful "Update now" so the parent can re-read the
+   * skill content, refresh the library list, and reset the badge state. */
+  onUpdated?: (name: string) => void | Promise<void>;
 }
 
 function resolveSkillAuthorDescriptor(source?: SkillSource, sources?: string[]): AuthorDescriptor {
@@ -236,7 +239,7 @@ function resolveSkillAuthorDescriptor(source?: SkillSource, sources?: string[]):
   return { type: "local" };
 }
 
-function SkillPreview({ content, source, sources, resources, license }: SkillPreviewProps) {
+function SkillPreview({ content, source, sources, resources, license, onUpdated }: SkillPreviewProps) {
   const { meta, body } = parseFrontmatter(content);
   const displayName = meta.name || "";
   const description = meta.description || "";
@@ -271,8 +274,15 @@ function SkillPreview({ content, source, sources, resources, license }: SkillPre
   // effort and the badge stays hidden on any error so the preview is not
   // dominated by a network-level concern.
   const [updateStatus, setUpdateStatus] = useState<SkillUpdateStatus | "loading" | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const checkableName = meta.name;
   const canCheckUpdate = source?.kind === "github" && !!checkableName;
+  // The Update Now button is shown for every remote-sourced skill so the
+  // affordance is discoverable, but it is disabled when no remote source
+  // exists.  Per the spec, an up-to-date skill is still updatable — skill
+  // versioning is in its infancy, so force-refresh is a legitimate use.
+  const canUpdate = canCheckUpdate;
 
   useEffect(() => {
     if (!canCheckUpdate || !checkableName) {
@@ -295,6 +305,32 @@ function SkillPreview({ content, source, sources, resources, license }: SkillPre
     };
   }, [canCheckUpdate, checkableName, content]);
 
+  // Reset transient button state when the displayed skill changes so a
+  // previous error or in-flight state doesn't leak across selections.
+  useEffect(() => {
+    setUpdating(false);
+    setUpdateError(null);
+  }, [checkableName]);
+
+  const handleUpdateNow = async () => {
+    if (!canUpdate || !checkableName) return;
+    setUpdating(true);
+    setUpdateError(null);
+    try {
+      const status = await invoke<SkillUpdateStatus>("update_skill_from_source", {
+        name: checkableName,
+      });
+      setUpdateStatus(status);
+      // Parent owns content/library state — let it refresh so the markdown
+      // body and "Used By" sidebar reflect the new bytes.
+      await onUpdated?.(checkableName);
+    } catch (err: any) {
+      setUpdateError(typeof err === "string" ? err : String(err));
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   return (
     <div>
       {/* ── Metadata header ───────────────────────────────────────────── */}
@@ -309,11 +345,41 @@ function SkillPreview({ content, source, sources, resources, license }: SkillPre
         {/* Author section — always shown */}
         <div className={displayLicense ? "mb-2" : "mb-4"}>
           <AuthorSection descriptor={authorDescriptor} />
-          {canCheckUpdate && updateStatus && updateStatus !== "loading" && (
-            <SkillUpdateBadge status={updateStatus} />
+
+          {/* Update row: status pill + Update Now action, side by side.
+              Always rendered for skills with a recorded source so the
+              button is discoverable; disabled when the source has no
+              fetchable upstream (e.g. bundled skills). */}
+          {source && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {canCheckUpdate && updateStatus === "loading" && (
+                <span className="text-[11px] text-text-muted/70">Checking for updates…</span>
+              )}
+              {canCheckUpdate && updateStatus && updateStatus !== "loading" && (
+                <SkillUpdateBadge status={updateStatus} />
+              )}
+
+              <button
+                type="button"
+                onClick={handleUpdateNow}
+                disabled={!canUpdate || updating}
+                title={
+                  !canUpdate
+                    ? "This skill has no remote source to update from."
+                    : "Re-fetch this skill from its source. Safe to run even when up to date."
+                }
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-bg-sidebar border border-border-strong/40 text-text-base hover:bg-bg-input/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <Download size={11} className={updating ? "animate-pulse" : ""} />
+                {updating ? "Updating…" : "Update now"}
+              </button>
+            </div>
           )}
-          {canCheckUpdate && updateStatus === "loading" && (
-            <p className="mt-2 text-[11px] text-text-muted/70">Checking for updates…</p>
+
+          {updateError && (
+            <p className="mt-1.5 text-[11px] text-red-400">
+              Update failed: {updateError}
+            </p>
           )}
         </div>
 
@@ -1486,6 +1552,12 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                       sources={selectedEntry?.sources}
                       resources={skillResources}
                       license={selectedEntry?.license}
+                      onUpdated={async (name) => {
+                        // Refresh library list + the displayed skill so the
+                        // new SHA, version, and content are reflected.
+                        await loadSkills();
+                        await loadSkillContent(name);
+                      }}
                     />
                   </div>
 
