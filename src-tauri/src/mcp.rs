@@ -180,6 +180,79 @@ pub struct DetachRuleParams {
     pub file: Option<String>,
 }
 
+// ── Hook Tool Parameter Types ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ReadHookParams {
+    /// The hook's machine name (lowercase letters, digits, and hyphens; must
+    /// start with a letter; no consecutive or trailing hyphens).
+    pub machine_name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct CreateHookParams {
+    /// The hook's machine name. Must not already exist.
+    pub machine_name: String,
+    /// Human-readable display name shown in the Automatic UI.
+    pub name: String,
+    /// Target agent id (e.g. `"claude"`, `"codex"`).
+    pub agent: String,
+    /// Lifecycle event name. Accepted values depend on the target agent —
+    /// e.g. Claude Code supports `"SessionStart"`, `"PreToolUse"`,
+    /// `"PostToolUse"`, `"Stop"`, etc.; Codex CLI supports a smaller subset.
+    pub event: String,
+    /// Optional matcher (e.g. tool name regex for `PreToolUse`/`PostToolUse`).
+    pub matcher: Option<String>,
+    /// The handler that runs when the event fires. Must be one of the
+    /// `HookHandler` variants serialised with a `kind` discriminator:
+    /// `{ "kind": "command", "command": "echo hi" }` or
+    /// `{ "kind": "script", "interpreter": "bash", "script": "..." }`.
+    pub handler: serde_json::Value,
+    /// Optional timeout in seconds.
+    pub timeout_sec: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct UpdateHookParams {
+    /// The hook's machine name. Must already exist.
+    pub machine_name: String,
+    /// New display name. Omit to leave unchanged.
+    pub name: Option<String>,
+    /// New target agent. Omit to leave unchanged.
+    pub agent: Option<String>,
+    /// New event. Omit to leave unchanged.
+    pub event: Option<String>,
+    /// New matcher. Omit to leave unchanged. Pass `null` to clear.
+    pub matcher: Option<serde_json::Value>,
+    /// New handler JSON (same shape as `automatic_create_hook`). Omit to
+    /// leave unchanged.
+    pub handler: Option<serde_json::Value>,
+    /// New timeout. Omit to leave unchanged. Pass `null` to clear.
+    pub timeout_sec: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct DeleteHookParams {
+    /// The hook's machine name. Plugin-provided hooks cannot be deleted.
+    pub machine_name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct AttachHookParams {
+    /// The project name as registered in Automatic.
+    pub project: String,
+    /// The hook's machine name. Must already exist in the library.
+    pub machine_name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct DetachHookParams {
+    /// The project name as registered in Automatic.
+    pub project: String,
+    /// The hook's machine name.
+    pub machine_name: String,
+}
+
 // ── Feature Tool Parameter Types ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -1013,6 +1086,374 @@ impl AutomaticMcpServer {
                 "Detached rule '{}' from project '{}' under '{}'. Call \
                  automatic_sync_project to write the change to disk.",
                 machine_name, project_name, key
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to save project '{}': {}",
+                project_name, e
+            ))])),
+        }
+    }
+
+    // ── Hooks tools ──────────────────────────────────────────────────────
+
+    #[tool(
+        name = "automatic_list_hooks",
+        description = "List every hook in the Automatic library. Returns an \
+                       array of objects with `id` (machine name), `name`, \
+                       `agent`, `event`, and optional `plugin_id`."
+    )]
+    async fn list_hooks(&self) -> Result<CallToolResult, McpError> {
+        match crate::core::list_hooks() {
+            Ok(hooks) => {
+                let json = serde_json::to_string_pretty(&hooks)
+                    .unwrap_or_else(|_| "[]".to_string());
+                Ok(CallToolResult::success(vec![Content::text(json)]))
+            }
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to list hooks: {}",
+                e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_read_hook",
+        description = "Read a hook by machine name. Returns the full hook \
+                       JSON (`name`, `agent`, `event`, `matcher`, `handler`, \
+                       `timeout_sec`, optional `plugin_id`)."
+    )]
+    async fn read_hook(
+        &self,
+        params: Parameters<ReadHookParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::core::read_hook(&params.0.machine_name) {
+            Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to read hook '{}': {}",
+                params.0.machine_name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_create_hook",
+        description = "Create a new hook in the Automatic library. Fails if a \
+                       hook with the same machine name already exists — use \
+                       `automatic_update_hook` to modify an existing hook. \
+                       The handler payload follows the HookHandler shape: \
+                       `{\"kind\":\"command\",\"command\":\"...\"}` or \
+                       `{\"kind\":\"script\",\"interpreter\":\"bash\",\"script\":\"...\"}`."
+    )]
+    async fn create_hook(
+        &self,
+        params: Parameters<CreateHookParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let machine_name = &params.0.machine_name;
+
+        if crate::core::read_hook(machine_name).is_ok() {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Hook '{}' already exists. Use automatic_update_hook to modify it.",
+                machine_name
+            ))]));
+        }
+
+        let handler: crate::core::HookHandler =
+            match serde_json::from_value(params.0.handler.clone()) {
+                Ok(h) => h,
+                Err(e) => {
+                    return Ok(CallToolResult::error(vec![Content::text(format!(
+                        "Invalid handler payload for hook '{}': {}",
+                        machine_name, e
+                    ))]))
+                }
+            };
+
+        match crate::core::save_hook(
+            machine_name,
+            &params.0.name,
+            &params.0.agent,
+            &params.0.event,
+            params.0.matcher.as_deref(),
+            handler,
+            params.0.timeout_sec,
+        ) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Created hook '{}'.",
+                machine_name
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to create hook '{}': {}",
+                machine_name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_update_hook",
+        description = "Update an existing hook. Fails if the hook does not \
+                       exist or is provided by a plugin. Pass only the fields \
+                       you want to change."
+    )]
+    async fn update_hook(
+        &self,
+        params: Parameters<UpdateHookParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let machine_name = &params.0.machine_name;
+
+        let existing_raw = match crate::core::read_hook(machine_name) {
+            Ok(raw) => raw,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Cannot update hook '{}': {}",
+                    machine_name, e
+                ))]));
+            }
+        };
+        let existing: crate::core::Hook = match serde_json::from_str(&existing_raw) {
+            Ok(h) => h,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to parse existing hook '{}': {}",
+                    machine_name, e
+                ))]));
+            }
+        };
+
+        if existing.plugin_id.is_some() {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Cannot update hook '{}' — it is provided by a plugin.",
+                machine_name
+            ))]));
+        }
+
+        let new_name = params.0.name.as_deref().unwrap_or(&existing.name);
+        let new_agent = params.0.agent.as_deref().unwrap_or(&existing.agent);
+        let new_event = params.0.event.as_deref().unwrap_or(&existing.event);
+
+        // `matcher` and `timeout_sec` are JSON values so callers can pass
+        // `null` to clear them. Omitted fields keep the existing value.
+        let new_matcher: Option<String> = match params.0.matcher {
+            Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(s)) => Some(s),
+            Some(other) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid matcher payload for hook '{}': expected string or null, got {}",
+                    machine_name, other
+                ))]));
+            }
+            None => existing.matcher.clone(),
+        };
+
+        let new_timeout: Option<u32> = match params.0.timeout_sec {
+            Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::Number(n)) => match n.as_u64() {
+                Some(v) if v <= u32::MAX as u64 => Some(v as u32),
+                _ => {
+                    return Ok(CallToolResult::error(vec![Content::text(format!(
+                        "Invalid timeout_sec for hook '{}': must be a u32",
+                        machine_name
+                    ))]));
+                }
+            },
+            Some(other) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid timeout_sec for hook '{}': expected number or null, got {}",
+                    machine_name, other
+                ))]));
+            }
+            None => existing.timeout_sec,
+        };
+
+        let new_handler: crate::core::HookHandler = match params.0.handler {
+            Some(val) => match serde_json::from_value(val) {
+                Ok(h) => h,
+                Err(e) => {
+                    return Ok(CallToolResult::error(vec![Content::text(format!(
+                        "Invalid handler payload for hook '{}': {}",
+                        machine_name, e
+                    ))]));
+                }
+            },
+            None => existing.handler.clone(),
+        };
+
+        match crate::core::save_hook(
+            machine_name,
+            new_name,
+            new_agent,
+            new_event,
+            new_matcher.as_deref(),
+            new_handler,
+            new_timeout,
+        ) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Updated hook '{}'.",
+                machine_name
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to update hook '{}': {}",
+                machine_name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_delete_hook",
+        description = "Delete a hook from the Automatic library. Plugin-provided \
+                       hooks cannot be deleted. Note that this removes the \
+                       hook from the library but does not detach it from any \
+                       project — projects referencing the deleted hook will \
+                       silently skip it on next sync."
+    )]
+    async fn delete_hook(
+        &self,
+        params: Parameters<DeleteHookParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let machine_name = &params.0.machine_name;
+        match crate::core::delete_hook(machine_name) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Deleted hook '{}'.",
+                machine_name
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to delete hook '{}': {}",
+                machine_name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_attach_hook",
+        description = "Attach a hook to a project. The hook's target agent is \
+                       inferred from its library record. Idempotent. Does not \
+                       trigger a sync — call automatic_sync_project to write \
+                       the change to disk."
+    )]
+    async fn attach_hook(
+        &self,
+        params: Parameters<AttachHookParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let project_name = &params.0.project;
+        let machine_name = &params.0.machine_name;
+
+        if let Err(e) = validate_project(project_name) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        if crate::core::read_hook(machine_name).is_err() {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Hook '{}' does not exist in the library. Call \
+                 automatic_list_hooks to see available hooks.",
+                machine_name
+            ))]));
+        }
+
+        let project_json = match crate::core::read_project(project_name) {
+            Ok(j) => j,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to read project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+        let mut project: crate::core::Project = match serde_json::from_str(&project_json) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to parse project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+
+        if project.hooks.iter().any(|h| h == machine_name) {
+            return Ok(CallToolResult::success(vec![Content::text(format!(
+                "Hook '{}' is already attached to project '{}'.",
+                machine_name, project_name
+            ))]));
+        }
+        project.hooks.push(machine_name.to_string());
+
+        let new_json = match serde_json::to_string(&project) {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to serialise project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+        match crate::core::save_project(project_name, &new_json) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Attached hook '{}' to project '{}'. Call \
+                 automatic_sync_project to write the change to disk.",
+                machine_name, project_name
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to save project '{}': {}",
+                project_name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_detach_hook",
+        description = "Detach a hook from a project. Idempotent. Does not \
+                       trigger a sync."
+    )]
+    async fn detach_hook(
+        &self,
+        params: Parameters<DetachHookParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let project_name = &params.0.project;
+        let machine_name = &params.0.machine_name;
+
+        if let Err(e) = validate_project(project_name) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+
+        let project_json = match crate::core::read_project(project_name) {
+            Ok(j) => j,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to read project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+        let mut project: crate::core::Project = match serde_json::from_str(&project_json) {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to parse project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+
+        let before = project.hooks.len();
+        project.hooks.retain(|h| h != machine_name);
+        if project.hooks.len() == before {
+            return Ok(CallToolResult::success(vec![Content::text(format!(
+                "Hook '{}' was not attached to project '{}'.",
+                machine_name, project_name
+            ))]));
+        }
+
+        let new_json = match serde_json::to_string(&project) {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to serialise project '{}': {}",
+                    project_name, e
+                ))]));
+            }
+        };
+        match crate::core::save_project(project_name, &new_json) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Detached hook '{}' from project '{}'. Call \
+                 automatic_sync_project to write the change to disk.",
+                machine_name, project_name
             ))])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to save project '{}': {}",

@@ -115,6 +115,7 @@ pub enum AssetKind {
     UserAgent,
     Rule,
     Template,
+    Hook,
 }
 
 impl AssetKind {
@@ -127,6 +128,7 @@ impl AssetKind {
             AssetKind::UserAgent => "user agent",
             AssetKind::Rule => "rule",
             AssetKind::Template => "template",
+            AssetKind::Hook => "hook",
         }
     }
 }
@@ -143,6 +145,7 @@ impl FromStr for AssetKind {
             "user_agent" | "user-agent" | "agent" => Ok(Self::UserAgent),
             "rule" => Ok(Self::Rule),
             "template" => Ok(Self::Template),
+            "hook" => Ok(Self::Hook),
             _ => Err(format!("Unknown asset kind '{}'", value)),
         }
     }

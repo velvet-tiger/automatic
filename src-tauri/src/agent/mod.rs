@@ -79,6 +79,9 @@ pub struct AgentCapabilities {
     pub agents: bool,
     /// Automatic can sync custom commands to this agent's commands directory.
     pub commands: bool,
+    /// Automatic can sync lifecycle hooks to this agent's config.
+    /// Only agents whose vendor ships a hook feature opt in.
+    pub hooks: bool,
 }
 
 impl Default for AgentCapabilities {
@@ -90,6 +93,7 @@ impl Default for AgentCapabilities {
             mcp_servers: true,
             agents: true,
             commands: false,
+            hooks: false,
         }
     }
 }
@@ -277,6 +281,28 @@ pub trait Agent: Send + Sync {
     /// Convert canonical Markdown command content into this agent's native format.
     fn convert_command_content(&self, content: &str, _name: &str) -> String {
         render_markdown_command(content)
+    }
+
+    // ── Hooks ──────────────────────────────────────────────────────────────
+
+    /// Sync lifecycle hooks for this agent into the project directory.
+    ///
+    /// `hooks` is the set of hooks attached to the project whose `agent`
+    /// field matches this agent's [`id`]. The implementation decides how to
+    /// represent them on disk (e.g. merge into `.claude/settings.json`,
+    /// write a dedicated `.codex/hooks.json`). Returns the paths of every
+    /// file that was written or modified so the sync engine can track them
+    /// for drift detection.
+    ///
+    /// The default implementation is a no-op so agents that don't support
+    /// hooks don't have to override it. Agents that do must also set
+    /// [`AgentCapabilities::hooks`] to `true`.
+    fn sync_hooks(
+        &self,
+        _project_dir: &Path,
+        _hooks: &[crate::core::Hook],
+    ) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────

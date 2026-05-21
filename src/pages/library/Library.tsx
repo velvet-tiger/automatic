@@ -11,6 +11,7 @@ import {
   ScrollText,
   Server,
   Terminal,
+  Webhook,
   Wrench,
 } from "lucide-react";
 
@@ -50,6 +51,7 @@ type Counts = {
   rules: number | null;
   userAgents: number | null;
   commands: number | null;
+  hooks: number | null;
   skills: number | null;
   mcp: number | null;
   providers: number | null;
@@ -161,6 +163,17 @@ const ASSET_CARDS: AssetCard[] = [
     ctaLabel: "Manage commands",
   },
   {
+    tab: "hooks",
+    title: "Hooks",
+    description:
+      "Lifecycle hooks that run shell commands or scripts on agent events — session start, tool use, prompt submission. Synced per-agent into the project's settings.",
+    icon: Webhook,
+    classes: STYLE_SKILL,
+    countKey: "hooks",
+    countLabel: "hooks defined",
+    ctaLabel: "Manage hooks",
+  },
+  {
     tab: "skills",
     title: "Skills",
     description:
@@ -213,6 +226,7 @@ export default function Library({ onNavigate }: LibraryProps) {
     rules: null,
     userAgents: null,
     commands: null,
+    hooks: null,
     skills: null,
     mcp: null,
     providers: null,
@@ -227,6 +241,7 @@ export default function Library({ onNavigate }: LibraryProps) {
         rules,
         userAgents,
         commands,
+        hooks,
         skills,
         mcp,
         providers,
@@ -237,6 +252,7 @@ export default function Library({ onNavigate }: LibraryProps) {
         safeArrayLength(() => invoke<unknown[]>("get_rules")),
         safeArrayLength(() => invoke<unknown[]>("get_subagents")),
         safeArrayLength(() => invoke<unknown[]>("get_user_commands")),
+        safeArrayLength(() => invoke<unknown[]>("get_hooks")),
         safeArrayLength(() => invoke<unknown[]>("get_skills")),
         safeArrayLength(() => invoke<string[]>("list_mcp_server_configs")),
         safeJsonArrayLength(() => invoke<string>("list_agents_with_projects")),
@@ -248,6 +264,7 @@ export default function Library({ onNavigate }: LibraryProps) {
         rules,
         userAgents,
         commands,
+        hooks,
         skills,
         mcp,
         providers,

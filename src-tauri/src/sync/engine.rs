@@ -146,6 +146,7 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         &workspace_command_contents,
         &mut written_files,
     )?;
+    sync_project_hooks_step(&effective_dir, project, &mut written_files)?;
     let instruction_targets = sync_agent_configs_step(
         &effective_dir,
         project,
@@ -209,6 +210,67 @@ fn sync_project_commands_step(
     )?);
 
     Ok(project_commands_dir)
+}
+
+/// Resolve attached hooks from the library, group by target agent, and let
+/// each agent that the project uses sync its slice. Hooks whose `agent` field
+/// does not match any agent in `project.agents` are silently skipped — the
+/// library entry may still be useful elsewhere; nothing forces the user to
+/// detach it.
+///
+/// Hooks that fail to read from the library are logged and skipped: this
+/// matches the propagation invariant — sync should never crash because a
+/// single hook went missing, but the failure must be visible so drift
+/// detection / activity logs can surface it.
+fn sync_project_hooks_step(
+    dir: &PathBuf,
+    project: &Project,
+    written_files: &mut Vec<String>,
+) -> Result<(), String> {
+    if project.hooks.is_empty() {
+        // Still call each agent's sync with an empty slice so detached hooks
+        // (config left from a prior sync) get cleaned up.
+        for agent_id in &project.agents {
+            if let Some(agent_instance) = agent::from_id(agent_id) {
+                if agent_instance.capabilities().hooks {
+                    let written = agent_instance.sync_hooks(dir, &[])?;
+                    written_files.extend(written);
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    use std::collections::HashMap;
+    let mut by_agent: HashMap<String, Vec<core::Hook>> = HashMap::new();
+    for hook_name in &project.hooks {
+        match core::read_hook_parsed(hook_name) {
+            Ok(hook) => {
+                by_agent.entry(hook.agent.clone()).or_default().push(hook);
+            }
+            Err(e) => {
+                eprintln!(
+                    "[automatic] Failed to read hook '{}' for project '{}': {}",
+                    hook_name, project.name, e
+                );
+            }
+        }
+    }
+
+    for agent_id in &project.agents {
+        let Some(agent_instance) = agent::from_id(agent_id) else {
+            continue;
+        };
+        if !agent_instance.capabilities().hooks {
+            continue;
+        }
+        let empty = Vec::new();
+        let hooks_for_agent = by_agent.get(agent_id).unwrap_or(&empty);
+        let written = agent_instance.sync_hooks(dir, hooks_for_agent)?;
+        written_files.extend(written);
+    }
+
+    Ok(())
 }
 
 fn sync_agent_configs_step(

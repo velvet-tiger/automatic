@@ -220,6 +220,21 @@ impl Agent for CodexCli {
     fn convert_agent_content(&self, content: &str, name: &str) -> String {
         convert_md_to_codex_toml(content, name)
     }
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            hooks: true,
+            ..Default::default()
+        }
+    }
+
+    fn sync_hooks(
+        &self,
+        project_dir: &Path,
+        hooks: &[crate::core::Hook],
+    ) -> Result<Vec<String>, String> {
+        sync_codex_hooks(project_dir, hooks)
+    }
 }
 
 // ── Global config discovery ──────────────────────────────────────────────────
@@ -413,6 +428,261 @@ fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
     toml
 }
 
+// ── Hooks ────────────────────────────────────────────────────────────────────
+//
+// Codex CLI supports a smaller event set than Claude Code. We write the full
+// `.codex/hooks.json` file (Automatic owns it; users wanting more control can
+// fall back to `.codex/config.toml`'s inline `[hooks]` table, which we do not
+// touch). Script-type handlers are written to `.codex/hooks/{slug}.sh`.
+
+const CODEX_SUPPORTED_EVENTS: &[&str] = &[
+    "SessionStart",
+    "PreToolUse",
+    "PermissionRequest",
+    "PostToolUse",
+    "UserPromptSubmit",
+    "Stop",
+];
+
+fn sync_codex_hooks(
+    project_dir: &Path,
+    hooks: &[crate::core::Hook],
+) -> Result<Vec<String>, String> {
+    let codex_dir = project_dir.join(".codex");
+    let hooks_file = codex_dir.join("hooks.json");
+    let scripts_dir = codex_dir.join("hooks");
+    let mut written = Vec::new();
+
+    // If there are no hooks, remove the file so Codex doesn't see a stale
+    // config. The scripts directory cleanup runs the same way as Claude Code.
+    let usable_hooks: Vec<&crate::core::Hook> = hooks
+        .iter()
+        .filter(|h| {
+            if CODEX_SUPPORTED_EVENTS.contains(&h.event.as_str()) {
+                true
+            } else {
+                eprintln!(
+                    "[automatic] Codex CLI does not support hook event '{}' — skipping hook '{}'",
+                    h.event, h.name
+                );
+                false
+            }
+        })
+        .collect();
+
+    if usable_hooks.is_empty() {
+        if hooks_file.exists() {
+            let _ = fs::remove_file(&hooks_file);
+        }
+        cleanup_codex_scripts(&scripts_dir, &[])?;
+        return Ok(written);
+    }
+
+    fs::create_dir_all(&codex_dir)
+        .map_err(|e| format!("Failed to create .codex/: {}", e))?;
+
+    let mut managed_script_paths: Vec<PathBuf> = Vec::new();
+    let mut needs_scripts_dir = false;
+    for hook in &usable_hooks {
+        if matches!(hook.handler, crate::core::HookHandler::Script { .. }) {
+            needs_scripts_dir = true;
+            break;
+        }
+    }
+    if needs_scripts_dir {
+        fs::create_dir_all(&scripts_dir)
+            .map_err(|e| format!("Failed to create .codex/hooks/: {}", e))?;
+    }
+
+    for hook in &usable_hooks {
+        if let crate::core::HookHandler::Script {
+            interpreter,
+            script,
+        } = &hook.handler
+        {
+            let ext = codex_script_extension(interpreter);
+            let slug = codex_hook_slug(hook);
+            let path = scripts_dir.join(format!("{}.{}", slug, ext));
+            let body = codex_annotate_managed_script(&codex_ensure_shebang(script, interpreter));
+            fs::write(&path, body)
+                .map_err(|e| format!("Failed to write Codex hook script '{}': {}", path.display(), e))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = fs::metadata(&path) {
+                    let mut perms = meta.permissions();
+                    perms.set_mode(0o755);
+                    let _ = fs::set_permissions(&path, perms);
+                }
+            }
+            managed_script_paths.push(path.clone());
+            written.push(path.display().to_string());
+        }
+    }
+
+    // Build the hooks.json document. Codex's schema is similar to Claude
+    // Code's: { event: [ { matcher?, hooks: [ { type, command, timeout? } ] } ] }.
+    use std::collections::BTreeMap;
+    type HandlersByMatcher = BTreeMap<Option<String>, Vec<Value>>;
+    let mut grouped: BTreeMap<String, HandlersByMatcher> = BTreeMap::new();
+    for hook in &usable_hooks {
+        let handler = codex_handler_value(hook);
+        grouped
+            .entry(hook.event.clone())
+            .or_default()
+            .entry(hook.matcher.clone())
+            .or_default()
+            .push(handler);
+    }
+
+    let mut hooks_root = Map::new();
+    for (event, matchers) in grouped {
+        let mut groups = Vec::new();
+        for (matcher, handlers) in matchers {
+            let mut group = Map::new();
+            if let Some(m) = matcher {
+                group.insert("matcher".to_string(), Value::String(m));
+            }
+            group.insert("hooks".to_string(), Value::Array(handlers));
+            groups.push(Value::Object(group));
+        }
+        hooks_root.insert(event, Value::Array(groups));
+    }
+
+    let document = serde_json::json!({ "hooks": hooks_root });
+    let pretty = serde_json::to_string_pretty(&document)
+        .map_err(|e| format!("JSON error: {}", e))?;
+    fs::write(&hooks_file, format!("{}\n", pretty))
+        .map_err(|e| format!("Failed to write .codex/hooks.json: {}", e))?;
+    written.push(hooks_file.display().to_string());
+
+    cleanup_codex_scripts(&scripts_dir, &managed_script_paths)?;
+
+    Ok(written)
+}
+
+fn codex_handler_value(hook: &crate::core::Hook) -> Value {
+    let mut handler = Map::new();
+    handler.insert("type".to_string(), Value::String("command".to_string()));
+    let command_str = match &hook.handler {
+        crate::core::HookHandler::Command { command } => command.clone(),
+        crate::core::HookHandler::Script { interpreter, .. } => {
+            let ext = codex_script_extension(interpreter);
+            let slug = codex_hook_slug(hook);
+            format!("./.codex/hooks/{}.{}", slug, ext)
+        }
+    };
+    handler.insert("command".to_string(), Value::String(command_str));
+    if let Some(t) = hook.timeout_sec {
+        handler.insert("timeout".to_string(), Value::Number(serde_json::Number::from(t)));
+    }
+    Value::Object(handler)
+}
+
+fn codex_hook_slug(hook: &crate::core::Hook) -> String {
+    let slug: String = hook
+        .name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if slug.is_empty() {
+        "hook".to_string()
+    } else {
+        slug
+    }
+}
+
+fn codex_script_extension(interpreter: &str) -> &'static str {
+    let lower = interpreter.trim().to_ascii_lowercase();
+    if lower.ends_with("python") || lower.ends_with("python3") {
+        "py"
+    } else if lower.ends_with("node") || lower.ends_with("nodejs") {
+        "js"
+    } else if lower.ends_with("zsh") {
+        "zsh"
+    } else if lower.ends_with("fish") {
+        "fish"
+    } else if lower.ends_with("pwsh") || lower.ends_with("powershell") {
+        "ps1"
+    } else {
+        "sh"
+    }
+}
+
+fn codex_ensure_shebang(script: &str, interpreter: &str) -> String {
+    let trimmed = script.trim_start();
+    if trimmed.starts_with("#!") {
+        return script.to_string();
+    }
+    let interp = interpreter.trim();
+    if interp.is_empty() {
+        return script.to_string();
+    }
+    let shebang = if interp.starts_with('/') {
+        format!("#!{}\n", interp)
+    } else {
+        format!("#!/usr/bin/env {}\n", interp)
+    };
+    format!("{}{}", shebang, script)
+}
+
+fn codex_annotate_managed_script(body: &str) -> String {
+    const MARKER: &str = "# managed-by-automatic — do not edit by hand\n";
+    if body.contains("managed-by-automatic") {
+        return body.to_string();
+    }
+    if let Some(rest) = body.strip_prefix("#!") {
+        if let Some(newline_idx) = rest.find('\n') {
+            let (shebang_line, rest_after) = body.split_at("#!".len() + newline_idx + 1);
+            return format!("{}{}{}", shebang_line, MARKER, rest_after);
+        }
+    }
+    format!("{}{}", MARKER, body)
+}
+
+fn cleanup_codex_scripts(
+    scripts_dir: &Path,
+    keep_paths: &[PathBuf],
+) -> Result<(), String> {
+    if !scripts_dir.exists() {
+        return Ok(());
+    }
+    let entries = match fs::read_dir(scripts_dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+    let keep_names: std::collections::HashSet<String> = keep_paths
+        .iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+        .collect();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if keep_names.contains(name) {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&path) {
+            if content.contains("managed-by-automatic") {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+    Ok(())
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -478,6 +748,62 @@ mod tests {
         assert!(content.contains("type = \"http\""));
         assert!(content.contains("url = \"https://api.example.com/mcp\""));
         assert!(content.contains("Authorization"));
+    }
+
+    // ── Hooks ───────────────────────────────────────────────────────────────
+
+    fn codex_cmd_hook(name: &str, event: &str, command: &str) -> crate::core::Hook {
+        crate::core::Hook {
+            name: name.to_string(),
+            agent: "codex".to_string(),
+            event: event.to_string(),
+            matcher: None,
+            handler: crate::core::HookHandler::Command {
+                command: command.to_string(),
+            },
+            timeout_sec: Some(45),
+            plugin_id: None,
+            _author: None,
+        }
+    }
+
+    #[test]
+    fn codex_hook_sync_writes_dedicated_file() {
+        let dir = tempdir().unwrap();
+        let hooks = vec![codex_cmd_hook("hi", "SessionStart", "echo hi")];
+        let written = CodexCli.sync_hooks(dir.path(), &hooks).unwrap();
+        let path = dir.path().join(".codex/hooks.json");
+        assert!(path.exists());
+        assert!(written.iter().any(|w| w.ends_with("hooks.json")));
+
+        let raw = fs::read_to_string(&path).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let handler = &v["hooks"]["SessionStart"][0]["hooks"][0];
+        assert_eq!(handler["type"], "command");
+        assert_eq!(handler["command"], "echo hi");
+        assert_eq!(handler["timeout"], 45);
+    }
+
+    #[test]
+    fn codex_hook_sync_skips_unsupported_events() {
+        let dir = tempdir().unwrap();
+        // Claude-only event — Codex must skip it without failing the sync.
+        let hooks = vec![codex_cmd_hook("compact", "PreCompact", "echo nope")];
+        let written = CodexCli.sync_hooks(dir.path(), &hooks).unwrap();
+        assert!(written.is_empty());
+        assert!(!dir.path().join(".codex/hooks.json").exists());
+    }
+
+    #[test]
+    fn codex_hook_sync_removes_file_when_no_hooks() {
+        let dir = tempdir().unwrap();
+        // Pre-existing hooks file from an earlier sync.
+        let hooks = vec![codex_cmd_hook("temp", "Stop", "echo bye")];
+        CodexCli.sync_hooks(dir.path(), &hooks).unwrap();
+        assert!(dir.path().join(".codex/hooks.json").exists());
+
+        CodexCli.sync_hooks(dir.path(), &[]).unwrap();
+        assert!(!dir.path().join(".codex/hooks.json").exists());
     }
 
     #[test]

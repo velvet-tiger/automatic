@@ -342,6 +342,12 @@ pub struct Project {
     /// into agent-specific command directories for providers that support them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub user_commands: Vec<String>,
+    /// Hook machine names selected for this project. These reference files in
+    /// `~/.automatic/library/hooks/{name}.json`. Each hook carries its own
+    /// `agent` field; the sync engine groups by agent and dispatches to each
+    /// `Agent` impl's `sync_hooks` method.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<String>,
     /// Inline custom sub-agents stored directly in the project configuration.
     /// These are written to each agent's sub-agent directory (e.g.
     /// `.claude/agents/`) during sync. Unlike workspace user_agents, custom

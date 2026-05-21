@@ -1117,6 +1117,41 @@ pub(crate) fn sync_projects_referencing_user_command(machine_name: &str) {
     });
 }
 
+pub(crate) fn sync_projects_referencing_hook(machine_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        if project.hooks.iter().any(|name| name == machine_name) {
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
+pub(crate) fn prune_hook_from_projects(machine_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        let before = project.hooks.len();
+        project.hooks.retain(|name| name != machine_name);
+        if project.hooks.len() != before {
+            project.updated_at = chrono::Utc::now().to_rfc3339();
+            match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
+                Ok(data) => {
+                    if let Err(e) = core::save_project(project_name, &data) {
+                        eprintln!(
+                            "Failed to update project '{}' after detaching hook '{}': {}",
+                            project_name, machine_name, e
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Failed to serialise project '{}' after detaching hook '{}': {}",
+                        project_name, machine_name, e
+                    );
+                }
+            }
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
 /// Re-sync every project that has both a configured directory and at least
 /// one agent. Used after upgrade-time bundled-asset reinstalls so any project
 /// that references the updated library copies picks up the new content

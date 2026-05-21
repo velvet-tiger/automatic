@@ -18,6 +18,7 @@ import Instructions from "./pages/workspace/Instructions";
 import Rules from "./pages/workspace/Rules";
 import Subagents from "./pages/workspace/Subagents";
 import Commands from "./pages/workspace/Commands";
+import Hooks from "./pages/workspace/Hooks";
 import Providers from "./pages/workspace/Providers";
 import LibraryTools from "./pages/workspace/Tools";
 import ToolsHome from "./pages/tools/ToolsHome";
@@ -39,7 +40,7 @@ import UpdateToast from "./components/UpdateToast";
 import RemoteInstallDialog from "./components/RemoteInstallDialog";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Featured from "./pages/community/Featured";
-import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, PanelLeft, Star, RefreshCw, Hash, FlaskConical } from "lucide-react";
+import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, Webhook, PanelLeft, Star, RefreshCw, Hash, FlaskConical } from "lucide-react";
 import { flag } from "./lib/flags";
 import CloudSync from "./pages/CloudSync";
 import graphLogo from "../logos/graph_5.svg";
@@ -52,7 +53,7 @@ type Section = "start" | "workspace" | "library" | "discover" | "tools";
 const SECTION_TABS: Record<Section, string[]> = {
   start: ["getting-started"],
   workspace: ["projects", "project-groups"],
-  library: ["library-home", "templates", "instructions", "rules", "subagents", "commands", "skills", "mcp", "providers", "tools"],
+  library: ["library-home", "templates", "instructions", "rules", "subagents", "commands", "hooks", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "community-featured", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
   tools: ["tools-home", "library-generator", "token-estimator", "ai-playground", "recommendations"],
 };
@@ -608,6 +609,7 @@ function App() {
                   <NavItem id="rules" icon={ScrollText} label="Rules" />
                   <NavItem id="subagents" icon={MessagesSquare} label="Sub-Agents" />
                   <NavItem id="commands" icon={Terminal} label="Commands" />
+                  <NavItem id="hooks" icon={Webhook} label="Hooks" />
                   <NavItem id="skills" icon={Code} label="Skills" />
                   <NavItem id="mcp" icon={Server} label="MCP Servers" />
                   <NavItem id="providers" icon={Bot} label="Providers" />
@@ -883,6 +885,11 @@ function App() {
                 initialCommand={pendingCommand}
                 onInitialCommandConsumed={() => setPendingCommand(null)}
               />
+            </div>
+          )}
+          {activeTab === "hooks" && (
+            <div className="flex-1 h-full">
+              <Hooks />
             </div>
           )}
           {activeTab === "mcp" && (
