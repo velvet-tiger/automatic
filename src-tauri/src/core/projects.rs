@@ -436,6 +436,15 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
         fs::remove_file(&old_registry).map_err(|e| e.to_string())?;
     }
 
+    // Update group membership lists so references follow the rename. Best-
+    // effort — see delete_project for the rationale.
+    if let Err(e) = rename_project_in_all_groups(old_name, new_name) {
+        eprintln!(
+            "rename_project: could not update group references '{}' -> '{}': {}",
+            old_name, new_name, e
+        );
+    }
+
     Ok(())
 }
 
@@ -465,6 +474,17 @@ pub fn delete_project(name: &str) -> Result<(), String> {
         }
 
         fs::remove_file(&registry_path).map_err(|e| e.to_string())?;
+    }
+
+    // Strip the deleted project from any group that still references it. The
+    // project file is already gone, so a failure here cannot be recovered by
+    // re-running the delete — log and continue so the UI still sees a clean
+    // delete result.
+    if let Err(e) = remove_project_from_all_groups(name) {
+        eprintln!(
+            "delete_project: could not clean up group references for '{}': {}",
+            name, e
+        );
     }
 
     Ok(())

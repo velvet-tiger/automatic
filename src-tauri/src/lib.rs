@@ -125,6 +125,21 @@ pub fn run() {
                     Err(e) => eprintln!("[automatic] library layout migration error: {}", e),
                 }
 
+                // Drop stale project references from group files. Heals data
+                // written before delete_project/rename_project started cleaning
+                // up their own group entries. Idempotent.
+                match core::list_projects() {
+                    Ok(live) => match core::scrub_orphan_project_references(&live) {
+                        Ok(affected) if !affected.is_empty() => eprintln!(
+                            "[automatic] scrubbed orphan project references from groups: {:?}",
+                            affected
+                        ),
+                        Ok(_) => {}
+                        Err(e) => eprintln!("[automatic] group scrub error: {}", e),
+                    },
+                    Err(e) => eprintln!("[automatic] group scrub skipped (list_projects failed): {}", e),
+                }
+
                 if let Err(e) = core::install_default_skills_inner(force_reinstall) {
                     eprintln!("[automatic] skill install error: {}", e);
                 } else if force_reinstall {
