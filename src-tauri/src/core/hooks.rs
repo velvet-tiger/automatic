@@ -31,6 +31,16 @@ pub enum HookHandler {
     /// `interpreter` is the executable (or `#!`-line program name) that runs
     /// the script.
     Script { interpreter: String, script: String },
+    /// Reference to a script file that already exists on disk. Automatic
+    /// does not write or own the file — the user is responsible for placing
+    /// it and making it executable. The path is passed through to the agent
+    /// verbatim, so it may include vendor placeholders like
+    /// `${CLAUDE_PROJECT_DIR}` for portability.
+    Path {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interpreter: Option<String>,
+    },
 }
 
 /// A hook as stored on disk.
@@ -201,14 +211,17 @@ pub fn save_hook(
         return Err("Hook event cannot be empty".into());
     }
 
-    // Scan the embedded script body (or inline command) for obvious unsafe
-    // patterns. Hooks run with the user's privileges, so we apply the same
-    // text-asset checks as rules — the existing scan covers prompt-override
-    // strings, embedded secrets, destructive `rm -rf`, and remote-shell
-    // pipelines, all of which apply equally to a hook script.
+    // Scan the embedded script body (or inline command, or referenced path)
+    // for obvious unsafe patterns. Hooks run with the user's privileges, so
+    // we apply the same text-asset checks as rules — the existing scan covers
+    // prompt-override strings, embedded secrets, destructive `rm -rf`, and
+    // remote-shell pipelines, all of which apply equally to a hook script.
+    // For Path handlers we can only scan the path string itself; the file's
+    // contents are outside Automatic's control.
     let scanned_body: &str = match &handler {
         HookHandler::Command { command } => command,
         HookHandler::Script { script, .. } => script,
+        HookHandler::Path { path, .. } => path,
     };
     let scan = scan_text_asset_report(AssetKind::Hook, scanned_body);
     if scan.blocked() {

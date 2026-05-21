@@ -78,7 +78,8 @@ interface HookEntry {
 
 type HookHandler =
   | { kind: "command"; command: string }
-  | { kind: "script"; interpreter: string; script: string };
+  | { kind: "script"; interpreter: string; script: string }
+  | { kind: "path"; path: string; interpreter?: string | null };
 
 interface Hook {
   name: string;
@@ -95,10 +96,11 @@ interface EditorState {
   agent: string;
   event: string;
   matcher: string;
-  handlerKind: "command" | "script";
+  handlerKind: "command" | "script" | "path";
   command: string;
   interpreter: string;
   script: string;
+  scriptPath: string;
   timeoutSec: string;
 }
 
@@ -111,6 +113,7 @@ const DEFAULT_EDITOR: EditorState = {
   command: "",
   interpreter: "bash",
   script: "",
+  scriptPath: "",
   timeoutSec: "",
 };
 
@@ -124,20 +127,30 @@ function toMachineName(raw: string): string {
 }
 
 function buildEditorFromHook(id: string, hook: Hook): EditorState {
-  const isScript = hook.handler.kind === "script";
+  const handler = hook.handler;
+  let command = "";
+  let interpreter = "bash";
+  let script = "";
+  let scriptPath = "";
+  if (handler.kind === "command") {
+    command = handler.command;
+  } else if (handler.kind === "script") {
+    interpreter = handler.interpreter;
+    script = handler.script;
+  } else if (handler.kind === "path") {
+    scriptPath = handler.path;
+    interpreter = handler.interpreter ?? "";
+  }
   return {
     name: hook.name,
     agent: hook.agent,
     event: hook.event,
     matcher: hook.matcher ?? "",
-    handlerKind: hook.handler.kind,
-    command: isScript ? "" : (hook.handler as { command: string }).command,
-    interpreter: isScript
-      ? (hook.handler as { interpreter: string }).interpreter
-      : "bash",
-    script: isScript
-      ? (hook.handler as { script: string }).script
-      : "",
+    handlerKind: handler.kind,
+    command,
+    interpreter,
+    script,
+    scriptPath,
     timeoutSec: hook.timeout_sec != null ? String(hook.timeout_sec) : "",
     // Keep `id` referenced so editing the same hook re-loads the same slug.
     // Not stored here — handled by the parent component.
@@ -157,10 +170,23 @@ function buildPayloadFromEditor(state: EditorState): {
   const trimmedMatcher = state.matcher.trim();
   const matcher = trimmedMatcher.length > 0 ? trimmedMatcher : null;
 
-  const handler: HookHandler =
-    state.handlerKind === "command"
-      ? { kind: "command", command: state.command }
-      : { kind: "script", interpreter: state.interpreter.trim() || "bash", script: state.script };
+  let handler: HookHandler;
+  if (state.handlerKind === "command") {
+    handler = { kind: "command", command: state.command };
+  } else if (state.handlerKind === "script") {
+    handler = {
+      kind: "script",
+      interpreter: state.interpreter.trim() || "bash",
+      script: state.script,
+    };
+  } else {
+    handler = {
+      kind: "path",
+      path: state.scriptPath.trim(),
+      interpreter:
+        state.interpreter.trim().length > 0 ? state.interpreter.trim() : null,
+    };
+  }
 
   let timeoutSec: number | null = null;
   if (state.timeoutSec.trim().length > 0) {
@@ -291,6 +317,10 @@ export default function Hooks() {
     }
     if (payload.handler.kind === "script" && !payload.handler.script.trim()) {
       setError("Script body is required.");
+      return;
+    }
+    if (payload.handler.kind === "path" && !payload.handler.path.trim()) {
+      setError("Script file path is required.");
       return;
     }
 
@@ -563,7 +593,13 @@ export default function Hooks() {
               {/* Handler kind */}
               <Field label="Handler" required>
                 <div className="inline-flex rounded-md border border-border-strong/40 overflow-hidden">
-                  {(["command", "script"] as const).map((kind) => {
+                  {(
+                    [
+                      { kind: "command", label: "Inline command" },
+                      { kind: "script", label: "Inline script" },
+                      { kind: "path", label: "Script file" },
+                    ] as const
+                  ).map(({ kind, label }) => {
                     const active = editor.handlerKind === kind;
                     return (
                       <button
@@ -579,15 +615,23 @@ export default function Hooks() {
                             : "bg-bg-sidebar text-text-muted hover:text-text-base"
                         } ${!isEditing ? "opacity-70 cursor-default" : ""}`}
                       >
-                        {kind === "command" ? "Inline command" : "Script"}
+                        {label}
                       </button>
                     );
                   })}
                 </div>
+                <p className="mt-1.5 text-[11px] text-text-muted">
+                  {editor.handlerKind === "command" &&
+                    "Run a single shell snippet directly."}
+                  {editor.handlerKind === "script" &&
+                    "Write a script body here — Automatic writes it to .claude/hooks/ (or the agent's equivalent) and the hook references that file."}
+                  {editor.handlerKind === "path" &&
+                    "Point at a script file you already have on disk. Automatic does not write or own the file. You can use placeholders like ${CLAUDE_PROJECT_DIR}."}
+                </p>
               </Field>
 
               {/* Handler body */}
-              {editor.handlerKind === "command" ? (
+              {editor.handlerKind === "command" && (
                 <Field label="Command" required>
                   <textarea
                     value={editor.command}
@@ -600,7 +644,8 @@ export default function Hooks() {
                     className="w-full px-3 py-2 rounded-md bg-bg-sidebar border border-border-strong/40 outline-none text-[13px] text-text-base placeholder-text-muted/40 font-mono leading-relaxed resize-y focus:border-brand transition-colors"
                   />
                 </Field>
-              ) : (
+              )}
+              {editor.handlerKind === "script" && (
                 <>
                   <Field label="Interpreter" required>
                     <input
@@ -630,6 +675,45 @@ export default function Hooks() {
                           : undefined
                       }
                       className="h-64"
+                    />
+                  </Field>
+                </>
+              )}
+              {editor.handlerKind === "path" && (
+                <>
+                  <Field label="Script file path" required>
+                    <input
+                      type="text"
+                      value={editor.scriptPath}
+                      onChange={(e) =>
+                        setEditor((prev) => ({
+                          ...prev,
+                          scriptPath: e.target.value,
+                        }))
+                      }
+                      readOnly={!isEditing}
+                      placeholder="${CLAUDE_PROJECT_DIR}/scripts/log-session.sh"
+                      className="w-full px-3 py-2 rounded-md bg-bg-sidebar border border-border-strong/40 outline-none text-[13px] text-text-base placeholder-text-muted/40 font-mono focus:border-brand transition-colors"
+                    />
+                    <p className="mt-1 text-[11px] text-text-muted">
+                      Absolute path, or a vendor placeholder like
+                      <code className="px-1">${"{CLAUDE_PROJECT_DIR}"}</code>.
+                      The file must be executable.
+                    </p>
+                  </Field>
+                  <Field label="Interpreter (optional)">
+                    <input
+                      type="text"
+                      value={editor.interpreter}
+                      onChange={(e) =>
+                        setEditor((prev) => ({
+                          ...prev,
+                          interpreter: e.target.value,
+                        }))
+                      }
+                      readOnly={!isEditing}
+                      placeholder="leave blank to use the file's shebang"
+                      className="w-full px-3 py-2 rounded-md bg-bg-sidebar border border-border-strong/40 outline-none text-[13px] text-text-base placeholder-text-muted/40 font-mono focus:border-brand transition-colors"
                     />
                   </Field>
                 </>

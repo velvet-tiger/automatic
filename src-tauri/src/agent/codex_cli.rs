@@ -571,6 +571,8 @@ fn codex_handler_value(hook: &crate::core::Hook) -> Value {
             let slug = codex_hook_slug(hook);
             format!("./.codex/hooks/{}.{}", slug, ext)
         }
+        // The user owns the file — pass the path through verbatim.
+        crate::core::HookHandler::Path { path, .. } => path.clone(),
     };
     handler.insert("command".to_string(), Value::String(command_str));
     if let Some(t) = hook.timeout_sec {

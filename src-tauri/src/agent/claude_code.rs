@@ -543,6 +543,12 @@ fn build_handler_value(hook: &crate::core::Hook, scripts_dir: &Path) -> Value {
             let _ = scripts_dir; // silence unused-warning; kept for clarity
             format!("${{CLAUDE_PROJECT_DIR}}/.claude/hooks/{}", file_name)
         }
+        crate::core::HookHandler::Path { path, .. } => {
+            // The user owns the file. Pass the path straight through —
+            // it may already contain ${CLAUDE_PROJECT_DIR} or similar
+            // placeholders that Claude Code expands at run time.
+            path.clone()
+        }
     };
     handler.insert("command".to_string(), Value::String(command_str));
 
@@ -854,6 +860,22 @@ mod tests {
         }
     }
 
+    fn path_hook(name: &str, event: &str, path: &str) -> crate::core::Hook {
+        crate::core::Hook {
+            name: name.to_string(),
+            agent: "claude".to_string(),
+            event: event.to_string(),
+            matcher: None,
+            handler: crate::core::HookHandler::Path {
+                path: path.to_string(),
+                interpreter: None,
+            },
+            timeout_sec: None,
+            plugin_id: None,
+            _author: None,
+        }
+    }
+
     fn script_hook(name: &str, event: &str, interpreter: &str, script: &str) -> crate::core::Hook {
         crate::core::Hook {
             name: name.to_string(),
@@ -1022,6 +1044,30 @@ mod tests {
             "${CLAUDE_PROJECT_DIR}/.claude/hooks/logger.sh"
         );
         assert_eq!(handler["timeout"], 60);
+    }
+
+    #[test]
+    fn hook_sync_path_handler_references_user_owned_file() {
+        let dir = tempdir().unwrap();
+        // User points at a script that already lives in their repo.
+        let hooks = vec![path_hook(
+            "logger",
+            "SessionStart",
+            "${CLAUDE_PROJECT_DIR}/scripts/log-session.sh",
+        )];
+        ClaudeCode.sync_hooks(dir.path(), &hooks).unwrap();
+
+        // Automatic must NOT have created a script file under .claude/hooks/
+        // — the user owns that file.
+        assert!(!dir.path().join(".claude/hooks").exists());
+
+        let raw = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        let handler = &v["hooks"]["SessionStart"][0]["hooks"][0];
+        assert_eq!(
+            handler["command"].as_str().unwrap(),
+            "${CLAUDE_PROJECT_DIR}/scripts/log-session.sh"
+        );
     }
 
     #[test]
