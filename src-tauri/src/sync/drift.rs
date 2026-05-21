@@ -247,6 +247,24 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         .cloned()
         .collect();
 
+    // Load workspace command contents from the global registry, mirroring how
+    // the sync engine builds the same list in
+    // `sync::engine::sync_project_without_autodetect`.
+    let workspace_command_contents: Vec<(String, String)> = project
+        .user_commands
+        .iter()
+        .filter_map(|name| {
+            crate::core::read_user_command(name)
+                .ok()
+                .map(|content| (name.clone(), content))
+        })
+        .collect();
+    let empty_custom_commands: Vec<crate::core::CustomCommand> = Vec::new();
+    let custom_commands = project
+        .custom_commands
+        .as_deref()
+        .unwrap_or(&empty_custom_commands);
+
     let mut agent_drifts: Vec<AgentDrift> = Vec::new();
 
     for agent_id in &project.agents {
@@ -267,6 +285,13 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
                 &effective_dir,
                 project.custom_agents.as_deref().unwrap_or(&[]),
                 &project.user_agents,
+                &mut files,
+            );
+            collect_commands_drift(
+                agent_instance,
+                &effective_dir,
+                &workspace_command_contents,
+                custom_commands,
                 &mut files,
             );
 
@@ -694,6 +719,147 @@ fn collect_skills_drift(
     }
 }
 
+/// Collect command drift entries for one agent into `out`.
+///
+/// Writes the expected on-disk command files (both the project-local hub at
+/// `.agents/commands/` and the per-agent dir) into a tempdir using the same
+/// helpers the sync engine uses, then compares each tempdir file with its
+/// real counterpart in the project directory. Missing, modified, unreadable
+/// and stale managed files are all reported.
+fn collect_commands_drift(
+    agent_instance: &dyn agent::Agent,
+    dir: &PathBuf,
+    workspace_command_contents: &[(String, String)],
+    custom_commands: &[crate::core::CustomCommand],
+    out: &mut Vec<DriftedFile>,
+) {
+    let agent_commands_dir = match agent_instance.commands_dir(dir) {
+        Some(d) => d,
+        None => return,
+    };
+
+    let relative = match agent_commands_dir.strip_prefix(dir) {
+        Ok(r) => r.to_path_buf(),
+        Err(_) => return,
+    };
+
+    let tmp = match tempfile::tempdir() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+
+    // Mirror the engine's two-step write: first the canonical hub at
+    // `<tmp>/.agents/commands/`, then the per-agent directory (which either
+    // symlinks back to the hub for `.md` agents, or copies the converted
+    // content for non-`.md` agents).
+    let tmp_hub = tmp.path().join(".agents").join("commands");
+    if agent::copy_commands_to_project(&tmp_hub, workspace_command_contents, custom_commands)
+        .is_err()
+    {
+        return;
+    }
+
+    let tmp_agent_dir = tmp.path().join(&relative);
+    let sync_result = if agent_instance.commands_file_ext() == "md" {
+        agent::symlink_commands_from_project(
+            &tmp_agent_dir,
+            &tmp_hub,
+            workspace_command_contents,
+            custom_commands,
+            agent_instance,
+        )
+    } else {
+        agent::sync_commands_to_dir(
+            &tmp_agent_dir,
+            workspace_command_contents,
+            custom_commands,
+            agent_instance,
+        )
+    };
+    if sync_result.is_err() {
+        return;
+    }
+
+    // Compare expected (tempdir) with actual (project dir).
+    let mut expected_names: HashSet<String> = HashSet::new();
+    if let Ok(tmp_entries) = fs::read_dir(&tmp_agent_dir) {
+        for entry in tmp_entries.flatten() {
+            let tmp_path = entry.path();
+            let file_name = match tmp_path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            expected_names.insert(file_name.clone());
+
+            // `fs::read_to_string` follows symlinks, so symlinked entries
+            // resolve to the hub file we just wrote.
+            let expected = match fs::read_to_string(&tmp_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let disk_path = agent_commands_dir.join(&file_name);
+            let rel_path = format!("{}/{}", relative.display(), file_name);
+
+            if !disk_path.exists() {
+                out.push(DriftedFile {
+                    path: rel_path,
+                    reason: "missing".into(),
+                    expected: Some(expected),
+                    actual: None,
+                });
+                continue;
+            }
+
+            match fs::read_to_string(&disk_path) {
+                Ok(actual) => {
+                    if actual != expected {
+                        out.push(DriftedFile {
+                            path: rel_path,
+                            reason: "modified".into(),
+                            expected: Some(expected),
+                            actual: Some(actual),
+                        });
+                    }
+                }
+                Err(_) => {
+                    out.push(DriftedFile {
+                        path: rel_path,
+                        reason: "unreadable".into(),
+                        expected: Some(expected),
+                        actual: None,
+                    });
+                }
+            }
+        }
+    }
+
+    // Stale: managed files on disk that aren't in the expected set.
+    if agent_commands_dir.exists() {
+        if let Ok(disk_entries) = fs::read_dir(&agent_commands_dir) {
+            for disk_entry in disk_entries.flatten() {
+                let disk_path = disk_entry.path();
+                let file_name = match disk_path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
+                if expected_names.contains(&file_name) {
+                    continue;
+                }
+                if !agent::is_managed_command_file(&disk_path) {
+                    continue;
+                }
+                let actual = fs::read_to_string(&disk_path).ok();
+                out.push(DriftedFile {
+                    path: format!("{}/{}", relative.display(), file_name),
+                    reason: "stale".into(),
+                    expected: None,
+                    actual,
+                });
+            }
+        }
+    }
+}
+
 /// Collect agent drift entries for one agent into `out`.
 /// Handles both custom_agents (inline, project-scoped) and user_agents
 /// (workspace-scoped from ~/.automatic/agents/).
@@ -1106,6 +1272,103 @@ mod tests {
         assert!(
             files.iter().any(|f| f.reason == "missing"),
             "Expected a 'missing' drift entry"
+        );
+    }
+
+    /// `collect_commands_drift` must report no drift when the on-disk
+    /// commands match the workspace-command contents exactly.
+    #[test]
+    fn no_drift_after_sync_commands() {
+        let project_dir = tempdir().unwrap();
+        let dir = project_dir.path().to_path_buf();
+
+        let workspace_commands: Vec<(String, String)> = vec![(
+            "review".to_string(),
+            "---\ndescription: Review the changes\n---\n\nLook hard.\n".to_string(),
+        )];
+        let custom_commands: Vec<crate::core::CustomCommand> = Vec::new();
+
+        // Simulate the engine's two-step write so the on-disk state matches
+        // what drift expects.
+        let project_commands_dir = dir.join(".agents").join("commands");
+        crate::agent::copy_commands_to_project(
+            &project_commands_dir,
+            &workspace_commands,
+            &custom_commands,
+        )
+        .expect("write hub");
+        let claude_commands_dir = ClaudeCode.commands_dir(&dir).expect("claude commands dir");
+        crate::agent::symlink_commands_from_project(
+            &claude_commands_dir,
+            &project_commands_dir,
+            &workspace_commands,
+            &custom_commands,
+            &ClaudeCode,
+        )
+        .expect("write claude commands");
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_commands_drift(
+            &ClaudeCode,
+            &dir,
+            &workspace_commands,
+            &custom_commands,
+            &mut files,
+        );
+
+        assert!(
+            files.is_empty(),
+            "Expected no drift after sync, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A library command edit that has not been propagated to a project
+    /// must surface as a `modified` drift entry on the agent's commands dir.
+    #[test]
+    fn collect_commands_drift_detects_modified_file() {
+        let project_dir = tempdir().unwrap();
+        let dir = project_dir.path().to_path_buf();
+
+        // First, write an "old" version of the command to disk.
+        let old_workspace: Vec<(String, String)> = vec![(
+            "review".to_string(),
+            "---\ndescription: Old description\n---\n\nOld body.\n".to_string(),
+        )];
+        let custom: Vec<crate::core::CustomCommand> = Vec::new();
+        let project_commands_dir = dir.join(".agents").join("commands");
+        crate::agent::copy_commands_to_project(&project_commands_dir, &old_workspace, &custom)
+            .expect("write hub old");
+        let claude_commands_dir = ClaudeCode.commands_dir(&dir).expect("claude commands dir");
+        crate::agent::symlink_commands_from_project(
+            &claude_commands_dir,
+            &project_commands_dir,
+            &old_workspace,
+            &custom,
+            &ClaudeCode,
+        )
+        .expect("write claude old");
+
+        // Now drift-check against the "new" library content (as if the
+        // library was edited but the project wasn't re-synced).
+        let new_workspace: Vec<(String, String)> = vec![(
+            "review".to_string(),
+            "---\ndescription: New description\n---\n\nNew body.\n".to_string(),
+        )];
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_commands_drift(&ClaudeCode, &dir, &new_workspace, &custom, &mut files);
+
+        assert!(
+            files.iter().any(|f| f.reason == "modified"),
+            "Expected a 'modified' drift entry when library and disk diverge, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
         );
     }
 }

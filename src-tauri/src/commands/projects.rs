@@ -1085,6 +1085,49 @@ pub(crate) fn sync_projects_referencing_mcp_server(server_name: &str) {
     });
 }
 
+pub(crate) fn sync_projects_referencing_rule(rule_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        let referenced = project
+            .file_rules
+            .values()
+            .any(|rules| rules.iter().any(|r| r == rule_name));
+        if referenced {
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
+pub(crate) fn sync_projects_referencing_subagent(machine_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        if project.user_agents.iter().any(|name| name == machine_name) {
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
+pub(crate) fn sync_projects_referencing_user_command(machine_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        if project
+            .user_commands
+            .iter()
+            .any(|name| name == machine_name)
+        {
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
+/// Re-sync every project that has both a configured directory and at least
+/// one agent. Used after upgrade-time bundled-asset reinstalls so any project
+/// that references the updated library copies picks up the new content
+/// without the user having to press "Sync now". Silent failures are logged
+/// to stderr; this is best-effort.
+pub(crate) fn resync_all_projects() {
+    with_each_project_mut(|project_name, project| {
+        sync_project_if_configured(project_name, project);
+    });
+}
+
 pub(crate) fn prune_skill_from_projects(skill_name: &str) {
     with_each_project_mut(|project_name, project| {
         let before = project.skills.len();
@@ -1168,4 +1211,119 @@ pub(crate) fn prune_rule_from_projects(rule_name: &str) {
             sync_project_if_configured(project_name, project);
         }
     });
+}
+
+#[cfg(test)]
+mod propagation_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    /// Run `test` with a thread-local override of Automatic's HOME directory.
+    /// Uses `core::paths::with_test_home` so parallel tests in other modules
+    /// cannot race on the process-wide `$HOME` env var.
+    fn with_temp_home<T>(test: impl FnOnce(&std::path::Path) -> T) -> T {
+        let home = tempdir().expect("temp home");
+        let home_path = home.path().to_path_buf();
+        crate::core::with_test_home(home_path.clone(), || test(&home_path))
+    }
+
+    /// Create and persist a project whose directory is an empty tempdir.
+    /// Returns the directory path so the test can inspect it after a sync.
+    fn make_project(
+        name: &str,
+        mutate: impl FnOnce(&mut core::Project),
+    ) -> (tempfile::TempDir, std::path::PathBuf) {
+        let project_dir = tempdir().expect("project dir");
+        let mut project = core::Project {
+            name: name.to_string(),
+            directory: project_dir.path().display().to_string(),
+            agents: vec!["claude".to_string()],
+            ..Default::default()
+        };
+        mutate(&mut project);
+        let json = serde_json::to_string_pretty(&project).expect("project json");
+        core::save_project(name, &json).expect("save project");
+        let dir = project_dir.path().to_path_buf();
+        (project_dir, dir)
+    }
+
+    /// Only projects that reference the named rule should be re-synced.
+    /// A project that does not reference the rule must remain untouched on
+    /// disk (no .claude/ directory created).
+    #[test]
+    fn sync_projects_referencing_rule_only_visits_referencing_projects() {
+        with_temp_home(|_| {
+            // The rule must exist in the library so the sync engine can
+            // resolve its content when re-injecting.
+            core::save_rule("test-rule", "Test Rule", "Rule body.\n")
+                .expect("save rule to library");
+
+            let (_keep_a, dir_a) = make_project("project-a", |p| {
+                p.file_rules
+                    .insert("_unified".to_string(), vec!["test-rule".to_string()]);
+            });
+            let (_keep_b, dir_b) = make_project("project-b", |_| {});
+
+            sync_projects_referencing_rule("test-rule");
+
+            assert!(
+                dir_a.join(".claude").exists(),
+                "referencing project should have been synced"
+            );
+            assert!(
+                !dir_b.join(".claude").exists(),
+                "non-referencing project should NOT have been synced"
+            );
+        });
+    }
+
+    /// `resync_all_projects` must visit every configured project
+    /// regardless of which assets it references.
+    #[test]
+    fn resync_all_projects_visits_every_configured_project() {
+        with_temp_home(|_| {
+            let (_keep_a, dir_a) = make_project("project-a", |_| {});
+            let (_keep_b, dir_b) = make_project("project-b", |_| {});
+
+            resync_all_projects();
+
+            assert!(
+                dir_a.join(".claude").exists(),
+                "project-a should have been synced"
+            );
+            assert!(
+                dir_b.join(".claude").exists(),
+                "project-b should have been synced"
+            );
+        });
+    }
+
+    /// Only projects that reference the named user command should be
+    /// re-synced.
+    #[test]
+    fn sync_projects_referencing_user_command_only_visits_referencing_projects() {
+        with_temp_home(|_| {
+            core::save_user_command(
+                "review",
+                "---\ndescription: Review\n---\n\nLook hard.\n",
+            )
+            .expect("save user command");
+
+            let (_keep_a, dir_a) = make_project("project-a", |p| {
+                p.user_commands.push("review".to_string());
+            });
+            let (_keep_b, dir_b) = make_project("project-b", |_| {});
+
+            sync_projects_referencing_user_command("review");
+
+            assert!(
+                dir_a.join(".claude").exists(),
+                "referencing project should have been synced"
+            );
+            assert!(
+                !dir_b.join(".claude").exists(),
+                "non-referencing project should NOT have been synced"
+            );
+        });
+    }
 }

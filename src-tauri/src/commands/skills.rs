@@ -88,6 +88,7 @@ pub fn import_skill_from_local_path(path: String) -> Result<String, String> {
     let imported = core::import_skill_from_local_path(&path)?;
     for skill in &imported {
         core::record_recently_added("skills", &skill.name);
+        sync_projects_referencing_skill(&skill.name);
     }
     serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
 }
@@ -107,6 +108,7 @@ pub async fn import_skill_from_repository(
     let imported = core::import_skill_from_repository(&repo_url, skill_name.as_deref()).await?;
     for skill in &imported {
         core::record_recently_added("skills", &skill.name);
+        sync_projects_referencing_skill(&skill.name);
     }
     serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
 }
@@ -120,6 +122,7 @@ pub fn import_skill_from_package(path: String) -> Result<String, String> {
     let imported = core::import_skill_from_package(&path)?;
     for skill in &imported {
         core::record_recently_added("skills", &skill.name);
+        sync_projects_referencing_skill(&skill.name);
     }
     serde_json::to_string_pretty(&imported).map_err(|e| e.to_string())
 }

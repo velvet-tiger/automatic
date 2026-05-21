@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use crate::core;
 
 use super::projects::{
-    prune_rule_from_projects, sync_project_if_configured, with_each_project_mut,
+    prune_rule_from_projects, sync_project_if_configured, sync_projects_referencing_rule,
+    with_each_project_mut,
 };
 
 // ── Rules ────────────────────────────────────────────────────────────────────
@@ -20,12 +21,13 @@ pub fn read_rule(machine_name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), String> {
-    // Only persist the rule to disk.  Do NOT eagerly sync referencing projects
-    // here — that writes to project directories, which triggers the Tauri dev
-    // watcher and causes a full app reload (losing all frontend state).
-    // The user can push updates to projects via the "Update" buttons on the
-    // Rules page instead.
-    core::save_rule(machine_name, name, content)
+    core::save_rule(machine_name, name, content)?;
+    // Propagate to every project that references this rule so on-disk
+    // instruction files stay in sync with the library content. Sync output
+    // directories are excluded from the Vite dev watcher so this does not
+    // trigger a frontend reload during `make dev`.
+    sync_projects_referencing_rule(machine_name);
+    Ok(())
 }
 
 #[tauri::command]

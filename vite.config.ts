@@ -26,8 +26,35 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri` and the per-agent sync
+      //    output directories that Automatic writes to when syncing projects.
+      //    Without this, editing a rule (or any library asset) while running
+      //    `make dev` against the automatic-app project would trigger Vite
+      //    HMR and reload the frontend, losing all in-memory state.
+      ignored: [
+        "**/src-tauri/**",
+        "**/.automatic/**",
+        "**/.agents/**",
+        "**/.claude/**",
+        "**/.cline/**",
+        "**/.clinerules/**",
+        "**/.codex/**",
+        "**/.cursor/**",
+        "**/.cursorrules/**",
+        "**/.factory/**",
+        "**/.gemini/**",
+        "**/.goosehints/**",
+        "**/.junie/**",
+        "**/.kilocode/**",
+        "**/.kiro/**",
+        "**/.antigravity/**",
+        "**/.opencode/**",
+        "**/.warp/**",
+        "**/.zed/**",
+        "**/AGENTS.md",
+        "**/CLAUDE.md",
+        "**/CODEX.md",
+      ],
     },
   },
 }));

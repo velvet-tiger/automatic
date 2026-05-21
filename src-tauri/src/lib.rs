@@ -209,6 +209,22 @@ pub fn run() {
                 }
                 // Reconcile tool/skill/rule registries with current plugin states.
                 core::reconcile_plugin_resources_on_startup();
+
+                // On an actual version upgrade the bundled skills, rules,
+                // sub-agents and instructions in the library have just been
+                // overwritten with new content. Re-sync every project so any
+                // project that references one of these picks up the new
+                // library copy on disk. Without this the bundled assets in
+                // the library are current but the project copies remain
+                // stale, defeating the core invariant Automatic exists to
+                // enforce. Gated on `force_reinstall` so this only runs once
+                // per upgrade.
+                if force_reinstall {
+                    eprintln!(
+                        "[automatic] bundled assets refreshed; re-syncing all projects to propagate updates"
+                    );
+                    commands::resync_all_projects();
+                }
             });
             Ok(())
         })

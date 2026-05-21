@@ -1,5 +1,7 @@
 use crate::core;
 
+use super::projects::sync_projects_referencing_subagent;
+
 // ── Sub-Agents (global registry) ─────────────────────────────────────────────
 
 #[tauri::command]
@@ -29,7 +31,9 @@ pub fn save_subagent(machine_name: String, name: String, content: String) -> Res
         return Err("Sub-agent content must start with YAML frontmatter (---)".into());
     }
 
-    core::save_subagent(&machine_name, &name, &content)
+    core::save_subagent(&machine_name, &name, &content)?;
+    sync_projects_referencing_subagent(&machine_name);
+    Ok(())
 }
 
 #[tauri::command]
