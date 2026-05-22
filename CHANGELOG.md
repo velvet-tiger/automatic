@@ -4,6 +4,32 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-05-22
+
+### Added
+
+- Hooks are now a library item synced per-agent, with templates that can include hooks and a Path handler for referencing an existing script file. ([e1a6c28](https://github.com/velvet-tiger/automatic/commit/e1a6c28), [36bc69f](https://github.com/velvet-tiger/automatic/commit/36bc69f), [c7b9e4b](https://github.com/velvet-tiger/automatic/commit/c7b9e4b), [f3300ad](https://github.com/velvet-tiger/automatic/commit/f3300ad))
+- Skills now check for upstream updates on remote-sourced skills, with an "Update now" button in the skill preview. ([a6df6d8](https://github.com/velvet-tiger/automatic/commit/a6df6d8), [f922af0](https://github.com/velvet-tiger/automatic/commit/f922af0))
+- New `--icon-command` theme token and aligned Commands summary card. ([cc4fe66](https://github.com/velvet-tiger/automatic/commit/cc4fe66))
+
+### Changed
+
+- Project pickers for skills, MCP servers, and rules now share the "Add from Library" pattern used by commands and hooks. ([f83437f](https://github.com/velvet-tiger/automatic/commit/f83437f))
+- Insights moved from the Start section to Tools in the primary navigation. ([244a41d](https://github.com/velvet-tiger/automatic/commit/244a41d))
+- Project header actions collapsed to icon-only with hover tooltips, and the project controls bar moved to the bottom of the panel. ([124115a](https://github.com/velvet-tiger/automatic/commit/124115a), [8a57424](https://github.com/velvet-tiger/automatic/commit/8a57424))
+- `SummaryMetricCard` collapsed to a single inline row. ([e66ec1f](https://github.com/velvet-tiger/automatic/commit/e66ec1f))
+- Dropped shadows and borders from project header icon buttons, header action buttons, and sync buttons for a flatter look. ([96de3d0](https://github.com/velvet-tiger/automatic/commit/96de3d0), [04c9e63](https://github.com/velvet-tiger/automatic/commit/04c9e63))
+
+### Fixed
+
+- Library asset changes (skills, MCP servers, rules, hooks) now propagate to every referencing project on save and upgrade, and drift surfaces failures. ([f2c25dd](https://github.com/velvet-tiger/automatic/commit/f2c25dd))
+- Group project references are now cleaned up on delete, rename, and startup. ([0d877b4](https://github.com/velvet-tiger/automatic/commit/0d877b4))
+- First-run wizard step labels remain readable in the corporate-dark theme after a step is completed. ([360cb7e](https://github.com/velvet-tiger/automatic/commit/360cb7e))
+
+### Maintenance
+
+- Regenerated the group block in agent instruction files. ([b25a376](https://github.com/velvet-tiger/automatic/commit/b25a376))
+
 ## [1.9.0] - 2026-05-19
 
 ### Added
