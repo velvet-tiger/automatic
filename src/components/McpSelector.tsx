@@ -2,12 +2,9 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Plus,
-  Search,
   Server,
   Trash2,
-  Power,
   X,
-  ChevronDown,
   ChevronRight,
   Terminal,
   Globe,
@@ -227,11 +224,11 @@ function McpConfigCard({ name, onNavigate }: McpConfigCardProps) {
 /**
  * Shared MCP server selector used by both Projects and ProjectTemplates.
  * Renders:
- *   - A section header with an "Add" button (hidden when disableAdd=true)
- *   - The current list of servers as styled card rows
- *   - Clicking a server expands an inline read-only config card with a link
+ *   - A section header with an "Add from Library" trigger (hidden when disableAdd=true)
+ *   - The current list of servers as compact rows
+ *   - Clicking a row expands an inline read-only config card with a link
  *     back to the full MCP server configuration page
- *   - A searchable dropdown panel when adding
+ *   - A floating searchable dropdown when adding
  */
 export function McpSelector({
   servers,
@@ -268,14 +265,15 @@ export function McpSelector({
     setSearch("");
   }
 
-  function handleCancel() {
-    setAdding(false);
-    setSearch("");
-  }
-
   function toggleExpand(srv: string) {
     setExpandedServer((prev) => (prev === srv ? null : srv));
   }
+
+  const emptyDropdownMessage = availableServers.length === 0
+    ? "No MCP servers in the library yet."
+    : unaddedServers.length === 0
+      ? "All MCP servers already added."
+      : "No servers match.";
 
   return (
     <div>
@@ -286,14 +284,59 @@ export function McpSelector({
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             {label}
           </span>
+          {servers.length > 0 && (
+            <span className="text-[10px] bg-bg-sidebar border border-border-strong/40 rounded-full px-1.5 py-0.5 text-text-muted leading-none">
+              {servers.length}
+            </span>
+          )}
         </div>
-        {!disableAdd && availableServers.length > 0 && (
-          <button
-            onClick={(e) => { e.stopPropagation(); setAdding(true); }}
-            className="text-[11px] text-brand hover:text-text-base flex items-center gap-1 px-2 py-1 rounded border border-brand/50 hover:border-brand hover:bg-brand/15 transition-all"
-          >
-            <Plus size={11} /> Add
-          </button>
+        {!disableAdd && (
+          <div className="relative">
+            <button
+              onClick={(e) => { e.stopPropagation(); setAdding(!adding); }}
+              className="flex items-center gap-1 text-[12px] text-brand hover:text-brand-hover transition-colors font-medium"
+            >
+              <Plus size={12} /> Add from Library
+            </button>
+            {adding && (
+              <div className="absolute right-0 top-full mt-1 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
+                <div className="p-2 border-b border-border-strong/40">
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") { setAdding(false); setSearch(""); }
+                      if (e.key === "Enter" && filteredServers.length === 1) handleAdd(filteredServers[0]!);
+                    }}
+                    placeholder="Search MCP servers..."
+                    autoFocus
+                    className="w-full bg-bg-input border border-border-strong/40 focus:border-brand rounded px-2 py-1 text-[12px] text-text-base placeholder-text-muted/50 outline-none"
+                  />
+                </div>
+                <div className="py-1">
+                  {filteredServers.length === 0 ? (
+                    <div className="px-3 py-2 text-[12px] text-text-muted italic">
+                      {emptyDropdownMessage}
+                    </div>
+                  ) : (
+                    filteredServers.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => handleAdd(s)}
+                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-input text-left transition-colors"
+                      >
+                        <Server size={14} className="text-text-muted flex-shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-[12px] font-medium text-text-base truncate">{s}</div>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -303,45 +346,40 @@ export function McpSelector({
       )}
 
       {/* Current servers list */}
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         {sortedServers.map(({ srv, idx }) => {
           const isExpanded = expandedServer === srv;
           const enabled = isServerEnabled ? isServerEnabled(srv) : true;
           const canToggleEnabled = !!onToggleEnabled && srv !== "automatic";
+          const isLocked = srv === "automatic";
           return (
-            <div key={srv}>
-              {/* Row — clicking toggles inline card */}
-              <div
-                className={`flex items-center gap-3 px-3 py-3 bg-bg-input border group cursor-pointer transition-colors ${
-                  isExpanded
-                    ? "border-border-strong rounded-t-lg rounded-b-none"
-                    : "border-border-strong/40 rounded-lg hover:border-border-strong/70"
-                }`}
-                onClick={() => toggleExpand(srv)}
-              >
-                <span className="text-text-muted flex-shrink-0">
-                  {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                </span>
+            <div
+              key={srv}
+              className={`bg-bg-input border rounded-lg group transition-colors ${
+                isExpanded ? "border-brand/40" : "border-border-strong/40"
+              }`}
+            >
+              {/* Row */}
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <Server size={14} className="flex-shrink-0 text-text-muted" />
 
-                <div className="w-7 h-7 rounded-md bg-icon-mcp/12 flex items-center justify-center flex-shrink-0">
-                  <Server size={14} className="text-icon-mcp" />
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 min-w-0">
+                <button
+                  className="flex-1 flex items-center gap-2 text-left min-w-0"
+                  onClick={() => toggleExpand(srv)}
+                >
+                  <div className="flex-1 min-w-0">
                     <div className="text-[13px] font-medium text-text-base truncate">{srv}</div>
-                    {!enabled && (
-                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-text-muted/10 text-text-muted border border-border-strong/40 leading-none">
-                        Disabled
-                      </span>
+                    {canToggleEnabled && !enabled && (
+                      <div className="text-[11px] text-text-muted truncate">
+                        Kept in Automatic only — not synced
+                      </div>
                     )}
                   </div>
-                  {canToggleEnabled && (
-                    <div className="mt-0.5 text-[11px] text-text-muted">
-                      {enabled ? "Synced into agent MCP config" : "Kept in Automatic only"}
-                    </div>
-                  )}
-                </div>
+                  <ChevronRight
+                    size={12}
+                    className={`text-text-muted flex-shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                  />
+                </button>
 
                 {canToggleEnabled && (
                   <button
@@ -349,31 +387,31 @@ export function McpSelector({
                       e.stopPropagation();
                       void onToggleEnabled(srv, !enabled);
                     }}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] font-medium transition-colors ${
+                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full border leading-none transition-colors flex-shrink-0 ${
                       enabled
-                        ? "border-success/30 text-success hover:border-success/50 hover:bg-success/10"
-                        : "border-border-strong/50 text-text-muted hover:border-border-strong hover:text-text-base hover:bg-surface"
+                        ? "border-success/30 text-success bg-success/10 hover:bg-success/15"
+                        : "border-border-strong/40 text-text-muted bg-bg-sidebar hover:bg-surface"
                     }`}
                     title={enabled ? "Disable syncing for this project" : "Enable syncing for this project"}
                   >
-                    <Power size={11} />
                     {enabled ? "On" : "Off"}
                   </button>
                 )}
 
-                {srv !== "automatic" && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onRemove(idx); }}
-                  className={`text-text-muted hover:text-danger transition-all p-1 hover:bg-surface rounded ${showRemoveButtonAlways ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
-                >
-                  <Trash2 size={12} />
-                </button>
+                {!isLocked && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onRemove(idx); }}
+                    className={`p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 ${showRemoveButtonAlways ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+                    title="Remove"
+                  >
+                    {showRemoveButtonAlways ? <Trash2 size={12} /> : <X size={12} />}
+                  </button>
                 )}
               </div>
 
               {/* Inline config card */}
               {isExpanded && (
-                <div className="border border-t-0 border-border-strong rounded-b-lg overflow-hidden bg-bg-input">
+                <div className="border-t border-border-strong/40">
                   <McpConfigCard
                     name={srv}
                     onNavigate={onNavigateToMcpServer}
@@ -384,71 +422,6 @@ export function McpSelector({
           );
         })}
       </div>
-
-      {/* Searchable add dropdown */}
-      {adding && !disableAdd && (
-        <div className="mt-2 bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
-          {/* Search input */}
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-border-strong/40">
-            <Search size={12} className="text-text-muted shrink-0" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") handleCancel();
-                if (e.key === "Enter" && filteredServers.length === 1) handleAdd(filteredServers[0]!);
-              }}
-              placeholder="Search MCP servers..."
-              autoFocus
-              className="flex-1 bg-transparent outline-none text-[13px] text-text-base placeholder-text-muted/50"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch("")}
-                className="text-text-muted hover:text-text-base transition-colors"
-              >
-                <X size={11} />
-              </button>
-            )}
-          </div>
-
-          {/* Results list */}
-          <div className="max-h-48 overflow-y-auto custom-scrollbar py-1">
-            {filteredServers.length > 0 ? (
-              filteredServers.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => handleAdd(s)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-sidebar text-left transition-colors"
-                >
-                  <div className="w-5 h-5 rounded bg-icon-mcp/10 flex items-center justify-center flex-shrink-0">
-                    <Server size={11} className="text-icon-mcp" />
-                  </div>
-                  <span className="text-[13px] text-text-base">{s}</span>
-                </button>
-              ))
-            ) : (
-              <p className="text-[12px] text-text-muted italic px-3 py-3">
-                {unaddedServers.length === 0 ? "All MCP servers already added." : "No servers match."}
-              </p>
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="border-t border-border-strong/40 px-3 py-2 flex items-center justify-between">
-            <span className="text-[11px] text-text-muted">
-              {filteredServers.length} of {unaddedServers.length} server{unaddedServers.length !== 1 ? "s" : ""}
-            </span>
-            <button
-              onClick={handleCancel}
-              className="text-[11px] text-text-muted hover:text-text-base transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -6877,6 +6877,11 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                               r.id.toLowerCase().includes(globalRuleSearch.toLowerCase())
                             )
                           : unaddedRules;
+                        const emptyDropdownMessage = availableRules.length === 0
+                          ? "No rules in the library yet."
+                          : unaddedRules.length === 0
+                            ? "All rules already added."
+                            : "No rules match.";
 
                         return (
                           <section>
@@ -6885,15 +6890,67 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                               <div className="flex items-center gap-2">
                                 <ScrollText size={13} className="text-text-muted" />
                                 <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Global Rules</span>
+                                {projectRules.length > 0 && (
+                                  <span className="text-[10px] bg-bg-sidebar border border-border-strong/40 rounded-full px-1.5 py-0.5 text-text-muted leading-none">
+                                    {projectRules.length}
+                                  </span>
+                                )}
                               </div>
-                              {availableRules.length > 0 && (
+                              <div className="relative">
                                 <button
-                                  onClick={() => setGlobalRuleAdding(true)}
-                                  className="text-[11px] text-brand hover:text-text-base flex items-center gap-1 px-2 py-1 rounded border border-brand/50 hover:border-brand hover:bg-brand/15 transition-all"
+                                  onClick={() => setGlobalRuleAdding(!globalRuleAdding)}
+                                  className="flex items-center gap-1 text-[12px] text-brand hover:text-brand-hover transition-colors font-medium"
                                 >
-                                  <Plus size={11} /> Add
+                                  <Plus size={12} /> Add from Library
                                 </button>
-                              )}
+                                {globalRuleAdding && (
+                                  <div className="absolute right-0 top-full mt-1 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
+                                    <div className="p-2 border-b border-border-strong/40">
+                                      <input
+                                        type="text"
+                                        value={globalRuleSearch}
+                                        onChange={(e) => setGlobalRuleSearch(e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Escape") { setGlobalRuleAdding(false); setGlobalRuleSearch(""); }
+                                          if (e.key === "Enter" && filteredRules.length === 1) {
+                                            handleToggleProjectRule(filteredRules[0]!.id);
+                                            setGlobalRuleAdding(false);
+                                            setGlobalRuleSearch("");
+                                          }
+                                        }}
+                                        placeholder="Search rules..."
+                                        autoFocus
+                                        className="w-full bg-bg-input border border-border-strong/40 focus:border-brand rounded px-2 py-1 text-[12px] text-text-base placeholder-text-muted/50 outline-none"
+                                      />
+                                    </div>
+                                    <div className="py-1">
+                                      {filteredRules.length === 0 ? (
+                                        <div className="px-3 py-2 text-[12px] text-text-muted italic">
+                                          {emptyDropdownMessage}
+                                        </div>
+                                      ) : (
+                                        filteredRules.map((r) => (
+                                          <button
+                                            key={r.id}
+                                            onClick={() => {
+                                              handleToggleProjectRule(r.id);
+                                              setGlobalRuleAdding(false);
+                                              setGlobalRuleSearch("");
+                                            }}
+                                            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-input text-left transition-colors"
+                                          >
+                                            <ScrollText size={14} className="text-text-muted flex-shrink-0" />
+                                            <div className="min-w-0">
+                                              <div className="text-[12px] font-medium text-text-base truncate">{r.name}</div>
+                                              <div className="text-[11px] text-text-muted truncate">{r.id}</div>
+                                            </div>
+                                          </button>
+                                        ))
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
 
                             {/* Selected rules list */}
@@ -6906,11 +6963,9 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                 return (
                                   <div
                                     key={ruleId}
-                                    className="bg-bg-input border border-border-strong/40 rounded-lg group flex items-center gap-3 px-3 py-3"
+                                    className="bg-bg-input border border-border-strong/40 rounded-lg group flex items-center gap-3 px-3 py-2.5"
                                   >
-                                    <div className="w-8 h-8 rounded-md bg-brand/10 flex items-center justify-center flex-shrink-0">
-                                      <ScrollText size={15} className="text-brand" />
-                                    </div>
+                                    <ScrollText size={14} className="flex-shrink-0 text-text-muted" />
                                     <div className="flex-1 min-w-0">
                                       <div className="text-[13px] font-medium text-text-base truncate">
                                         {meta?.name ?? ruleId}
@@ -6921,87 +6976,16 @@ export default function Projects({ resetKey, initialProject = null, onInitialPro
                                     {!isRuleLocked(ruleId) && (
                                     <button
                                       onClick={() => handleToggleProjectRule(ruleId)}
-                                      className="text-text-muted hover:text-danger opacity-100 transition-all p-1 hover:bg-surface rounded"
+                                      className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
                                       title="Remove"
                                     >
-                                      <Trash2 size={12} />
+                                      <X size={12} />
                                     </button>
                                     )}
                                   </div>
                                 );
                               })}
                             </div>
-
-                            {/* Searchable add dropdown */}
-                            {globalRuleAdding && (
-                              <div className="mt-2 bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
-                                <div className="flex items-center gap-2 px-3 py-2 border-b border-border-strong/40">
-                                  <Search size={12} className="text-text-muted shrink-0" />
-                                  <input
-                                    type="text"
-                                    value={globalRuleSearch}
-                                    onChange={(e) => setGlobalRuleSearch(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Escape") { setGlobalRuleAdding(false); setGlobalRuleSearch(""); }
-                                      if (e.key === "Enter" && filteredRules.length === 1) {
-                                        handleToggleProjectRule(filteredRules[0]!.id);
-                                        setGlobalRuleAdding(false);
-                                        setGlobalRuleSearch("");
-                                      }
-                                    }}
-                                    placeholder="Search rules…"
-                                    autoFocus
-                                    className="flex-1 bg-transparent outline-none text-[13px] text-text-base placeholder-text-muted/50"
-                                  />
-                                  {globalRuleSearch && (
-                                    <button
-                                      onClick={() => setGlobalRuleSearch("")}
-                                      className="text-text-muted hover:text-text-base transition-colors"
-                                    >
-                                      <X size={11} />
-                                    </button>
-                                  )}
-                                </div>
-                                <div className="max-h-48 overflow-y-auto custom-scrollbar py-1">
-                                  {filteredRules.length > 0 ? (
-                                    filteredRules.map((r) => (
-                                      <button
-                                        key={r.id}
-                                        onClick={() => {
-                                          handleToggleProjectRule(r.id);
-                                          setGlobalRuleAdding(false);
-                                          setGlobalRuleSearch("");
-                                        }}
-                                        className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-sidebar text-left transition-colors"
-                                      >
-                                        <div className="w-5 h-5 rounded bg-brand/10 flex items-center justify-center flex-shrink-0">
-                                          <ScrollText size={11} className="text-brand" />
-                                        </div>
-                                        <div className="min-w-0">
-                                          <div className="text-[13px] text-text-base truncate">{r.name}</div>
-                                          <div className="text-[11px] text-text-muted truncate">{r.id}</div>
-                                        </div>
-                                      </button>
-                                    ))
-                                  ) : (
-                                    <p className="text-[12px] text-text-muted italic px-3 py-3">
-                                      {unaddedRules.length === 0 ? "All rules already added." : "No rules match."}
-                                    </p>
-                                  )}
-                                </div>
-                                <div className="border-t border-border-strong/40 px-3 py-2 flex items-center justify-between">
-                                  <span className="text-[11px] text-text-muted">
-                                    {filteredRules.length} of {unaddedRules.length} rule{unaddedRules.length !== 1 ? "s" : ""}
-                                  </span>
-                                  <button
-                                    onClick={() => { setGlobalRuleAdding(false); setGlobalRuleSearch(""); }}
-                                    className="text-[11px] text-text-muted hover:text-text-base transition-colors"
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              </div>
-                            )}
 
                             {availableRules.length === 0 && (
                               <div className="px-4 py-6 bg-bg-input border border-border-strong/40 rounded-lg text-center">

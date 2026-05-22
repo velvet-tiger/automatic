@@ -137,11 +137,15 @@
   --avatar-4: #3a3a3a;
   --avatar-5: #8a8a8a;
 
-  /* Corporate Dark: monochrome black / dark grey / white — no colour */
-  --brand: #2a2a2a;
-  --brand-hover: #3a3a3a;
-  --brand-active: #1a1a1a;
-  --brand-light: #4a4a4a;
+  /* Corporate Dark: monochrome black / dark grey / white — no colour.
+     Brand is set light so text-brand links remain readable on the dark
+     background. The .bg-brand override below switches text to dark when
+     brand is used as a background, mirroring the cyberpunk pattern. */
+  --brand: #d4d4d4;
+  --brand-hover: #ffffff;
+  --brand-active: #a3a3a3;
+  --brand-light: #e5e5e5;
+  --brand-text: #1a1a1a;
 
   --accent: #3a3a3a;
   --accent-hover: #4a4a4a;
@@ -224,6 +228,13 @@
 /* Cyberpunk: brand bg is bright cyan — override text to near-black for contrast */
 [data-theme="cyberpunk"] .bg-brand,
 [data-theme="cyberpunk"] .hover\:bg-brand:hover {
+  color: var(--brand-text);
+}
+
+/* Corporate Dark: brand bg is light grey — switch text to dark so buttons
+   like the Save action stay readable when brand is used as a background. */
+[data-theme="corporate-dark"] .bg-brand,
+[data-theme="corporate-dark"] .hover\:bg-brand:hover {
   color: var(--brand-text);
 }
 

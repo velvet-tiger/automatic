@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Code, Plus, Search, Trash2, X, ExternalLink, GitFork, ChevronRight } from "lucide-react";
+import { Code, Plus, Trash2, X, ExternalLink, GitFork, ChevronRight } from "lucide-react";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { TokenPill } from "./TokenPill";
 
@@ -31,9 +31,9 @@ interface SkillSelectorProps {
 /**
  * Shared skill selector used by both Projects and ProjectTemplates.
  * Renders:
- *   - A section header with an "Add" button
- *   - The current list of skills as styled card rows
- *   - A searchable dropdown panel when adding
+ *   - A section header with an "Add from Library" trigger
+ *   - The current list of skills as compact rows
+ *   - A floating searchable dropdown when adding
  *   - (optional) Inline skill preview with "View in library" and "Fork" actions
  */
 export function SkillSelector({
@@ -107,11 +107,6 @@ export function SkillSelector({
     setSearch("");
   }
 
-  function handleCancel() {
-    setAdding(false);
-    setSearch("");
-  }
-
   async function handleToggleExpand(skill: string) {
     if (!onReadSkill) return;
 
@@ -158,6 +153,12 @@ export function SkillSelector({
     return match ? match[1]!.trimStart() : raw;
   }
 
+  const emptyDropdownMessage = availableSkills.length === 0
+    ? "No skills in the library yet."
+    : unaddedSkills.length === 0
+      ? "All skills already added."
+      : "No skills match.";
+
   return (
     <div>
       {/* Header */}
@@ -167,15 +168,58 @@ export function SkillSelector({
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             {label}
           </span>
+          {skills.length > 0 && (
+            <span className="text-[10px] bg-bg-sidebar border border-border-strong/40 rounded-full px-1.5 py-0.5 text-text-muted leading-none">
+              {skills.length}
+            </span>
+          )}
         </div>
-        {availableSkills.length > 0 && (
+        <div className="relative">
           <button
-            onClick={(e) => { e.stopPropagation(); setAdding(true); }}
-            className="text-[11px] text-brand hover:text-text-base flex items-center gap-1 px-2 py-1 rounded border border-brand/50 hover:border-brand hover:bg-brand/15 transition-all"
+            onClick={(e) => { e.stopPropagation(); setAdding(!adding); }}
+            className="flex items-center gap-1 text-[12px] text-brand hover:text-brand-hover transition-colors font-medium"
           >
-            <Plus size={11} /> Add
+            <Plus size={12} /> Add from Library
           </button>
-        )}
+          {adding && (
+            <div className="absolute right-0 top-full mt-1 w-72 bg-bg-sidebar border border-border-strong rounded-lg shadow-xl z-50 max-h-72 overflow-y-auto">
+              <div className="p-2 border-b border-border-strong/40">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") { setAdding(false); setSearch(""); }
+                    if (e.key === "Enter" && filteredSkills.length === 1) handleAdd(filteredSkills[0]!);
+                  }}
+                  placeholder="Search skills..."
+                  autoFocus
+                  className="w-full bg-bg-input border border-border-strong/40 focus:border-brand rounded px-2 py-1 text-[12px] text-text-base placeholder-text-muted/50 outline-none"
+                />
+              </div>
+              <div className="py-1">
+                {filteredSkills.length === 0 ? (
+                  <div className="px-3 py-2 text-[12px] text-text-muted italic">
+                    {emptyDropdownMessage}
+                  </div>
+                ) : (
+                  filteredSkills.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => handleAdd(s)}
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-bg-input text-left transition-colors"
+                    >
+                      <Code size={14} className="text-text-muted flex-shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-[12px] font-medium text-text-base truncate">{s}</div>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Empty state */}
@@ -188,6 +232,7 @@ export function SkillSelector({
         {sortedSkills.map(({ skill, idx }) => {
           const isExpanded = expandedSkill === skill;
           const isClickable = !!onReadSkill;
+          const isLocked = lockedSkills.includes(skill) || skill === "automatic";
 
           return (
             <div
@@ -197,10 +242,8 @@ export function SkillSelector({
               }`}
             >
               {/* Row */}
-              <div className="flex items-center gap-3 px-3 py-3">
-                <div className="w-8 h-8 rounded-md bg-icon-skill/12 flex items-center justify-center flex-shrink-0">
-                  <Code size={15} className="text-icon-skill" />
-                </div>
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <Code size={14} className="flex-shrink-0 text-text-muted" />
 
                 {/* Name — clickable to expand when onReadSkill is provided */}
                 {isClickable ? (
@@ -208,7 +251,9 @@ export function SkillSelector({
                     className="flex-1 flex items-center gap-2 text-left min-w-0"
                     onClick={() => handleToggleExpand(skill)}
                   >
-                    <span className="text-[13px] font-medium text-text-base flex-1 truncate">{skill}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13px] font-medium text-text-base truncate">{skill}</div>
+                    </div>
                     <ChevronRight
                       size={12}
                       className={`text-text-muted flex-shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
@@ -216,19 +261,20 @@ export function SkillSelector({
                   </button>
                 ) : (
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-medium text-text-base">{skill}</div>
+                    <div className="text-[13px] font-medium text-text-base truncate">{skill}</div>
                   </div>
                 )}
 
                 <TokenPill text={skillContentCache[skill] ?? ""} />
 
-                {skill !== "automatic" && !lockedSkills.includes(skill) && (
-                <button
-                  onClick={() => onRemove(idx)}
-                  className={`text-text-muted hover:text-danger transition-all p-1 hover:bg-surface rounded ${showRemoveButtonAlways ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
-                >
-                  <Trash2 size={12} />
-                </button>
+                {!isLocked && (
+                  <button
+                    onClick={() => onRemove(idx)}
+                    className={`p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 ${showRemoveButtonAlways ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+                    title="Remove"
+                  >
+                    {showRemoveButtonAlways ? <Trash2 size={12} /> : <X size={12} />}
+                  </button>
                 )}
               </div>
 
@@ -283,71 +329,6 @@ export function SkillSelector({
           );
         })}
       </div>
-
-      {/* Searchable add dropdown */}
-      {adding && (
-        <div className="mt-2 bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
-          {/* Search input */}
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-border-strong/40">
-            <Search size={12} className="text-text-muted shrink-0" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") handleCancel();
-                if (e.key === "Enter" && filteredSkills.length === 1) handleAdd(filteredSkills[0]!);
-              }}
-              placeholder="Search skills..."
-              autoFocus
-              className="flex-1 bg-transparent outline-none text-[13px] text-text-base placeholder-text-muted/50"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch("")}
-                className="text-text-muted hover:text-text-base transition-colors"
-              >
-                <X size={11} />
-              </button>
-            )}
-          </div>
-
-          {/* Results list */}
-          <div className="max-h-48 overflow-y-auto custom-scrollbar py-1">
-            {filteredSkills.length > 0 ? (
-              filteredSkills.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => handleAdd(s)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-bg-sidebar text-left transition-colors"
-                >
-                  <div className="w-5 h-5 rounded bg-icon-skill/10 flex items-center justify-center flex-shrink-0">
-                    <Code size={11} className="text-icon-skill" />
-                  </div>
-                  <span className="text-[13px] text-text-base">{s}</span>
-                </button>
-              ))
-            ) : (
-              <p className="text-[12px] text-text-muted italic px-3 py-3">
-                {unaddedSkills.length === 0 ? "All skills already added." : "No skills match."}
-              </p>
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="border-t border-border-strong/40 px-3 py-2 flex items-center justify-between">
-            <span className="text-[11px] text-text-muted">
-              {filteredSkills.length} of {unaddedSkills.length} skill{unaddedSkills.length !== 1 ? "s" : ""}
-            </span>
-            <button
-              onClick={handleCancel}
-              className="text-[11px] text-text-muted hover:text-text-base transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
