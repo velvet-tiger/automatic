@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-05-23
+
+### Fixed
+
+- Projects no longer report perpetual skill drift when the same skill exists in both the project's library-backed list and a stale `custom_skills` snapshot. Sync writes library content to disk; drift now uses the library version as its expected-state baseline, and autodetect prunes the obsolete `custom_skills` entries from the project JSON. ([7c76443](https://github.com/velvet-tiger/automatic/commit/7c76443))
+
 ## [1.10.0] - 2026-05-22
 
 ### Added
