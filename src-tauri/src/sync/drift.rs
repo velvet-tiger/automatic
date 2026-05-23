@@ -234,12 +234,25 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
     let enabled_mcp_servers = project.enabled_mcp_servers();
     let selected_servers = build_selected_servers(&project.name, &enabled_mcp_servers, &mcp_config);
 
+    // Skip any custom_skill whose name is already a library-backed skill:
+    // library wins (it is what `copy_skills_to_project` actually writes to
+    // disk).  Without this dedup, a stale `custom_skills` snapshot in the
+    // project JSON makes the drift baseline disagree with what sync wrote
+    // and the project appears perpetually drifted.
     let mut skill_contents = load_skill_contents(&project.skills);
+    let library_skill_names: HashSet<String> = project.skills.iter().cloned().collect();
     let custom_skills = project.custom_skills.as_deref().unwrap_or(&[]);
     for cs in custom_skills {
+        if library_skill_names.contains(&cs.name) {
+            continue;
+        }
         skill_contents.push((cs.name.clone(), cs.content.clone()));
     }
-    let custom_skill_names: Vec<String> = custom_skills.iter().map(|s| s.name.clone()).collect();
+    let custom_skill_names: Vec<String> = custom_skills
+        .iter()
+        .filter(|s| !library_skill_names.contains(&s.name))
+        .map(|s| s.name.clone())
+        .collect();
     let all_selected_skill_names: Vec<String> = project
         .skills
         .iter()
@@ -1241,6 +1254,53 @@ mod tests {
                 .map(|f| format!("{} ({})", f.path, f.reason))
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// Regression test for the "project keeps drifting after sync" bug:
+    /// a skill that appears in both `project.skills` (library-backed) and
+    /// `project.custom_skills` (stale snapshot) must not produce drift after
+    /// the engine syncs the project.  Sync writes library content; if drift
+    /// uses the custom_skills snapshot as its baseline they disagree forever.
+    #[test]
+    fn no_drift_when_skill_in_both_library_and_stale_custom_skills() {
+        use crate::core::{save_skill, with_test_home, CustomSkill, Project};
+        use crate::sync::engine::sync_project_without_autodetect;
+
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+
+        with_test_home(home.path().to_path_buf(), || {
+            // Library version is the "new" content the user has on disk.
+            save_skill("boundary-audit", "# Library version (new)\n").expect("save_skill");
+
+            // Project has the same name in both lists; custom_skills snapshot is
+            // stale and would otherwise win in the second push, breaking drift.
+            let mut project = Project {
+                name: "regress".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["claude".to_string()],
+                skills: vec!["boundary-audit".to_string()],
+                custom_skills: Some(vec![CustomSkill {
+                    name: "boundary-audit".to_string(),
+                    content: "# Stale custom snapshot (old)\n".to_string(),
+                }]),
+                ..Default::default()
+            };
+
+            sync_project_without_autodetect(&mut project).expect("sync");
+
+            let report = check_project_drift(&project).expect("drift");
+            assert!(
+                !report.drifted,
+                "Expected no drift, got: {:?}",
+                report
+                    .agents
+                    .iter()
+                    .flat_map(|a| a.files.iter())
+                    .map(|f| format!("{} ({})", f.path, f.reason))
+                    .collect::<Vec<_>>()
+            );
+        });
     }
 
     /// A custom skill that is not synced to disk should appear as "missing"

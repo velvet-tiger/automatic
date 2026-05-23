@@ -36,6 +36,24 @@ pub(super) fn autodetect_inner(
     let mut updated_project = project.clone();
     let mut discovered_servers: Vec<(String, String)> = Vec::new();
 
+    // Drop any `custom_skills` entries whose name now exists in the managed
+    // library.  Such entries are leftover state from when the skill was
+    // project-local before being promoted to the library, and their snapshot
+    // content goes stale once the library version is updated.  The library
+    // copy is the source of truth for content, so the duplicate custom_skill
+    // is pure noise that breaks drift detection (see engine/drift skill_contents
+    // dedup).
+    let library_skill_names_for_cleanup: HashSet<String> = crate::core::list_skill_names()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    if let Some(custom) = updated_project.custom_skills.as_mut() {
+        custom.retain(|cs| !library_skill_names_for_cleanup.contains(&cs.name));
+        if custom.is_empty() {
+            updated_project.custom_skills = None;
+        }
+    }
+
     // Detect which agents are present by asking each agent to check.
     //
     // If the project already has an explicit agent list (set by the user in the
@@ -235,6 +253,53 @@ mod tests {
             .find(|s| s.name == "my-local")
             .expect("my-local in custom_skills");
         assert_eq!(entry.content, "# Local skill body");
+    }
+
+    #[test]
+    fn autodetect_prunes_custom_skills_now_in_library() {
+        // A custom_skills entry whose name now exists in the managed library
+        // must be removed during autodetect.  Such entries are leftover state
+        // from when the skill was project-local before being promoted to the
+        // library; their cached `content` goes stale once the library version
+        // is updated and would otherwise break drift detection.
+        use crate::core::{save_skill, with_test_home, CustomSkill};
+
+        let home = tempdir().expect("home tempdir");
+        let dir = tempdir().expect("project tempdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            save_skill("promoted", "# Library version").expect("save_skill");
+
+            let project = Project {
+                name: "p".into(),
+                directory: dir.path().display().to_string(),
+                custom_skills: Some(vec![
+                    CustomSkill {
+                        name: "promoted".into(),
+                        content: "# Stale snapshot".into(),
+                    },
+                    CustomSkill {
+                        name: "still-local".into(),
+                        content: "# Genuinely project-only".into(),
+                    },
+                ]),
+                ..Default::default()
+            };
+
+            let (updated, _) = autodetect_inner(&project).expect("autodetect");
+
+            let custom = updated
+                .custom_skills
+                .expect("custom_skills should retain still-local");
+            assert!(
+                custom.iter().all(|s| s.name != "promoted"),
+                "stale custom_skill for library-backed name should be pruned"
+            );
+            assert!(
+                custom.iter().any(|s| s.name == "still-local"),
+                "project-only custom_skill must be preserved"
+            );
+        });
     }
 
     #[test]
