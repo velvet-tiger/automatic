@@ -1656,8 +1656,10 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
         isOpen={showImportDialog}
         onClose={() => setShowImportDialog(false)}
         onImport={async (skillName) => {
+          // Refresh the skills list and selected-skill content in the
+          // background. The dialog stays open so the user can read the
+          // import summary; closing is the user's call via "Done".
           await loadSkills();
-          setShowImportDialog(false);
           await loadSkillContent(skillName);
           setRecentRefresh(prev => prev + 1);
         }}
