@@ -6,12 +6,19 @@ import { X, Download, Github, Loader2, CheckCircle2, FolderOpen, FileText } from
 interface ImportedSkill {
   name: string;
   source_path: string;
+  was_updated?: boolean;
 }
 
 interface ImportedSkillFromRepo {
   name: string;
   source: string;
   id: string;
+  was_updated?: boolean;
+}
+
+interface ImportedSkillSummary {
+  name: string;
+  wasUpdated: boolean;
 }
 
 interface SkillImportDialogProps {
@@ -37,7 +44,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
   const [skillName, setSkillName] = useState("");
   const [status, setStatus] = useState<ImportStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [importedSkillNames, setImportedSkillNames] = useState<string[]>([]);
+  const [importedSkills, setImportedSkills] = useState<ImportedSkillSummary[]>([]);
 
   const handleLocalImport = async () => {
     const selected = await open({
@@ -53,14 +60,14 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
 
     setStatus("importing");
     setError(null);
-    setImportedSkillNames([]);
+    setImportedSkills([]);
 
     try {
       const path = typeof selected === "string" ? selected : (selected as unknown as string);
-      
+
       // Check if it's a .skill package file
       const isPackage = path.toLowerCase().endsWith(".skill");
-      
+
       const rawResult = isPackage
         ? await invoke("import_skill_from_package", { path })
         : await invoke("import_skill_from_local_path", { path });
@@ -72,10 +79,10 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
         return;
       }
 
-      const importedNames = result.map((s) => s.name);
-      setImportedSkillNames(importedNames);
+      const summary = result.map((s) => ({ name: s.name, wasUpdated: s.was_updated ?? false }));
+      setImportedSkills(summary);
       setStatus("success");
-      onImport(importedNames[0]!);
+      onImport(summary[0]!.name);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus("error");
@@ -90,7 +97,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
 
     setStatus("importing");
     setError(null);
-    setImportedSkillNames([]);
+    setImportedSkills([]);
 
     try {
       const rawResult = await invoke("import_skill_from_repository", {
@@ -99,10 +106,16 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
       });
       const result = parseInvokeResult<ImportedSkillFromRepo[]>(rawResult);
 
-      const importedNames = result.map((s) => s.name);
-      setImportedSkillNames(importedNames);
+      if (result.length === 0) {
+        setError("No skills found in the repository.");
+        setStatus("error");
+        return;
+      }
+
+      const summary = result.map((s) => ({ name: s.name, wasUpdated: s.was_updated ?? false }));
+      setImportedSkills(summary);
       setStatus("success");
-      onImport(importedNames[0]!);
+      onImport(summary[0]!.name);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus("error");
@@ -112,7 +125,7 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
   const handleClose = () => {
     setStatus("idle");
     setError(null);
-    setImportedSkillNames([]);
+    setImportedSkills([]);
     setRepoUrl("");
     setSkillName("");
     onClose();
@@ -271,24 +284,43 @@ export default function SkillImportDialog({ isOpen, onClose, onImport }: SkillIm
           )}
 
           {/* Success */}
-          {status === "success" && importedSkillNames.length > 0 && (
-            <div className="mt-4 p-3 rounded-lg bg-success/10 border border-success/20">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle2 size={14} className="text-success" />
-                <span className="text-[12px] font-medium text-success">
-                  Successfully imported {importedSkillNames.length} skill{importedSkillNames.length > 1 ? "s" : ""}
-                </span>
+          {status === "success" && importedSkills.length > 0 && (() => {
+            const total = importedSkills.length;
+            const updatedCount = importedSkills.filter((s) => s.wasUpdated).length;
+            const addedCount = total - updatedCount;
+            const breakdownParts: string[] = [];
+            if (addedCount > 0) breakdownParts.push(`${addedCount} added`);
+            if (updatedCount > 0) breakdownParts.push(`${updatedCount} updated`);
+            const breakdown = breakdownParts.join(" · ");
+            return (
+              <div className="mt-4 p-3 rounded-lg bg-success/10 border border-success/20">
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle2 size={14} className="text-success" />
+                  <span className="text-[12px] font-medium text-success">
+                    Imported {total} skill{total > 1 ? "s" : ""}
+                    {breakdown ? ` (${breakdown})` : ""}
+                  </span>
+                </div>
+                <ul className="space-y-1">
+                  {importedSkills.map((skill, idx) => (
+                    <li key={idx} className="flex items-center gap-2 text-[12px] text-text-muted">
+                      <FileText size={12} className="text-success" />
+                      <span className="font-mono">{skill.name}</span>
+                      <span
+                        className={`ml-auto px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider ${
+                          skill.wasUpdated
+                            ? "bg-brand/15 text-brand"
+                            : "bg-success/15 text-success"
+                        }`}
+                      >
+                        {skill.wasUpdated ? "Updated" : "New"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               </div>
-              <ul className="space-y-1">
-                {importedSkillNames.map((name, idx) => (
-                  <li key={idx} className="flex items-center gap-2 text-[12px] text-text-muted">
-                    <FileText size={12} className="text-success" />
-                    <span className="font-mono">{name}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Footer */}

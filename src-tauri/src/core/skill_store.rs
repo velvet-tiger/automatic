@@ -834,6 +834,7 @@ pub async fn import_skill_from_repository(
                 let actual_name =
                     extract_frontmatter_name(&content).unwrap_or_else(|| name.clone());
 
+                let was_updated = super::skill_exists(&actual_name);
                 super::save_skill(&actual_name, &content)?;
 
                 let id = format!("{}/{}", source, actual_name);
@@ -855,6 +856,7 @@ pub async fn import_skill_from_repository(
                     name: actual_name,
                     source,
                     id,
+                    was_updated,
                 }]);
             }
             Err(e) => {
@@ -913,6 +915,7 @@ pub async fn import_skill_from_repository(
                     let actual_name =
                         extract_frontmatter_name(&content).unwrap_or_else(|| name.clone());
 
+                    let was_updated = super::skill_exists(&actual_name);
                     if let Err(e) = super::save_skill(&actual_name, &content) {
                         eprintln!("[automatic] Failed to save skill '{}': {}", actual_name, e);
                         continue;
@@ -934,6 +937,7 @@ pub async fn import_skill_from_repository(
                         name: actual_name,
                         source: source.clone(),
                         id,
+                        was_updated,
                     });
                 }
                 Err(e) => {
@@ -962,4 +966,9 @@ pub struct ImportedSkillFromRepo {
     pub name: String,
     pub source: String,
     pub id: String,
+    /// True when the library already contained a skill with this name and
+    /// the import overwrote it. False when this import created the skill
+    /// for the first time. Lets the UI show "added" vs "updated".
+    #[serde(default)]
+    pub was_updated: bool,
 }

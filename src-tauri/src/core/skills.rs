@@ -787,6 +787,12 @@ fn copy_dir_recursive_for_migration(src: &PathBuf, dest: &PathBuf) -> Result<(),
 pub struct ImportedSkill {
     pub name: String,
     pub source_path: String,
+    /// True when a skill with this name already existed in the library and
+    /// was overwritten by the import. False when this import created the
+    /// skill for the first time. Lets the UI distinguish "added" from
+    /// "updated" in the success summary.
+    #[serde(default)]
+    pub was_updated: bool,
 }
 
 /// Import a skill from a local file path or directory.
@@ -839,6 +845,7 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
         }
 
         let skill_dir = library_dir.join(skill_name);
+        let was_updated = skill_dir.join("SKILL.md").exists();
         fs::create_dir_all(&skill_dir)
             .map_err(|e| format!("Failed to create skill directory: {}", e))?;
 
@@ -854,6 +861,7 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
         imported.push(ImportedSkill {
             name: skill_name.to_string(),
             source_path: path.to_string(),
+            was_updated,
         });
 
         return Ok(imported);
@@ -903,6 +911,7 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
             }
 
             let skill_dir = library_dir.join(&skill_entry.name);
+            let was_updated = skill_dir.join("SKILL.md").exists();
             fs::create_dir_all(&skill_dir)
                 .map_err(|e| format!("Failed to create skill directory: {}", e))?;
 
@@ -916,6 +925,7 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
             imported.push(ImportedSkill {
                 name: skill_entry.name.clone(),
                 source_path: entry_path.to_string_lossy().to_string(),
+                was_updated,
             });
         }
 
@@ -982,6 +992,7 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
         }
 
         let skill_dir = library_dir.join(skill_name);
+        let was_updated = skill_dir.join("SKILL.md").exists();
         fs::create_dir_all(&skill_dir)
             .map_err(|e| format!("Failed to create skill directory: {}", e))?;
 
@@ -997,6 +1008,7 @@ pub fn import_skill_from_local_path(path: &str) -> Result<Vec<ImportedSkill>, St
         imported.push(ImportedSkill {
             name: skill_name.to_string(),
             source_path: skill_file.to_string_lossy().to_string(),
+            was_updated,
         });
     }
 
