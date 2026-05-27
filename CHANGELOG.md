@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.10.2] - 2026-05-27
+
+### Fixed
+
+- Skill import dialog now reports per-skill whether the import added a new skill or overwrote an existing one, with a count breakdown (for example `1 added · 1 updated`) in the success summary. Re-importing a repository to pick up upstream changes is no longer indistinguishable from a no-op. ([bc1f59c](https://github.com/velvet-tiger/automatic/commit/bc1f59c))
+
 ## [1.10.1] - 2026-05-23
 
 ### Fixed
