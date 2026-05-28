@@ -8,8 +8,8 @@ use crate::agent;
 use crate::core::{Project, ProjectMode};
 
 use super::helpers::{
-    build_selected_servers, extract_agent_machine_name, load_mcp_server_configs,
-    load_skill_contents,
+    build_selected_servers, build_skill_contents, extract_agent_machine_name,
+    load_mcp_server_configs,
 };
 
 // ── Problems types ────────────────────────────────────────────────────────────
@@ -234,25 +234,9 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
     let enabled_mcp_servers = project.enabled_mcp_servers();
     let selected_servers = build_selected_servers(&project.name, &enabled_mcp_servers, &mcp_config);
 
-    // Skip any custom_skill whose name is already a library-backed skill:
-    // library wins (it is what `copy_skills_to_project` actually writes to
-    // disk).  Without this dedup, a stale `custom_skills` snapshot in the
-    // project JSON makes the drift baseline disagree with what sync wrote
-    // and the project appears perpetually drifted.
-    let mut skill_contents = load_skill_contents(&project.skills);
-    let library_skill_names: HashSet<String> = project.skills.iter().cloned().collect();
-    let custom_skills = project.custom_skills.as_deref().unwrap_or(&[]);
-    for cs in custom_skills {
-        if library_skill_names.contains(&cs.name) {
-            continue;
-        }
-        skill_contents.push((cs.name.clone(), cs.content.clone()));
-    }
-    let custom_skill_names: Vec<String> = custom_skills
-        .iter()
-        .filter(|s| !library_skill_names.contains(&s.name))
-        .map(|s| s.name.clone())
-        .collect();
+    // Build skill contents with dedup: library-backed skills win over stale
+    // custom_skills snapshots.
+    let (skill_contents, custom_skill_names) = build_skill_contents(project);
     let all_selected_skill_names: Vec<String> = project
         .skills
         .iter()

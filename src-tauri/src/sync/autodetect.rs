@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::agent;
 use crate::core::{CustomSkill, Project};
 
-use super::helpers::add_unique;
+use super::helpers::{add_unique, prune_shadowed_custom_skills};
 
 /// Discover dependencies already present in a project's directory and persist
 /// any new findings into the project + global registries.
@@ -36,23 +36,10 @@ pub(super) fn autodetect_inner(
     let mut updated_project = project.clone();
     let mut discovered_servers: Vec<(String, String)> = Vec::new();
 
-    // Drop any `custom_skills` entries whose name now exists in the managed
-    // library.  Such entries are leftover state from when the skill was
-    // project-local before being promoted to the library, and their snapshot
-    // content goes stale once the library version is updated.  The library
-    // copy is the source of truth for content, so the duplicate custom_skill
-    // is pure noise that breaks drift detection (see engine/drift skill_contents
-    // dedup).
-    let library_skill_names_for_cleanup: HashSet<String> = crate::core::list_skill_names()
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
-    if let Some(custom) = updated_project.custom_skills.as_mut() {
-        custom.retain(|cs| !library_skill_names_for_cleanup.contains(&cs.name));
-        if custom.is_empty() {
-            updated_project.custom_skills = None;
-        }
-    }
+    // Prune any `custom_skills` entries whose name is already in the project's
+    // library-backed `skills` list.  Such entries are stale snapshots from
+    // before the skill was promoted to the library and break drift detection.
+    prune_shadowed_custom_skills(&mut updated_project);
 
     // Detect which agents are present by asking each agent to check.
     //
@@ -257,11 +244,10 @@ mod tests {
 
     #[test]
     fn autodetect_prunes_custom_skills_now_in_library() {
-        // A custom_skills entry whose name now exists in the managed library
-        // must be removed during autodetect.  Such entries are leftover state
-        // from when the skill was project-local before being promoted to the
-        // library; their cached `content` goes stale once the library version
-        // is updated and would otherwise break drift detection.
+        // A custom_skills entry whose name also appears in the project's
+        // library-backed `skills` list must be pruned during autodetect.
+        // The library version is the source of truth; the stale custom_skills
+        // snapshot breaks drift detection.
         use crate::core::{save_skill, with_test_home, CustomSkill};
 
         let home = tempdir().expect("home tempdir");
@@ -273,6 +259,7 @@ mod tests {
             let project = Project {
                 name: "p".into(),
                 directory: dir.path().display().to_string(),
+                skills: vec!["promoted".into()],
                 custom_skills: Some(vec![
                     CustomSkill {
                         name: "promoted".into(),

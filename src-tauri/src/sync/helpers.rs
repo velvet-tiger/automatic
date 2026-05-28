@@ -1,6 +1,10 @@
+use std::collections::HashSet;
+
 use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::PathBuf;
+
+use crate::core::Project;
 
 /// Load MCP server configs from the Automatic registry (~/.automatic/mcp_servers/).
 pub(crate) fn load_mcp_server_configs() -> Result<Map<String, Value>, String> {
@@ -38,6 +42,47 @@ pub(crate) fn load_skill_contents(skill_names: &[String]) -> Vec<(String, String
         }
     }
     contents
+}
+
+/// Build the combined skill contents and custom skill name list for a project,
+/// deduplicating custom_skills entries whose names already appear in the
+/// project's library-backed `skills` list.  Library wins because
+/// `copy_skills_to_project` writes library content to disk; a stale
+/// custom_skills snapshot would otherwise produce perpetual drift.
+pub(crate) fn build_skill_contents(
+    project: &Project,
+) -> (Vec<(String, String)>, Vec<String>) {
+    let mut skill_contents = load_skill_contents(&project.skills);
+    let library_skill_names: HashSet<&str> = project.skills.iter().map(|s| s.as_str()).collect();
+    let custom_skills = project.custom_skills.as_deref().unwrap_or(&[]);
+    for cs in custom_skills {
+        if library_skill_names.contains(cs.name.as_str()) {
+            continue;
+        }
+        skill_contents.push((cs.name.clone(), cs.content.clone()));
+    }
+    let custom_skill_names: Vec<String> = custom_skills
+        .iter()
+        .filter(|s| !library_skill_names.contains(s.name.as_str()))
+        .map(|s| s.name.clone())
+        .collect();
+    (skill_contents, custom_skill_names)
+}
+
+/// Prune `custom_skills` entries whose name already appears in the project's
+/// library-backed `skills` list.  Returns `true` if any entries were removed.
+pub(crate) fn prune_shadowed_custom_skills(project: &mut Project) -> bool {
+    let library_names: HashSet<&str> = project.skills.iter().map(|s| s.as_str()).collect();
+    let Some(custom) = project.custom_skills.as_mut() else {
+        return false;
+    };
+    let before = custom.len();
+    custom.retain(|cs| !library_names.contains(cs.name.as_str()));
+    let changed = custom.len() != before;
+    if custom.is_empty() {
+        project.custom_skills = None;
+    }
+    changed
 }
 
 /// Find the Automatic binary path.

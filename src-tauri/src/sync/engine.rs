@@ -7,8 +7,8 @@ use crate::core::{self, Project, ProjectMode};
 
 use super::autodetect::autodetect_inner;
 use super::helpers::{
-    build_selected_servers, clean_project_file, extract_agent_machine_name,
-    load_mcp_server_configs, load_skill_contents, sync_custom_agents, sync_user_agents,
+    build_selected_servers, build_skill_contents, clean_project_file, extract_agent_machine_name,
+    load_mcp_server_configs, sync_custom_agents, sync_user_agents,
 };
 
 struct InstructionTarget {
@@ -108,28 +108,9 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
     let selected_servers = build_selected_servers(&project.name, &enabled_mcp_servers, &mcp_config);
 
     // Read all skill contents from the global skill registry, then append
-    // project-scoped custom skills (which live inline in the project JSON
-    // rather than in ~/.automatic/skills/).
-    //
-    // Skip any custom_skill whose name is already a library-backed skill:
-    // the library is the source of truth, and a stale custom_skills snapshot
-    // (left over from when the skill was project-local before being promoted
-    // to the library) would otherwise overwrite the library content and
-    // cause drift detection to disagree with what sync actually writes.
-    let mut skill_contents = load_skill_contents(&project.skills);
-    let library_skill_names: HashSet<String> = project.skills.iter().cloned().collect();
-    let custom_skills = project.custom_skills.as_deref().unwrap_or(&[]);
-    for cs in custom_skills {
-        if library_skill_names.contains(&cs.name) {
-            continue;
-        }
-        skill_contents.push((cs.name.clone(), cs.content.clone()));
-    }
-    let custom_skill_names: Vec<String> = custom_skills
-        .iter()
-        .filter(|s| !library_skill_names.contains(&s.name))
-        .map(|s| s.name.clone())
-        .collect();
+    // project-scoped custom skills — deduplicating any custom_skill whose
+    // name is already library-backed (library is the source of truth).
+    let (skill_contents, custom_skill_names) = build_skill_contents(project);
     let workspace_command_contents: Vec<(String, String)> = project
         .user_commands
         .iter()
