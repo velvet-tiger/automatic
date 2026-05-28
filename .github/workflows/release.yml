@@ -108,6 +108,7 @@ jobs:
           VITE_BRANDFETCH_CLIENT_ID: ${{ secrets.VITE_BRANDFETCH_CLIENT_ID }}
           # Baked into the Rust binary at compile time via option_env!()
           AMPLITUDE_API_KEY: ${{ secrets.AMPLITUDE_API_KEY }}
+          ATTIO_API_KEY: ${{ secrets.ATTIO_API_KEY }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Automatic ${{ github.ref_name }}
@@ -232,6 +233,7 @@ jobs:
           VITE_BRANDFETCH_CLIENT_ID: ${{ secrets.VITE_BRANDFETCH_CLIENT_ID }}
           # Baked into the Rust binary at compile time via option_env!()
           AMPLITUDE_API_KEY: ${{ secrets.AMPLITUDE_API_KEY }}
+          ATTIO_API_KEY: ${{ secrets.ATTIO_API_KEY }}
         with:
           args: ${{ matrix.args }}
 
