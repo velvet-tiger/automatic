@@ -278,10 +278,32 @@ pub fn source_clone_path(repo: &str) -> Result<PathBuf, String> {
 
 /// Resolve the base directory for manifest and resource paths.
 /// If `directory` is set, returns `clone_path/directory`; otherwise returns `clone_path`.
+///
+/// The directory is validated to ensure it does not escape the clone root via
+/// path traversal (e.g. `../../etc`).
 pub fn resolve_base_dir(repo: &str, directory: Option<&str>) -> Result<PathBuf, String> {
     let clone_path = source_clone_path(repo)?;
     match directory {
         Some(dir) if !dir.is_empty() => {
+            // Reject obvious traversal components before touching the filesystem.
+            for component in std::path::Path::new(dir).components() {
+                match component {
+                    std::path::Component::ParentDir => {
+                        return Err(format!(
+                            "Directory '{}' contains path traversal and is not allowed",
+                            dir
+                        ));
+                    }
+                    std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                        return Err(format!(
+                            "Directory '{}' must be a relative path within the repository",
+                            dir
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+
             let base = clone_path.join(dir);
             if !base.exists() {
                 return Err(format!(
@@ -289,7 +311,22 @@ pub fn resolve_base_dir(repo: &str, directory: Option<&str>) -> Result<PathBuf, 
                     dir, repo
                 ));
             }
-            Ok(base)
+
+            // Verify the resolved path is still inside the clone root.
+            let canonical_clone = clone_path
+                .canonicalize()
+                .unwrap_or_else(|_| clone_path.clone());
+            let canonical_base = base
+                .canonicalize()
+                .map_err(|e| format!("Failed to resolve directory '{}': {}", dir, e))?;
+            if !canonical_base.starts_with(&canonical_clone) {
+                return Err(format!(
+                    "Directory '{}' escapes the repository root",
+                    dir
+                ));
+            }
+
+            Ok(canonical_base)
         }
         _ => Ok(clone_path),
     }
@@ -1375,6 +1412,27 @@ pub fn parse_install_uri(uri: &str) -> Result<InstallUriParams, String> {
             "Invalid repo format '{}', expected 'owner/repo'",
             repo
         ));
+    }
+
+    // Validate directory parameter does not contain path traversal sequences.
+    if let Some(ref dir) = directory {
+        for component in std::path::Path::new(dir).components() {
+            match component {
+                std::path::Component::ParentDir => {
+                    return Err(format!(
+                        "Directory parameter '{}' contains path traversal and is not allowed",
+                        dir
+                    ));
+                }
+                std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                    return Err(format!(
+                        "Directory parameter '{}' must be a relative path",
+                        dir
+                    ));
+                }
+                _ => {}
+            }
+        }
     }
 
     Ok(InstallUriParams {

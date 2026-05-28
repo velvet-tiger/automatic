@@ -167,6 +167,44 @@ pub fn list_spec_kitty_features(project_dir: String) -> Result<Vec<SpecKittyFeat
     Ok(features)
 }
 
+/// Validate that a feature slug contains only safe characters (alphanumeric,
+/// hyphens, and underscores) and does not start with a hyphen (which could be
+/// interpreted as a CLI flag by the target binary).
+fn validate_feature_slug(slug: &str) -> Result<(), String> {
+    if slug.is_empty() {
+        return Err("Feature slug must not be empty".into());
+    }
+    if slug.starts_with('-') {
+        return Err(format!(
+            "Feature slug '{}' must not start with a hyphen",
+            slug
+        ));
+    }
+    if !slug
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!(
+            "Feature slug '{}' contains invalid characters (only alphanumeric, hyphens, and underscores are allowed)",
+            slug
+        ));
+    }
+    Ok(())
+}
+
+/// Validate that a project directory path exists and is a directory.
+fn validate_project_dir(dir: &str) -> Result<PathBuf, String> {
+    let path = Path::new(dir);
+    if !path.exists() {
+        return Err(format!("Project directory does not exist: {}", dir));
+    }
+    if !path.is_dir() {
+        return Err(format!("Path is not a directory: {}", dir));
+    }
+    path.canonicalize()
+        .map_err(|e| format!("Failed to resolve project directory: {}", e))
+}
+
 /// Shell out to `spec-kitty agent tasks status --feature <slug> --json` in
 /// `project_dir` and return the parsed status.
 ///
@@ -177,6 +215,8 @@ pub fn get_spec_kitty_status(
     project_dir: String,
     feature_slug: String,
 ) -> Result<SpecKittyFeatureStatus, String> {
+    validate_feature_slug(&feature_slug)?;
+    let canonical_dir = validate_project_dir(&project_dir)?;
     let binary = find_spec_kitty_binary()?;
     let output = std::process::Command::new(&binary)
         .args([
@@ -187,7 +227,7 @@ pub fn get_spec_kitty_status(
             &feature_slug,
             "--json",
         ])
-        .current_dir(&project_dir)
+        .current_dir(&canonical_dir)
         .output()
         .map_err(|e| format!("Failed to run Spec Kitty at {}: {}", binary.display(), e))?;
 

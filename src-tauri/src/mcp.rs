@@ -443,17 +443,28 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_get_credential",
-        description = "Retrieve an API key for a given LLM provider stored in Automatic"
+        description = "Retrieve an API key for a given LLM provider stored in Automatic. \
+                       Only recognised provider IDs are accepted (e.g. anthropic, openai)."
     )]
     async fn get_credential(
         &self,
         params: Parameters<GetCredentialParams>,
     ) -> Result<CallToolResult, McpError> {
-        match crate::core::get_api_key(&params.0.provider) {
+        let provider = &params.0.provider;
+        let known = crate::core::agents::known_agents();
+        if !known.iter().any(|id| id.as_str() == provider) {
+            let valid: Vec<&str> = known.iter().map(|id| id.as_str()).collect();
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Unknown provider '{}'. Valid providers: {}",
+                provider,
+                valid.join(", ")
+            ))]));
+        }
+        match crate::core::get_api_key(provider) {
             Ok(key) => Ok(CallToolResult::success(vec![Content::text(key)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to retrieve credential for '{}': {}",
-                params.0.provider, e
+                provider, e
             ))])),
         }
     }
