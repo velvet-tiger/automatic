@@ -10,7 +10,9 @@
     "tauri": "tauri",
     "lint": "tsc --noEmit",
     "check": "tsc --noEmit && cd src-tauri && cargo check",
-    "test": "cd src-tauri && cargo test"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:rust": "cd src-tauri && cargo test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -24,11 +26,16 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.0",
     "@tauri-apps/cli": "^2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "happy-dom": "^20.9.0",
     "tailwindcss": "^4.2.0",
     "typescript": "~5.8.3",
-    "vite": "^7.3.2"
+    "vite": "^7.3.2",
+    "vitest": "^4.1.7"
   }
 }
