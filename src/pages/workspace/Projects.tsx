@@ -79,6 +79,8 @@ import {
   MessagesSquare,
   EyeOff,
   Webhook,
+  LayoutGrid,
+  Table2,
 } from "lucide-react";
 
 interface CustomRule {
@@ -2169,6 +2171,17 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject }: Project
 function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, onSelect, onCreate, onSyncAll, syncAllStatus, filterGroup = null }: ProjectsOverviewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState<"alphabetical" | "created" | "updated" | "last_activity">("alphabetical");
+  // Projects can be displayed as a card grid or a compact table. The choice is
+  // persisted per-machine so it survives navigation and restarts.
+  const VIEW_MODE_KEY = "automatic.projects.viewMode";
+  const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
+    const stored = localStorage.getItem(VIEW_MODE_KEY);
+    return stored === "table" ? "table" : "grid";
+  });
+  const selectViewMode = (mode: "grid" | "table") => {
+    setViewMode(mode);
+    localStorage.setItem(VIEW_MODE_KEY, mode);
+  };
   const [groupProjectNames, setGroupProjectNames] = useState<Set<string> | null>(null);
   /** For "__ungrouped__" filter: set of all projects that ARE in some group. */
   const [allGroupedNames, setAllGroupedNames] = useState<Set<string> | null>(null);
@@ -2277,6 +2290,102 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
     </div>
   );
 
+  const renderTable = (names: string[]) => (
+    <div className="overflow-x-auto rounded-lg border border-border-strong/40 bg-bg-input/40">
+      <table className="w-full border-collapse text-[12px]">
+        <thead>
+          <tr className="border-b border-border-strong/40 text-left text-[11px] font-medium uppercase tracking-wide text-text-muted">
+            <th className="px-3 py-2 font-medium">Project</th>
+            <th className="px-3 py-2 font-medium">Status</th>
+            <th className="px-3 py-2 font-medium text-right" title="Agents">Agents</th>
+            <th className="px-3 py-2 font-medium text-right" title="Skills">Skills</th>
+            <th className="px-3 py-2 font-medium text-right" title="MCP servers">MCP</th>
+            <th className="px-3 py-2 font-medium text-right" title="Rules">Rules</th>
+            <th className="px-3 py-2 font-medium text-right" title="Sub-agents">Sub-agents</th>
+            <th className="px-3 py-2 font-medium text-right" title="Commands">Commands</th>
+            <th className="px-3 py-2 font-medium text-right">Last activity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {names.map((name) => {
+            const project = projectDetails.get(name);
+            const drift = driftByProject[name];
+            // Mirror the per-card derivations so both views report identical counts
+            // and an identical sync state. A project is only "synced/drifted" once
+            // it is configured (has a directory and at least one agent); otherwise
+            // the card suppresses the badge and surfaces the configuration gap, and
+            // the table must do the same to stay consistent.
+            const isMissingDir = project?.directory_missing === true;
+            const isConfigured = !!(project?.directory && (project?.agents?.length ?? 0) > 0);
+            const agentCount = project?.agents?.length ?? 0;
+            const skillsCount = (project?.skills?.length ?? 0) + (project?.custom_skills?.length ?? 0);
+            const mcpCount = project?.mcp_servers?.length ?? 0;
+            const rulesCount =
+              Object.values(project?.file_rules ?? {}).reduce((sum, arr) => sum + arr.length, 0) +
+              (project?.custom_rules?.length ?? 0);
+            const subAgentCount = (project?.custom_agents?.length ?? 0) + (project?.user_agents?.length ?? 0);
+            const commandsCount = (project?.custom_commands?.length ?? 0) + (project?.user_commands?.length ?? 0);
+            const directory = project?.directory ?? "";
+            const lastActivity = project?.last_activity ?? project?.updated_at ?? project?.created_at ?? null;
+            return (
+              <tr
+                key={name}
+                onClick={() => onSelect(name)}
+                className="group cursor-pointer border-b border-border-strong/20 last:border-b-0 transition-colors hover:bg-bg-input/70"
+              >
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded-md bg-gradient-to-br from-brand/20 to-brand/5 border border-brand/20 flex items-center justify-center shrink-0">
+                      <FolderOpen size={13} className="text-brand" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-medium text-text-base truncate group-hover:text-brand transition-colors">
+                        {name}
+                      </div>
+                      {directory && (
+                        <div className="text-[11px] text-text-muted truncate">{directory}</div>
+                      )}
+                    </div>
+                  </div>
+                </td>
+                <td className="px-3 py-2">
+                  {isMissingDir ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-danger bg-danger/10 border border-danger/30 rounded-full px-2 py-0.5">
+                      <AlertCircle size={9} /> Folder missing
+                    </span>
+                  ) : !isConfigured ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-warning bg-warning/10 border border-warning/30 rounded-full px-2 py-0.5">
+                      <AlertCircle size={9} /> No agents
+                    </span>
+                  ) : drift === true ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-warning bg-warning/10 border border-warning/30 rounded-full px-2 py-0.5">
+                      <AlertCircle size={9} /> Drifted
+                    </span>
+                  ) : drift === false ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-success bg-success/10 border border-success/30 rounded-full px-2 py-0.5">
+                      <CheckCircle2 size={9} /> Synced
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-text-muted">—</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-text-base">{agentCount}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-text-base">{skillsCount}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-text-base">{mcpCount}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-text-base">{rulesCount}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-text-base">{subAgentCount}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-text-base">{commandsCount}</td>
+                <td className="px-3 py-2 text-right text-[11px] text-text-muted whitespace-nowrap">
+                  {lastActivity ? relativeTime(lastActivity) : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+
   return (
     <div className="flex-1 h-full overflow-y-auto custom-scrollbar bg-bg-base">
       {/* Top bar */}
@@ -2293,6 +2402,34 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
               placeholder="Search projects"
               className="h-7 w-44 rounded-md border border-border-strong/50 bg-bg-input pl-7 pr-2 text-[12px] text-text-base placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60"
             />
+          </div>
+          <div className="flex items-center rounded-md border border-border-strong/50 bg-bg-input p-0.5" role="group" aria-label="Project view mode">
+            <button
+              onClick={() => selectViewMode("grid")}
+              aria-label="Card view"
+              aria-pressed={viewMode === "grid"}
+              title="Card view"
+              className={`flex h-6 w-6 items-center justify-center rounded transition-colors ${
+                viewMode === "grid"
+                  ? "bg-brand/15 text-brand"
+                  : "text-text-muted hover:text-text-base"
+              }`}
+            >
+              <LayoutGrid size={13} />
+            </button>
+            <button
+              onClick={() => selectViewMode("table")}
+              aria-label="Table view"
+              aria-pressed={viewMode === "table"}
+              title="Table view"
+              className={`flex h-6 w-6 items-center justify-center rounded transition-colors ${
+                viewMode === "table"
+                  ? "bg-brand/15 text-brand"
+                  : "text-text-muted hover:text-text-base"
+              }`}
+            >
+              <Table2 size={13} />
+            </button>
           </div>
           <div className="relative">
             <select
@@ -2362,6 +2499,8 @@ function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByPr
             <p className="text-[13px] text-text-base mb-1">No matching projects</p>
             <p className="text-[12px] text-text-muted">Try another search term.</p>
           </div>
+        ) : viewMode === "table" ? (
+          renderTable(filteredProjects)
         ) : (
           renderCardGrid(filteredProjects)
         )}
