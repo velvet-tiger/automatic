@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import mcpServersData from "../../../../src-tauri/assets/discover/featured-mcp-servers.json";
+import mcpServersData from "../../../../../src-tauri/assets/discover/featured-mcp-servers.json";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
-import type { ProjectRecommendation } from "./types";
+import type { ProjectRecommendation } from "../types";
 
 /**
  * Installs an AI-suggested MCP server config and adds it to the project.

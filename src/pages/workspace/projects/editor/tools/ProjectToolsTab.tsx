@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getToolPanel } from "../../../../plugins";
-import { handleExternalLinkClick } from "../../../../lib/externalLinks";
+import { getToolPanel } from "../../../../../plugins";
+import { handleExternalLinkClick } from "../../../../../lib/externalLinks";
 import { CheckCircle2, ExternalLink, Globe, MinusCircle, Plus, Puzzle, RefreshCw, Terminal, Wrench, X } from "lucide-react";
-import { projectToolKindLabel } from "../helpers";
-import { ProjectToolAvatar } from "../EditorIcon";
-import type { ProjectToolEntry } from "../types";
+import { projectToolKindLabel } from "../../helpers";
+import { ProjectToolAvatar } from "../../EditorIcon";
+import type { ProjectToolEntry } from "../../types";
 
 interface ProjectToolsTabProps {
   projectDir: string;

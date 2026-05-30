@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertCircle, Plus, RefreshCw } from "lucide-react";
-import { formatAssetScanResult, scanAssetContent, warningFindings } from "../../../lib/assetSecurity";
-import type { ProjectRecommendation } from "./types";
+import { formatAssetScanResult, scanAssetContent, warningFindings } from "../../../../lib/assetSecurity";
+import type { ProjectRecommendation } from "../types";
 
 /**
  * Installs an AI-suggested skill from the remote registry and then notifies

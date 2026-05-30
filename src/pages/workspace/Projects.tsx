@@ -64,15 +64,15 @@ import {
 import { EditorIcon } from "./projects/EditorIcon";
 import { DriftDiffModal } from "./projects/modals/DriftDiffModal";
 import { InstructionConflictModal } from "./projects/modals/InstructionConflictModal";
-import { SwitchToUnifiedModal } from "./projects/modals/SwitchToUnifiedModal";
-import { RebuildConfirmationModal } from "./projects/modals/RebuildConfirmationModal";
-import { ApplyProjectTemplateModal } from "./projects/modals/ApplyProjectTemplateModal";
+import { SwitchToUnifiedModal } from "./projects/editor/SwitchToUnifiedModal";
+import { RebuildConfirmationModal } from "./projects/editor/RebuildConfirmationModal";
+import { ApplyProjectTemplateModal } from "./projects/editor/ApplyProjectTemplateModal";
 import { ActivityFeed } from "./projects/editor/ActivityFeed";
 import { SummaryMetricCard, SummarySidebarSection } from "./projects/editor/SummaryMetricCard";
 import { ProjectsOverview } from "./projects/overview/ProjectsOverview";
-import { SkillAddButton } from "./projects/SkillAddButton";
-import { McpAddButton } from "./projects/McpAddButton";
-import { ProjectToolsTab, ToolInfoSidebar, ProjectToolDetailPanel } from "./projects/tools/ProjectToolsTab";
+import { SkillAddButton } from "./projects/editor/SkillAddButton";
+import { McpAddButton } from "./projects/editor/McpAddButton";
+import { ProjectToolsTab, ToolInfoSidebar, ProjectToolDetailPanel } from "./projects/editor/tools/ProjectToolsTab";
 
 import {
   Plus,
