@@ -122,6 +122,13 @@ interface ProjectEditorProps {
   setProjectDetailsMap: React.Dispatch<React.SetStateAction<Map<string, Project>>>;
   setDriftByProject: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   onBack: () => void;
+  /**
+   * Cached project from the router's overview map, used as the initial value
+   * so the editor chrome (title, tabs) renders immediately while SEAM 1's
+   * `selectProject` fetches fresh data. Avoids a flash of empty content
+   * between overview and editor.
+   */
+  initialProject?: Project | null;
   initialProjectTab?: string | null;
   onInitialProjectTabConsumed?: () => void;
   createFromTemplates?: ProjectTemplate[] | null;
@@ -144,6 +151,7 @@ export function ProjectEditor({
   setProjectDetailsMap,
   setDriftByProject,
   onBack,
+  initialProject = null,
   initialProjectTab = null,
   onInitialProjectTabConsumed,
   createFromTemplates = null,
@@ -161,7 +169,7 @@ export function ProjectEditor({
   const LAST_PROJECT_KEY = "automatic.projects.selected";
   const PROJECT_ORDER_KEY = "automatic.projects.order";
 
-  const [project, setProject] = useState<Project | null>(null);
+  const [project, setProject] = useState<Project | null>(initialProject);
   const [dirty, setDirty] = useState(false);
   const [newName, setNewName] = useState("");
   // Wizard state (used while isCreating === true)
@@ -7201,26 +7209,11 @@ export function ProjectEditor({
             )}
           </div>
         ) : (
-          /* Empty state */
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-full border border-dashed border-border-strong flex items-center justify-center text-text-muted">
-              <FolderOpen size={24} strokeWidth={1.5} />
-            </div>
-            <h2 className="text-lg font-medium text-text-base mb-2">
-              No Project Selected
-            </h2>
-            <p className="text-[14px] text-text-muted mb-8 leading-relaxed max-w-sm">
-              Projects group skills and MCP servers into reusable
-              configurations. Select one from the sidebar or create a new
-              project.
-            </p>
-            <button
-              onClick={() => startCreate()}
-              className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
-            >
-              Create Project
-            </button>
-          </div>
+          // Loading: SEAM 1 (selectProject) or SEAM 2 (startCreate) will
+          // populate `project` shortly. Render an empty pane to avoid flashing
+          // the old "No Project Selected" empty state — the router now owns
+          // the no-selection screen (ProjectsOverview).
+          null
         )}
       </div>
     </div>

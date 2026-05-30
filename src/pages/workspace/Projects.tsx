@@ -286,6 +286,7 @@ export default function Projects({
       setProjectDetailsMap={setProjectDetailsMap}
       setDriftByProject={setDriftByProject}
       onBack={handleBackToOverview}
+      initialProject={selectedName ? projectDetailsMap.get(selectedName) ?? null : null}
       initialProjectTab={initialProjectTab}
       onInitialProjectTabConsumed={onInitialProjectTabConsumed}
       createFromTemplates={createFromTemplates}
