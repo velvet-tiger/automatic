@@ -139,7 +139,8 @@ pub struct SpecKittyFeatureStatus {
 /// directory does not exist or no features are found.
 #[tauri::command]
 pub fn list_spec_kitty_features(project_dir: String) -> Result<Vec<SpecKittyFeatureMeta>, String> {
-    let specs_dir = Path::new(&project_dir).join("kitty-specs");
+    let canonical_dir = validate_project_dir(&project_dir)?;
+    let specs_dir = canonical_dir.join("kitty-specs");
     if !specs_dir.exists() {
         return Ok(Vec::new());
     }
