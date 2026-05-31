@@ -9,8 +9,6 @@ import { LineNumberedTextarea } from "../../../../components/LineNumberedTextare
 import { TokenPill } from "../../../../components/TokenPill";
 import { useCurrentUser } from "../../../../contexts/ProfileContext";
 import { useTaskLog } from "../../../../contexts/TaskLogContext";
-import { MemoryBrowser } from "../../../../components/MemoryBrowser";
-import { ClaudeMemoryPanel } from "../../../../components/ClaudeMemoryPanel";
 import Features from "../../../../plugins/build/Features";
 import { SpecKittyPanel } from "../../../../plugins/spec-kitty/SpecKittyPanel";
 import { invoke } from "@tauri-apps/api/core";
@@ -73,6 +71,7 @@ import { SkillAddButton } from "./SkillAddButton";
 import { McpAddButton } from "./McpAddButton";
 import { ProjectToolsTab, ToolInfoSidebar, ProjectToolDetailPanel } from "./tools/ProjectToolsTab";
 import { SettingsPanel } from "./panels/SettingsPanel";
+import { MemoryPanel } from "./panels/MemoryPanel";
 
 import {
   Plus,
@@ -6598,22 +6597,14 @@ export function ProjectEditor({
 
                 {/* ── Memory tab ──────────────────────────────────── */}
                 {projectTab === "memory" && selectedName && (
-                  <>
-                    <MemoryBrowser
-                      projectName={selectedName}
-                      memories={memories}
-                      loading={loadingMemories}
-                      onRefresh={() => loadMemories(selectedName)}
-                      onError={(msg) => setError(msg)}
-                    />
-                    {project?.directory && project.agents.includes("claude") && (
-                      <ClaudeMemoryPanel
-                        projectName={selectedName}
-                        projectDirectory={project.directory}
-                        onPromoted={() => loadMemories(selectedName)}
-                      />
-                    )}
-                  </>
+                  <MemoryPanel
+                    projectName={selectedName}
+                    project={project}
+                    memories={memories}
+                    loadingMemories={loadingMemories}
+                    reloadMemories={loadMemories}
+                    onError={setError}
+                  />
                 )}
 
                 {/* ── Activity tab ─────────────────────────────────── */}
