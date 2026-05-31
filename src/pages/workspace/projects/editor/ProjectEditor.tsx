@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { SkillSelector } from "../../../../components/SkillSelector";
-import { AgentSelector } from "../../../../components/AgentSelector";
 import type { AgentOptions } from "../../../../components/AgentSelector";
 import { AgentIcon } from "../../../../components/AgentIcon";
 import { McpSelector } from "../../../../components/McpSelector";
@@ -74,6 +73,7 @@ import { DocsFilesPanel } from "./panels/DocsFilesPanel";
 import { DocsLinksPanel } from "./panels/DocsLinksPanel";
 import { DocsNotesPanel } from "./panels/DocsNotesPanel";
 import { SummaryPanel } from "./panels/SummaryPanel";
+import { AgentsPanel } from "./panels/AgentsPanel";
 
 import {
   Plus,
@@ -5359,30 +5359,16 @@ export function ProjectEditor({
 
                 {/* ── Details tab ──────────────────────────────────────── */}
                  {/* ── Agents tab ───────────────────────────────────────── */}
-                {projectTab === "agents" && (
-                   <section>
-                      <AgentSelector
-                        agentIds={project.agents}
-                        availableAgents={availableAgents}
-                        onAdd={(id) => addItem("agents", id)}
-                        onRemove={(i) => handleRemoveAgent(i)}
-                        emptyMessage="No agent tools selected. Add tools to enable config sync."
-                        agentOptions={project.agent_options}
-                        onOptionChange={(agentId, patch) => {
-                          const current = project.agent_options?.[agentId] ?? { claude_rules_in_dot_claude: true };
-                          setProject({
-                            ...project,
-                            agent_options: {
-                              ...(project.agent_options ?? {}),
-                              [agentId]: { ...current, ...patch },
-                            },
-                            updated_at: new Date().toISOString(),
-                          });
-                          setDirty(true);
-                        }}
-                      />
-                   </section>
-                 )}
+                {projectTab === "agents" && project && (
+                  <AgentsPanel
+                    project={project}
+                    setProject={setProject}
+                    setDirty={setDirty}
+                    availableAgents={availableAgents}
+                    addItem={addItem}
+                    handleRemoveAgent={handleRemoveAgent}
+                  />
+                )}
 
                 {/* ── Skills tab ───────────────────────────────────────── */}
                 {projectTab === "skills" && (
