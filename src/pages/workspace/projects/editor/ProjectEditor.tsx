@@ -59,7 +59,7 @@ import { InstructionConflictModal } from "../modals/InstructionConflictModal";
 import { SwitchToUnifiedModal } from "./SwitchToUnifiedModal";
 import { RebuildConfirmationModal } from "./RebuildConfirmationModal";
 import { ApplyProjectTemplateModal } from "./ApplyProjectTemplateModal";
-import { ProjectToolsTab, ToolInfoSidebar, ProjectToolDetailPanel } from "./tools/ProjectToolsTab";
+import { ToolInfoSidebar } from "./tools/ProjectToolsTab";
 import { SettingsPanel } from "./panels/SettingsPanel";
 import { MemoryPanel } from "./panels/MemoryPanel";
 import { GroupsPanel } from "./panels/GroupsPanel";
@@ -72,6 +72,7 @@ import { SummaryPanel } from "./panels/SummaryPanel";
 import { AgentsPanel } from "./panels/AgentsPanel";
 import { SkillsPanel } from "./panels/SkillsPanel";
 import { McpServersPanel } from "./panels/McpServersPanel";
+import { ToolsPanel } from "./panels/ToolsPanel";
 
 import {
   Plus,
@@ -3920,52 +3921,19 @@ export function ProjectEditor({
             )}
 
             {/* ── Tools tab (under Configuration) ──────────────────── */}
-            {activeToolName === null && projectTab === "tools" && (
+            {activeToolName === null && projectTab === "tools" && project && (
               <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
                 <div className="space-y-8">
-                  {toolTab === null ? (
-                    <ProjectToolsTab
-                      projectDir={project.directory}
-                      projectTools={project.tools ?? []}
-                      entries={toolEntries}
-                      loading={toolEntriesLoading}
-                      onReload={loadToolEntries}
-                      onToolsChange={(tools) => {
-                        const updated = { ...project, tools, updated_at: new Date().toISOString() };
-                        setProject(updated);
-                        setDirty(false);
-                        saveProjectSnapshot(updated);
-                      }}
-                    />
-                  ) : (
-                    (() => {
-                      const entry = toolEntries.find((e) => e.name === toolTab);
-                      if (!entry) return (
-                        <p className="text-[12px] text-text-muted">Tool not found.</p>
-                      );
-                      return (
-                        <ProjectToolDetailPanel
-                          entry={entry}
-                          projectDir={project.directory}
-                          active={(project.tools ?? []).includes(entry.name)}
-                          onAdd={() => {
-                            const tools = [...new Set([...(project.tools ?? []), entry.name])];
-                            const updated = { ...project, tools, updated_at: new Date().toISOString() };
-                            setProject(updated);
-                            setDirty(false);
-                            saveProjectSnapshot(updated);
-                          }}
-                          onRemove={() => {
-                            const tools = (project.tools ?? []).filter((t) => t !== entry.name);
-                            const updated = { ...project, tools, updated_at: new Date().toISOString() };
-                            setProject(updated);
-                            setDirty(false);
-                            saveProjectSnapshot(updated);
-                          }}
-                        />
-                      );
-                    })()
-                  )}
+                  <ToolsPanel
+                    project={project}
+                    toolTab={toolTab}
+                    toolEntries={toolEntries}
+                    toolEntriesLoading={toolEntriesLoading}
+                    loadToolEntries={loadToolEntries}
+                    setProject={setProject}
+                    setDirty={setDirty}
+                    saveProjectSnapshot={saveProjectSnapshot}
+                  />
                 </div>
               </div>
             )}
