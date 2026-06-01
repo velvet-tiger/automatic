@@ -4,6 +4,35 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.10.3] - 2026-06-01
+
+### Added
+
+- Projects list now offers a table view alongside the existing grid layout, with a grid/table switcher in the header. ([edbc2fc](https://github.com/velvet-tiger/automatic/commit/edbc2fc))
+- Refreshed application icon set. ([d0ebb64](https://github.com/velvet-tiger/automatic/commit/d0ebb64))
+
+### Fixed
+
+- Hardened security posture: enabled CSP, scoped MCP credentials, and added validation for CLI arguments and deep link paths. ([0316210](https://github.com/velvet-tiger/automatic/commit/0316210))
+- Opening a project no longer shows a brief empty-state flash before the editor renders. ([e288269](https://github.com/velvet-tiger/automatic/commit/e288269))
+- Skill import dialog now stays open after a successful import so the summary remains readable. ([6f424dd](https://github.com/velvet-tiger/automatic/commit/6f424dd), [d33c9d6](https://github.com/velvet-tiger/automatic/commit/d33c9d6))
+- `list_spec_kitty_features` now validates `project_dir` before scanning. ([6a3bdef](https://github.com/velvet-tiger/automatic/commit/6a3bdef))
+- `build.rs` and CI environment variables are now in sync with `.env.example`. ([78bad11](https://github.com/velvet-tiger/automatic/commit/78bad11))
+
+### Changed
+
+- Split the monolithic `Projects.tsx` into a `Projects` router plus a dedicated `ProjectEditor`, then extracted each editor section (Summary, Agents, Skills, MCP Servers, Tools, Rules, Commands, Hooks, Custom Agents, Project Files, Context, Settings, Memory, Groups, Activity, Recommendations, Docs Files, Docs Links, Docs Notes) into its own panel component. ([48b7ea9](https://github.com/velvet-tiger/automatic/commit/48b7ea9), [e0442a1](https://github.com/velvet-tiger/automatic/commit/e0442a1), [6af1b9a](https://github.com/velvet-tiger/automatic/commit/6af1b9a), [aec6c2a](https://github.com/velvet-tiger/automatic/commit/aec6c2a), [6040380](https://github.com/velvet-tiger/automatic/commit/6040380), [aa3355d](https://github.com/velvet-tiger/automatic/commit/aa3355d), [992b213](https://github.com/velvet-tiger/automatic/commit/992b213), [f247722](https://github.com/velvet-tiger/automatic/commit/f247722), [2af9c7f](https://github.com/velvet-tiger/automatic/commit/2af9c7f), [f74ce9b](https://github.com/velvet-tiger/automatic/commit/f74ce9b), [80ab99d](https://github.com/velvet-tiger/automatic/commit/80ab99d), [2d9dfcb](https://github.com/velvet-tiger/automatic/commit/2d9dfcb), [daf680c](https://github.com/velvet-tiger/automatic/commit/daf680c), [d479373](https://github.com/velvet-tiger/automatic/commit/d479373), [0dfa12f](https://github.com/velvet-tiger/automatic/commit/0dfa12f), [7ec95fc](https://github.com/velvet-tiger/automatic/commit/7ec95fc), [78814f2](https://github.com/velvet-tiger/automatic/commit/78814f2), [4db00cf](https://github.com/velvet-tiger/automatic/commit/4db00cf), [0c520c5](https://github.com/velvet-tiger/automatic/commit/0c520c5), [3a68c9c](https://github.com/velvet-tiger/automatic/commit/3a68c9c))
+- Grouped editor-only files under `projects/editor/` and pulled the module-scope helpers into a `projects/` subfolder. ([7d11720](https://github.com/velvet-tiger/automatic/commit/7d11720), [817dc38](https://github.com/velvet-tiger/automatic/commit/817dc38))
+- Extracted a shared skill dedup helper and scoped autodetect pruning to project skills only. ([bb3a886](https://github.com/velvet-tiger/automatic/commit/bb3a886))
+
+### Testing
+
+- Added characterization tests for the projects list and editor behavior to guard the refactor. ([1da12dc](https://github.com/velvet-tiger/automatic/commit/1da12dc))
+
+### Documentation
+
+- Added a granular, test-harness-first plan for the Phase 2 projects refactor. ([af36afa](https://github.com/velvet-tiger/automatic/commit/af36afa))
+
 ## [1.10.2] - 2026-05-27
 
 ### Fixed
