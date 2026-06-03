@@ -86,6 +86,44 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         let _ = crate::core::save_project(&project.name, &proj_str);
     }
 
+    sync_to_directory_inner(project, true)
+}
+
+/// Write a project's configuration to its directory **without** updating the
+/// projects registry.
+///
+/// Identical to [`sync_project_without_autodetect`] except that no
+/// `save_project` call occurs anywhere in the call graph — neither the
+/// upfront registry write nor the trailing instruction-hash persistence.
+///
+/// The instruction-hash bookkeeping that the persistent sync path performs
+/// is deliberately skipped here: those hashes only exist to power drift
+/// detection on a registered project, and a transient init has no project
+/// for them to be attached to.
+///
+/// Used by `automatic init`, which applies a template to the current
+/// directory without registering an ongoing project. The returned `Vec`
+/// lists the files that were written, in order.
+pub fn sync_to_directory(project: &mut Project) -> Result<Vec<String>, String> {
+    sync_to_directory_inner(project, false)
+}
+
+/// Shared body for both sync entry points. `persist_hashes` controls whether
+/// the trailing instruction-hash bookkeeping is run; that step also calls
+/// `save_project` internally and is therefore disabled by `sync_to_directory`.
+fn sync_to_directory_inner(
+    project: &mut Project,
+    persist_hashes: bool,
+) -> Result<Vec<String>, String> {
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    let dir = PathBuf::from(&project.directory);
+    if !dir.exists() {
+        return Err(format!("Directory '{}' does not exist", project.directory));
+    }
+
     // In Silent mode all synced files are written under .automatic/silent/
     // instead of the project root, leaving the project tree untouched.
     let effective_dir = match project.mode {
@@ -164,7 +202,9 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
         &effective_dir_str,
         &mut written_files,
     )?;
-    record_instruction_state_step(project, &written_instruction_files, &effective_dir_str);
+    if persist_hashes {
+        record_instruction_state_step(project, &written_instruction_files, &effective_dir_str);
+    }
 
     Ok(written_files)
 }

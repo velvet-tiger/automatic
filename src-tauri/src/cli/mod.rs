@@ -65,6 +65,22 @@ pub enum Command {
         #[command(subcommand)]
         action: RulesAction,
     },
+    /// Apply a project template to a directory without creating a project.
+    ///
+    /// Writes the same agent config files (CLAUDE.md, AGENTS.md, .mcp.json,
+    /// `.agents/skills/*`, etc.) `automatic projects sync` would write, but
+    /// never persists a project record or mutates any global registry.
+    Init {
+        /// Template name from `~/.automatic/library/templates/`.
+        template: String,
+        /// Target directory. Defaults to the current working directory.
+        #[arg(long)]
+        directory: Option<String>,
+        /// Synthetic project name used internally for sync. Defaults to the
+        /// directory basename, sanitised to a valid name.
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -156,6 +172,11 @@ pub fn run(argv: Vec<String>) -> i32 {
         Command::Mcp { action } => mcp::dispatch(action, opts),
         Command::Memory { action } => memory::dispatch(action, opts),
         Command::Rules { action } => rules::dispatch(action, opts),
+        Command::Init {
+            template,
+            directory,
+            name,
+        } => init::run(&template, directory.as_deref(), name.as_deref(), opts),
     };
 
     match result {
@@ -189,6 +210,7 @@ pub fn is_cli_verb(verb: &str) -> bool {
             | "mcp"
             | "memory"
             | "rules"
+            | "init"
             | "--help"
             | "-h"
             | "help"
@@ -221,6 +243,7 @@ impl From<String> for CliError {
     }
 }
 
+mod init;
 mod memory;
 mod mcp;
 mod projects;
@@ -301,6 +324,49 @@ mod tests {
                 assert_eq!(key, "k");
                 assert_eq!(value, "v");
                 assert_eq!(source, "cli");
+            }
+            other => panic!("unexpected command: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_init_with_directory_and_name() {
+        let cli = Cli::try_parse_from([
+            "automatic",
+            "init",
+            "software-defaults",
+            "--directory",
+            "/tmp/foo",
+            "--name",
+            "demo",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Init {
+                template,
+                directory,
+                name,
+            } => {
+                assert_eq!(template, "software-defaults");
+                assert_eq!(directory.as_deref(), Some("/tmp/foo"));
+                assert_eq!(name.as_deref(), Some("demo"));
+            }
+            other => panic!("unexpected command: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_init_with_template_only() {
+        let cli = Cli::try_parse_from(["automatic", "init", "software-defaults"]).unwrap();
+        match cli.command {
+            Command::Init {
+                template,
+                directory,
+                name,
+            } => {
+                assert_eq!(template, "software-defaults");
+                assert!(directory.is_none(), "directory should default at runtime");
+                assert!(name.is_none(), "name should default at runtime");
             }
             other => panic!("unexpected command: {:?}", other),
         }

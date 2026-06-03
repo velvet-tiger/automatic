@@ -96,6 +96,38 @@ automatic rules list
 automatic rules show <machine-name>
 ```
 
+### Init — apply a template to a directory
+
+```
+automatic init <template> [--directory <path>] [--name <name>]
+```
+
+Applies a project template to a directory and writes the same files
+`automatic projects sync` would write — agent config files, skill copies,
+hooks, instruction files, and any inline `project_files` from the template.
+
+Unlike `projects sync`, **no project is created and no registry entry is
+written**. The projects registry, the activity log, and the global MCP
+server registry are all untouched. Use this when you want template-driven
+setup for a directory that is not (and should not become) a tracked
+Automatic project.
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--directory <path>` | `$PWD` | Target directory. Must exist. |
+| `--name <name>` | directory basename, sanitised | Synthetic project name used internally for filename generation. |
+
+Example:
+
+```bash
+mkdir my-app && cd my-app
+automatic init software-defaults
+# Wrote 7 files into ./ — CLAUDE.md, AGENTS.md, .agents/skills/*, .mcp.json, …
+```
+
+The `--json` form returns the list of paths written so a script can
+verify the files or copy them elsewhere.
+
 ## Scripting
 
 Combining `--json` with a JSON tool such as `jq` covers most automation

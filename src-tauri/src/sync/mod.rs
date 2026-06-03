@@ -13,5 +13,8 @@ pub use drift::{
     DriftReport, DriftedFile, InstructionFileConflict, ProjectProblem, ProjectProblemKind,
     ProjectProblemsReport,
 };
-pub use engine::{discover_new_agent_mcp_configs, sync_project, sync_project_without_autodetect};
+pub use engine::{
+    discover_new_agent_mcp_configs, sync_project, sync_project_without_autodetect,
+    sync_to_directory,
+};
 pub use rebuild::{rebuild_instruction_snapshots, rebuild_project_state};
