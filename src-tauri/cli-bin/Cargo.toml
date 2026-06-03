@@ -1,0 +1,22 @@
+[package]
+name = "automatic-cli"
+version = "1.11.0"
+edition = "2021"
+description = "Console-subsystem CLI front-end for the Automatic desktop app"
+publish = false
+
+# This crate exists purely so Tauri's bundler does not see the CLI binary
+# as a sidecar of the main GUI crate. See `src/main.rs` for the longer
+# rationale. The actual CLI surface — argument parsing, dispatch, output
+# formatting — all lives in the parent crate's library, exposed via
+# `automatic_lib::cli::run`.
+
+[[bin]]
+name = "automatic-cli"
+path = "src/main.rs"
+
+[dependencies]
+# Pull in the parent crate's library so we can call `cli::run`. The parent
+# package is `automatic`; its `[lib].name = "automatic_lib"` means the
+# crate is imported as `automatic_lib` here.
+automatic = { path = ".." }

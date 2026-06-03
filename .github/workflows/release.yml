@@ -65,6 +65,19 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Build the console-subsystem CLI binary and stage it where
+      # tauri.windows.conf.json's `externalBin` entry expects to find it.
+      # Tauri's externalBin convention requires the target-triple suffix.
+      - name: Build and stage automatic-cli (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          cd src-tauri
+          cargo build --release -p automatic-cli
+          mkdir -p binaries
+          cp target/release/automatic-cli.exe \
+             binaries/automatic-cli-x86_64-pc-windows-msvc.exe
+
       # Import the Apple Developer ID certificate into the macOS keychain for signing.
       - name: Import Apple Developer certificate
         if: matrix.os == 'macos-latest'

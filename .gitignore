@@ -23,6 +23,10 @@ target
 # Local dev Tauri config (machine-specific signing identity)
 src-tauri/tauri.dev.conf.json
 
+# CI-only staging area for Tauri `externalBin` sidecars (CLI binary copied
+# here with the target-triple suffix expected by the bundler).
+/src-tauri/binaries/
+
 # Editor directories and files
 .vscode/*
 .vscode/

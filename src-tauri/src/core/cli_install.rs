@@ -499,9 +499,9 @@ mod windows {
     /// a logout. Failures are silent — the registry write itself is the
     /// source of truth; the broadcast is just a courtesy.
     fn broadcast_environment_change() {
-        use windows_sys::Win32::Foundation::{HWND_BROADCAST, LPARAM, WPARAM};
+        use windows_sys::Win32::Foundation::{LPARAM, WPARAM};
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+            HWND_BROADCAST, SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
         };
         let param: Vec<u16> = "Environment\0".encode_utf16().collect();
         let mut result: usize = 0;

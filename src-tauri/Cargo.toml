@@ -1,3 +1,12 @@
+# ── Workspace ───────────────────────────────────────────────────────────────
+# `cli-bin/` is a separate workspace member so its `[[bin]]` entry is invisible
+# to Tauri's bundler (which scans the active crate's Cargo.toml and treats
+# extra binaries as sidecars to lipo on macOS / copy into the installer
+# everywhere). Both members share `target/`, so the produced
+# `automatic-cli.exe` ends up next to the GUI binary at install time.
+[workspace]
+members = [".", "cli-bin"]
+
 [package]
 name = "automatic"
 version = "1.11.0"
@@ -15,19 +24,12 @@ name = "automatic_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 # The GUI binary (windows-subsystem on release builds). All MCP and GUI
-# dispatch flows through this entry point.
+# dispatch flows through this entry point. The console-subsystem CLI
+# binary lives in the `cli-bin/` workspace member; see that crate's
+# `src/main.rs` for the rationale.
 [[bin]]
 name = "automatic"
 path = "src/main.rs"
-
-# Console-subsystem CLI binary. Forwards directly to `automatic_lib::cli::run`
-# so the same verb surface works from PowerShell / cmd.exe with synchronous
-# stdout, proper exit codes, and no `AttachConsole` workarounds. The
-# Settings → Command Line page installs a copy of this binary into a
-# per-user bin directory and adds that directory to `HKCU\Environment\Path`.
-[[bin]]
-name = "automatic-cli"
-path = "src/bin/automatic-cli.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -69,7 +71,8 @@ clap = { version = "4", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
     "Win32_System_Console",
-    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 winreg = "0.55"
