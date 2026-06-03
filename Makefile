@@ -1,4 +1,4 @@
-.PHONY: help dev build check clean install test tauri-dev tauri-build frontend-dev frontend-build rust-check
+.PHONY: help dev build check clean install test tauri-dev tauri-build frontend-dev frontend-build rust-check cli
 
 # Default target
 .DEFAULT_GOAL := help
@@ -41,6 +41,9 @@ clean: ## Clean build artifacts
 
 test: ## Run Rust backend tests
 	cd src-tauri && cargo test
+
+cli: ## Run the CLI locally (usage: make cli ARGS="projects list")
+	cd src-tauri && cargo run --quiet -- $(ARGS)
 
 format: ## Format code (Rust)
 	cd src-tauri && cargo fmt

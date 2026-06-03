@@ -11,10 +11,11 @@ import { AgentSelector, type AgentInfo } from "../components/AgentSelector";
 import SettingsPlugins from "../plugins/SettingsPlugins";
 import { MarkdownPreview } from "../components/MarkdownPreview";
 import { flag } from "../lib/flags";
-import { Bot, Sparkles, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw, UserCircle, LogOut } from "lucide-react";
+import { Bot, Sparkles, AppWindow, Palette, Puzzle, Shield, FileText, LifeBuoy, X, RefreshCw, UserCircle, LogOut, Terminal } from "lucide-react";
 import SettingsAgents from "./settings/Agents";
+import SettingsCommandLine from "./settings/CommandLine";
 
-type SettingsPage = "account" | "sync" | "providers" | "agents" | "appearance" | "app" | "plugins" | "support";
+type SettingsPage = "account" | "sync" | "providers" | "agents" | "appearance" | "app" | "plugins" | "cli" | "support";
 
 interface AccountProfile {
   user_id: string;
@@ -82,6 +83,12 @@ const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; descripti
     description: "Enable & disable features",
   },
   {
+    id: "cli",
+    label: "Command Line",
+    icon: <Terminal size={15} />,
+    description: "Install the automatic CLI",
+  },
+  {
     id: "support",
     label: "Support",
     icon: <LifeBuoy size={15} />,
@@ -97,7 +104,7 @@ interface SettingsProps {
 
 export default function Settings({ onOpenWizard, initialPage, onInitialPageConsumed }: SettingsProps) {
   const [activePage, setActivePage] = useState<SettingsPage>(() => {
-    const valid: SettingsPage[] = ["account", "sync", "providers", "agents", "appearance", "app", "plugins", "support"];
+    const valid: SettingsPage[] = ["account", "sync", "providers", "agents", "appearance", "app", "plugins", "cli", "support"];
     if (initialPage && valid.includes(initialPage as SettingsPage)) {
       return initialPage as SettingsPage;
     }
@@ -106,7 +113,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
   // Handle deep-link navigation when initialPage changes after mount
   useEffect(() => {
     if (!initialPage) return;
-    const valid: SettingsPage[] = ["account", "sync", "providers", "agents", "appearance", "app", "plugins", "support"];
+    const valid: SettingsPage[] = ["account", "sync", "providers", "agents", "appearance", "app", "plugins", "cli", "support"];
     if (valid.includes(initialPage as SettingsPage)) {
       setActivePage(initialPage as SettingsPage);
     }
@@ -607,6 +614,9 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
           {/* ── App page ────────────────────────────────────────────── */}
           {/* ── Plugins page ────────────────────────────────────────────── */}
           {activePage === "plugins" && <SettingsPlugins />}
+
+          {/* ── Command Line page ──────────────────────────────────────── */}
+          {activePage === "cli" && <SettingsCommandLine />}
 
           {/* ── Support page ──────────────────────────────────────────── */}
           {activePage === "support" && (

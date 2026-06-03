@@ -23,6 +23,7 @@
 pub mod account;
 pub mod activity;
 pub mod agent;
+pub mod cli;
 pub mod context;
 pub mod core;
 pub mod languages;
@@ -232,6 +233,9 @@ pub fn run() {
             account_login,
             account_logout,
             account_status,
+            cli_install_status,
+            cli_install_install,
+            cli_install_uninstall,
             cloud_build_bundle,
             cloud_sync_library,
             ai_chat,

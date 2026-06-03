@@ -13,6 +13,7 @@ mod app_plugins;
 mod asset_security;
 mod author;
 mod bundled_skills;
+pub mod cli_install;
 pub mod cloud_sync;
 pub mod cloud_sync_diff;
 pub mod cloud_sync_reconcile;

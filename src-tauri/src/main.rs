@@ -31,8 +31,29 @@ fn main() {
                 std::process::exit(1);
             }
         });
+    } else if args.len() > 1 && automatic_lib::cli::is_cli_verb(&args[1]) {
+        // CLI mode: dispatch to the structured command surface. On Windows
+        // release builds the binary is linked as a windows subsystem (so the
+        // GUI does not show a console); attach to the parent console first
+        // so that stdout/stderr are visible to the invoking shell.
+        attach_parent_console();
+        let code = automatic_lib::cli::run(args);
+        std::process::exit(code);
     } else {
         // Default: launch Tauri desktop app
         automatic_lib::run();
     }
 }
+
+#[cfg(windows)]
+fn attach_parent_console() {
+    // Best-effort: if no parent console exists (double-clicked GUI launch
+    // that somehow ended up here) the call is a no-op.
+    use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_parent_console() {}
