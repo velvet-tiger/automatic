@@ -24,7 +24,7 @@ fn list(project: &str, pattern: Option<&str>, opts: OutputOptions) -> Result<(),
         // a markdown string which is not useful to scripts.
         let db = memory_store::read_memory_db(project).map_err(CliError::from)?;
         let filtered = filter_db(&db, pattern);
-        emit(opts, &filtered, || String::new()).map_err(CliError::Io)
+        emit(opts, &filtered, String::new).map_err(CliError::Io)
     } else {
         let report = memory_store::list_memories(project, pattern).map_err(CliError::from)?;
         emit_status(opts, "ok", &report).map_err(CliError::Io)
@@ -35,7 +35,7 @@ fn get(project: &str, key: &str, opts: OutputOptions) -> Result<(), CliError> {
     if opts.json {
         let db = memory_store::read_memory_db(project).map_err(CliError::from)?;
         match db.get(key) {
-            Some(entry) => emit(opts, entry, || String::new()).map_err(CliError::Io),
+            Some(entry) => emit(opts, entry, String::new).map_err(CliError::Io),
             None => Err(CliError::NotFound(format!(
                 "memory key '{}' not found",
                 key
@@ -70,7 +70,7 @@ fn search(project: &str, query: &str, opts: OutputOptions) -> Result<(), CliErro
             })
             .map(|(k, v)| serde_json::json!({ "key": k, "entry": v }))
             .collect();
-        emit(opts, &matches, || String::new()).map_err(CliError::Io)
+        emit(opts, &matches, String::new).map_err(CliError::Io)
     } else {
         let report = memory_store::search_memories(project, query).map_err(CliError::from)?;
         emit_status(opts, "ok", &report).map_err(CliError::Io)
