@@ -355,6 +355,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "windows-sys 0.59.0",
+ "winreg",
  "zip 2.4.2",
 ]
 

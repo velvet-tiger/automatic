@@ -14,13 +14,33 @@ Open the desktop app, navigate to **Settings → Command Line**, and click
 **Install**. This creates a symlink from the bundled binary to a directory on
 your `$PATH`:
 
-| Platform | Preferred path | Fallback |
+| Platform | Preferred path | Fallback / extra |
 | --- | --- | --- |
 | macOS, Linux | `/usr/local/bin/automatic` (if writable) | `~/.local/bin/automatic` |
-| Windows | _not yet supported_ | manual install required |
+| Windows | `%LOCALAPPDATA%\Programs\automatic\bin\automatic.exe` (no admin needed) | dir is prepended to `HKCU\Environment\Path` |
 
-If the fallback `~/.local/bin` is not already on your `$PATH`, the settings
-page surfaces a hint with the shell snippet to add.
+If the macOS / Linux fallback `~/.local/bin` is not already on your `$PATH`,
+the settings page surfaces a hint with the shell snippet to add.
+
+On Windows, the install button copies the bundled `automatic-cli.exe`
+console binary into the per-user bin directory and broadcasts
+`WM_SETTINGCHANGE` so already-running shells refresh their `PATH`. Newly
+opened terminals always see the change.
+
+### Windows: two binaries, on purpose
+
+The Windows GUI binary (`Automatic.exe`) is linked as a windows-subsystem
+app so launching it from Explorer does not flash a console. That same
+flag stops `cmd.exe` and PowerShell from waiting for it, which makes the
+GUI binary unsuitable for direct CLI invocation: stdout would flush too
+late and exit codes would not propagate.
+
+The `automatic-cli.exe` binary built from `src/bin/automatic-cli.rs` is a
+console-subsystem app that forwards directly to `automatic_lib::cli::run`.
+The install action drops a copy of this binary on `PATH` so `automatic
+<verb>` works end-to-end from any shell. Both binaries share the same Rust
+crate and the same `cli::run` entry point, so behaviour matches the
+single-binary install on macOS / Linux exactly.
 
 ## Global flags
 
@@ -158,5 +178,28 @@ The CLI deliberately does **not** include:
 - Skill, rule, or MCP-server mutations (use the GUI).
 - Interactive prompts or TTY-aware UI.
 - Shell completions (`clap_complete` integration is queued for v2).
-- Windows install — symlinks need developer mode or an admin shell on
-  Windows; the install button is hidden on that platform.
+
+### Windows bundle wiring (deployment follow-up)
+
+The Settings install action looks for `automatic-cli.exe` next to the
+running GUI binary. For the bundled Windows MSI / NSIS installer to
+actually place it there, `src-tauri/tauri.conf.json` needs an
+`externalBin` entry pointing at the CLI binary, e.g.:
+
+```jsonc
+"bundle": {
+  // ...
+  "externalBin": ["../target/release/automatic-cli"]
+}
+```
+
+`cargo tauri build` then expects `automatic-cli-x86_64-pc-windows-msvc.exe`
+to exist; CI builds for Windows must build both `[[bin]]` entries
+(`cargo build --release --bin automatic --bin automatic-cli`) before
+invoking `tauri build`. The macOS / Linux bundle does not need this — the
+GUI binary IS the install target on Unix.
+
+This wiring cannot be validated from a macOS host. The install action
+will return a descriptive error (`CLI binary not found at ...`) until the
+bundle ships the CLI, so users on a pre-bundle build see a clean
+failure rather than a partial install.
