@@ -4,6 +4,13 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-06-03
+
+### Fixed
+
+- macOS bundle step no longer fails looking for `automatic-cli` at the universal-apple-darwin path. The CLI binary now lives in its own workspace member (`src-tauri/cli-bin/`) so Tauri's bundler — which auto-discovers `[[bin]]` entries in the active crate — only sees the GUI binary. macOS and Linux builds revert to the single-binary path they always used; Windows builds get the CLI via a `tauri.windows.conf.json` `externalBin` entry. ([forthcoming](https://github.com/velvet-tiger/automatic/commit/HEAD))
+- Windows compile error in the PATH-broadcast routine. `HWND_BROADCAST` lives in `Win32::UI::WindowsAndMessaging`, and the windows-sys feature flag now correctly enables `Win32_UI_WindowsAndMessaging` and `Win32_Foundation` instead of `Win32_UI_Shell`. ([forthcoming](https://github.com/velvet-tiger/automatic/commit/HEAD))
+
 ## [1.11.0] - 2026-06-03
 
 ### Added
