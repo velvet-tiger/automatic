@@ -4,6 +4,19 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-06-03
+
+### Added
+
+- New `automatic` command-line interface. Ships as a fourth dispatch mode of the existing binary alongside the GUI, the MCP stdio server, and the MCP proxy. Verbs cover projects, skills, MCP servers, memory, and rules; every command supports `--json` returning the same shapes as the MCP tools, plus `--quiet` and standard exit codes (0 ok, 1 not-found, 2 usage error, 3 I/O). ([729ef53](https://github.com/velvet-tiger/automatic/commit/729ef53))
+- New Settings → Command Line page with one-click install. On macOS and Linux it symlinks `/usr/local/bin/automatic` (or `~/.local/bin/automatic` when the system path is not writable) to the bundled binary; install, uninstall, and re-check actions are all idempotent. ([729ef53](https://github.com/velvet-tiger/automatic/commit/729ef53))
+- New `automatic init <template>` command. Writes the same files a project sync would write — agent configs, skills, hooks, instruction files, and any inline template `project_files` — into a target directory without ever touching the projects registry, the activity log, or the global MCP server registry. ([65bb91d](https://github.com/velvet-tiger/automatic/commit/65bb91d))
+- Windows support for the CLI. Adds a second console-subsystem binary (`automatic-cli`) and a Windows install path that copies it to `%LOCALAPPDATA%\Programs\automatic\bin\automatic.exe` and prepends that directory to `HKCU\Environment\Path`, broadcasting `WM_SETTINGCHANGE` so running shells refresh PATH. No admin or developer mode required. ([40f42c1](https://github.com/velvet-tiger/automatic/commit/40f42c1))
+
+### Changed
+
+- The sync engine's `sync_project_without_autodetect` now delegates to a shared inner helper. The new public `sync::sync_to_directory` runs the same file-writing pipeline without any `save_project` side-effects, so callers that need template-driven setup without a persistent project entry have a first-class entry point. ([65bb91d](https://github.com/velvet-tiger/automatic/commit/65bb91d))
+
 ## [1.10.3] - 2026-06-01
 
 ### Added
