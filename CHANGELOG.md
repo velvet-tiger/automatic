@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.11.2] - 2026-06-03
+
+### Fixed
+
+- Windows CI build now succeeds. The `automatic-cli` staging step touches a placeholder file at the `externalBin` path before invoking `cargo build -p automatic-cli`, so the parent crate's `tauri-build` script (which validates every `externalBin` path) does not fail before the real binary has a chance to be produced. The placeholder is overwritten with the real binary once `cli-bin` finishes building, and the subsequent `tauri build` ships the real binary inside the NSIS installer. ([1c0d08c](https://github.com/velvet-tiger/automatic/commit/1c0d08c))
+
 ## [1.11.1] - 2026-06-03
 
 ### Fixed
