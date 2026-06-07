@@ -4,6 +4,17 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.11.3] - 2026-06-08
+
+### Fixed
+
+- Skills marked as external-only are now deleted from disk when removed, rather than left as orphans. ([afe9f70](https://github.com/velvet-tiger/automatic/commit/afe9f70))
+- List and kanban project views now scroll correctly when their contents overflow the viewport. ([e2152e9](https://github.com/velvet-tiger/automatic/commit/e2152e9))
+
+### Maintenance
+
+- Regenerated the full application icon set (macOS, iOS, Android, Windows Store, favicon) from a new 1024×1024 source. ([e50e2fa](https://github.com/velvet-tiger/automatic/commit/e50e2fa))
+
 ## [1.11.2] - 2026-06-03
 
 ### Fixed
