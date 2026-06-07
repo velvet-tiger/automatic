@@ -845,7 +845,24 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
   const handleDelete = async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const confirmed = await ask(`Delete skill "${name}"?`, { title: "Delete Skill", kind: "warning" });
+    const target = skills.find(s => s.name === name);
+    const externalSources = (target?.sources ?? []).filter(src => src !== "library");
+    let message = `Delete skill "${name}"?`;
+    if (externalSources.length > 0) {
+      try {
+        const dirs = await invoke<{ id: string; path: string }[]>("list_skill_directories");
+        const paths = externalSources
+          .map(src => dirs.find(d => d.id === src)?.path)
+          .filter((p): p is string => !!p)
+          .map(p => `${p}/${name}`);
+        if (paths.length > 0) {
+          message = `Delete skill "${name}"?\n\nThis will remove the following directories from disk:\n\n${paths.join("\n")}`;
+        }
+      } catch {
+        // fall back to the simple confirmation
+      }
+    }
+    const confirmed = await ask(message, { title: "Delete Skill", kind: "warning" });
     if (!confirmed) return;
     try {
       await invoke("delete_skill", { name });

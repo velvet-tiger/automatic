@@ -600,24 +600,40 @@ pub fn save_skill(name: &str, content: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Delete a skill from Automatic's managed library and remove its registry
-/// entry. External skill directories (`~/.agents/skills/`, `~/.claude/skills/`
-/// etc.) are never touched — they belong to the user or to other tools.
+/// Delete a skill from every source directory that holds it — Automatic's
+/// managed library plus any external scan directory (`~/.agents/skills/`,
+/// `~/.claude/skills/`, agent-specific paths). Each external directory is
+/// only touched if it actually contains a `SKILL.md` for `name`, so this
+/// never removes an unrelated directory that happens to share the name.
+///
+/// Callers are responsible for guarding plugin-owned and built-in skills
+/// before invoking this; see `commands::skills::delete_skill`.
 pub fn delete_skill(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid skill name".into());
     }
 
-    let library_dir = get_library_skills_dir()?;
-    let skill_dir = library_dir.join(name);
-    if skill_dir.exists() {
-        fs::remove_dir_all(&skill_dir)
-            .map_err(|e| format!("Failed to delete skill from library: {}", e))?;
+    let mut failures: Vec<String> = Vec::new();
+    for source in get_all_skill_sources() {
+        let skill_dir = PathBuf::from(&source.path).join(name);
+        if !skill_dir.join("SKILL.md").exists() {
+            continue;
+        }
+        if let Err(e) = fs::remove_dir_all(&skill_dir) {
+            failures.push(format!("{} ({}): {}", source.id, skill_dir.display(), e));
+        }
     }
 
     let _ = remove_skill_source(name);
     let _ = remove_skill_collection(name);
     remove_recently_added("skills", name);
+
+    if !failures.is_empty() {
+        return Err(format!(
+            "Failed to delete skill from: {}",
+            failures.join("; ")
+        ));
+    }
 
     Ok(())
 }
@@ -1574,6 +1590,34 @@ mod tests {
         let skills_root = tmp.path().join("skills");
         // Should not error when skill doesn't exist.
         delete_skill_at(&skills_root, "ghost-skill").expect("delete non-existent");
+    }
+
+    #[test]
+    fn delete_removes_external_only_skill_from_agents_dir() {
+        with_temp_home(|_| {
+            let agents_dir = get_agents_skills_dir().expect("agents dir");
+            make_skill(&agents_dir, "external-only", "# External");
+            assert!(agents_dir.join("external-only/SKILL.md").exists());
+
+            delete_skill("external-only").expect("delete");
+
+            assert!(!agents_dir.join("external-only").exists());
+        });
+    }
+
+    #[test]
+    fn delete_removes_skill_from_library_and_external() {
+        with_temp_home(|_| {
+            let library = get_library_skills_dir().expect("library dir");
+            let agents_dir = get_agents_skills_dir().expect("agents dir");
+            make_skill(&library, "everywhere", "# Lib");
+            make_skill(&agents_dir, "everywhere", "# Agents");
+
+            delete_skill("everywhere").expect("delete");
+
+            assert!(!library.join("everywhere").exists());
+            assert!(!agents_dir.join("everywhere").exists());
+        });
     }
 
     // ── sync_skill (agents ↔ claude) ──────────────────────────────────────────
