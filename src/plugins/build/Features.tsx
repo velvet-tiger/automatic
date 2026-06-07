@@ -1323,7 +1323,7 @@ function ListView({
   }, [features, filterPriority, filterState, sort]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0">
       {/* Filter bar */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border-strong/40 shrink-0 flex-wrap">
         {!showArchived && (
@@ -1707,7 +1707,7 @@ function KanbanView({
 
   return (
     <>
-      <div className="flex h-full overflow-x-auto gap-3 p-3 custom-scrollbar">
+      <div className="flex flex-1 min-h-0 overflow-x-auto gap-3 p-3 custom-scrollbar">
         {STATES.map((s) => {
           const col = grouped[s.id] ?? [];
           const isOver = dragOverState === s.id;
