@@ -13,6 +13,7 @@ This project is managed by Automatic, a desktop hub that provides skills, memory
 - **Skills** — Follow loaded skill instructions. Skills may include companion scripts, templates, or reference docs in their directory.
 - **MCP Servers** — Call `automatic_list_mcp_servers` to see what servers are registered. Call `automatic_sync_project` after configuration changes.
 - **Skill Discovery** — Call `automatic_search_skills` to find community skills on skills.sh when you need specialised guidance not covered by installed skills.
+- **Related Projects** — Before searching the filesystem or asking the user for sibling projects, call `automatic_get_related_projects` with this project's name. It returns peer projects (name, description, directory, and the relative path from this project) for every Project Group this project belongs to. This is the authoritative source — related projects are intentionally not written into the instruction file.
 
 ## Memory
 

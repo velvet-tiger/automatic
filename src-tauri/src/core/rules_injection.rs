@@ -482,7 +482,11 @@ pub fn inject_index_into_project_file(
     let user_content = strip_index_section(&strip_groups_section(&strip_rules_section(
         &strip_managed_section(&raw),
     )));
-    let groups_section = extract_groups_section(&raw);
+    // The groups section is no longer written into instruction files;
+    // related-project context is exposed via the
+    // `automatic_get_related_projects` MCP tool instead. Any pre-existing
+    // groups block is dropped on the next sync.
+    let groups_section = String::new();
     let index_section = build_index_section(rule_names, custom_rules);
 
     let full_content = assemble_file_with_index(&user_content, &groups_section, &index_section);
@@ -581,11 +585,11 @@ pub fn inject_rules_into_project_file_with_custom(
 
     let rules_section = build_rules_section_with_custom(rule_names, custom_contents)?;
 
-    // Re-read any existing groups section so it is preserved across rules-only
-    // updates.  The groups section sits between user content and rules; it is
-    // written by a dedicated `inject_groups_into_project_file` call in the sync
-    // engine, but we must not discard it here.
-    let groups_section = extract_groups_section(&raw);
+    // The groups section is no longer written into instruction files;
+    // related-project context is exposed via the
+    // `automatic_get_related_projects` MCP tool instead. Any pre-existing
+    // groups block is dropped on the next sync.
+    let groups_section = String::new();
 
     let full_content = assemble_file(&user_content, &groups_section, &rules_section);
 
@@ -622,96 +626,23 @@ pub fn strip_groups_section(content: &str) -> String {
     }
 }
 
-/// Extract the raw `<!-- automatic:groups:start -->...<!-- automatic:groups:end -->` block
-/// (including markers) from a file, or return an empty string if absent.
-pub(crate) fn extract_groups_section(content: &str) -> String {
-    if let (Some(start), Some(end)) = (
-        content.find(GROUPS_START_MARKER),
-        content.find(GROUPS_END_MARKER),
-    ) {
-        content[start..end + GROUPS_END_MARKER.len()].to_string()
-    } else {
-        String::new()
-    }
-}
-
 /// Build the groups context section for injection into an instruction file.
 ///
-/// `project_name` is used to compute relative paths between this project's
-/// directory and each peer project's directory.
+/// Always returns an empty string. Project group membership is no longer
+/// written into instruction files because (a) every member-project file would
+/// have to be rewritten on every membership change, creating churn on tracked
+/// files, and (b) the peer project names risk leaking into public repos when
+/// instruction files are committed.
 ///
-/// The section lists every group the project belongs to.  For each group it
-/// shows the group name/description and then a short entry per peer project
-/// containing the project's description and relative path to its directory.
+/// Agents that need related-project context should call the
+/// `automatic_get_related_projects` MCP tool instead, which returns the same
+/// information on demand.
 pub fn build_groups_section(
-    this_project_name: &str,
-    this_project_dir: &str,
-    groups: &[crate::core::ProjectGroup],
+    _this_project_name: &str,
+    _this_project_dir: &str,
+    _groups: &[crate::core::ProjectGroup],
 ) -> String {
-    if groups.is_empty() {
-        return String::new();
-    }
-
-    let mut parts: Vec<String> = Vec::new();
-
-    for group in groups {
-        // List peer projects (all members except this project itself).
-        let peers: Vec<&String> = group
-            .projects
-            .iter()
-            .filter(|p| p.as_str() != this_project_name)
-            .collect();
-
-        // "### GroupName" heading, with description directly beneath.
-        let mut block = String::new();
-        block.push_str(&format!("### {}\n", group.name));
-        if !group.description.trim().is_empty() {
-            block.push_str(group.description.trim());
-            block.push('\n');
-        }
-
-        // Peer project entries.
-        if peers.is_empty() {
-            block.push_str("No other projects in this group yet.");
-            block.push('\n');
-        } else {
-            for peer_name in peers {
-                let (peer_desc, peer_rel_path) = match crate::core::read_project(peer_name) {
-                    Ok(raw) => match serde_json::from_str::<crate::core::Project>(&raw) {
-                        Ok(p) => {
-                            let rel = compute_relative_path(this_project_dir, &p.directory);
-                            (p.description.clone(), rel)
-                        }
-                        Err(_) => (String::new(), String::new()),
-                    },
-                    Err(_) => (String::new(), String::new()),
-                };
-
-                let mut entry = format!("**{}**", peer_name);
-                if !peer_desc.trim().is_empty() {
-                    entry.push_str(&format!(": {}", peer_desc.trim()));
-                }
-                if !peer_rel_path.is_empty() {
-                    entry.push_str(&format!("\nLocation: `{}`", peer_rel_path));
-                }
-                block.push_str(&entry);
-                block.push('\n');
-            }
-        }
-
-        parts.push(block);
-    }
-
-    if parts.is_empty() {
-        return String::new();
-    }
-
-    // Single "## Related Projects" heading wraps all groups.
-    let mut inner = String::from("## Related Projects\n");
-    inner.push_str("The following projects are related to this one. They are provided for context — explore or reference them when relevant to the current task.\n\n");
-    inner.push_str(&parts.join("\n"));
-
-    format!("{}\n{}\n{}", GROUPS_START_MARKER, inner, GROUPS_END_MARKER)
+    String::new()
 }
 
 /// Compute a relative path from `from_dir` to `to_dir`.
