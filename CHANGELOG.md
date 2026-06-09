@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.11.4] - 2026-06-09
+
+### Fixed
+
+- Project Group membership is no longer written into each member's instruction file. Embedding peer projects caused churn on tracked files whenever group membership changed and risked leaking sibling project names into public repositories. Related-project context is now exposed only via the `automatic_get_related_projects` MCP tool, and the default `automatic-service` rule directs agents to call it. Existing instruction files have the legacy `<!-- automatic:groups -->` block stripped on their next sync. ([58ea4a1](https://github.com/velvet-tiger/automatic/commit/58ea4a1))
+
 ## [1.11.3] - 2026-06-08
 
 ### Fixed
