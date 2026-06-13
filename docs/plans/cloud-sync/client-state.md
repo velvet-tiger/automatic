@@ -129,7 +129,7 @@ no-op.
 
 - **First run** — generate `device_id` (UUIDv4), default `display_name =
   hostname`, write an empty state file.
-- **User renames device** in Settings — local update + `PATCH /api/devices/:id`.
+- **User renames device** in Settings — local update + `PATCH /api/devices` with body `{ device_id, display_name }` (collection-level endpoint, not per-device).
 - **Sign out** — **do not** delete the state file. If the user signs back
   in as the same Clerk user, `device_id` still matches and tombstone GC
   continues working. If they sign in as a different user, the server

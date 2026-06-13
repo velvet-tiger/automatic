@@ -1,4 +1,43 @@
-# Plan: Cloud Library Sync (Up-first, Bidirectional Later)
+# Plan: Cloud Library Sync (Historical — Shipped)
+
+> **Status: shipped, partially superseded.** Cloud library sync is live. The
+> authoritative descriptions of the shipped system are:
+>
+> - [`contract.md`](./contract.md) — webapp endpoints, bundle/response
+>   shapes, merge semantics, database schema.
+> - [`client-state.md`](./client-state.md) — desktop-side state file and
+>   diff/reconcile algorithm.
+>
+> Read those first. This document is preserved for the design rationale
+> (OAuth choices, secrets handling, payload size cap) and the narrative of
+> how the feature was scoped. **Where it disagrees with the live contract,
+> the live contract wins.**
+>
+> Key ways this v1 plan differs from what actually shipped:
+>
+> - **Sync model.** v1 planned up-only with destructive delete. Shipped from
+>   day one as bidirectional delta sync with per-device tombstones and
+>   timestamp last-writer-wins. There was no separate v1 deploy.
+> - **Database schema.** v1 used a surrogate `uuid` PK and a single
+>   `library_assets` table. Shipped uses a composite PK
+>   `(owner_type, owner_id, kind, machine_name)` and adds `asset_tombstones`,
+>   `devices`, and `oauth_used_codes` tables. `oauth_refresh_tokens` carries
+>   a `client_id` column.
+> - **Webapp surface.** Shipped adds `/api/devices` (GET/PATCH),
+>   `/api/devices/:device_id` (DELETE), and `/api/library/assets/:kind/:machine_name`
+>   (PUT) for in-browser asset editing. None of these were in the v1 plan.
+> - **Desktop file layout.** Shipped as flat files at
+>   `src-tauri/src/core/cloud_sync.rs`, `cloud_sync_state.rs`,
+>   `cloud_sync_reconcile.rs`, `cloud_sync_diff.rs`, not the
+>   `core/cloud_sync/{auth,bundle,secrets,client}.rs` submodule layout
+>   described below.
+> - **MCP secrets.** v1 planned silent stripping on upload. Shipped contract
+>   *rejects* a bundle that carries `env` at all (`400 secret_leak_detected`),
+>   forcing the desktop to scrub to `env_keys` before sending.
+> - **Project templates / collections.** Treated as ordinary asset kinds by
+>   the contract; no special normalization layer is required.
+
+---
 
 see also ./docs/plans/cloud-sync/contract.md
 
