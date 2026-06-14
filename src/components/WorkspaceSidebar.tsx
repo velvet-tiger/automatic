@@ -113,9 +113,11 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
     const handler = () => { loadData(); };
     window.addEventListener("groups-updated", handler);
     window.addEventListener("project-removed", handler);
+    window.addEventListener("project-added", handler);
     return () => {
       window.removeEventListener("groups-updated", handler);
       window.removeEventListener("project-removed", handler);
+      window.removeEventListener("project-added", handler);
     };
   }, [loadData]);
 

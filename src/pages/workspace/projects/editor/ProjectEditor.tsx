@@ -1801,6 +1801,7 @@ export function ProjectEditor({
         setProjectTab("summary");
         setProjectGroup("summary");
         await reloadProjects();
+        window.dispatchEvent(new CustomEvent("project-added", { detail: { name } }));
       } else {
         trackProjectUpdated(name, {
           agent_count: toSave.agents.length,
