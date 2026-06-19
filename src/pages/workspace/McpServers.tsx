@@ -7,6 +7,8 @@ import { trackMcpServerCreated, trackMcpServerUpdated, trackMcpServerDeleted } f
 import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
 import { KvEditor, inputClass, smallInputClass, addBtnClass } from "../../components/KvField";
 import McpServerImportDialog from "../../components/McpServerImportDialog";
+import { handleExternalLinkClick } from "../../lib/externalLinks";
+import featuredMcpServers from "../../../src-tauri/assets/discover/featured-mcp-servers.json";
 import {
   Plus,
   ClipboardPaste,
@@ -24,8 +26,54 @@ import {
   ShieldCheck,
   Loader2,
   Info,
+  ExternalLink,
 } from "lucide-react";
 import { ICONS } from "../../lib/icons";
+
+/** Discover-catalogue env-var metadata used to surface a "Generate token" link
+ *  next to each configured environment variable that has one. */
+interface DiscoverEnvVarMeta {
+  name: string;
+  token_url?: string | null;
+  token_url_label?: string | null;
+}
+interface DiscoverEntryMeta {
+  slug: string;
+  title: string;
+  auth?: { method?: string; env_vars?: DiscoverEnvVarMeta[] } | null;
+}
+const DISCOVER_ENTRIES = featuredMcpServers as DiscoverEntryMeta[];
+
+/** Find the Discover catalogue entry that matches a saved server name.
+ *  Matches by slug first (the installer's default), then by title-derived key. */
+function findDiscoverEntry(serverName: string): DiscoverEntryMeta | null {
+  const needle = serverName.toLowerCase();
+  return (
+    DISCOVER_ENTRIES.find(
+      (e) =>
+        e.slug === needle ||
+        e.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") === needle,
+    ) ?? null
+  );
+}
+
+/** Resolve token-acquisition links for the env vars present in a server's config. */
+function tokenLinksForServer(
+  serverName: string,
+  env: Record<string, string>,
+): Array<{ name: string; url: string; label: string }> {
+  const entry = findDiscoverEntry(serverName);
+  const vars = entry?.auth?.env_vars;
+  if (!vars) return [];
+  const out: Array<{ name: string; url: string; label: string }> = [];
+  for (const key of Object.keys(env)) {
+    const meta = vars.find((v) => v.name === key);
+    if (meta?.token_url) {
+      out.push({ name: key, url: meta.token_url, label: meta.token_url_label || "Get token" });
+    }
+  }
+  return out;
+}
 
 type TransportType = "stdio" | "http" | "sse";
 
@@ -915,6 +963,27 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       <code className="font-mono">{"${KEY}"}</code>
                       {" "}instead, inheriting from your shell at runtime.
                     </p>
+                    {(() => {
+                      const links = tokenLinksForServer(selectedName || "", config.env || {});
+                      if (links.length === 0) return null;
+                      return (
+                        <div className="mt-2 flex flex-col gap-1">
+                          {links.map((l) => (
+                            <a
+                              key={l.name}
+                              href={l.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={handleExternalLinkClick(l.url)}
+                              className="inline-flex items-center gap-1 text-[11px] text-brand hover:text-brand-hover w-fit"
+                            >
+                              {l.label} for <code className="font-mono">{l.name}</code>
+                              <ExternalLink size={10} />
+                            </a>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </section>
                 )}
 

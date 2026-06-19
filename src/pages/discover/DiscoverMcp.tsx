@@ -36,10 +36,6 @@ interface EnvVar {
   name: string;
   description: string;
   secret: boolean;
-  /** Optional link to where the user generates or obtains this value (e.g. an API-key page). */
-  token_url?: string | null;
-  /** Optional label for the token link; defaults to "Get token". */
-  token_url_label?: string | null;
 }
 
 interface CompanionSkill {
@@ -968,19 +964,6 @@ export default function DiscoverMcp({
                             <p className="text-[11px] text-text-muted leading-relaxed">
                               {v.description}
                             </p>
-                            {v.token_url && (
-                              <a
-                                href={v.token_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={handleExternalLinkClick(v.token_url)}
-                                className="mt-1.5 inline-flex items-center gap-1 text-[11px] hover:text-text-base transition-colors"
-                                style={{ color: ACCENT }}
-                              >
-                                {v.token_url_label || "Get token"}
-                                <ExternalLink size={10} />
-                              </a>
-                            )}
                           </div>
                           <CopyButton text={v.name} />
                         </div>
