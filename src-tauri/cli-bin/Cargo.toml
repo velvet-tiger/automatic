@@ -1,6 +1,6 @@
 [package]
 name = "automatic-cli"
-version = "1.11.4"
+version = "1.11.5"
 edition = "2021"
 description = "Console-subsystem CLI front-end for the Automatic desktop app"
 publish = false

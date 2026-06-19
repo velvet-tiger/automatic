@@ -4,6 +4,27 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.11.5] - 2026-06-19
+
+### Changed
+
+- The default `automatic-general` rule now states that asking a clarifying question is not the same as receiving permission. Agents must wait for the user to choose explicitly rather than inferring an option from the question itself. ([bb27b25](https://github.com/velvet-tiger/automatic/commit/bb27b25))
+
+### Fixed
+
+- MCP servers installed from the Discover page now honour the explicit `args` array recorded in their install config, restoring missing CLI flags for servers such as Aikido. ([50db601](https://github.com/velvet-tiger/automatic/commit/50db601))
+- The library MCP server editor surfaces its own inline "Generate token" link, so users no longer have to bounce back to the Discover page to find it. ([c48d263](https://github.com/velvet-tiger/automatic/commit/c48d263))
+- The MCP transport selector in the library editor is rendered as a segmented tab control, replacing the dropdown that previously mixed transports with unrelated options. ([8cc61ed](https://github.com/velvet-tiger/automatic/commit/8cc61ed))
+- The "MCP Enabled" control in the library editor is now a proper switch, not an icon-button styled as one. ([893e7e0](https://github.com/velvet-tiger/automatic/commit/893e7e0))
+- Rejected OAuth tokens are now shown as a warning state with an explicit "Re-authenticate" action, instead of disappearing silently and leaving the server unconfigured. ([9dae0de](https://github.com/velvet-tiger/automatic/commit/9dae0de))
+- The OAuth panel in the library MCP editor is hidden when there is no URL configured and no token exists, removing the empty-state flash that confused new server entries. ([ad08647](https://github.com/velvet-tiger/automatic/commit/ad08647))
+- The Projects sidebar now refreshes as soon as a new project is added, instead of waiting for the next foreground drift poll. ([0d78b1d](https://github.com/velvet-tiger/automatic/commit/0d78b1d))
+
+### Maintenance
+
+- Removed documentation that has been migrated to the `automatic-meta` repo, including agent guides, sub-agent format references, remote-source examples, and the cloud-sync and multi-agent plans. `AGENTS.md`, `CLAUDE.md`, and `docs/index.md` now point at `automatic-meta` instead of carrying the content locally. ([1cb929a](https://github.com/velvet-tiger/automatic/commit/1cb929a))
+- Aligned the internal cloud-sync contract notes with the shipped webapp implementation. ([12396da](https://github.com/velvet-tiger/automatic/commit/12396da))
+
 ## [1.11.4] - 2026-06-09
 
 ### Fixed
