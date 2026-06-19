@@ -300,6 +300,9 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
   };
 
   if (checking) return null;
+  // No URL and no stored token → nothing actionable. Wait for the user to
+  // enter a URL before claiming auth is required.
+  if (!hasToken && !url) return null;
 
   return (
     <section>
