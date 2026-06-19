@@ -19,8 +19,6 @@ import {
   Terminal,
   Variable,
   Globe,
-  ToggleLeft,
-  ToggleRight,
   AlertTriangle,
   Shield,
   ShieldCheck,
@@ -777,17 +775,31 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     <label className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
                       Type
                     </label>
-                    <button
-                      onClick={() => !isBuiltin && updateConfig({ enabled: !config.enabled })}
-                      disabled={isBuiltin}
-                      className={`flex items-center gap-1.5 text-[12px] transition-colors ${
-                        config.enabled !== false ? "text-success" : "text-text-muted"
-                      } ${isBuiltin ? "opacity-60 cursor-not-allowed" : ""}`}
-                      title={isBuiltin ? "Built-in server — always enabled" : config.enabled !== false ? "Enabled — click to disable" : "Disabled — click to enable"}
-                    >
-                      {config.enabled !== false ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-                      {config.enabled !== false ? "Enabled" : "Disabled"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-[12px] font-medium transition-colors ${
+                          config.enabled !== false ? "text-success" : "text-text-muted"
+                        } ${isBuiltin ? "opacity-60" : ""}`}
+                      >
+                        {config.enabled !== false ? "Enabled" : "Disabled"}
+                      </span>
+                      <button
+                        role="switch"
+                        aria-checked={config.enabled !== false}
+                        onClick={() => !isBuiltin && updateConfig({ enabled: !config.enabled })}
+                        disabled={isBuiltin}
+                        title={isBuiltin ? "Built-in server — always enabled" : config.enabled !== false ? "Click to disable" : "Click to enable"}
+                        className={`relative flex-shrink-0 w-9 h-5 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-brand/60 ${
+                          config.enabled !== false ? "bg-success" : "bg-surface-active"
+                        } ${isBuiltin ? "opacity-60 cursor-not-allowed" : ""}`}
+                      >
+                        <span
+                          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                            config.enabled !== false ? "left-[18px]" : "left-0.5"
+                          }`}
+                        />
+                      </button>
+                    </div>
                   </div>
                   <div role="tablist" aria-label="Transport type" className="inline-flex gap-1 p-1 bg-bg-sidebar rounded-lg">
                     <button
