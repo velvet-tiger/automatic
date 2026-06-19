@@ -2345,10 +2345,10 @@
       "env_vars": [
         {
           "name": "AIKIDO_API_KEY",
-          "description": "Personal Access Token for headless or CI use. Generate one in Aikido under Settings → Integrations → MCP Server. When set, it takes precedence over the browser sign-in token.",
+          "description": "Personal Access Token for headless or CI use. Generate one in Aikido under Settings → Integrations → IDE → MCP. When set, it takes precedence over the browser sign-in token.",
           "secret": true,
-          "token_url": "https://help.aikido.dev/ai-and-dev-tools/aikido-mcp/token-authentication",
-          "token_url_label": "How to get a token"
+          "token_url": "https://app.aikido.dev/settings/integrations/ide/mcp",
+          "token_url_label": "Generate token"
         }
       ]
     },
