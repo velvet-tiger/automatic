@@ -789,26 +789,30 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                       {config.enabled !== false ? "Enabled" : "Disabled"}
                     </button>
                   </div>
-                  <div className="flex gap-1.5">
+                  <div role="tablist" aria-label="Transport type" className="inline-flex gap-1 p-1 bg-bg-sidebar rounded-lg">
                     <button
+                      role="tab"
+                      aria-selected={isStdio}
                       onClick={() => !isManaged && setTransport("stdio")}
                       disabled={isManaged}
-                      className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
+                      className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
                         isStdio
-                          ? "bg-brand border-brand text-white"
-                          : "bg-bg-input border-border-strong/40 text-text-muted hover:border-border-strong hover:text-text-base"
-                      } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
+                          ? "bg-bg-base text-text-base shadow-sm"
+                          : "text-text-muted hover:text-text-base"
+                      } ${isManaged ? "cursor-not-allowed" : ""} ${isManaged && !isStdio ? "opacity-60" : ""}`}
                     >
                       Local
                     </button>
                     <button
+                      role="tab"
+                      aria-selected={!isStdio}
                       onClick={() => !isManaged && setTransport(config.type === "sse" ? "sse" : "http")}
                       disabled={isManaged}
-                      className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
+                      className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
                         !isStdio
-                          ? "bg-brand border-brand text-white"
-                          : "bg-bg-input border-border-strong/40 text-text-muted hover:border-border-strong hover:text-text-base"
-                      } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
+                          ? "bg-bg-base text-text-base shadow-sm"
+                          : "text-text-muted hover:text-text-base"
+                      } ${isManaged ? "cursor-not-allowed" : ""} ${isManaged && isStdio ? "opacity-60" : ""}`}
                     >
                       Remote
                     </button>
@@ -826,26 +830,30 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     <label className="block text-[11px] font-semibold text-text-muted tracking-wider uppercase mb-2">
                       Transport Protocol
                     </label>
-                    <div className="flex gap-1.5">
+                    <div role="tablist" aria-label="Transport protocol" className="inline-flex gap-1 p-1 bg-bg-sidebar rounded-lg">
                       <button
+                        role="tab"
+                        aria-selected={config.type === "http"}
                         onClick={() => !isManaged && setTransport("http")}
                         disabled={isManaged}
-                        className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
+                        className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
                           config.type === "http"
-                            ? "bg-bg-sidebar border-border-strong text-text-base"
-                            : "bg-bg-input border-border-strong/40 text-text-muted hover:border-border-strong hover:text-text-base"
-                        } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
+                            ? "bg-bg-base text-text-base shadow-sm"
+                            : "text-text-muted hover:text-text-base"
+                        } ${isManaged ? "cursor-not-allowed" : ""} ${isManaged && config.type !== "http" ? "opacity-60" : ""}`}
                       >
                         Streamable HTTP
                       </button>
                       <button
+                        role="tab"
+                        aria-selected={config.type === "sse"}
                         onClick={() => !isManaged && setTransport("sse")}
                         disabled={isManaged}
-                        className={`px-3 py-1.5 rounded text-[12px] font-medium transition-colors border ${
+                        className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
                           config.type === "sse"
-                            ? "bg-bg-sidebar border-border-strong text-text-base"
-                            : "bg-bg-input border-border-strong/40 text-text-muted hover:border-border-strong hover:text-text-base"
-                        } ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
+                            ? "bg-bg-base text-text-base shadow-sm"
+                            : "text-text-muted hover:text-text-base"
+                        } ${isManaged ? "cursor-not-allowed" : ""} ${isManaged && config.type !== "sse" ? "opacity-60" : ""}`}
                       >
                         SSE (legacy)
                       </button>
