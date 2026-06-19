@@ -10,9 +10,10 @@ Reference and design documentation for the Automatic desktop app. Source-of-trut
 - [Sub-Agents Feature](./sub-agents/sub-agents.md) — Automatic's sub-agent model and storage.
 - [Session Tracking](./session-tracking.md) — design for tracking agent sessions across projects.
 - **Cloud Library Sync** — bidirectional sync of `~/.automatic/` to `tryautomatic.app`.
-  - [Webapp Contract](./plans/cloud-sync/contract.md) — endpoints, bundle/response shapes, merge semantics, database schema. *(source of truth)*
-  - [Client State & Diff Algorithm](./plans/cloud-sync/client-state.md) — desktop-side state file and reconcile algorithm. *(source of truth)*
-  - [Cloud Library Sync — Historical Plan](./plans/cloud-sync/cloud-library-sync.md) — v1 design notes, kept for rationale; superseded by the two docs above.
+  - [Webapp Contract](./plans/cloud-sync/contract.md) — endpoints, bundle/response shapes, merge semantics, database schema. *(source of truth for the shipped single-library system)*
+  - [Client State & Diff Algorithm](./plans/cloud-sync/client-state.md) — desktop-side state file and reconcile algorithm. *(source of truth for the shipped single-library system)*
+  - [Multi-Library Cloud Sync — Plan](./plans/cloud-sync/multi-library-sync.md) — extends the contract and client state above to support team libraries, per-user library priority, asset IDs, and cross-user conflict handling. *(unshipped — under design)*
+  - Archived: [Cloud Library Sync — Historical v1 Plan](../archive/cloud-sync/cloud-library-sync.md).
 
 ## Operations
 
@@ -44,6 +45,7 @@ Reference and design documentation for the Automatic desktop app. Source-of-trut
 
 - [Projects.tsx — Phase 2 Refactor Plan](./projects-phase2-refactor.md) — test-harness-first split of the projects screen.
 - [Multi-Agent Support in Settings > Agents](./plans/multi-agent/plan.md) — adding GitHub Models, Cloudflare, Z.ai, OpenCode Zen, OpenAI, and an AI Gateway router.
+- [Webapp Library Rebuild — Asset Specification](./plans/library-rebuild/webapp-library-spec.md) — per-asset reference (Templates, Instructions, Rules, Sub-Agents, Commands, Hooks, Skills, MCP Servers, Providers, Tools) for re-implementing the Library in the companion webapp.
 
 ## Examples
 

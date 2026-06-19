@@ -4,6 +4,8 @@
 
 **Automatic** is a desktop hub for managing AI agent configuration across projects. It provides centralized storage and synchronization of skills, MCP servers, rules, templates, and project instructions for agent tools like Claude Code, Codex CLI, Cursor, and other MCP-compatible systems.
 
+Documentation can be found in the related automatic-meta project
+
 **Tech Stack:**
 - **Frontend:** React 19, TypeScript, Tailwind CSS 4, Vite 7
 - **Backend:** Rust (Tauri 2), rmcp SDK for MCP protocol
@@ -139,19 +141,3 @@ npm run tauri [cmd]     # Direct Tauri CLI access
 - **Skill sync mode switching** — changing global sync mode (symlink vs copy) mid-project can confuse users, warn if switching
 - **Drift alerts** — manually editing synced files triggers drift detection until re-synced, this is expected behavior
 - **Command name coupling** — frontend TypeScript and Rust command names must match exactly, typos break invokes silently
-
-<!-- automatic:groups:start -->
-## Related Projects
-The following projects are related to this one. They are provided for context — explore or reference them when relevant to the current task.
-
-### Automatic
-**automatic-webapp**
-Location: `../automatic-webapp`
-**deep-agents-rs**
-Location: `../deep-agents-rs`
-**skill.json**
-Location: `../../skill.json`
-**common-docs**
-Location: `../../common-docs`
-
-<!-- automatic:groups:end -->

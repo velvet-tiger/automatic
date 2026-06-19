@@ -4,6 +4,8 @@
 
 **Automatic** is a desktop hub for managing AI agent configuration across projects. It provides centralized storage and synchronization of skills, MCP servers, rules, templates, and project instructions for agent tools like Claude Code, Codex CLI, Cursor, and other MCP-compatible systems.
 
+Documentation can be found in the related automatic-meta project
+
 **Tech Stack:**
 - **Frontend:** React 19, TypeScript, Tailwind CSS 4, Vite 7
 - **Backend:** Rust (Tauri 2), rmcp SDK for MCP protocol
@@ -139,22 +141,6 @@ npm run tauri [cmd]     # Direct Tauri CLI access
 - **Skill sync mode switching** — changing global sync mode (symlink vs copy) mid-project can confuse users, warn if switching
 - **Drift alerts** — manually editing synced files triggers drift detection until re-synced, this is expected behavior
 - **Command name coupling** — frontend TypeScript and Rust command names must match exactly, typos break invokes silently
-
-<!-- automatic:groups:start -->
-## Related Projects
-The following projects are related to this one. They are provided for context — explore or reference them when relevant to the current task.
-
-### Automatic
-**automatic-webapp**
-Location: `../automatic-webapp`
-**deep-agents-rs**
-Location: `../deep-agents-rs`
-**skill.json**
-Location: `../../skill.json`
-**common-docs**
-Location: `../../common-docs`
-
-<!-- automatic:groups:end -->
 
 <!-- automatic:rules:start -->
 # Working with the Automatic MCP Service
@@ -412,65 +398,4 @@ This Constitution establishes rules to prevent common modes of failure in autono
 - **Learn from rejection.** When a human corrects or rejects your output, incorporate that feedback pattern permanently.
 
 ## 14. Always be nice
-
-# Agent Problem-Solving Process
-
-A framework for structured, honest, and traceable software development work. Apply judgement at each stage. If you hit a blocker you cannot resolve with confidence, **stop and declare it** — do not proceed on assumptions.
-
----
-
-## Phase 1: Understand the Task
-
-- Restate the goal in your own words. Confirm what problem is being solved, not just what action is requested.
-- Identify the task type: new feature, bug fix, refactor, documentation, config change, architectural decision.
-- Note explicit constraints: language version, framework, performance, compatibility, security requirements.
-- Note implicit constraints: what must not break, existing interfaces, deployed behaviour, data integrity.
-- If the task is ambiguous or contradictory, **ask before proceeding**. Assumptions made here compound through every later phase.
-
-## Phase 2: Understand the Context
-
-- Read the relevant files. Do not rely on filenames or structure alone.
-- Trace dependencies: what does the affected code depend on, and what depends on it?
-- Check how similar problems have been solved elsewhere in the codebase. Prefer consistency.
-- Identify existing test coverage. Understand what is already verified and what is not.
-- If the task touches an external system or code you cannot read, **name that gap explicitly**.
-
-## Phase 3: Plan
-
-- Outline your approach before writing any code. It does not need to be exhaustive — it needs to be honest.
-- Prefer the minimal scope of change that correctly solves the problem. Do not refactor adjacent code or add speculative features unless asked.
-- Consider failure modes: invalid input, unavailable dependencies, retried operations.
-- Validate your plan against the constraints from Phase 1. If there is a conflict, surface it rather than quietly working around it.
-
-## Phase 4: Communicate
-
-- Tell the user what you found, what needs to be done, and how you are going to fix it.
-- Communicate in plain, clear language. Do not use jargon, idioms, turns-of-phrase or colloquialisms.
-- Communicate in full sentances, do not omit words or drop articles.
-- Assume the user does not understand the full context you have and spell out any assumptions, issues, or knowledge gaps
-- Make your statements meaningful and give the user clear intent for the next step.
-
-## Phase 5: Implement
-
-- Edit only what is relevant to the task. If you notice a bug nearby, note it — do not silently fix it unless it is in scope.
-- Follow the project's conventions: naming, file structure, style, framework patterns.
-- Write type-safe, deterministic, defensively validated code. Refer to the project's coding patterns document.
-- Leave no placeholders or stubs without declaring them. Incomplete work must be disclosed, not hidden.
-- Comment on *why*, not *what*. Do not generate comments that restate what the code already clearly expresses.
-- Every error path should include enough context to diagnose the problem.
-
-## Phase 6: Verify
-
-- Review your changes as if reading someone else's code. Check for logic errors, edge cases, and missing error handling.
-- Confirm the implementation actually solves the goal from Phase 1. Trace through it with a realistic input.
-- Consider what existing behaviour may have been affected. Run tests if they exist; note the gap if they do not.
-- Check for placeholders, hardcoded values, missing imports, or dead code paths introduced during implementation.
-
-## Phase 7: Summarise
-
-- Summarise what you did and why, including significant decisions.
-- Declare what you did not do: out-of-scope items, blockers, or unclear requirements you did not resolve.
-- Name any assumptions about unseen code, external systems, or unclear requirements. Do not present uncertain work as definitive.
-- Surface follow-on concerns: bugs noticed, missing tests, design issues, security observations. Do not discard observations silently.
-- Do not exaggerate confidence. If you are uncertain, say so.
 <!-- automatic:rules:end -->
