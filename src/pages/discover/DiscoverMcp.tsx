@@ -36,6 +36,10 @@ interface EnvVar {
   name: string;
   description: string;
   secret: boolean;
+  /** Optional link to where the user generates or obtains this value (e.g. an API-key page). */
+  token_url?: string | null;
+  /** Optional label for the token link; defaults to "Get token". */
+  token_url_label?: string | null;
 }
 
 interface CompanionSkill {
@@ -74,6 +78,8 @@ interface McpServer {
     version: string | null;
     transport: string;
     command: string;
+    /** Explicit argument vector. Preferred over splitting `command` on whitespace. */
+    args?: string[] | null;
   } | null;
   auth: { method: string; env_vars: EnvVar[] };
   /** Optional skill that should be installed alongside this server */
@@ -212,6 +218,41 @@ function configName(server: McpServer): string {
   return server.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+type LocalConfig = NonNullable<McpServer["local"]>;
+
+/** Resolve a Discover `local` block into a runnable {command, args}.
+ *  Prefers an explicit `args` array; falls back to splitting the command
+ *  string on whitespace for legacy entries that embed args in `command`.
+ *  Splitting a string is fragile (it breaks on arguments containing spaces),
+ *  so `args` is the canonical source when an entry provides it. */
+function resolveLocalCommand(local: LocalConfig): { command: string; args: string[] } {
+  const parts = local.command.split(/\s+/).filter(Boolean);
+  return { command: parts[0] || "", args: local.args ?? parts.slice(1) };
+}
+
+/** Full command line for display/copy, reconstructed from command + resolved args. */
+function localCommandLine(local: LocalConfig): string {
+  const { command, args } = resolveLocalCommand(local);
+  return [command, ...args].join(" ");
+}
+
+/** Build the human-facing example stdio config JSON shown in the local setup tab. */
+function exampleConfigJson(server: McpServer): string {
+  const { command, args } = resolveLocalCommand(server.local!);
+  const envObj: Record<string, string> = {};
+  server.auth.env_vars.forEach((v) => {
+    envObj[v.name] = v.secret ? "<YOUR_VALUE>" : "";
+  });
+  const configObj: Record<string, unknown> = { type: "stdio", command };
+  if (args.length > 0) configObj.args = args;
+  if (Object.keys(envObj).length > 0) configObj.env = envObj;
+  return JSON.stringify(
+    { [server.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")]: configObj },
+    null,
+    2,
+  );
+}
+
 /** Build a save-ready config JSON from Discover data. Prefers local, falls back to remote.
  *  Embeds `_author` metadata so Automatic can display the provider in the MCP Servers view.
  */
@@ -221,14 +262,12 @@ function buildConfig(server: McpServer): Record<string, unknown> {
   if (server.repository_url) _author.repository_url = server.repository_url;
 
   if (server.local) {
-    const parts = server.local.command.split(/\s+/);
-    const cmd = parts[0] || "";
-    const args = parts.slice(1);
+    const { command, args } = resolveLocalCommand(server.local);
     const env: Record<string, string> = {};
     server.auth.env_vars.forEach((v) => {
       env[v.name] = "";
     });
-    const cfg: Record<string, unknown> = { type: "stdio", command: cmd, _author };
+    const cfg: Record<string, unknown> = { type: "stdio", command, _author };
     if (args.length > 0) cfg.args = args;
     if (Object.keys(env).length > 0) cfg.env = env;
     return cfg;
@@ -859,9 +898,9 @@ export default function DiscoverMcp({
                     </label>
                     <div className="flex items-center gap-2 bg-bg-base border border-border-strong/40 rounded-md px-3 py-2">
                       <code className="flex-1 text-[12px] font-mono text-success truncate">
-                        $ {selected.local.command}
+                        $ {localCommandLine(selected.local)}
                       </code>
-                      <CopyButton text={selected.local.command} />
+                      <CopyButton text={localCommandLine(selected.local)} />
                     </div>
                   </div>
 
@@ -872,50 +911,10 @@ export default function DiscoverMcp({
                     </label>
                     <div className="relative">
                       <pre className="bg-bg-base border border-border-strong/40 rounded-md px-4 py-3 font-mono text-[11px] text-text-base leading-relaxed overflow-x-auto whitespace-pre">
-{(() => {
-  const parts = selected.local!.command.split(/\s+/);
-  const cmd = parts[0] || "";
-  const args = parts.slice(1);
-  const envObj: Record<string, string> = {};
-  selected.auth.env_vars.forEach((v) => {
-    envObj[v.name] = v.secret ? "<YOUR_VALUE>" : "";
-  });
-  const configObj: Record<string, unknown> = {
-    type: "stdio",
-    command: cmd,
-  };
-  if (args.length > 0) configObj.args = args;
-  if (Object.keys(envObj).length > 0) configObj.env = envObj;
-  return JSON.stringify(
-    { [selected.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")]: configObj },
-    null,
-    2
-  );
-})()}
+{exampleConfigJson(selected)}
                       </pre>
                       <div className="absolute top-2 right-2">
-                        <CopyButton
-                          text={(() => {
-                            const parts = selected.local!.command.split(/\s+/);
-                            const cmd = parts[0] || "";
-                            const args = parts.slice(1);
-                            const envObj: Record<string, string> = {};
-                            selected.auth.env_vars.forEach((v) => {
-                              envObj[v.name] = v.secret ? "<YOUR_VALUE>" : "";
-                            });
-                            const configObj: Record<string, unknown> = {
-                              type: "stdio",
-                              command: cmd,
-                            };
-                            if (args.length > 0) configObj.args = args;
-                            if (Object.keys(envObj).length > 0) configObj.env = envObj;
-                            return JSON.stringify(
-                              { [selected.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")]: configObj },
-                              null,
-                              2
-                            );
-                          })()}
-                        />
+                        <CopyButton text={exampleConfigJson(selected)} />
                       </div>
                     </div>
                   </div>
@@ -969,6 +968,19 @@ export default function DiscoverMcp({
                             <p className="text-[11px] text-text-muted leading-relaxed">
                               {v.description}
                             </p>
+                            {v.token_url && (
+                              <a
+                                href={v.token_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={handleExternalLinkClick(v.token_url)}
+                                className="mt-1.5 inline-flex items-center gap-1 text-[11px] hover:text-text-base transition-colors"
+                                style={{ color: ACCENT }}
+                              >
+                                {v.token_url_label || "Get token"}
+                                <ExternalLink size={10} />
+                              </a>
+                            )}
                           </div>
                           <CopyButton text={v.name} />
                         </div>

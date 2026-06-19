@@ -2330,23 +2330,25 @@
     "icon": "aikido.dev",
     "classification": "official",
     "repository_url": null,
-    "docs_url": "https://help.aikido.dev/mcp/opencode-mcp",
+    "docs_url": "https://help.aikido.dev/ai-and-dev-tools/aikido-mcp",
     "remote": null,
     "local": {
       "registry": "npm",
       "package": "@aikidosec/mcp",
-      "version": null,
+      "version": "latest",
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@aikidosec/mcp"]
+      "args": ["-y", "@aikidosec/mcp@latest"]
     },
     "auth": {
       "method": "api_key",
       "env_vars": [
         {
           "name": "AIKIDO_API_KEY",
-          "description": "Your Aikido API key. Get one from https://app.aikido.dev",
-          "secret": true
+          "description": "Personal Access Token for headless or CI use. Generate one in Aikido under Settings → Integrations → MCP Server. When set, it takes precedence over the browser sign-in token.",
+          "secret": true,
+          "token_url": "https://help.aikido.dev/ai-and-dev-tools/aikido-mcp/token-authentication",
+          "token_url_label": "How to get a token"
         }
       ]
     },

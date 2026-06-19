@@ -37,7 +37,7 @@ export function McpAddButton({
       slug: string; name: string; title: string; provider: string;
       repository_url: string | null;
       remote: { transport: string; url: string } | null;
-      local: { registry: string; package: string; version: string | null; transport: string; command: string } | null;
+      local: { registry: string; package: string; version: string | null; transport: string; command: string; args?: string[] | null } | null;
       auth: { method: string; env_vars: Array<{ name: string; description: string; secret: boolean }> };
     }>;
     const server = servers.find(
@@ -56,9 +56,11 @@ export function McpAddButton({
 
     let config: Record<string, unknown>;
     if (server.local) {
-      const parts = server.local.command.split(/\s+/);
+      // Mirrors resolveLocalCommand in DiscoverMcp: prefer an explicit args
+      // vector, fall back to splitting the command string for legacy entries.
+      const parts = server.local.command.split(/\s+/).filter(Boolean);
       const cmd = parts[0] ?? "";
-      const args = parts.slice(1);
+      const args = server.local.args ?? parts.slice(1);
       const env: Record<string, string> = {};
       server.auth.env_vars.forEach((v) => { env[v.name] = ""; });
       config = { type: "stdio", command: cmd, _author };
