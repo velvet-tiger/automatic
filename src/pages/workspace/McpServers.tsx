@@ -211,10 +211,11 @@ function cleanConfig(config: McpServerConfig): Record<string, unknown> {
 function OAuthSection({ serverName, url }: { serverName: string; url: string }) {
   const [hasToken, setHasToken] = useState(false);
   const [tokenStatus, setTokenStatus] = useState<McpOAuthTokenStatus | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [action, setAction] = useState<"authorize" | "revoke" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
   const [checkingStatus, setCheckingStatus] = useState(false);
+  const loading = action !== null;
   // Track whether the user cancelled so we can ignore the late-arriving invoke result.
   const cancelledRef = useRef(false);
 
@@ -264,7 +265,7 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
   const handleAuthorize = async () => {
     if (!serverName || !url) return;
     cancelledRef.current = false;
-    setLoading(true);
+    setAction("authorize");
     setError(null);
     try {
       await invoke("authorize_mcp_server", { serverName, mcpUrl: url });
@@ -273,19 +274,19 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
     } catch (e) {
       if (!cancelledRef.current) setError(String(e));
     } finally {
-      if (!cancelledRef.current) setLoading(false);
+      if (!cancelledRef.current) setAction(null);
     }
   };
 
   const handleCancel = () => {
     cancelledRef.current = true;
-    setLoading(false);
+    setAction(null);
     setError(null);
   };
 
   const handleRevoke = async () => {
     if (!serverName) return;
-    setLoading(true);
+    setAction("revoke");
     setError(null);
     try {
       await invoke("revoke_mcp_oauth_token", { serverName });
@@ -294,7 +295,7 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
     } catch (e) {
       setError(String(e));
     } finally {
-      setLoading(false);
+      setAction(null);
     }
   };
 
@@ -307,45 +308,86 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
       </label>
 
       {hasToken ? (
-        <div className="space-y-3">
-          <div className="flex items-center gap-3 rounded-lg border border-green-500/25 bg-green-500/8 px-4 py-3">
-            <ShieldCheck size={14} className="text-green-500 shrink-0" />
-            <div className="flex-1">
-              <p className="text-[12px] font-medium text-text-base">Authenticated</p>
-              <p className="text-[11px] text-text-muted">
-                OAuth token stored in system keychain. Agents will connect through the Automatic proxy.
-              </p>
-            </div>
-            <button
-              onClick={handleRevoke}
-              disabled={loading}
-              className="px-3 py-1.5 text-[11px] font-medium text-text-muted hover:text-danger border border-border-strong/40 hover:border-danger/30 rounded transition-colors disabled:opacity-50"
-            >
-              {loading ? <Loader2 size={12} className="animate-spin" /> : "Revoke"}
-            </button>
-          </div>
+        (() => {
+          const tokenInvalid = !checkingStatus && !!tokenStatus && !tokenStatus.valid;
+          const invalidMessage = tokenStatus?.message ?? "Stored token is no longer accepted by the MCP server. Re-authenticate to restore access.";
+          const authorizing = action === "authorize";
+          return (
+            <div className="space-y-3">
+              <div
+                className={`flex items-start gap-3 rounded-lg border px-4 py-3 ${
+                  tokenInvalid
+                    ? "border-warning/25 bg-warning/8"
+                    : "border-green-500/25 bg-green-500/8"
+                }`}
+              >
+                {tokenInvalid ? (
+                  <AlertTriangle size={14} className="text-warning shrink-0 mt-0.5" />
+                ) : (
+                  <ShieldCheck size={14} className="text-green-500 shrink-0 mt-0.5" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-[12px] font-medium text-text-base">
+                    {tokenInvalid ? "Authentication expired" : "Authenticated"}
+                  </p>
+                  <p className="text-[11px] text-text-muted">
+                    {tokenInvalid
+                      ? invalidMessage
+                      : "OAuth token stored in system keychain. Agents will connect through the Automatic proxy."}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {authorizing ? (
+                    <>
+                      <span className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-text-muted whitespace-nowrap">
+                        <Loader2 size={12} className="animate-spin" /> Waiting...
+                      </span>
+                      <button
+                        onClick={handleCancel}
+                        className="px-3 py-1.5 text-[11px] font-medium text-text-muted hover:text-danger border border-border-strong/40 hover:border-danger/30 rounded transition-colors whitespace-nowrap"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {tokenInvalid && (
+                        <button
+                          onClick={handleAuthorize}
+                          disabled={!url || loading}
+                          className="px-3 py-1.5 text-[11px] font-medium bg-brand hover:bg-brand-hover text-white rounded transition-colors disabled:opacity-50 whitespace-nowrap"
+                        >
+                          Re-authenticate
+                        </button>
+                      )}
+                      <button
+                        onClick={handleRevoke}
+                        disabled={loading}
+                        className="px-3 py-1.5 text-[11px] font-medium text-text-muted hover:text-danger border border-border-strong/40 hover:border-danger/30 rounded transition-colors disabled:opacity-50"
+                      >
+                        {action === "revoke" ? <Loader2 size={12} className="animate-spin" /> : "Revoke"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
 
-          {checkingStatus && (
-            <div className="flex items-center gap-2 rounded-lg border border-border-strong/30 bg-bg-tertiary/60 px-4 py-3 text-[11px] text-text-muted">
-              <Loader2 size={12} className="animate-spin shrink-0" />
-              Checking whether the stored token is still accepted by the MCP server...
-            </div>
-          )}
+              {checkingStatus && (
+                <div className="flex items-center gap-2 rounded-lg border border-border-strong/30 bg-bg-tertiary/60 px-4 py-3 text-[11px] text-text-muted">
+                  <Loader2 size={12} className="animate-spin shrink-0" />
+                  Checking whether the stored token is still accepted by the MCP server...
+                </div>
+              )}
 
-          {!checkingStatus && tokenStatus?.revoked && (
-            <div className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/8 px-4 py-3">
-              <AlertTriangle size={12} className="text-warning mt-0.5 shrink-0" />
-              <p className="text-[11px] text-warning">{tokenStatus.message}</p>
+              {error && (
+                <div className="flex items-start gap-2 rounded-lg border border-danger/25 bg-danger/8 px-4 py-3">
+                  <AlertTriangle size={12} className="text-danger mt-0.5 shrink-0" />
+                  <p className="text-[11px] text-danger">{error}</p>
+                </div>
+              )}
             </div>
-          )}
-
-          {!checkingStatus && tokenStatus && !tokenStatus.valid && !tokenStatus.revoked && tokenStatus.message && (
-            <div className="flex items-start gap-2 rounded-lg border border-border-strong/30 bg-bg-tertiary/60 px-4 py-3">
-              <Info size={12} className="text-text-muted mt-0.5 shrink-0" />
-              <p className="text-[11px] text-text-muted">{tokenStatus.message}</p>
-            </div>
-          )}
-        </div>
+          );
+        })()
       ) : (
         <div className="space-y-3">
           <div className="flex items-center gap-3 rounded-lg border border-brand/25 bg-brand/8 px-4 py-3">
