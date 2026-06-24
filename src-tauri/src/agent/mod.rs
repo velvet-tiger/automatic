@@ -24,6 +24,7 @@ mod junie;
 mod kilo_code;
 mod kiro;
 mod opencode;
+mod pi;
 mod warp;
 mod zed;
 
@@ -51,6 +52,7 @@ pub use opencode::{
     clean_opencode_snapshots, clear_opencode_cache, CleanSnapshotsResult, ClearCacheResult,
     OpenCode,
 };
+pub use pi::Pi;
 pub use warp::Warp;
 pub use zed::Zed;
 
@@ -404,6 +406,7 @@ pub fn all() -> Vec<&'static dyn Agent> {
         &Goose,
         &CodexCli,
         &OpenCode,
+        &Pi,
         &Warp,
         &Zed,
     ];
