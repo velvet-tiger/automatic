@@ -41,6 +41,10 @@ Reference and design documentation for the Automatic desktop app. Source-of-trut
   - [Droid](./agents/droid.md)
 - [Sub-Agent Format Reference](./sub-agents/formats.md) — file formats, storage locations, and frontmatter schemas per agent.
 
+## Version 2.0
+
+- [Rename `Project` → `Repository`](./version_2/project-to-repository-rename.md) — repositions the existing per-directory config object as `Repository`, freeing `Project` for a future parent container. Includes the on-disk migrator and a breaking MCP tool rename.
+
 ## Plans (in flight / proposed)
 
 - [Projects.tsx — Phase 2 Refactor Plan](./projects-phase2-refactor.md) — test-harness-first split of the projects screen.
