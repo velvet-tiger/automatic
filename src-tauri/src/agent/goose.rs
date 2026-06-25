@@ -15,14 +15,17 @@ use super::{sync_individual_skills, Agent, AgentCapabilities};
 ///
 /// ## MCP / extensions
 ///
-/// Goose manages extensions entirely through its own YAML config file:
-/// `~/.config/goose/config.yaml`.  Extensions are registered under the
-/// `extensions` key as stdio commands or remote HTTP endpoints.  There is no
-/// project-scoped MCP config file; all extensions are global.
+/// Goose registers extensions under the `extensions` key of its global config
+/// file `~/.config/goose/config.yaml` (stdio commands or remote HTTP
+/// endpoints).  Extensions may also be declared inline inside a project recipe
+/// (`.goose/recipes/`), but those apply only while that recipe runs.  Goose
+/// reads no ambient project-wide extension config — there is no per-project
+/// equivalent that applies to every session in the directory (see Goose issue
+/// block/goose#5597).
 ///
-/// Automatic can discover existing extensions from the global config (YAML
-/// parsing) but **cannot write** Goose extension config — extensions must be
-/// added through the `goose configure` CLI or the Goose Desktop GUI.
+/// Automatic discovers existing extensions from the global config (read-only
+/// YAML parsing) but **does not write** Goose extension config; extensions must
+/// be added through the `goose configure` CLI or the Goose Desktop GUI.
 pub struct Goose;
 
 impl Agent for Goose {
@@ -49,8 +52,15 @@ impl Agent for Goose {
     // ── Capabilities ────────────────────────────────────────────────────
 
     fn capabilities(&self) -> AgentCapabilities {
-        // Goose has no project-level MCP config file.  Extensions are managed
-        // globally via ~/.config/goose/config.yaml through the Goose CLI/Desktop.
+        // `mcp_servers: false` — Goose has no ambient project-wide extension
+        // config that Automatic can write. Extensions live in the global
+        // ~/.config/goose/config.yaml (managed via the Goose CLI/Desktop) or
+        // inline in recipes; we only discover the global config read-only.
+        //
+        // `agents: false` — Goose has no persona-style sub-agent directory. Its
+        // only reusable unit is a recipe (a packaged task/workflow), which is
+        // not the same concept as a sub-agent, so we deliberately do not map
+        // sub-agents onto Goose recipes.
         AgentCapabilities {
             mcp_servers: false,
             agents: false,
@@ -71,9 +81,11 @@ impl Agent for Goose {
     // ── Detection ───────────────────────────────────────────────────────
 
     fn detect_in(&self, dir: &Path) -> bool {
-        // .goosehints is the most unique Goose-specific marker.
-        // AGENTS.md is too generic to use as a sole trigger.
-        dir.join(".goosehints").exists()
+        // `.goosehints` and `.goose/recipes/` are both Goose-specific markers.
+        // `AGENTS.md` is shared with other agents, so it is too generic to use
+        // as a sole trigger. A bare `.goose/` directory is not enough on its
+        // own; we require the `recipes` subdirectory to avoid false positives.
+        dir.join(".goosehints").exists() || dir.join(".goose").join("recipes").exists()
     }
 
     fn skill_dirs(&self, dir: &Path) -> Vec<PathBuf> {
@@ -434,6 +446,20 @@ mod tests {
         assert!(!Goose.detect_in(dir.path()));
 
         fs::write(dir.path().join(".goosehints"), "").unwrap();
+        assert!(Goose.detect_in(dir.path()));
+    }
+
+    #[test]
+    fn test_detect_goose_recipes_dir() {
+        let dir = tempdir().unwrap();
+        assert!(!Goose.detect_in(dir.path()));
+
+        // A bare `.goose/` directory must NOT trigger detection on its own.
+        fs::create_dir(dir.path().join(".goose")).unwrap();
+        assert!(!Goose.detect_in(dir.path()));
+
+        // The `recipes` subdirectory is the Goose-specific marker.
+        fs::create_dir(dir.path().join(".goose").join("recipes")).unwrap();
         assert!(Goose.detect_in(dir.path()));
     }
 
