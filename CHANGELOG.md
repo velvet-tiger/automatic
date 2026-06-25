@@ -4,6 +4,20 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-06-25
+
+### Added
+
+- Support for the Pi (pi.dev) agent. Automatic writes a Pi-scoped `.pi/mcp.json` (Claude-compatible JSON, kept separate from Claude Code's `.mcp.json`) and exposes `.pi/agents/` for Markdown + YAML sub-agent definitions. MCP servers and sub-agents are provided through the `pi-mcp-adapter` and `pi-subagents` community extensions. The project marker is `.pi/`, and `AGENTS.md` is shared rather than owned. ([5472204](https://github.com/velvet-tiger/automatic/commit/5472204))
+
+### Fixed
+
+- Goose projects that use recipes (`.goose/recipes/`) are now detected, not only those with a `.goosehints` file. A bare `.goose/` directory is intentionally not sufficient — the `recipes` subdirectory is required to avoid false positives. The stale MCP documentation that claimed Goose exposes no project-scoped extension config has also been corrected. ([a9bd4d4](https://github.com/velvet-tiger/automatic/commit/a9bd4d4))
+
+### Maintenance
+
+- Added the design-of-record for the 2.0 "Project → Repository" rename, covering the naming map, the idempotent on-disk migrator, the breaking MCP tool rename, and the planned five-PR rollout. ([e001da7](https://github.com/velvet-tiger/automatic/commit/e001da7))
+
 ## [1.11.5] - 2026-06-19
 
 ### Changed
