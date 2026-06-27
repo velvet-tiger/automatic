@@ -18,9 +18,12 @@
   "unified_instruction": "",
   "unified_rules": [
     "automatic-service",
-    "automatic-checklist",
+    "automatic-general",
     "automatic-code-style",
-    "automatic-general"
+    "automatic-process",
+    "automatic-guardrails",
+    "automatic-prose",
+    "automatic-agent-guidance"
   ],
   "_author": { "type": "provider", "name": "Automatic", "url": "https://automatic.sh" }
 }
