@@ -71,7 +71,8 @@ npm run tauri [cmd]     # Direct Tauri CLI access
 - `src-tauri/assets/skills/` — Bundled skill definitions (automatic-*, laravel-specialist, php-pro, etc.)
 - `src-tauri/assets/rules/` — Bundled rule templates
 - `src-tauri/assets/subagents/` — Agent-specific templates and config structures
-- `src-tauri/assets/templates/` — Markdown templates (Agent Project Brief, Session Context)
+- `src-tauri/assets/instructions/` — Markdown instruction templates (Agent Project Brief, Session Context)
+- `src-tauri/assets/discover/project-templates/` — Bundled project-config templates (JSON, surfaced as "Templates" in the Discover UI)
 - `src-tauri/languages/` — Language-specific module definitions (.mod files)
 - `src-tauri/assets/discover/featured-mcp-servers.json` — Curated MCP server registry
 - `src-tauri/collections.json` — Skill/server collection definitions
