@@ -320,6 +320,16 @@ const DEFAULT_RULES: &[(&str, &str, &str)] = &[
         include_str!("../../assets/rules/automatic/guardrails.md"),
     ),
     (
+        "automatic-prose",
+        "Prose",
+        include_str!("../../assets/rules/automatic/prose.md"),
+    ),
+    (
+        "automatic-agent-guidance",
+        "Agent guidance",
+        include_str!("../../assets/rules/automatic/agent-guidance.md"),
+    ),
+    (
         "automatic-service",
         "Automatic",
         include_str!("../../assets/rules/automatic/automatic-service.md"),
