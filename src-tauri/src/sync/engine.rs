@@ -569,12 +569,7 @@ fn sync_instruction_target_file(
         })
         .cloned()
         .unwrap_or_default();
-    let has_commands = !project.user_commands.is_empty()
-        || project
-            .custom_commands
-            .as_ref()
-            .is_some_and(|commands| !commands.is_empty());
-    let rules = crate::core::ensure_automatic_rules(&user_rules, has_commands);
+    let rules = crate::core::ensure_automatic_rules(&user_rules);
     let custom_contents: Vec<String> = project
         .custom_rules
         .iter()

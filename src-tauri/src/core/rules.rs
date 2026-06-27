@@ -18,7 +18,6 @@ use super::recently_added::{record_recently_added, remove_recently_added};
 /// Automatic.  It tells agents how to use the Automatic MCP tools (skills,
 /// memory, features, project context).
 pub const MANDATORY_RULE: &str = "automatic-service";
-pub const COMMANDS_RULE: &str = "automatic-commands";
 
 /// Returns `true` if the given rule machine name is mandatory and cannot be
 /// removed from a project.
@@ -39,9 +38,10 @@ pub fn ensure_mandatory_rules(rules: &[String]) -> Vec<String> {
 
 /// Ensure the standard Automatic rules are present for a project.
 ///
-/// This always includes the Automatic service rule. When the project has
-/// repo-local commands configured, it also includes the commands discovery
-/// rule so agents know to consult `.agents/commands-index.md`.
+/// This always includes the Automatic service rule. Guidance for consulting
+/// repo-local commands (`.agents/commands-index.md`) now lives in the
+/// `automatic-process` rule, so there is no longer a separate commands rule
+/// to inject.
 ///
 /// The returned list is deduplicated, preserving the first occurrence of
 /// each rule name. This is a defensive safety net: a duplicate rule name
@@ -49,21 +49,13 @@ pub fn ensure_mandatory_rules(rules: &[String]) -> Vec<String> {
 /// duplicate that reaches here is silently collapsed before it can leak
 /// into a project's AGENTS.md / CLAUDE.md index or be written twice to
 /// `.automatic/instructions/`.
-pub fn ensure_automatic_rules(rules: &[String], has_commands: bool) -> Vec<String> {
-    let mut result = ensure_mandatory_rules(rules);
-
-    if has_commands && !result.iter().any(|r| r == COMMANDS_RULE) {
-        let insert_at = if result.first().is_some_and(|r| r == MANDATORY_RULE) {
-            1
-        } else {
-            0
-        };
-        result.insert(insert_at, COMMANDS_RULE.to_string());
-    }
+pub fn ensure_automatic_rules(rules: &[String]) -> Vec<String> {
+    let result = ensure_mandatory_rules(rules);
 
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    result.retain(|rule| seen.insert(rule.clone()));
-    result
+    let mut deduped = result;
+    deduped.retain(|rule| seen.insert(rule.clone()));
+    deduped
 }
 
 /// A rule stored as JSON in `~/.automatic/rules/{machine_name}.json`.
@@ -332,12 +324,19 @@ const DEFAULT_RULES: &[(&str, &str, &str)] = &[
         "Automatic",
         include_str!("../../assets/rules/automatic/automatic-service.md"),
     ),
-    (
-        "automatic-commands",
-        "Commands",
-        include_str!("../../assets/rules/automatic/commands.md"),
-    ),
 ];
+
+/// Rules that shipped as bundled defaults in a past version and have since
+/// been removed from the product.  Installation is declarative via
+/// `DEFAULT_RULES`; removal is declarative here.  When you drop a rule from
+/// `DEFAULT_RULES`, add its machine name to this list so existing installs
+/// have the orphaned file (and any project references to it) cleaned up on
+/// the next update.
+///
+/// A name listed here is removed even if the user edited the rule, because
+/// listing it asserts the rule no longer exists in the product.  A rule that
+/// a plugin has since claimed (carries a `plugin_id`) is left untouched.
+const REMOVED_DEFAULT_RULES: &[&str] = &["automatic-commands"];
 
 /// Write default rules to `~/.automatic/rules/`.
 ///
@@ -393,6 +392,10 @@ pub fn install_default_rules_inner(force: bool) -> Result<(), String> {
     // 2. Replace all project file_rules references.
     // 3. Rename .claude/rules/automatic-checklist.md in project directories.
     migrate_checklist_to_process(&dir)?;
+
+    // Migration: drop rules that were removed from DEFAULT_RULES in a past
+    // version so they don't linger as undeletable orphans on existing installs.
+    migrate_remove_default_rules(&dir, REMOVED_DEFAULT_RULES)?;
 
     Ok(())
 }
@@ -504,6 +507,167 @@ fn migrate_checklist_to_process(rules_dir: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Remove rules listed in `removed` from disk and from every project's
+/// `file_rules`.  Idempotent: a name whose file is already gone still has any
+/// stale project references scrubbed.
+///
+/// A rule file that carries a `plugin_id` is left in place — a plugin now
+/// owns that name, so it is no longer an orphaned default.
+fn migrate_remove_default_rules(rules_dir: &Path, removed: &[&str]) -> Result<(), String> {
+    if removed.is_empty() {
+        return Ok(());
+    }
+
+    // 1. Delete each removed rule file unless a plugin has claimed the name.
+    let mut deleted: Vec<&str> = Vec::new();
+    for &name in removed {
+        let path = rules_dir.join(format!("{}.json", name));
+        if path.exists() {
+            // Leave files a plugin now owns; only orphaned defaults are ours.
+            let owned_by_plugin = fs::read_to_string(&path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<Rule>(&raw).ok())
+                .is_some_and(|rule| rule.plugin_id.is_some());
+            if owned_by_plugin {
+                continue;
+            }
+            fs::remove_file(&path).map_err(|e| {
+                format!("Failed to remove orphaned rule file {}.json: {}", name, e)
+            })?;
+        }
+        // Whether or not the file existed, scrub stale references below.
+        deleted.push(name);
+    }
+
+    if deleted.is_empty() {
+        return Ok(());
+    }
+
+    // 2. Walk every project and drop references to the removed rules.
+    let projects_dir = match super::paths::get_projects_dir() {
+        Ok(p) => p,
+        Err(_) => return Ok(()), // no projects dir yet — nothing to scrub
+    };
+    if !projects_dir.exists() {
+        return Ok(());
+    }
+    let entries = match fs::read_dir(&projects_dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+
+    for entry in entries.flatten() {
+        let registry_path = entry.path();
+        if !registry_path.is_file()
+            || registry_path.extension().and_then(|e| e.to_str()) != Some("json")
+        {
+            continue;
+        }
+        let raw = match fs::read_to_string(&registry_path) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let mut value: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let project_dir = value
+            .get("directory")
+            .and_then(|d| d.as_str())
+            .filter(|d| !d.is_empty())
+            .map(|d| d.to_string());
+
+        // With a project directory the authoritative config lives there; the
+        // registry entry is just a pointer.
+        if let Some(ref dir) = project_dir {
+            let config_path = std::path::PathBuf::from(dir)
+                .join(".automatic")
+                .join("project.json");
+            if config_path.exists() {
+                if let Ok(config_raw) = fs::read_to_string(&config_path) {
+                    if let Ok(mut config) =
+                        serde_json::from_str::<serde_json::Value>(&config_raw)
+                    {
+                        let mut changed = false;
+                        for &name in &deleted {
+                            changed |= remove_rule_from_file_rules(&mut config, name);
+                        }
+                        if changed {
+                            if let Ok(pretty) = serde_json::to_string_pretty(&config) {
+                                let _ = fs::write(&config_path, pretty);
+                            }
+                        }
+                    }
+                }
+                for &name in &deleted {
+                    remove_dot_claude_rule(dir, name);
+                }
+                continue;
+            }
+        }
+
+        // Legacy / no-directory projects: update the registry entry directly.
+        let mut changed = false;
+        for &name in &deleted {
+            changed |= remove_rule_from_file_rules(&mut value, name);
+        }
+        if changed {
+            if let Ok(pretty) = serde_json::to_string_pretty(&value) {
+                let _ = fs::write(&registry_path, pretty);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove every occurrence of `rule_name` from all arrays in a project's
+/// `file_rules` map.  Returns `true` if any array shrank.
+fn remove_rule_from_file_rules(project: &mut serde_json::Value, rule_name: &str) -> bool {
+    let file_rules = match project
+        .get_mut("file_rules")
+        .and_then(|v| v.as_object_mut())
+    {
+        Some(m) => m,
+        None => return false,
+    };
+
+    let mut changed = false;
+    for rules in file_rules.values_mut() {
+        let Some(arr) = rules.as_array_mut() else {
+            continue;
+        };
+        let before = arr.len();
+        arr.retain(|e| e.as_str() != Some(rule_name));
+        if arr.len() != before {
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Delete `<project_dir>/.claude/rules/<name>.md` when it exists and carries
+/// the Automatic-managed header.  User-authored files are never deleted.
+fn remove_dot_claude_rule(project_dir: &str, name: &str) {
+    const MANAGED_HEADER: &str = "<!-- managed by Automatic — do not edit by hand -->\n\n";
+
+    let path = std::path::PathBuf::from(project_dir)
+        .join(".claude")
+        .join("rules")
+        .join(format!("{}.md", name));
+
+    if !path.exists() {
+        return;
+    }
+    // Only delete files we own.
+    if let Ok(content) = fs::read_to_string(&path) {
+        if content.starts_with(MANAGED_HEADER) {
+            let _ = fs::remove_file(&path);
+        }
+    }
 }
 
 /// Replace occurrences of `old_rule` with `new_rule` inside the `file_rules`
@@ -859,7 +1023,6 @@ mod tests {
     #[test]
     fn non_automatic_rules_are_not_mandatory() {
         assert!(!is_mandatory_rule("automatic-general"));
-        assert!(!is_mandatory_rule("automatic-commands"));
         assert!(!is_mandatory_rule("my-custom-rule"));
         assert!(!is_mandatory_rule(""));
     }
@@ -901,34 +1064,13 @@ mod tests {
     }
 
     #[test]
-    fn ensure_automatic_rules_adds_commands_rule_when_project_has_commands() {
+    fn ensure_automatic_rules_prepends_mandatory_rule() {
         let rules = vec!["my-rule".to_string()];
-        let result = ensure_automatic_rules(&rules, true);
-        assert_eq!(
-            result,
-            vec![
-                MANDATORY_RULE.to_string(),
-                COMMANDS_RULE.to_string(),
-                "my-rule".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn ensure_automatic_rules_skips_commands_rule_when_project_has_no_commands() {
-        let rules = vec!["my-rule".to_string()];
-        let result = ensure_automatic_rules(&rules, false);
+        let result = ensure_automatic_rules(&rules);
         assert_eq!(
             result,
             vec![MANDATORY_RULE.to_string(), "my-rule".to_string()]
         );
-    }
-
-    #[test]
-    fn ensure_automatic_rules_does_not_duplicate_commands_rule() {
-        let rules = vec![MANDATORY_RULE.to_string(), COMMANDS_RULE.to_string()];
-        let result = ensure_automatic_rules(&rules, true);
-        assert_eq!(result, rules);
     }
 
     #[test]
@@ -939,7 +1081,7 @@ mod tests {
             "automatic-process".to_string(),
             "automatic-process".to_string(),
         ];
-        let result = ensure_automatic_rules(&rules, false);
+        let result = ensure_automatic_rules(&rules);
         assert_eq!(
             result,
             vec![
@@ -958,7 +1100,7 @@ mod tests {
             "alpha".to_string(),
             "gamma".to_string(),
         ];
-        let result = ensure_automatic_rules(&rules, false);
+        let result = ensure_automatic_rules(&rules);
         assert_eq!(
             result,
             vec![
@@ -1086,5 +1228,215 @@ mod tests {
         let mut project = serde_json::json!({ "name": "demo", "directory": "/tmp" });
         let changed = dedupe_file_rules(&mut project);
         assert!(!changed);
+    }
+
+    // ── remove_rule_from_file_rules ─────────────────────────────────────────
+
+    #[test]
+    fn remove_rule_strips_from_all_arrays() {
+        let mut project = serde_json::json!({
+            "file_rules": {
+                "_project": ["automatic-commands", "other"],
+                "AGENTS.md": ["keep", "automatic-commands"],
+            }
+        });
+        let changed = remove_rule_from_file_rules(&mut project, "automatic-commands");
+        assert!(changed);
+        assert_eq!(
+            project["file_rules"]["_project"],
+            serde_json::json!(["other"])
+        );
+        assert_eq!(
+            project["file_rules"]["AGENTS.md"],
+            serde_json::json!(["keep"])
+        );
+    }
+
+    #[test]
+    fn remove_rule_is_noop_when_absent() {
+        let mut project = serde_json::json!({
+            "file_rules": { "_project": ["a", "b"] }
+        });
+        let changed = remove_rule_from_file_rules(&mut project, "automatic-commands");
+        assert!(!changed);
+        assert_eq!(
+            project["file_rules"]["_project"],
+            serde_json::json!(["a", "b"])
+        );
+    }
+
+    #[test]
+    fn remove_rule_handles_missing_field() {
+        let mut project = serde_json::json!({ "name": "demo", "directory": "/tmp" });
+        let changed = remove_rule_from_file_rules(&mut project, "automatic-commands");
+        assert!(!changed);
+    }
+
+    // ── migrate_remove_default_rules ────────────────────────────────────────
+
+    const MANAGED_HEADER: &str = "<!-- managed by Automatic — do not edit by hand -->\n\n";
+
+    #[test]
+    fn migrate_remove_deletes_orphan_and_scrubs_project() {
+        with_temp_home(|_home| {
+            let rules_dir = get_rules_dir().expect("rules dir");
+            fs::create_dir_all(&rules_dir).expect("create rules dir");
+            write_rule(&rules_dir, "automatic-commands", "Commands", "body");
+
+            // A project whose registry entry points at a directory holding the
+            // authoritative project.json and a synced .claude/rules copy.
+            let projects_dir = super::super::paths::get_projects_dir().expect("projects dir");
+            fs::create_dir_all(&projects_dir).expect("create projects dir");
+            let proj_tmp = tempfile::tempdir().expect("project dir");
+            let proj_dir = proj_tmp.path().to_path_buf();
+
+            fs::write(
+                projects_dir.join("demo.json"),
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "name": "demo",
+                    "directory": proj_dir.to_string_lossy(),
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+
+            let config_dir = proj_dir.join(".automatic");
+            fs::create_dir_all(&config_dir).unwrap();
+            fs::write(
+                config_dir.join("project.json"),
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "name": "demo",
+                    "directory": proj_dir.to_string_lossy(),
+                    "file_rules": { "_project": ["automatic-commands", "automatic-service"] }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+
+            let claude_rules = proj_dir.join(".claude").join("rules");
+            fs::create_dir_all(&claude_rules).unwrap();
+            let managed_rule = claude_rules.join("automatic-commands.md");
+            fs::write(&managed_rule, format!("{}commands body", MANAGED_HEADER)).unwrap();
+
+            migrate_remove_default_rules(&rules_dir, &["automatic-commands"]).unwrap();
+
+            assert!(
+                !rules_dir.join("automatic-commands.json").exists(),
+                "orphaned rule file should be deleted"
+            );
+            let config: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(config_dir.join("project.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                config["file_rules"]["_project"],
+                serde_json::json!(["automatic-service"]),
+                "reference to removed rule should be scrubbed"
+            );
+            assert!(
+                !managed_rule.exists(),
+                "synced .claude/rules copy should be deleted"
+            );
+        });
+    }
+
+    #[test]
+    fn migrate_remove_skips_plugin_owned_rule() {
+        with_temp_home(|_home| {
+            let rules_dir = get_rules_dir().expect("rules dir");
+            fs::create_dir_all(&rules_dir).expect("create rules dir");
+            let rule = Rule {
+                name: "Commands".to_string(),
+                content: "body".to_string(),
+                plugin_id: Some("some-plugin".to_string()),
+                _author: None,
+            };
+            fs::write(
+                rules_dir.join("automatic-commands.json"),
+                serde_json::to_string_pretty(&rule).unwrap(),
+            )
+            .unwrap();
+
+            migrate_remove_default_rules(&rules_dir, &["automatic-commands"]).unwrap();
+
+            assert!(
+                rules_dir.join("automatic-commands.json").exists(),
+                "a rule a plugin now owns must not be deleted"
+            );
+        });
+    }
+
+    #[test]
+    fn migrate_remove_preserves_user_authored_claude_file() {
+        with_temp_home(|_home| {
+            let rules_dir = get_rules_dir().expect("rules dir");
+            fs::create_dir_all(&rules_dir).expect("create rules dir");
+            write_rule(&rules_dir, "automatic-commands", "Commands", "body");
+
+            let projects_dir = super::super::paths::get_projects_dir().expect("projects dir");
+            fs::create_dir_all(&projects_dir).expect("create projects dir");
+            let proj_tmp = tempfile::tempdir().expect("project dir");
+            let proj_dir = proj_tmp.path().to_path_buf();
+            fs::write(
+                projects_dir.join("demo.json"),
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "name": "demo",
+                    "directory": proj_dir.to_string_lossy(),
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            fs::create_dir_all(proj_dir.join(".automatic")).unwrap();
+            fs::write(
+                proj_dir.join(".automatic").join("project.json"),
+                serde_json::to_string_pretty(&serde_json::json!({ "name": "demo" })).unwrap(),
+            )
+            .unwrap();
+
+            let claude_rules = proj_dir.join(".claude").join("rules");
+            fs::create_dir_all(&claude_rules).unwrap();
+            // No managed header — this is a file the user wrote by hand.
+            let user_rule = claude_rules.join("automatic-commands.md");
+            fs::write(&user_rule, "my own notes").unwrap();
+
+            migrate_remove_default_rules(&rules_dir, &["automatic-commands"]).unwrap();
+
+            assert!(
+                user_rule.exists(),
+                "a user-authored .claude rule must not be deleted"
+            );
+        });
+    }
+
+    #[test]
+    fn migrate_remove_is_idempotent_when_file_already_gone() {
+        with_temp_home(|_home| {
+            let rules_dir = get_rules_dir().expect("rules dir");
+            fs::create_dir_all(&rules_dir).expect("create rules dir");
+            // No rule file on disk, but a project still references it.
+            let projects_dir = super::super::paths::get_projects_dir().expect("projects dir");
+            fs::create_dir_all(&projects_dir).expect("create projects dir");
+            fs::write(
+                projects_dir.join("legacy.json"),
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "name": "legacy",
+                    "file_rules": { "_project": ["automatic-commands", "keep"] }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+
+            migrate_remove_default_rules(&rules_dir, &["automatic-commands"]).unwrap();
+
+            let entry: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(projects_dir.join("legacy.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                entry["file_rules"]["_project"],
+                serde_json::json!(["keep"]),
+                "stale reference scrubbed even when the rule file was already gone"
+            );
+        });
     }
 }

@@ -19,6 +19,7 @@ A framework for structured, honest, and traceable software development work. App
 - Check how similar problems have been solved elsewhere in the codebase. Prefer consistency.
 - Identify existing test coverage. Understand what is already verified and what is not.
 - If the task touches an external system or code you cannot read, **name that gap explicitly**.
+- **Reusable commands.** When this project has repo-local commands, check `.agents/commands-index.md` before starting work that may match a reusable workflow. If the index lists a relevant command, read the referenced file in `.agents/commands/` and follow it. Treat these files as reusable workflow instructions, not as native slash commands.
 
 ## Phase 3: Plan
 
