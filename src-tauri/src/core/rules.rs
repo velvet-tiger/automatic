@@ -301,37 +301,37 @@ pub fn save_plugin_rule(
 const DEFAULT_RULES: &[(&str, &str, &str)] = &[
     (
         "automatic-general",
-        "General",
+        "Automatic: General",
         include_str!("../../assets/rules/automatic/general.md"),
     ),
     (
         "automatic-code-style",
-        "Code Style",
+        "Automatic: Code Style",
         include_str!("../../assets/rules/automatic/code-style.md"),
     ),
     (
         "automatic-process",
-        "Agent process",
+        "Automatic: Agent process",
         include_str!("../../assets/rules/automatic/process.md"),
     ),
     (
         "automatic-guardrails",
-        "Guardrails",
+        "Automatic: Guardrails",
         include_str!("../../assets/rules/automatic/guardrails.md"),
     ),
     (
         "automatic-prose",
-        "Prose",
+        "Automatic: Prose",
         include_str!("../../assets/rules/automatic/prose.md"),
     ),
     (
         "automatic-agent-guidance",
-        "Agent guidance",
+        "Automatic: Agent guidance",
         include_str!("../../assets/rules/automatic/agent-guidance.md"),
     ),
     (
         "automatic-service",
-        "Automatic",
+        "Automatic: Service",
         include_str!("../../assets/rules/automatic/automatic-service.md"),
     ),
 ];
@@ -371,11 +371,13 @@ pub fn install_default_rules_inner(force: bool) -> Result<(), String> {
             let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
             fs::write(&path, pretty).map_err(|e| e.to_string())?;
         } else if *machine_name == "automatic-service" {
-            // Migration: rename "Automatic MCP Service" → "Automatic"
+            // Migration: converge legacy service-rule display names on the
+            // current canonical name ("Automatic MCP Service" and the later
+            // "Automatic" both become "Automatic: Service").
             if let Ok(raw) = fs::read_to_string(&path) {
                 if let Ok(mut rule) = serde_json::from_str::<Rule>(&raw) {
-                    if rule.name == "Automatic MCP Service" {
-                        rule.name = "Automatic".to_string();
+                    if rule.name == "Automatic MCP Service" || rule.name == "Automatic" {
+                        rule.name = "Automatic: Service".to_string();
                         if let Ok(pretty) = serde_json::to_string_pretty(&rule) {
                             let _ = fs::write(&path, pretty);
                         }
