@@ -1,6 +1,6 @@
 # Automatic
 
-Manage and sync your skills, MCP servers, rules, and project instructions. Works with Claude Code, Codex, Cursor, and 12 other agent tools.
+Manage and sync your skills, MCP servers, rules, hooks, and project instructions. Works with Claude Code, Codex, Cursor, and 13 other agent tools.
 
 <p>
   <a href="https://tryautomatic.app">Website</a>
@@ -21,7 +21,7 @@ Manage and sync your skills, MCP servers, rules, and project instructions. Works
 
 ![Automatic screenshot](screenshot.png)
 
-Automatic is a desktop hub for managing AI agent configuration across projects. It gives you one place to organise the skills, MCP servers, rules, templates, and project settings that power your agents, then syncs that configuration into the tools you actually use.
+Automatic is a desktop hub for managing AI agent configuration across projects. It gives you one place to organise the skills, MCP servers, rules, hooks, templates, and project settings that power your agents, then syncs that configuration into the tools you actually use.
 
 The goal is simple: capture the patterns that work once, reuse them everywhere, and stop rebuilding agent context from scratch for every new project.
 
@@ -96,6 +96,7 @@ Each project in Automatic maps to a directory on disk and brings together all th
 - **Agents** — which agent tools (Claude Code, Cursor, Codex, etc.) are enabled for the project
 - **Sub-agents** — specialised agent configurations for specific tasks
 - **Commands** — custom commands scoped to the project
+- **Hooks** — lifecycle scripts synced per agent, either inline or referencing an existing script file
 - **Context** — auto-generated project snapshot (directory tree, config files, key documentation) for AI consumption
 - **Documentation** — links to external docs relevant to the project
 - **Plugins** — extend project capabilities with additional integrations
@@ -111,12 +112,15 @@ The library is a global registry of reusable resources that can be assigned to a
 - **Rules** — reusable rules for code quality, security, review, and more
 - **Sub-Agents** — pre-configured agent roles for specialised tasks
 - **Commands** — reusable command definitions
-- **Skills** — prompt-based capabilities (19 bundled skills covering code review, testing, debugging, security, performance, documentation, and framework-specific guidance for Laravel, PHP, Python, Terraform, Tailwind CSS, React/Next.js)
+- **Hooks** — reusable lifecycle scripts that templates can bundle and projects sync per agent
+- **Skills** — prompt-based capabilities (21 bundled skills covering code review, testing, debugging, security, performance, documentation, refactoring, API design, database design, and framework-specific guidance for Laravel, PHP, Python, Terraform, Tailwind CSS, React/Next.js)
 - **MCP Servers** — Model Context Protocol server configurations
 - **Providers** — supported agent tools and their sync settings
 - **Tools** — available tool integrations
 
-Skills can be installed from the marketplace, created locally, or scoped to individual projects. They are synced to agent tool directories as symlinks or copies (configurable).
+Skills can be installed from the marketplace, created locally, or scoped to individual projects. They are synced to agent tool directories as symlinks or copies (configurable), and remote-sourced skills check for upstream updates with an in-app "Update now" action.
+
+Library items — skills, commands, rules, and sub-agents — can also be drafted with the AI-powered **Library Generator** instead of being written by hand.
 
 ### Marketplace
 
@@ -129,7 +133,7 @@ Browse, search, and install community resources:
 
 ### Project Sync
 
-- Sync configuration into 15 supported agent tools with one click
+- Sync configuration into 16 supported agent tools with one click
 - Auto-detect installed agents and import their existing MCP server configs
 - Detect configuration drift when on-disk files diverge from saved state
 - Rebuild or recover configuration when drift is detected
@@ -137,14 +141,16 @@ Browse, search, and install community resources:
 
 ### MCP Service
 
-Automatic exposes a full MCP server (over stdio) with 27 tools that agents can call directly:
+Automatic exposes a full MCP server (over stdio) with 41 tools that agents can call directly:
 
 | Category | Tools |
 |---|---|
 | **Projects** | List, read, sync projects; get project context; discover related projects via groups |
 | **Skills** | List, read, search skills (global and project-local) |
-| **Memory** | Store, get, list, search, delete memory entries; read Claude Code auto-memory files |
-| **Features** | Create, list, get, update, archive, delete features; set lifecycle state; add progress updates |
+| **Memory** | Store, get, list, search, delete, clear memory entries; read Claude Code auto-memory files |
+| **Features** | Create, list, get, update, archive, unarchive, delete features; set lifecycle state; add progress updates |
+| **Rules** | Create, read, update, delete, list rules; attach and detach them from projects |
+| **Hooks** | Create, read, update, delete, list hooks; attach and detach them from projects |
 | **Credentials** | Retrieve API keys for LLM providers (Anthropic, OpenAI, Gemini, and others) |
 | **MCP Servers** | List registered MCP server configurations |
 | **Sessions** | List active Claude Code sessions tracked by Automatic |
@@ -173,14 +179,23 @@ Run the MCP server standalone with `automatic mcp-serve` or let the desktop app 
 - Encrypted environment variable storage (AES-GCM)
 - Agents retrieve credentials via MCP without exposing raw keys
 
+### Command Line Interface
+
+The bundled `automatic` CLI ships as a fourth mode of the desktop binary, alongside the GUI, the MCP stdio server, and the MCP proxy. Install it with one click from **Settings → Command Line** (macOS, Windows, and Linux).
+
+- Verbs cover projects, skills, MCP servers, memory, and rules
+- Every command supports `--json` (returning the same shapes as the MCP tools), plus `--quiet` and standard exit codes
+- `automatic init <template>` writes the files a project sync would write into a target directory without registering a project
+
 ### Utilities
 
 - **Token Estimator** — estimate token counts for messages before sending them to an LLM
+- **AI Playground** — run prompts against a live model list with library read and marketplace search tools available to the built-in agent
 - **Insights** — AI-powered recommendations for skills, MCP servers, and agents per project
 
 ## Supported Agent Tools
 
-Automatic syncs configuration into 15 agent tools. The matrix below reflects what each tool's configuration format actually supports — `✓` means Automatic writes that surface, `—` means the tool does not expose it (or manages it through a separate global config Automatic does not own).
+Automatic syncs configuration into 16 agent tools. The matrix below reflects what each tool's configuration format actually supports — `✓` means Automatic writes that surface, `—` means the tool does not expose it (or manages it through a separate global config Automatic does not own).
 
 | Tool | Skills | Project instructions | MCP servers | Sub-agents | Commands |
 |---|---|---|---|---|---|
@@ -191,6 +206,7 @@ Automatic syncs configuration into 15 agent tools. The matrix below reflects wha
 | Codex CLI | ✓ | ✓ | ✓ | ✓ | — |
 | Cursor | ✓ | ✓ | ✓ | ✓ | — |
 | Zed | ✓ | ✓ | ✓ | ✓ | — |
+| Pi | ✓ | ✓ | ✓ | ✓ | — |
 | Droid | ✓ | ✓ | ✓ | — | — |
 | Junie | ✓ | ✓ | ✓ | — | — |
 | Kilo Code | ✓ | ✓ | ✓ | — | — |
@@ -204,6 +220,7 @@ Notes:
 
 - **Rules** are injected into each tool's project-instructions file (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, etc.), so rules support follows the "Project instructions" column.
 - **Antigravity, Cline, Goose, and Warp** manage MCP servers through their own global app/CLI config rather than a project file. Automatic can discover those servers but does not write project-level MCP config for them.
+- **Pi** reads MCP servers and sub-agents through the `pi-mcp-adapter` and `pi-subagents` community extensions. Automatic writes a Pi-scoped `.pi/mcp.json` (kept separate from Claude Code's `.mcp.json`) and `.pi/agents/`, and shares `AGENTS.md` rather than owning it.
 - Automatic auto-detects installed tools and writes to their config directories.
 
 ## Privacy and Security
@@ -256,11 +273,12 @@ The desktop app has two main parts:
 - A **React + TypeScript frontend** for managing projects, skills, templates, marketplaces, and settings
 - A **Rust backend** (Tauri 2) that handles business logic, local configuration, syncing, and the MCP server
 
-The application runs in three modes:
+The application runs in four modes, all dispatched from the same binary:
 
 1. **Desktop GUI** (default) — full UI for managing configuration
-2. **MCP server** (`mcp-serve`) — standalone stdio-based MCP server exposing 27 tools
+2. **MCP server** (`mcp-serve`) — standalone stdio-based MCP server exposing 41 tools
 3. **MCP proxy** (`mcp-proxy`) — transparent proxy with keychain-based authentication
+4. **CLI** (any CLI verb) — scriptable command surface for projects, skills, MCP servers, memory, and rules
 
 Key source locations:
 
@@ -270,7 +288,7 @@ Key source locations:
 - `src-tauri/src/sync/` — Sync engine with drift detection
 - `src-tauri/src/memory.rs` — Key-value memory storage
 - `src-tauri/src/context.rs` — AI context generation
-- `src-tauri/src/agent/` — Agent tool integrations (15 providers)
+- `src-tauri/src/agent/` — Agent tool integrations (16 providers)
 
 ## License
 
