@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-06-28
+
+### Fixed
+
+- The bundled default rules no longer carry framework- or domain-specific content. The `automatic-agent-guidance` rule, which shipped Laravel-specific guidance (Eloquent, FormRequests, Pint, `lando artisan`, translations, `env()`/`config()`, PHPDoc), is now framework-agnostic. Medical-domain naming examples in `automatic-code-style` and `automatic-guardrails`, and niche compliance terms in `automatic-prose`, have been replaced with general ones. Framework specifics belong in language and framework templates. ([b6e43f1](https://github.com/velvet-tiger/automatic/commit/b6e43f1))
+
 ## [1.13.0] - 2026-06-28
 
 ### Added
