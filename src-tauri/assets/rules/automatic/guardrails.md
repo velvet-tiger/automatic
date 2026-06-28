@@ -22,9 +22,9 @@ If yes, compose instead: pass Y as a constructor arg. Inheritance is only for ge
 
 ## 4. Before you name something `Manager`, `Helper`, `Util`, `Service`, `Handler`, `Processor`, `Controller` — stop.
 
-Reach for the domain noun: `PatientRepository`, `InvoiceRenderer`, `StudyMetadataCache`. Generic names hide missing concepts.
+Reach for the domain noun: `OrderRepository`, `InvoiceRenderer`, `SearchIndexCache`. Generic names hide missing concepts.
 
-**Red flag:** a class whose only cohesion is the suffix; e.g. `DicomManager` doing parsing, upload, and caching.
+**Red flag:** a class whose only cohesion is the suffix; e.g. `UploadManager` doing parsing, upload, and caching.
 
 ## 5. Before you write `app(Thing::class)`, `new Client()`, `import { globalState }` inside business logic — stop.
 

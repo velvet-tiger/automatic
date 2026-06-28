@@ -4,26 +4,24 @@ Use these instructions to know how to respond to questions and tasks.
 
 ## What the agent SHOULD do
 
-1. **Check existing code** — Inspect sibling files for patterns before creating new components, repositories, or services. Reuse where possible.
-2. **Run tests** — After modifying code, run the relevant test(s) with `--filter`. Ask user if they want to run the full suite after feature tests pass.
-3. **Follow Laravel conventions** — Use Eloquent relationships, FormRequests, named routes, queued jobs, and config-based env access.
-4. **Use keyed translations** — Always add translations to `lang/en/` files and reference with dot notation.
-5. **Type everything** — Explicit return types, property types, and PHPDoc array shapes.
+1. **Check existing code** — Inspect sibling files for patterns before creating new components, modules, or services. Reuse where possible.
+2. **Run tests** — After modifying code, run the tests relevant to what you changed. Ask the user before running the full suite once the focused tests pass.
+3. **Follow the project's conventions** — Match the framework idioms, directory layout, and patterns already established in the codebase.
+4. **Externalise user-facing strings** — Where the project has a localisation or messages convention, add strings there rather than hardcoding them.
+5. **Type everything** — Add explicit parameter, return, and property types wherever the language supports them.
 6. **Respect local context** — Conform to project architecture, directory structure, and naming. Never overwrite unrelated code.
-7. **Rebuild icon cache** — After clearing cache, run `lando artisan icons:cache`.
-8. **Ask before destructive actions** — File deletions, schema changes, or migrations require confirmation.
+7. **Ask before destructive actions** — File deletions, schema changes, or migrations require confirmation.
 
 ## What the agent MUST NOT do
 
-1. **NEVER run Pint manually** — Pint's `no_unused_imports` rule strips imports referenced in `app()` calls via `::class`, breaking code. Let CI handle linting.
-2. **NEVER pass raw strings to `__()`** — Always use keyed translation strings from lang files to avoid array collisions.
-3. **NEVER create new base folders** — Stick to existing directory structure. Ask for approval before adding top-level directories.
-4. **NEVER remove tests** — Tests are core to the application. Seek approval before deleting any test file.
-5. **NEVER use `env()` outside config files** — Always use `config()`.
-6. **NEVER skip FormRequest validation** — Create dedicated FormRequest classes instead of inline validation.
-7. **NEVER assume production readiness** — Use objective statements ("tests pass", "no linter warnings") instead of subjective claims.
-8. **NEVER loop aimlessly** — If reasoning repeats without progress, abort and explain what data or confirmation is needed.
-9. **NEVER normalize broken behavior** — Treat errors, failing tests, or nonsensical results as defects, not acceptable variations.
+1. **NEVER fight the project's formatter or linter** — Run them the way the project runs them. Do not hand-run a tool in a way that contradicts its configuration; let the configured tooling and CI handle it.
+2. **NEVER create new top-level folders** — Stick to the existing directory structure. Ask for approval before adding base directories.
+3. **NEVER remove tests** — Tests are core to the application. Seek approval before deleting any test file.
+4. **NEVER read environment variables outside the config layer** — Access configuration through the project's config mechanism, not by reading the environment directly throughout the code.
+5. **NEVER skip input validation** — Validate input at boundaries using the project's validation mechanism instead of inline ad-hoc checks.
+6. **NEVER assume production readiness** — Use objective statements ("tests pass", "no linter warnings") instead of subjective claims.
+7. **NEVER loop aimlessly** — If reasoning repeats without progress, abort and explain what data or confirmation is needed.
+8. **NEVER normalize broken behavior** — Treat errors, failing tests, or nonsensical results as defects, not acceptable variations.
 
 ## Best practices
 
@@ -39,8 +37,8 @@ Use these instructions to know how to respond to questions and tasks.
 
 1. **Session start** — Review relevant memories, skills, and project context (if using Automatic MCP).
 2. **Plan** — Make a clear plan and communicate it to the user. If the plan changes, communicate that too.
-3. **Build** — Follow existing patterns. Check sibling files. Use keyed translations. Type everything. Respect local context.
-4. **Test** — Run relevant tests with `--filter`. Fix failures by correcting the code, not the test.
+3. **Build** — Follow existing patterns. Check sibling files. Type everything. Respect local context.
+4. **Test** — Run the tests relevant to your change. Fix failures by correcting the code, not the test.
 5. **Session end** — Store meaningful learnings (architectural decisions, gotchas, conventions) in memory (if using Automatic MCP).
 
 ## Voice

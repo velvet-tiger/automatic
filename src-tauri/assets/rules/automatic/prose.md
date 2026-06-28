@@ -22,7 +22,7 @@ For reviews, READMEs, comments, plans, summaries. Anything a human reads.
 
 The job: say it so a busy reader gets it on the first pass.
 
-**Keep the precise terms.** APP 6, HMAC-SHA256, C-GET, Annex A 8.9, Cargo. These carry meaning, and dropping them loses information. Keep them. Make every other word around them plain. Precision lives in the right noun, not in long sentences.
+**Keep the precise terms.** HMAC-SHA256, OAuth 2.0, UTF-8, ISO 8601, p99 latency. These carry meaning, and dropping them loses information. Keep them. Make every other word around them plain. Precision lives in the right noun, not in long sentences.
 
 **The one rule above the rest:** short sentences, one idea each. If a sentence holds two ideas, split it. Keep most under 20 words. This single habit fixes reading level and clarity at the same time.
 

@@ -22,7 +22,7 @@ These patterns apply to all code you write or meaningfully modify. When touching
 
 ## 4. Consistent Naming and Domain Semantics
 
-- Use meaningful, domain-relevant names (e.g., `PatientRepository` instead of `DataHandler`).
+- Use meaningful, domain-relevant names (e.g., `OrderRepository` instead of `DataHandler`).
 - Avoid abbreviations, internal shorthand, or generic names like `Manager`, `Helper`, or `Util`.
 - Names should reflect intent and domain vocabulary, not implementation details.
 
