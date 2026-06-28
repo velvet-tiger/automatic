@@ -4,6 +4,22 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-06-28
+
+### Added
+
+- Two new bundled default rules: `automatic-prose` (writing guidance for anything a human reads) and `automatic-agent-guidance` (how the agent should respond to questions and tasks). Both ship with fresh installs. ([33ac764](https://github.com/velvet-tiger/automatic/commit/33ac764))
+
+### Changed
+
+- The guidance for consulting repo-local commands (`.agents/commands-index.md`) now lives in the `automatic-process` rule. The standalone `automatic-commands` rule has been retired. Existing installs drop the orphaned rule automatically on update, and any project references to it are cleaned up. ([2345d5f](https://github.com/velvet-tiger/automatic/commit/2345d5f))
+- Every bundled default rule's display name is now namespaced with `Automatic:` so they group together in the UI (for example `Automatic: General`, `Automatic: Service`). ([85c6f0b](https://github.com/velvet-tiger/automatic/commit/85c6f0b))
+- The Software Defaults project template now applies the full set of automatic default rules. ([77a1b53](https://github.com/velvet-tiger/automatic/commit/77a1b53))
+
+### Maintenance
+
+- Documentation sync: README feature coverage, `AGENTS.md`, and stale template paths in `CLAUDE.md`. ([41e4bf1](https://github.com/velvet-tiger/automatic/commit/41e4bf1), [dad256f](https://github.com/velvet-tiger/automatic/commit/dad256f), [2d85325](https://github.com/velvet-tiger/automatic/commit/2d85325))
+
 ## [1.12.0] - 2026-06-25
 
 ### Added
