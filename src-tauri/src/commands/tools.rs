@@ -8,7 +8,7 @@ use crate::core;
 ///
 /// ```ts
 /// invoke("invoke_tool_command", {
-///   tool:    "spec-kitty",
+///   tool:    "example-plugin",
 ///   command: "list_features",
 ///   payload: { projectDir: "/path/to/project" },
 /// })
@@ -22,15 +22,14 @@ use crate::core;
 #[tauri::command]
 pub fn invoke_tool_command(
     tool: String,
-    command: String,
-    payload: serde_json::Value,
+    _command: String,
+    _payload: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     match tool.as_str() {
         // ── Registered plugins ────────────────────────────────────────────────
         // To add a new plugin: add one line here mapping its tool name to its
         // dispatch function.  Nothing else in lib.rs or commands/mod.rs needs
         // to change.
-        "spec-kitty" => crate::plugins::spec_kitty::dispatch(&command, payload),
         other => Err(format!("Unknown tool: '{}'", other)),
     }
 }

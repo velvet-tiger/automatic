@@ -25,7 +25,7 @@ Each plugin needs to expose commands to the frontend (e.g. "list features", "get
 
 ```rust
 // naive — every plugin adds names to lib.rs
-tauri::generate_handler![list_spec_kitty_features, get_spec_kitty_status, ...]
+tauri::generate_handler![list_my_tool_items, get_my_tool_status, ...]
 ```
 
 This was the initial implementation. It had two problems:
@@ -52,7 +52,7 @@ The dispatch table in `commands/tools.rs` maps tool names to plugin dispatch fun
 
 ```rust
 match tool.as_str() {
-    "spec-kitty" => crate::plugins::spec_kitty::dispatch(&command, payload),
+    "my-tool" => crate::plugins::my_tool::dispatch(&command, payload),
     other => Err(format!("Unknown tool: '{}'", other)),
 }
 ```
@@ -174,7 +174,6 @@ Use `detect_dir` when the tool initialises a directory inside the project (e.g. 
 Register the module in `src-tauri/src/plugins/mod.rs`:
 
 ```rust
-pub mod spec_kitty;
 pub mod my_tool;    // add this
 ```
 
@@ -184,8 +183,7 @@ pub mod my_tool;    // add this
 
 ```rust
 match tool.as_str() {
-    "spec-kitty" => crate::plugins::spec_kitty::dispatch(&command, payload),
-    "my-tool"    => crate::plugins::my_tool::dispatch(&command, payload),   // add this
+    "my-tool" => crate::plugins::my_tool::dispatch(&command, payload),   // add this
     other => Err(format!("Unknown tool: '{}'", other)),
 }
 ```
@@ -195,7 +193,6 @@ match tool.as_str() {
 ```rust
 fn bundled_plugins() -> Vec<PluginManifest> {
     vec![
-        crate::plugins::spec_kitty::manifest(),
         crate::plugins::my_tool::manifest(),    // add this
     ]
 }
@@ -294,26 +291,4 @@ When neither field is set, the tool is never auto-detected.
 
 ## Existing Plugins
 
-### Spec Kitty
-
-| Field | Value |
-|-------|-------|
-| Plugin ID | `spec-kitty` |
-| Tool name | `spec-kitty` |
-| detect_dir | `kitty-specs` |
-| detect_binary | `spec-kitty` |
-| Category | Integrations |
-| Enabled by default | No |
-
-Spec Kitty is a spec-driven development CLI for AI agents. It stores feature specifications, plans, and work package kanban state under `kitty-specs/<slug>/` in the project directory.
-
-**Backend commands** (via `invoke_tool_command` with `tool: "spec-kitty"`):
-
-| command | payload fields | returns |
-|---------|---------------|---------|
-| `list_features` | `projectDir: string` | `SpecKittyFeatureMeta[]` |
-| `get_status` | `projectDir: string`, `featureSlug: string` | `SpecKittyFeatureStatus` |
-
-`list_features` reads `meta.json` from each subdirectory of `kitty-specs/`. `get_status` shells out to `spec-kitty agent tasks status --feature <slug> --json` — work package lane state is not stored on disk and can only be retrieved via the CLI.
-
-**Frontend:** `src/plugins/spec-kitty/SpecKittyPanel.tsx` — renders a features list with expandable per-feature WP kanban.
+_No bundled plugins currently declare runtime commands via `invoke_tool_command`. See `src-tauri/src/plugins/` for the current set of bundled plugins and their manifests._

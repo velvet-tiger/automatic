@@ -4,7 +4,6 @@ import { AgentIcon } from "../../../../components/AgentIcon";
 import { useCurrentUser } from "../../../../contexts/ProfileContext";
 import { useTaskLog } from "../../../../contexts/TaskLogContext";
 import Features from "../../../../plugins/build/Features";
-import { SpecKittyPanel } from "../../../../plugins/spec-kitty/SpecKittyPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { handleExternalLinkClick } from "../../../../lib/externalLinks";
@@ -52,7 +51,6 @@ import { InstructionConflictModal } from "../modals/InstructionConflictModal";
 import { SwitchToUnifiedModal } from "./SwitchToUnifiedModal";
 import { RebuildConfirmationModal } from "./RebuildConfirmationModal";
 import { ApplyProjectTemplateModal } from "./ApplyProjectTemplateModal";
-import { ToolInfoSidebar } from "./tools/ProjectToolsTab";
 import { SettingsPanel } from "./panels/SettingsPanel";
 import { MemoryPanel } from "./panels/MemoryPanel";
 import { GroupsPanel } from "./panels/GroupsPanel";
@@ -3322,33 +3320,6 @@ export function ProjectEditor({
                 <Features projectName={selectedName} />
               </div>
             )}
-            {activeToolName === "spec-kitty" && project.directory && (
-              <div className="flex-1 overflow-hidden">
-                <SpecKittyPanel
-                  projectDir={project.directory}
-                  sidebar={(() => {
-                    const entry = toolEntries.find((e) => e.name === "spec-kitty");
-                    if (!entry) return null;
-                    return (
-                      <ToolInfoSidebar
-                        entry={entry}
-                        active
-                        onAdd={() => {}}
-                        onRemove={() => {
-                          const tools = (project.tools ?? []).filter((t) => t !== "spec-kitty");
-                          const updated = { ...project, tools, updated_at: new Date().toISOString() };
-                          setProject(updated);
-                          setDirty(false);
-                          saveProjectSnapshot(updated);
-                          setActiveToolName(null);
-                        }}
-                      />
-                    );
-                  })()}
-                />
-              </div>
-            )}
-
             {/* ── Tools tab (under Configuration) ──────────────────── */}
             {activeToolName === null && projectTab === "tools" && project && (
               <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">

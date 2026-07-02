@@ -10,16 +10,12 @@
 import type { ToolPanelComponent } from "./ToolPanelRegistry";
 import { registerToolPanel } from "./ToolPanelRegistry";
 
-import { SpecKittyPanel } from "./spec-kitty/SpecKittyPanel";
-
 interface PluginEntry {
   name: string;
   panel?: ToolPanelComponent;
 }
 
-const PLUGINS: PluginEntry[] = [
-  { name: "spec-kitty", panel: SpecKittyPanel },
-];
+const PLUGINS: PluginEntry[] = [];
 
 export function initPlugins(): void {
   for (const plugin of PLUGINS) {

@@ -427,12 +427,12 @@ mod tests {
     #[test]
     fn detect_tool_binary_prefers_override_path() {
         let tmp = tmp();
-        let binary = tmp.path().join("spec-kitty");
+        let binary = tmp.path().join("test-tool");
         fs::write(&binary, "#!/bin/sh\nexit 0\n").unwrap();
 
         let def = ToolDefinition {
-            name: "spec-kitty".into(),
-            display_name: "Spec Kitty".into(),
+            name: "test-tool".into(),
+            display_name: "Test Tool".into(),
             description: "desc".into(),
             url: "https://example.com".into(),
             github_repo: None,
@@ -440,7 +440,7 @@ mod tests {
             detect_binary: Some("zzz-nonexistent-binary-xyz-123".into()),
             binary_path: Some(binary.to_string_lossy().into_owned()),
             detect_dir: None,
-            plugin_id: Some("spec-kitty".into()),
+            plugin_id: Some("test-tool".into()),
             provides_tab: false,
             created_at: "2026-01-01T00:00:00Z".into(),
         };

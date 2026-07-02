@@ -56,8 +56,8 @@ pub struct PluginToolDeclaration {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detect_binary: Option<String>,
     /// Relative directory path that signals this tool is initialised in a
-    /// project (e.g. `"kitty-specs"` for spec-kitty).  The autodetect pass
-    /// checks whether `<project_dir>/<detect_dir>` exists.
+    /// project.  The autodetect pass checks whether
+    /// `<project_dir>/<detect_dir>` exists.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detect_dir: Option<String>,
 
@@ -174,7 +174,6 @@ struct PluginState {
 fn bundled_plugins() -> Vec<PluginManifest> {
     vec![
         crate::plugins::build::manifest(),
-        crate::plugins::spec_kitty::manifest(),
         crate::plugins::common_docs::manifest(),
     ]
 }

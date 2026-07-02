@@ -59,7 +59,7 @@ The grid displays up to 6 items. Placeholder items render as non-interactive das
 
 ### `id`
 
-Unique kebab-case identifier. For real items use the product name (e.g. `"spec-kitty"`). For placeholders use `"placeholder-N"`.
+Unique kebab-case identifier. For real items use the product name (e.g. `"example-tool"`). For placeholders use `"placeholder-N"`.
 
 ### `type`
 
@@ -95,7 +95,7 @@ Set to `""` for placeholders.
 
 ### `icon`
 
-A Brandfetch-resolvable domain (e.g. `"spec-kitty.ai"`). Set to `null` to fall back to a letter avatar derived from the name.
+A Brandfetch-resolvable domain (e.g. `"example.com"`). Set to `null` to fall back to a letter avatar derived from the name.
 
 ### `author`
 
@@ -198,33 +198,33 @@ Multiple can be present simultaneously (e.g. a plugin with both "View Plugin" an
 
 ```json
 {
-  "id": "spec-kitty",
-  "name": "Spec Kitty",
+  "id": "example-tool",
+  "name": "Example Tool",
   "type": "plugin",
-  "description": "AI-powered specification management that turns vague ideas into structured, agent-ready feature specs.",
-  "about": "Spec Kitty structures your project requirements into features with work packages that AI coding agents can execute.\n\nIntegrates with Automatic as a plugin for kanban-style specification tracking.\n\n- [Website](https://spec-kitty.ai/)\n- [Documentation](https://spec-kitty.ai/docs)",
-  "icon": "spec-kitty.ai",
+  "description": "One to two sentences describing what the tool does.",
+  "about": "Extended description of the tool.\n\nIntegrates with Automatic as a plugin.\n\n- [Website](https://example.com/)\n- [Documentation](https://example.com/docs)",
+  "icon": "example.com",
   "author": {
-    "name": "Spec Kitty",
-    "url": "https://spec-kitty.ai/"
+    "name": "Example Tool",
+    "url": "https://example.com/"
   },
   "creator": {
-    "name": "Rob Douglass",
+    "name": "Jane Doe",
     "bio": null,
-    "picture": "https://github.com/Priivacy-ai.png",
-    "url": "https://github.com/Priivacy-ai"
+    "picture": "https://github.com/example-user.png",
+    "url": "https://github.com/example-user"
   },
   "links": {
-    "website": "https://spec-kitty.ai/",
+    "website": "https://example.com/",
     "github": null
   },
   "marketplace_target": null,
   "app_target": null,
   "plugin_target": {
-    "plugin_id": "spec-kitty"
+    "plugin_id": "example-tool"
   },
-  "external_url": "https://spec-kitty.ai/",
-  "tags": ["specifications", "planning", "project-management"],
+  "external_url": "https://example.com/",
+  "tags": ["tag1", "tag2", "tag3"],
   "placeholder": false
 }
 ```
