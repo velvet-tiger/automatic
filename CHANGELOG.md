@@ -4,6 +4,20 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-03
+
+### Added
+
+- An opt-in per-project toggle keeps a marked block in the project's `.gitignore` listing everything Automatic writes, so generated agent config is not committed. Turning it off removes the block on the next sync. Whole agent directories (`.claude/`, `.codex/`, `.gemini/`, etc.) are ignored; shared tool directories (`.github/`, `.vscode/`, `.zed/`) stay surgical so CI workflows and editor settings are never dropped. A bundled `automatic-gitignore` rule documents the convention while the toggle is on. ([83d5d0a](https://github.com/velvet-tiger/automatic/commit/83d5d0a))
+
+### Removed
+
+- The bundled Spec Kitty plugin has been dropped entirely, including its Rust backend, React panel, and every registry touch point. Documentation that used Spec Kitty as a worked example now uses a generic placeholder plugin. ([6c85c60](https://github.com/velvet-tiger/automatic/commit/6c85c60))
+
+### Fixed
+
+- Clicking the copy-prompt button on a kanban card no longer reorders the card. The click was triggering a drag on pointer-down, and the resulting pointer-up call reordered the card to the end of its column. ([dcf8ee9](https://github.com/velvet-tiger/automatic/commit/dcf8ee9))
+
 ## [1.13.1] - 2026-06-28
 
 ### Fixed
