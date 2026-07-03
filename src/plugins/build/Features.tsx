@@ -1577,6 +1577,7 @@ function KanbanCard({ feature, isSelected, isDragging, onSelect, onGripDown }: K
       onPointerDown={(e) => {
         // Only initiate drag if left-clicking on the card itself (not its interactive children)
         if (e.button !== 0) return;
+        if ((e.target as HTMLElement).closest("button, a, input, textarea, select")) return;
         onGripDown(feature, e);
       }}
       className={`group bg-bg-base border rounded-lg p-3 cursor-grab active:cursor-grabbing touch-none transition-colors select-none ${
@@ -1677,10 +1678,19 @@ function KanbanView({
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
-    setDraggingId(feature.id);
-    setGhost({ title: feature.title, x: e.clientX, y: e.clientY });
+    // A drag only engages after the pointer moves past a small threshold.
+    // Without it, a plain click "drops" the card into its own column and
+    // reorders it to the end.
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let dragging = false;
 
     const onPointerMove = (ev: PointerEvent) => {
+      if (!dragging) {
+        if (Math.abs(ev.clientX - startX) < 4 && Math.abs(ev.clientY - startY) < 4) return;
+        dragging = true;
+        setDraggingId(feature.id);
+      }
       setGhost({ title: feature.title, x: ev.clientX, y: ev.clientY });
       setDragOverState(resolveColumn(ev.clientX, ev.clientY));
     };
@@ -1689,12 +1699,13 @@ function KanbanView({
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
 
-      const targetState = resolveColumn(ev.clientX, ev.clientY);
-
+      const wasDragging = dragging;
       setDraggingId(null);
       setDragOverState(null);
       setGhost(null);
 
+      if (!wasDragging) return;
+      const targetState = resolveColumn(ev.clientX, ev.clientY);
       if (!targetState) return;
       const colFeatures = grouped[targetState] ?? [];
       const newPosition = colFeatures.length;
