@@ -25,6 +25,23 @@ pub fn is_mandatory_rule(machine_name: &str) -> bool {
     machine_name == MANDATORY_RULE
 }
 
+/// The rule that documents Automatic's managed `.gitignore` block.  It is
+/// injected into a project's instruction files only while the project opts in
+/// to `.gitignore` management, and removed on the next sync when it opts out.
+pub const GITIGNORE_RULE: &str = "automatic-gitignore";
+
+/// Append the [`GITIGNORE_RULE`] to a resolved rule list when the project
+/// manages its `.gitignore`, so the convention is documented in the agent's
+/// instruction file.  A no-op when `manage_gitignore` is `false` or the rule is
+/// already present.  Order is preserved; the rule is appended last so it never
+/// displaces user-selected rules.
+pub fn with_gitignore_rule(mut rules: Vec<String>, manage_gitignore: bool) -> Vec<String> {
+    if manage_gitignore && !rules.iter().any(|r| r == GITIGNORE_RULE) {
+        rules.push(GITIGNORE_RULE.to_string());
+    }
+    rules
+}
+
 /// Ensure mandatory rules are present in a resolved rule list.  If the
 /// mandatory rule is already in the list it is left in its current position.
 /// If absent it is prepended so it appears first.
@@ -333,6 +350,11 @@ const DEFAULT_RULES: &[(&str, &str, &str)] = &[
         "automatic-service",
         "Automatic: Service",
         include_str!("../../assets/rules/automatic/automatic-service.md"),
+    ),
+    (
+        GITIGNORE_RULE,
+        "Automatic: Managed .gitignore",
+        include_str!("../../assets/rules/automatic/gitignore.md"),
     ),
 ];
 

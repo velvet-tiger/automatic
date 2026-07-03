@@ -100,6 +100,46 @@ export function SettingsPanel({ project, setProject, setDirty }: SettingsPanelPr
             </div>
           )}
         </div>
+
+        {/* Manage .gitignore */}
+        <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium text-text-base">Manage .gitignore</div>
+              <div className="text-[11px] text-text-muted mt-0.5 leading-relaxed">
+                Keep a managed block in the project&apos;s{" "}
+                <code className="bg-bg-sidebar px-1 rounded text-[10px]">.gitignore</code> listing every
+                file Automatic writes (instruction files and agent config directories), so generated
+                config is not committed. Turning this off removes the block on the next sync.
+              </div>
+            </div>
+            <button
+              role="switch"
+              aria-checked={!!project.manage_gitignore}
+              aria-label="Manage .gitignore for this project"
+              onClick={() => {
+                setProject({ ...project, manage_gitignore: !project.manage_gitignore, updated_at: new Date().toISOString() });
+                setDirty(true);
+              }}
+              className={`flex items-center gap-2 px-2 py-1.5 rounded transition-colors flex-shrink-0 ${
+                project.manage_gitignore ? "bg-brand/10 text-brand" : "bg-bg-sidebar text-text-muted"
+              }`}
+            >
+              <span className="text-[11px] font-medium">{project.manage_gitignore ? "Enabled" : "Disabled"}</span>
+              <span
+                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors flex-shrink-0 ${
+                  project.manage_gitignore ? "bg-brand" : "bg-border-strong/60"
+                }`}
+              >
+                <span
+                  className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+                    project.manage_gitignore ? "translate-x-3.5" : "translate-x-0.5"
+                  }`}
+                />
+              </span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Help sidebar */}

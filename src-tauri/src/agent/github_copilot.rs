@@ -2,7 +2,7 @@ use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{discover_mcp_servers_from_json, sync_individual_skills, Agent};
+use super::{discover_mcp_servers_from_json, sync_individual_skills, Agent, ManagedPath};
 
 /// GitHub Copilot agent — writes `.vscode/mcp.json` and stores skills under
 /// `<project>/.agents/skills/<name>/SKILL.md`.
@@ -59,6 +59,29 @@ impl Agent for GitHubCopilot {
 
     fn command_file_name(&self, machine_name: &str) -> String {
         format!("{machine_name}.prompt.md")
+    }
+
+    /// Copilot has no directory of its own — it writes into `.github/` and
+    /// `.vscode/`, which belong to GitHub and the editor.  The default would
+    /// miss `.vscode/mcp.json` because that file is merged (not in
+    /// `owned_config_paths`), so it is listed explicitly here.  The pattern
+    /// builder keeps all three surgical rather than ignoring `.github/` or
+    /// `.vscode/` wholesale.
+    fn managed_gitignore_paths(&self, dir: &Path) -> Vec<ManagedPath> {
+        vec![
+            ManagedPath {
+                path: dir.join(".github").join("copilot-instructions.md"),
+                is_dir: false,
+            },
+            ManagedPath {
+                path: dir.join(".github").join("prompts"),
+                is_dir: true,
+            },
+            ManagedPath {
+                path: dir.join(".vscode").join("mcp.json"),
+                is_dir: false,
+            },
+        ]
     }
 
     // ── Config writing ──────────────────────────────────────────────────

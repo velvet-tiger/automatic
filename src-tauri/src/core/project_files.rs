@@ -103,17 +103,20 @@ pub fn save_project_file_for_project(
     // Resolve rules: project-level key ("_project") takes precedence over the
     // legacy per-file / unified keys so that saves are consistent with sync.
     // Mandatory rules (e.g. automatic-service) are always included.
-    let rules: Vec<String> = ensure_automatic_rules(
-        &if let Some(r) = project.file_rules.get("_project").filter(|v| !v.is_empty()) {
-            r.clone()
-        } else {
-            let rule_key = if is_unified { "_unified" } else { filename };
-            project
-                .file_rules
-                .get(rule_key)
-                .cloned()
-                .unwrap_or_default()
-        },
+    let rules: Vec<String> = with_gitignore_rule(
+        ensure_automatic_rules(
+            &if let Some(r) = project.file_rules.get("_project").filter(|v| !v.is_empty()) {
+                r.clone()
+            } else {
+                let rule_key = if is_unified { "_unified" } else { filename };
+                project
+                    .file_rules
+                    .get(rule_key)
+                    .cloned()
+                    .unwrap_or_default()
+            },
+        ),
+        project.manage_gitignore,
     );
 
     // Collect inline custom rule content strings from the project.

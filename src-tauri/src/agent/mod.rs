@@ -100,6 +100,19 @@ impl Default for AgentCapabilities {
     }
 }
 
+// ── Managed paths ──────────────────────────────────────────────────────────────
+
+/// A single filesystem path that Automatic writes for an agent, tagged with
+/// whether it is a directory.  Used to build `.gitignore` entries: directories
+/// are emitted with a trailing slash, files without.
+#[derive(Debug, Clone)]
+pub struct ManagedPath {
+    /// Absolute path under the project directory.
+    pub path: PathBuf,
+    /// `true` if this path is a directory Automatic writes into.
+    pub is_dir: bool,
+}
+
 // ── Trait ────────────────────────────────────────────────────────────────────
 
 /// The contract every agent type must fulfil.
@@ -355,6 +368,53 @@ pub trait Agent: Send + Sync {
             .filter(|p| p.exists())
             .map(|p| p.display().to_string())
             .collect()
+    }
+
+    /// Every path under `dir` that Automatic writes for this agent, used to
+    /// build the project's managed `.gitignore` block.
+    ///
+    /// The default composes the concrete files and directories the agent
+    /// touches: its instruction file, skill directories, sub-agent and command
+    /// directories, and owned MCP config files.  The pattern builder in
+    /// `core::gitignore` then reduces these to the coarsest safe ignore — a
+    /// subpath inside an agent's own directory (e.g. `.codex/agents`) collapses
+    /// to the whole directory (`.codex/`), while a path inside a shared tool
+    /// directory (`.github/`, `.vscode/`) is kept surgical.
+    ///
+    /// Agents that merge into a shared file and therefore keep it out of
+    /// [`owned_config_paths`] (so cleanup does not clobber it) must list that
+    /// file here explicitly if it should still be ignored — see the GitHub
+    /// Copilot override for `.vscode/mcp.json`.
+    fn managed_gitignore_paths(&self, dir: &Path) -> Vec<ManagedPath> {
+        let mut out = vec![ManagedPath {
+            path: dir.join(self.project_file_name()),
+            is_dir: false,
+        }];
+        for d in self.skill_dirs(dir) {
+            out.push(ManagedPath {
+                path: d,
+                is_dir: true,
+            });
+        }
+        if let Some(d) = self.agents_dir(dir) {
+            out.push(ManagedPath {
+                path: d,
+                is_dir: true,
+            });
+        }
+        if let Some(d) = self.commands_dir(dir) {
+            out.push(ManagedPath {
+                path: d,
+                is_dir: true,
+            });
+        }
+        for p in self.owned_config_paths(dir) {
+            out.push(ManagedPath {
+                path: p,
+                is_dir: false,
+            });
+        }
+        out
     }
 }
 

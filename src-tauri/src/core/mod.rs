@@ -23,6 +23,7 @@ mod credentials;
 mod editors;
 mod env_crypto;
 mod flags;
+pub mod gitignore;
 mod groups;
 mod hooks;
 mod integrations;

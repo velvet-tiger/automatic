@@ -206,7 +206,40 @@ fn sync_to_directory_inner(
         record_instruction_state_step(project, &written_instruction_files, &effective_dir_str);
     }
 
+    sync_gitignore_step(&dir, project)?;
+
     Ok(written_files)
+}
+
+/// Maintain the Automatic-managed `.gitignore` block at the project root.
+///
+/// The block always lives at the project root, even in Silent mode, so this
+/// uses `dir` rather than the (possibly redirected) effective sync directory.
+///
+/// When the project opts in, the block is (re)written from the paths every
+/// selected agent reports it owns.  When the project opts out, any previously
+/// written block is removed and the rest of `.gitignore` is left untouched;
+/// the removal call is a cheap no-op when no block exists.
+///
+/// The `.gitignore` file is deliberately kept out of `written_files`: it is a
+/// shared user file that Automatic only partially owns, so drift detection and
+/// stale-file cleanup must never treat it as an Automatic-owned artifact.
+fn sync_gitignore_step(dir: &std::path::Path, project: &Project) -> Result<(), String> {
+    if !project.manage_gitignore {
+        return core::gitignore::remove_managed_block(dir);
+    }
+
+    let mut managed_paths = Vec::new();
+    for agent_id in &project.agents {
+        if let Some(agent_instance) = agent::from_id(agent_id) {
+            managed_paths.extend(agent_instance.managed_gitignore_paths(dir));
+        }
+    }
+
+    let silent = matches!(project.mode, ProjectMode::Silent);
+    let patterns = core::gitignore::build_patterns(dir, &managed_paths, silent);
+    core::gitignore::write_managed_block(dir, &patterns)?;
+    Ok(())
 }
 
 fn sync_project_skills_step(
@@ -569,7 +602,10 @@ fn sync_instruction_target_file(
         })
         .cloned()
         .unwrap_or_default();
-    let rules = crate::core::ensure_automatic_rules(&user_rules);
+    let rules = crate::core::with_gitignore_rule(
+        crate::core::ensure_automatic_rules(&user_rules),
+        project.manage_gitignore,
+    );
     let custom_contents: Vec<String> = project
         .custom_rules
         .iter()

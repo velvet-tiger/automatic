@@ -72,6 +72,12 @@ export interface Project {
   /** When true, rules are written to .automatic/instructions/ and the instruction file becomes an index. */
   instructions_index_mode?: boolean;
   /**
+   * When true, Automatic maintains a managed block in the project's .gitignore
+   * listing every path it writes, so generated agent config is not committed.
+   * The block is removed on the next sync when this is turned back off.
+   */
+  manage_gitignore?: boolean;
+  /**
    * Sync mode for this project.
    * - "normal" (default): files are written directly into the project directory.
    * - "silent": files that would normally go outside .automatic/ are redirected

@@ -1604,6 +1604,7 @@ export function ProjectEditor({
         hooks: stored.hooks || [],
         custom_skills: [...storedCustomSkills, ...newCustomSkills],
         mode: stored.mode === 'silent' ? 'silent' : 'normal',
+        manage_gitignore: stored.manage_gitignore === true,
         directory_missing: stored.directory_missing === true,
       };
 
@@ -1681,6 +1682,7 @@ export function ProjectEditor({
         tools: parsed.tools || [],
         instructions_index_mode: parsed.instructions_index_mode || false,
         mode: parsed.mode === 'silent' ? 'silent' : 'normal',
+        manage_gitignore: parsed.manage_gitignore === true,
         directory_missing: parsed.directory_missing === true,
       };
       setSelectedName(name);

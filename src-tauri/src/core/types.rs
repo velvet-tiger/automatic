@@ -373,6 +373,15 @@ pub struct Project {
     #[serde(default)]
     pub instructions_index_mode: bool,
 
+    /// When `true`, Automatic maintains a managed block in the project's
+    /// `.gitignore` listing every path it writes (instruction files and agent
+    /// config directories), so generated agent configuration is not committed.
+    /// The block is bounded by explicit markers and is safe to re-run. When set
+    /// back to `false`, the sync engine removes the managed block and leaves the
+    /// rest of `.gitignore` untouched. Opt-in per project; defaults to `false`.
+    #[serde(default)]
+    pub manage_gitignore: bool,
+
     /// How Automatic writes synced files for this project.
     /// `Normal` (default) — files go directly into the project directory.
     /// `Silent` — files that would normally live outside `.automatic/` are
