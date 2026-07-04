@@ -1634,9 +1634,11 @@ export function ProjectEditor({
       setActivityPage(0);
       setActivityPageEntries([]);
       setActivityTotalCount(0);
-      // Reset tools group state so a stale sub-tab from a previous project isn't shown
+      // Reset the tool sub-tab so a stale selection from a previous project isn't shown.
+      // Do NOT clear toolEntries here. The registry is global, not per-project, and the
+      // selectedName effect above has already started reloading it. Clearing here can win
+      // the race against that load and wipe the top-level tool tabs (e.g. Build).
       setToolTab(null);
-      setToolEntries([]);
     } catch (err: any) {
       setError(`Failed to read project: ${err}`);
     }
