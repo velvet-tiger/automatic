@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-07-06
+
+### Fixed
+
+- Switching between projects no longer wipes the top-level Build tab. `selectProject` was clearing `toolEntries` right after loading it, which raced the eager reload triggered by the `selectedName` effect and intermittently dropped the Build tab until the Tools sub-tab was reopened to reload it. ([d7b6807](https://github.com/velvet-tiger/automatic/commit/d7b6807))
+
 ## [1.14.0] - 2026-07-03
 
 ### Added
