@@ -5,13 +5,16 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() > 1 && args[1] == "mcp-serve" {
-        // Ensure Discover catalogue files exist on disk before serving.
-        // Uses force=false so an existing (app-written) file is never overwritten;
-        // this only seeds the files when they are absent (e.g. first run without
-        // the GUI, or the user deleted them).
-        if let Err(e) = automatic_lib::core::init_discover_files(false) {
-            eprintln!("[automatic] discover init error: {}", e);
-        }
+        // Run the same startup housekeeping the GUI runs on launch —
+        // including the check that repairs a stale `automatic` binary path
+        // in a project's .mcp.json and re-syncs it. `mcp-serve` is normally
+        // launched directly by the calling agent (e.g. Claude Code) without
+        // the GUI ever running, so without this the repair never happens:
+        // after an app move or update, the agent's next restart of its MCP
+        // servers finds a dead path for `automatic` and everything proxied
+        // through it. Runs synchronously (there is no GUI event loop here to
+        // block) so the repair completes before the server starts serving.
+        automatic_lib::bootstrap::run_startup_housekeeping();
 
         // Run as MCP server on stdio
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");

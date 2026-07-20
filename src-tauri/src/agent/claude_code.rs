@@ -67,7 +67,8 @@ impl Agent for ClaudeCode {
         let path = dir.join(".mcp.json");
         let content =
             serde_json::to_string_pretty(&output).map_err(|e| format!("JSON error: {}", e))?;
-        fs::write(&path, content).map_err(|e| format!("Failed to write .mcp.json: {}", e))?;
+        write_file_atomic(&path, content.as_bytes())
+            .map_err(|e| format!("Failed to write .mcp.json: {}", e))?;
 
         Ok(path.display().to_string())
     }
@@ -639,6 +640,33 @@ fn cleanup_orphaned_managed_scripts(
     Ok(())
 }
 
+/// Writes `content` to `final_path` via a temp file + rename, so a crash or
+/// kill mid-write can never leave `.mcp.json` truncated or corrupt — which
+/// would otherwise drop every configured MCP server for the project, not
+/// just the one being synced.
+fn write_file_atomic(final_path: &Path, content: &[u8]) -> std::io::Result<()> {
+    let mut tmp_name = final_path.as_os_str().to_os_string();
+    tmp_name.push(".tmp");
+    let tmp_path = PathBuf::from(tmp_name);
+
+    // Remove a stale tmp left behind by a previous crash, if any.
+    let _ = fs::remove_file(&tmp_path);
+
+    {
+        let mut tmp = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
+        std::io::Write::write_all(&mut tmp, content)?;
+        tmp.sync_all()?;
+    } // file handle closed before rename
+
+    fs::rename(&tmp_path, final_path).inspect_err(|_| {
+        // Best-effort cleanup so a failed rename doesn't leave litter.
+        let _ = fs::remove_file(&tmp_path);
+    })
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -733,6 +761,38 @@ mod tests {
                 .unwrap(),
             "client_123"
         );
+    }
+
+    #[test]
+    fn test_write_mcp_config_leaves_no_tmp_file_and_overwrites_cleanly() {
+        let dir = tempdir().unwrap();
+        ClaudeCode
+            .write_mcp_config(dir.path(), &stdio_servers())
+            .unwrap();
+        ClaudeCode
+            .write_mcp_config(dir.path(), &http_servers())
+            .unwrap();
+
+        assert!(!dir.path().join(".mcp.json.tmp").exists());
+        let content = fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+        assert!(parsed["mcpServers"]["remote-api"].is_object());
+        assert!(parsed["mcpServers"]["automatic"].is_null());
+    }
+
+    #[test]
+    fn test_write_mcp_config_recovers_from_stale_tmp_file() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".mcp.json.tmp"), "leftover from a crash").unwrap();
+
+        ClaudeCode
+            .write_mcp_config(dir.path(), &stdio_servers())
+            .unwrap();
+
+        assert!(!dir.path().join(".mcp.json.tmp").exists());
+        let content = fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+        assert!(parsed["mcpServers"]["automatic"]["command"].is_string());
     }
 
     // ── discover_claude_global_config tests ─────────────────────────────────
