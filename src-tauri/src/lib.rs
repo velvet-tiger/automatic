@@ -51,6 +51,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
+        .on_window_event(handle_window_event)
         .setup(|app| {
             // ── Deep-link handler ────────────────────────────���────────────
             // Listens for automatic:// URLs from the OS and emits a Tauri
@@ -456,6 +457,48 @@ pub fn run() {
             handle_install_uri,
             get_recently_added_items,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(handle_run_event);
 }
+
+// ── Window lifecycle (macOS "stay running in the Dock" convention) ─────────
+
+/// Closing the window hides it instead of quitting the app, matching how
+/// Mail, Slack and other Mac apps behave. The Dock icon (and menu bar, if
+/// added later) stays available so the user can bring the window back
+/// without relaunching. Other platforms keep Tauri's default behaviour of
+/// exiting when the last window closes.
+#[cfg(target_os = "macos")]
+fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        api.prevent_close();
+        let _ = window.hide();
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn handle_window_event(_window: &tauri::Window, _event: &tauri::WindowEvent) {}
+
+/// Clicking the Dock icon while the window is hidden (see
+/// [`handle_window_event`]) brings it back, matching the standard macOS
+/// app-reopen convention.
+#[cfg(target_os = "macos")]
+fn handle_run_event(app_handle: &tauri::AppHandle, event: tauri::RunEvent) {
+    if let tauri::RunEvent::Reopen {
+        has_visible_windows,
+        ..
+    } = event
+    {
+        if !has_visible_windows {
+            use tauri::Manager;
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn handle_run_event(_app_handle: &tauri::AppHandle, _event: tauri::RunEvent) {}
