@@ -4,6 +4,17 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.14.2] - 2026-07-20
+
+### Added
+
+- Each configured MCP server on a project's MCP tab now shows a live/available status pill. Stdio servers are checked by resolving the command on disk or PATH; http/sse servers are checked with a lightweight reachability request. Checked once when the tab loads. ([96446ea](https://github.com/velvet-tiger/automatic/commit/96446ea))
+
+### Fixed
+
+- Closing the main window on macOS no longer quits the app. It now hides the window instead, matching how Mail, Slack and other Mac apps behave; clicking the Dock icon brings the window back. Windows and Linux are unaffected. ([82aad33](https://github.com/velvet-tiger/automatic/commit/82aad33))
+- A project's `.mcp.json` could be left with a stale `automatic` binary path after an app move or update, because the repair for this only ran when the desktop GUI launched — not when Claude Code started Automatic's MCP server directly. Restarting MCP servers from Claude Code would then fail for the Automatic server and anything proxied through it. The repair now also runs when `mcp-serve` starts. `.mcp.json` writes are also now atomic, so a crash mid-sync can no longer leave the file corrupted. ([8fd6261](https://github.com/velvet-tiger/automatic/commit/8fd6261))
+
 ## [1.14.1] - 2026-07-06
 
 ### Fixed
