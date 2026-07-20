@@ -219,6 +219,65 @@ function McpConfigCard({ name, onNavigate }: McpConfigCardProps) {
   );
 }
 
+// ── Live/available status pill ─────────────────────────────────────────────
+
+interface McpServerAvailability {
+  available: boolean;
+  message: string | null;
+}
+
+/**
+ * Checks whether a configured MCP server currently looks available — for
+ * stdio servers, that its command resolves to an executable on disk; for
+ * http/sse servers, that the URL is reachable. Checked once when the row
+ * mounts (i.e. when the MCP tab loads), not polled continuously.
+ */
+function McpAvailabilityPill({ name }: { name: string }) {
+  const [status, setStatus] = useState<McpServerAvailability | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checked, setChecked] = useState(false);
+
+  if (!checked && !checking) {
+    setChecking(true);
+    invoke<McpServerAvailability>("check_mcp_server_status", { name })
+      .then((result) => {
+        setStatus(result);
+      })
+      .catch((err) => {
+        setStatus({ available: false, message: String(err) });
+      })
+      .finally(() => {
+        setChecked(true);
+        setChecking(false);
+      });
+  }
+
+  if (!status) {
+    return (
+      <span
+        className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border border-border-strong/40 bg-bg-sidebar text-text-muted leading-none flex-shrink-0"
+        title="Checking availability…"
+      >
+        <Loader2 size={9} className="animate-spin" />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={`flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full leading-none flex-shrink-0 ${
+        status.available ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
+      }`}
+      title={status.message ?? undefined}
+    >
+      <span
+        className={`w-1.5 h-1.5 rounded-full ${status.available ? "bg-success" : "bg-warning"}`}
+      />
+      {status.available ? "Live" : "Unavailable"}
+    </span>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 /**
@@ -380,6 +439,8 @@ export function McpSelector({
                     className={`text-text-muted flex-shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
                   />
                 </button>
+
+                <McpAvailabilityPill name={srv} />
 
                 {canToggleEnabled && (
                   <button

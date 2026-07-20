@@ -36,6 +36,11 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub async fn check_mcp_server_status(name: String) -> Result<core::McpServerAvailability, String> {
+    core::check_mcp_server_status(&name).await
+}
+
 // ── MCP Discover ─────────────────────────────────────────────────────────────
 
 /// Return all MCP server Discover catalogue entries matching `query` as a JSON array.

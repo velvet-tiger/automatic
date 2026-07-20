@@ -184,6 +184,7 @@ pub fn run() {
             read_mcp_server_config,
             save_mcp_server_config,
             delete_mcp_server_config,
+            check_mcp_server_status,
             search_discover_mcp,
             search_collections,
             get_featured_community,

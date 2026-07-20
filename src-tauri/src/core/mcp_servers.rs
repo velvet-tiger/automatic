@@ -129,6 +129,155 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Reported availability of a configured MCP server, shown as a status
+/// indicator on the project's MCP tab.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct McpServerAvailability {
+    pub available: bool,
+    pub message: Option<String>,
+}
+
+/// Check whether a configured MCP server currently looks available.
+///
+/// For `stdio` servers this resolves the configured command against an
+/// absolute/relative path or the `PATH` environment variable — the same
+/// resolution a shell does — without spawning the process. For `http` and
+/// `sse` servers it sends a lightweight HTTP request to the configured URL;
+/// any response, even an error status, counts as available, since the
+/// question being answered is reachability, not authentication (OAuth
+/// token validity already has its own indicator).
+pub async fn check_mcp_server_status(name: &str) -> Result<McpServerAvailability, String> {
+    let raw = read_mcp_server_config(name)?;
+    let config: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid config for '{}': {}", name, e))?;
+
+    let transport = config
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("stdio");
+
+    match transport {
+        "stdio" => Ok(check_stdio_command_available(
+            config.get("command").and_then(|v| v.as_str()),
+        )),
+        "http" | "sse" => {
+            check_http_endpoint_available(
+                config.get("url").and_then(|v| v.as_str()),
+                config.get("headers"),
+            )
+            .await
+        }
+        other => Ok(McpServerAvailability {
+            available: false,
+            message: Some(format!("Unknown transport '{}'", other)),
+        }),
+    }
+}
+
+fn check_stdio_command_available(command: Option<&str>) -> McpServerAvailability {
+    let Some(command) = command.map(str::trim).filter(|c| !c.is_empty()) else {
+        return McpServerAvailability {
+            available: false,
+            message: Some("No command configured.".to_string()),
+        };
+    };
+
+    match resolve_command_path(command) {
+        Some(path) => McpServerAvailability {
+            available: true,
+            message: Some(format!("Resolved to {}", path.display())),
+        },
+        None => McpServerAvailability {
+            available: false,
+            message: Some(format!(
+                "Command '{}' was not found on disk or on PATH.",
+                command
+            )),
+        },
+    }
+}
+
+/// Resolves `command` the way a shell would: a path containing a separator
+/// is checked directly, otherwise every directory on `PATH` is searched.
+/// This only checks the file exists and is executable — it never spawns
+/// the process, so it stays cheap enough to run on every tab load.
+fn resolve_command_path(command: &str) -> Option<PathBuf> {
+    let candidate = std::path::Path::new(command);
+    if command.contains(std::path::MAIN_SEPARATOR) || candidate.is_absolute() {
+        return is_executable_file(candidate).then(|| candidate.to_path_buf());
+    }
+
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let full = dir.join(command);
+        if is_executable_file(&full) {
+            return Some(full);
+        }
+        #[cfg(windows)]
+        for ext in ["exe", "cmd", "bat"] {
+            let with_ext = dir.join(format!("{command}.{ext}"));
+            if is_executable_file(&with_ext) {
+                return Some(with_ext);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    path.is_file()
+}
+
+async fn check_http_endpoint_available(
+    url: Option<&str>,
+    headers: Option<&serde_json::Value>,
+) -> Result<McpServerAvailability, String> {
+    let Some(url) = url.map(str::trim).filter(|u| !u.is_empty()) else {
+        return Ok(McpServerAvailability {
+            available: false,
+            message: Some("No URL configured.".to_string()),
+        });
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+
+    let mut request = client.head(url);
+    if let Some(header_map) = headers.and_then(|h| h.as_object()) {
+        for (key, value) in header_map {
+            if let Some(value_str) = value.as_str() {
+                request = request.header(key.as_str(), value_str);
+            }
+        }
+    }
+
+    match request.send().await {
+        Ok(response) => Ok(McpServerAvailability {
+            available: true,
+            message: Some(format!(
+                "Responded with HTTP {}",
+                response.status().as_u16()
+            )),
+        }),
+        Err(e) => Ok(McpServerAvailability {
+            available: false,
+            message: Some(format!("Not reachable: {}", e)),
+        }),
+    }
+}
+
 /// Read raw Claude Desktop config.
 ///
 /// Uses [`dirs::config_dir`] to resolve the platform-specific configuration
@@ -464,6 +613,137 @@ mod tests {
         let tmp = tmp();
         let dir = tmp.path().join("mcp_servers");
         delete_at(&dir, "ghost").expect("delete non-existent should not error");
+    }
+
+    #[test]
+    fn ensure_automatic_in_global_mcp_detects_stale_binary_path_and_flags_resync() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let project_dir = tempfile::tempdir().expect("project dir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            // Seed a registry entry whose command path can never match the
+            // real test binary's `current_exe()`, simulating what's left
+            // behind after the app moves or updates.
+            save_mcp_server_config(
+                AUTOMATIC_SERVER_NAME,
+                r#"{"type":"stdio","command":"/stale/path/automatic","args":["mcp-serve"],"_builtin":true}"#,
+            )
+            .expect("seed stale registry entry");
+
+            let project = super::super::Project {
+                name: "demo".to_string(),
+                directory: project_dir.path().to_string_lossy().to_string(),
+                agents: vec!["claude".to_string()],
+                mcp_servers: vec![AUTOMATIC_SERVER_NAME.to_string()],
+                ..Default::default()
+            };
+            let serialized = serde_json::to_string_pretty(&project).expect("serialize project");
+            super::super::save_project("demo", &serialized).expect("save project");
+
+            let projects_to_sync =
+                ensure_automatic_in_global_mcp().expect("ensure automatic entry");
+            assert!(
+                projects_to_sync.contains(&"demo".to_string()),
+                "a project referencing a stale automatic binary path should be queued for re-sync, got {:?}",
+                projects_to_sync
+            );
+
+            let updated_registry =
+                read_mcp_server_config(AUTOMATIC_SERVER_NAME).expect("read updated registry entry");
+            let value: serde_json::Value =
+                serde_json::from_str(&updated_registry).expect("parse registry entry");
+            assert_ne!(
+                value["command"].as_str(),
+                Some("/stale/path/automatic"),
+                "registry entry should be repaired to the current binary path, not left stale"
+            );
+        });
+    }
+
+    // ── MCP server availability checks ──────────────────────────────────────
+
+    #[test]
+    fn resolve_command_path_finds_absolute_executable_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let script = tmp.path().join("fake-server");
+        fs::write(&script, "#!/bin/sh\necho hi\n").expect("write script");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod");
+        }
+
+        let resolved = resolve_command_path(script.to_str().expect("utf8 path"));
+        assert_eq!(resolved.as_deref(), Some(script.as_path()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_command_path_rejects_non_executable_absolute_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let script = tmp.path().join("not-executable");
+        // fs::write creates the file without the executable bit set.
+        fs::write(&script, "just data").expect("write file");
+
+        assert!(resolve_command_path(script.to_str().expect("utf8 path")).is_none());
+    }
+
+    #[test]
+    fn resolve_command_path_finds_bare_command_on_path() {
+        // "sh" is present on PATH in every unix dev/CI environment this runs in.
+        assert!(resolve_command_path("sh").is_some());
+    }
+
+    #[test]
+    fn resolve_command_path_returns_none_for_unknown_bare_command() {
+        assert!(resolve_command_path("definitely-not-a-real-command-xyz123").is_none());
+    }
+
+    #[test]
+    fn check_stdio_command_available_reports_missing_command_as_unavailable() {
+        let status = check_stdio_command_available(None);
+        assert!(!status.available);
+        assert!(status.message.is_some());
+    }
+
+    #[tokio::test]
+    async fn check_http_endpoint_available_treats_any_response_as_available() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                let _ = stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+
+        let url = format!("http://{}/", addr);
+        let status = check_http_endpoint_available(Some(&url), None)
+            .await
+            .expect("check status");
+        assert!(status.available);
+    }
+
+    #[tokio::test]
+    async fn check_http_endpoint_available_reports_unreachable_url_as_unavailable() {
+        // Port 1 is a privileged port essentially never bound to in dev/CI
+        // environments, so a connection attempt reliably fails.
+        let status = check_http_endpoint_available(Some("http://127.0.0.1:1/"), None)
+            .await
+            .expect("check status");
+        assert!(!status.available);
+    }
+
+    #[tokio::test]
+    async fn check_http_endpoint_available_reports_missing_url() {
+        let status = check_http_endpoint_available(None, None)
+            .await
+            .expect("check status");
+        assert!(!status.available);
     }
 
     #[test]
