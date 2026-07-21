@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.14.3] - 2026-07-22
+
+### Fixed
+
+- Remote HTTP/SSE MCP servers authenticated with OAuth no longer silently revert to a broken "local" server on sync. Such servers are stored in project files as a local `mcp-proxy` stub (to keep the token in the keychain); a later autodetect-sync would discover that stub and write it back over the authoritative registry entry, dropping the url/oauth/enabled fields and breaking the proxy — typically surfacing about a day after authenticating. Autodetect now skips Automatic proxy stubs, and sync refuses to downgrade an existing remote registry entry with a discovered local config. ([a1667e5](https://github.com/velvet-tiger/automatic/commit/a1667e5))
+
 ## [1.14.2] - 2026-07-20
 
 ### Added
