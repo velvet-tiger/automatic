@@ -1350,10 +1350,41 @@ pub(crate) fn discover_mcp_servers_from_json(
         if name == "automatic" || name == "nexus" || !crate::core::is_valid_name(name) {
             continue;
         }
+        // Never re-import an Automatic-generated proxy stub.  Remote (HTTP/SSE)
+        // servers with a stored OAuth token are written into project files as a
+        // local `mcp-proxy` stub (see `sync::helpers::build_selected_servers`) so
+        // the token stays in the keychain.  Discovering that stub and saving it
+        // back over the authoritative registry entry is what silently reverts a
+        // remote server to "local" and breaks the proxy.
+        if is_automatic_proxy_stub(config) {
+            continue;
+        }
         result.insert(name.clone(), normalise(config.clone()));
     }
 
     result
+}
+
+/// Return `true` if `config` is an Automatic-generated MCP proxy stub, i.e. a
+/// local stdio entry that invokes the Automatic binary with the `mcp-proxy`
+/// subcommand.  Such stubs are emitted for remote OAuth servers and must never
+/// be imported back into the shared MCP registry.
+pub(crate) fn is_automatic_proxy_stub(config: &Value) -> bool {
+    fn mentions_mcp_proxy(value: Option<&Value>) -> bool {
+        match value {
+            // Claude Code / Cursor / most agents: `"args": ["mcp-proxy", name]`.
+            Some(Value::Array(items)) => items.iter().any(|v| v.as_str() == Some("mcp-proxy")),
+            // Agents that model the command as a single array/string may fold
+            // the subcommand into `command`; cover that too.
+            Some(Value::String(s)) => s == "mcp-proxy",
+            _ => false,
+        }
+    }
+
+    match config.as_object() {
+        Some(obj) => mentions_mcp_proxy(obj.get("args")) || mentions_mcp_proxy(obj.get("command")),
+        None => false,
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -1381,6 +1412,72 @@ mod tests {
         let ids: Vec<&str> = all().iter().map(|a| a.id()).collect();
         let unique: HashSet<&str> = ids.iter().copied().collect();
         assert_eq!(ids.len(), unique.len());
+    }
+
+    #[test]
+    fn proxy_stub_is_detected() {
+        // Standard shape written by build_selected_servers for a remote OAuth
+        // server: local stdio invocation of the Automatic binary.
+        let stub = serde_json::json!({
+            "command": "/usr/local/bin/automatic",
+            "args": ["mcp-proxy", "linear"],
+        });
+        assert!(is_automatic_proxy_stub(&stub));
+
+        // A genuine remote config is not a stub.
+        let remote = serde_json::json!({
+            "type": "http",
+            "url": "https://mcp.linear.app/mcp",
+        });
+        assert!(!is_automatic_proxy_stub(&remote));
+
+        // A user's ordinary local stdio server is not a stub.
+        let local = serde_json::json!({
+            "command": "npx",
+            "args": ["-y", "some-mcp-server"],
+        });
+        assert!(!is_automatic_proxy_stub(&local));
+    }
+
+    #[test]
+    fn discover_skips_proxy_stub_but_keeps_real_servers() {
+        // Regression test for the bug where a remote OAuth server (e.g. Linear)
+        // silently reverted to "local" after a couple of syncs: its proxy stub
+        // in `.mcp.json` was discovered and saved back over the registry entry.
+        // Discovery must drop the stub while still importing real servers.
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join(".mcp.json");
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "mcpServers": {
+                    // Automatic's own server — always excluded.
+                    "automatic": { "command": "automatic", "args": ["mcp-serve"] },
+                    // Proxy stub for a remote OAuth server — must be excluded so
+                    // it never overwrites the authoritative remote registry entry.
+                    "linear": { "command": "/usr/local/bin/automatic", "args": ["mcp-proxy", "linear"] },
+                    // A genuine local server the user configured — must survive.
+                    "fetch": { "command": "npx", "args": ["-y", "fetch-mcp"] },
+                }
+            }))
+            .expect("serialize"),
+        )
+        .expect("write .mcp.json");
+
+        let discovered = discover_mcp_servers_from_json(&path, "mcpServers", |v| v);
+
+        assert!(
+            !discovered.contains_key("automatic"),
+            "automatic must never be imported"
+        );
+        assert!(
+            !discovered.contains_key("linear"),
+            "proxy stub must not be re-imported (would revert remote → local)"
+        );
+        assert!(
+            discovered.contains_key("fetch"),
+            "genuine local servers must still be discovered"
+        );
     }
 
     #[test]

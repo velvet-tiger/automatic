@@ -62,10 +62,51 @@ pub fn sync_project(project: &Project) -> Result<Vec<String>, String> {
     // Persist newly discovered MCP server configs into the global registry.
     // This only happens during an explicit sync, not during a read-only load.
     for (name, config_str) in discovered_servers {
+        // Defensive guard (belt-and-suspenders with the proxy-stub filter in
+        // `agent::discover_mcp_servers_from_json`): never overwrite an existing
+        // *remote* (HTTP/SSE) registry entry with a discovered *local* config.
+        // Remote OAuth servers are written into project files as local proxy
+        // stubs, so a re-import would otherwise silently downgrade the registry
+        // entry to local and break the proxy.
+        if discovered_would_downgrade_remote(&name, &config_str) {
+            continue;
+        }
         let _ = crate::core::save_mcp_server_config(&name, &config_str);
     }
 
     sync_project_without_autodetect(&mut updated_project)
+}
+
+/// Return `true` if importing `config_str` for `name` would downgrade an
+/// existing remote (HTTP/SSE) registry entry to a local one.  Used to protect
+/// authoritative remote OAuth configs from being clobbered by the local proxy
+/// stubs that are written into project files.
+fn discovered_would_downgrade_remote(name: &str, config_str: &str) -> bool {
+    fn is_remote(config: &serde_json::Value) -> bool {
+        config
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(|t| t == "http" || t == "sse")
+            .unwrap_or(false)
+    }
+
+    let existing = match core::read_mcp_server_config(name) {
+        Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(v) => v,
+            Err(_) => return false,
+        },
+        // No existing entry (or unreadable) — nothing to downgrade.
+        Err(_) => return false,
+    };
+    if !is_remote(&existing) {
+        return false;
+    }
+
+    // Existing entry is remote; only skip if the incoming config is *not* remote.
+    match serde_json::from_str::<serde_json::Value>(config_str) {
+        Ok(incoming) => !is_remote(&incoming),
+        Err(_) => false,
+    }
 }
 
 /// Sync a project's configuration to its directory without re-running
