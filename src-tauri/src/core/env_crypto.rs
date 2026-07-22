@@ -46,7 +46,7 @@ static TEST_KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
 fn get_or_create_key() -> Result<[u8; 32], String> {
     #[cfg(test)]
     {
-        return Ok(*TEST_KEY.get_or_init(|| Aes256Gcm::generate_key(OsRng).into()));
+        Ok(*TEST_KEY.get_or_init(|| Aes256Gcm::generate_key(OsRng).into()))
     }
 
     #[cfg(not(test))]

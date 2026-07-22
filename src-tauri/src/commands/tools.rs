@@ -25,13 +25,12 @@ pub fn invoke_tool_command(
     _command: String,
     _payload: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    match tool.as_str() {
-        // ── Registered plugins ────────────────────────────────────────────────
-        // To add a new plugin: add one line here mapping its tool name to its
-        // dispatch function.  Nothing else in lib.rs or commands/mod.rs needs
-        // to change.
-        other => Err(format!("Unknown tool: '{}'", other)),
-    }
+    // ── Registered plugins ────────────────────────────────────────────────
+    // To add a new plugin: match on its tool name here and forward to its
+    // dispatch function.  Nothing else in lib.rs or commands/mod.rs needs to
+    // change.  With no plugins registered yet, every tool is unknown.
+    let other = tool.as_str();
+    Err(format!("Unknown tool: '{}'", other))
 }
 
 // ── Tool registry commands ────────────────────────────────────────────────────
