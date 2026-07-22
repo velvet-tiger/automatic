@@ -144,7 +144,9 @@ pub(super) fn autodetect_inner(
         let servers = a.discover_mcp_servers(&dir);
         for (name, config) in servers {
             if let Ok(config_str) = serde_json::to_string_pretty(&config) {
-                if !updated_project.mcp_servers.contains(&name) {
+                // Case-insensitive: the registry treats `Sentry`/`sentry` as one
+                // server, so a re-discovered variant must not become a duplicate.
+                if !crate::core::contains_ignore_ascii_case(&updated_project.mcp_servers, &name) {
                     updated_project.mcp_servers.push(name.clone());
                 }
                 discovered_servers.push((name, config_str));
@@ -287,6 +289,42 @@ mod tests {
                 "project-only custom_skill must be preserved"
             );
         });
+    }
+
+    #[test]
+    fn discovered_mcp_server_does_not_duplicate_existing_case_variant() {
+        // Regression: the project already selects `sentry` (e.g. added lowercased
+        // from the library), and the agent's own `.mcp.json` declares it as
+        // `Sentry`. Discovery preserves the file's casing, but the registry
+        // treats the two as one server, so the project list must not end up with
+        // both.
+        let dir = tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join(".mcp.json"),
+            r#"{"mcpServers":{"Sentry":{"command":"npx","args":["-y","sentry-mcp"]}}}"#,
+        )
+        .expect("write .mcp.json");
+
+        let project = Project {
+            name: "p".into(),
+            directory: dir.path().display().to_string(),
+            mcp_servers: vec!["sentry".into()],
+            ..Default::default()
+        };
+
+        let (updated, _) = autodetect_inner(&project).expect("autodetect");
+
+        let matches: Vec<&String> = updated
+            .mcp_servers
+            .iter()
+            .filter(|s| s.eq_ignore_ascii_case("sentry"))
+            .collect();
+        assert_eq!(
+            matches,
+            vec![&"sentry".to_string()],
+            "re-discovering `Sentry` must not add a second entry alongside `sentry`, got {:?}",
+            updated.mcp_servers
+        );
     }
 
     #[test]

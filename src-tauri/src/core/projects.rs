@@ -159,12 +159,49 @@ fn restore_skill_collections(project: &Project) {
 // registry never prevents a project from being saved.
 
 fn enrich_project(project: &mut Project) {
+    // Collapse case-variant MCP server duplicates before deriving anything from
+    // the list. The global registry is keyed by filename on a case-insensitive
+    // filesystem (macOS APFS, Windows), so `Sentry` and `sentry` resolve to the
+    // same server there and the registry only ever shows one — but the project's
+    // `Vec<String>` is case-sensitive, so without this it accumulates both and
+    // each renders as its own row on the MCP tab. Running this on every
+    // enrich_project means both save_project (persists the fix) and read_project
+    // (cleans the display immediately) heal the duplicate.
+    dedupe_ignore_ascii_case(&mut project.mcp_servers);
+    dedupe_ignore_ascii_case(&mut project.disabled_mcp_servers);
     enrich_skill_sources(project);
     enrich_skill_collections(project);
     enrich_mcp_server_specs(project);
     enrich_resolved_rules(project);
     enrich_resolved_agents(project);
     enrich_resolved_commands(project);
+}
+
+/// Remove case-insensitive duplicate entries in place, keeping the first
+/// occurrence and preserving order. Returns `true` if any duplicate was
+/// dropped. See [`enrich_project`] for why the project's MCP server lists must
+/// mirror the registry's case-insensitivity.
+fn dedupe_ignore_ascii_case(items: &mut Vec<String>) -> bool {
+    let before = items.len();
+    let mut seen: Vec<String> = Vec::with_capacity(before);
+    items.retain(|item| {
+        let key = item.to_ascii_lowercase();
+        if seen.contains(&key) {
+            false
+        } else {
+            seen.push(key);
+            true
+        }
+    });
+    items.len() != before
+}
+
+/// Case-insensitive membership test used by the sync/discovery merge paths so
+/// re-discovering a server under a different casing (e.g. `Sentry` when the
+/// project already has `sentry`) does not push a duplicate. Matches the
+/// registry's case-insensitivity — see [`enrich_project`].
+pub(crate) fn contains_ignore_ascii_case(items: &[String], value: &str) -> bool {
+    items.iter().any(|item| item.eq_ignore_ascii_case(value))
 }
 
 fn enrich_skill_sources(project: &mut Project) {
@@ -907,5 +944,75 @@ mod tests {
         let raw = read_project_at(&projects_dir, "proj").expect("read");
         let project: Project = serde_json::from_str(&raw).expect("parse");
         assert_eq!(project.description, "v2");
+    }
+
+    // ── MCP server case-insensitive de-duplication ───────────────────────────
+
+    #[test]
+    fn dedupe_ignore_ascii_case_keeps_first_occurrence() {
+        let mut items = vec![
+            "Sentry".to_string(),
+            "linear".to_string(),
+            "sentry".to_string(),
+            "SENTRY".to_string(),
+            "Linear".to_string(),
+        ];
+        let changed = dedupe_ignore_ascii_case(&mut items);
+        assert!(changed, "duplicates should have been dropped");
+        assert_eq!(
+            items,
+            vec!["Sentry".to_string(), "linear".to_string()],
+            "first occurrence of each case-insensitive name wins, order preserved"
+        );
+    }
+
+    #[test]
+    fn dedupe_ignore_ascii_case_reports_no_change_when_unique() {
+        let mut items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert!(!dedupe_ignore_ascii_case(&mut items));
+        assert_eq!(items, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn contains_ignore_ascii_case_matches_across_case() {
+        let items = vec!["sentry".to_string(), "linear".to_string()];
+        assert!(contains_ignore_ascii_case(&items, "Sentry"));
+        assert!(contains_ignore_ascii_case(&items, "LINEAR"));
+        assert!(!contains_ignore_ascii_case(&items, "github"));
+    }
+
+    #[test]
+    fn enrich_project_drops_case_variant_mcp_servers() {
+        // Regression: a project that accumulated both `Sentry` (from autodetect,
+        // verbatim casing) and `sentry` (from Add-from-Library, lowercased) must
+        // collapse to a single entry — the registry only ever shows one.
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let mut project = Project {
+                name: "demo".to_string(),
+                mcp_servers: vec![
+                    "Sentry".to_string(),
+                    "linear".to_string(),
+                    "sentry".to_string(),
+                ],
+                disabled_mcp_servers: vec!["Foo".to_string(), "foo".to_string()],
+                ..Default::default()
+            };
+
+            enrich_project(&mut project);
+
+            assert_eq!(
+                project.mcp_servers,
+                vec!["Sentry".to_string(), "linear".to_string()],
+                "case-variant MCP server duplicates should collapse to the first occurrence"
+            );
+            assert_eq!(
+                project.disabled_mcp_servers,
+                vec!["Foo".to_string()],
+                "disabled list is de-duplicated the same way"
+            );
+        });
     }
 }

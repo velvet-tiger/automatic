@@ -208,10 +208,13 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
             }
 
             // ── Diff and log MCP server changes ──────────────────────────
+            // Case-insensitive so a case-only change (`Sentry` ⇄ `sentry`),
+            // which enrich_project collapses on save, is not mis-logged as a
+            // remove + add of the "same" server.
             for server in incoming
                 .mcp_servers
                 .iter()
-                .filter(|s| !existing.mcp_servers.contains(s))
+                .filter(|s| !core::contains_ignore_ascii_case(&existing.mcp_servers, s.as_str()))
             {
                 activity::log(
                     name,
@@ -223,7 +226,7 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
             for server in existing
                 .mcp_servers
                 .iter()
-                .filter(|s| !incoming.mcp_servers.contains(s))
+                .filter(|s| !core::contains_ignore_ascii_case(&incoming.mcp_servers, s.as_str()))
             {
                 activity::log(
                     name,
@@ -246,7 +249,9 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
 
                 for (server_name, config_str) in discovered {
                     // Add the server name to the project's selection list.
-                    if !enriched.mcp_servers.contains(&server_name) {
+                    // Case-insensitive: the registry treats `Sentry`/`sentry` as
+                    // one server, so a variant must not become a duplicate.
+                    if !core::contains_ignore_ascii_case(&enriched.mcp_servers, &server_name) {
                         enriched.mcp_servers.push(server_name.clone());
                     }
                     // Persist the config to the global registry so that
