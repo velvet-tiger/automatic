@@ -307,6 +307,67 @@ pub const AUTOMATIC_SERVER_NAME: &str = "automatic";
 /// how to use the Automatic MCP service.  Always assigned to every project.
 pub const AUTOMATIC_SKILL_NAME: &str = "automatic";
 
+/// Resolve the path of the Automatic binary that gets written into MCP
+/// configs (the registry entry and every per-project agent config file).
+///
+/// `std::env::current_exe()` returns the *invocation* path on macOS: a
+/// process spawned through the CLI symlink (`/usr/local/bin/automatic`) sees
+/// the symlink itself, while the GUI process sees the app-bundle binary —
+/// two different strings for the same file. Writing whichever string the
+/// current process happened to be invoked by made the GUI and
+/// symlink-spawned `mcp-serve` processes perpetually overwrite each other's
+/// configs. Instead:
+///
+/// 1. Canonicalize `current_exe()` so the invocation alias is stripped.
+/// 2. Prefer the stable CLI symlink when it resolves to this same binary —
+///    it survives app moves/updates, and every process that resolves through
+///    this function then emits the identical string.
+pub fn automatic_binary_path() -> String {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return "automatic".to_string(),
+    };
+    let canonical = std::fs::canonicalize(&exe).unwrap_or(exe);
+
+    #[cfg(unix)]
+    {
+        for candidate in unix_cli_symlink_candidates() {
+            if std::fs::canonicalize(&candidate)
+                .map(|c| c == canonical)
+                .unwrap_or(false)
+            {
+                return candidate.display().to_string();
+            }
+        }
+    }
+
+    canonical.display().to_string()
+}
+
+/// The locations `cli_install` may have placed the `automatic` CLI symlink.
+/// Kept in sync with `cli_install::unix::preferred_install_path`.
+#[cfg(unix)]
+fn unix_cli_symlink_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates = vec![std::path::PathBuf::from("/usr/local/bin/automatic")];
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".local").join("bin").join("automatic"));
+    }
+    candidates
+}
+
+/// True when two binary path strings refer to the same file. Falls back to
+/// literal comparison when canonicalisation fails (e.g. a stale path whose
+/// target no longer exists — that is a genuine change).
+fn same_automatic_binary(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => false,
+    }
+}
+
 /// Ensure the `automatic` MCP server entry is present in the Automatic
 /// registry and assigned to all projects.
 ///
@@ -333,22 +394,23 @@ pub const AUTOMATIC_SKILL_NAME: &str = "automatic";
 /// The binary path is resolved from the current executable so it always
 /// reflects the installed release binary rather than a hard-coded path.
 pub fn ensure_automatic_in_global_mcp() -> Result<Vec<String>, String> {
-    let binary = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.to_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "automatic".to_string());
+    let binary = automatic_binary_path();
 
     // ── 1. Read old registry entry to detect binary path change ──────────
     //
     // If the binary path has changed (e.g. dev→release or after an update),
     // every project that writes the automatic server entry needs a re-sync.
+    // Compared via `same_automatic_binary`, not string equality: the GUI
+    // process and a symlink-spawned `mcp-serve` see different `current_exe()`
+    // strings for the *same* binary, and treating that as a change made every
+    // spawn re-sync (and rewrite files in) every project.
     let binary_changed = read_mcp_server_config(AUTOMATIC_SERVER_NAME)
         .ok()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
         .and_then(|v| {
             v.get("command")
                 .and_then(|c| c.as_str())
-                .map(|c| c != binary)
+                .map(|c| !same_automatic_binary(c, &binary))
         })
         .unwrap_or(true); // no existing entry → treat as changed
 
@@ -613,6 +675,77 @@ mod tests {
         let tmp = tmp();
         let dir = tmp.path().join("mcp_servers");
         delete_at(&dir, "ghost").expect("delete non-existent should not error");
+    }
+
+    /// Two invocation aliases of the same file (e.g. the CLI symlink vs the
+    /// app-bundle binary) must compare equal; a dead path must not.
+    #[cfg(unix)]
+    #[test]
+    fn same_automatic_binary_resolves_symlink_aliases() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let real = dir.path().join("real-binary");
+        std::fs::write(&real, b"bin").expect("write real");
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).expect("symlink");
+
+        assert!(
+            same_automatic_binary(alias.to_str().unwrap(), real.to_str().unwrap()),
+            "a symlink alias of the same binary must not count as a path change"
+        );
+        assert!(
+            !same_automatic_binary(real.to_str().unwrap(), "/stale/path/automatic"),
+            "a dead path is a genuine change"
+        );
+    }
+
+    /// A registry entry holding a symlink *alias* of the currently running
+    /// binary is not a path change — flagging it as one made every
+    /// `mcp-serve` spawn re-sync (and rewrite files in) every project,
+    /// because the GUI and symlink-spawned processes see different
+    /// `current_exe()` strings for the same file.
+    #[cfg(unix)]
+    #[test]
+    fn ensure_automatic_in_global_mcp_ignores_symlink_alias_of_current_binary() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let alias_dir = tempfile::tempdir().expect("alias dir");
+
+        // Symlink alias pointing at the real current test binary.
+        let exe = std::env::current_exe().expect("current exe");
+        let alias = alias_dir.path().join("automatic");
+        std::os::unix::fs::symlink(&exe, &alias).expect("symlink to current exe");
+
+        with_test_home(home.path().to_path_buf(), || {
+            let seeded = serde_json::json!({
+                "type": "stdio",
+                "command": alias.to_str().unwrap(),
+                "args": ["mcp-serve"],
+                "_builtin": true
+            });
+            save_mcp_server_config(AUTOMATIC_SERVER_NAME, &seeded.to_string())
+                .expect("seed alias registry entry");
+
+            // Project already fully assigned so `changed` stays false and the
+            // only thing that could queue it is a (spurious) binary change.
+            let project = super::super::Project {
+                name: "demo".to_string(),
+                directory: project_dir.path().to_string_lossy().to_string(),
+                agents: vec!["claude".to_string()],
+                mcp_servers: vec![AUTOMATIC_SERVER_NAME.to_string()],
+                skills: vec![AUTOMATIC_SKILL_NAME.to_string()],
+                ..Default::default()
+            };
+            let serialized = serde_json::to_string_pretty(&project).expect("serialize project");
+            super::super::save_project("demo", &serialized).expect("save project");
+
+            let projects_to_sync =
+                ensure_automatic_in_global_mcp().expect("ensure automatic entry");
+            assert!(
+                projects_to_sync.is_empty(),
+                "an alias of the current binary must not queue re-syncs, got {:?}",
+                projects_to_sync
+            );
+        });
     }
 
     #[test]

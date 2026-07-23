@@ -86,11 +86,12 @@ pub(crate) fn prune_shadowed_custom_skills(project: &mut Project) -> bool {
 }
 
 /// Find the Automatic binary path.
+///
+/// Delegates to the canonical resolver so the sync engine, drift check, and
+/// MCP registry all emit the identical path string regardless of how the
+/// current process was invoked (GUI bundle vs CLI symlink).
 pub(crate) fn find_automatic_binary() -> String {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.to_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "automatic".to_string())
+    crate::core::automatic_binary_path()
 }
 
 /// Strip any legacy `<!-- automatic:skills:start -->…<!-- automatic:skills:end -->`
