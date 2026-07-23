@@ -135,10 +135,14 @@ pub fn save_project_file_for_project(
     };
 
     let mut dot_claude_synced = false;
+    let mut cursor_mdc_synced = false;
     let custom_rule_structs: Vec<CustomRule> = project.custom_rules.clone();
 
     for f in &target_files {
-        if project.instructions_index_mode && !project_uses_dot_claude_rules(project, f) {
+        if project.instructions_index_mode
+            && !project_uses_dot_claude_rules(project, f)
+            && !project_uses_cursor_mdc_rules(project, f)
+        {
             // Index mode: write rules to .automatic/instructions/ and inject an
             // index section into the main file instead of inlining rule content.
             // Claude is excluded here — it uses .claude/rules/ via the branch below.
@@ -159,6 +163,20 @@ pub fn save_project_file_for_project(
             if !dot_claude_synced && !rules.is_empty() {
                 sync_rules_to_dot_claude_rules(&project.directory, &rules)?;
                 dot_claude_synced = true;
+            }
+        } else if project_uses_cursor_mdc_rules(project, f) {
+            // Save with custom rules inline — global rules go to .cursor/rules/
+            // as MDC files.  Custom rules stay inline (no machine name).
+            save_project_file_with_rules_and_custom(
+                &project.directory,
+                f,
+                user_content,
+                &[],
+                &custom_contents,
+            )?;
+            if !cursor_mdc_synced && !rules.is_empty() {
+                sync_rules_to_cursor_mdc_rules(&project.directory, &rules)?;
+                cursor_mdc_synced = true;
             }
         } else {
             save_project_file_with_rules_and_custom(
@@ -235,6 +253,47 @@ pub fn project_uses_dot_claude_rules(project: &Project, key: &str) -> bool {
         .cloned()
         .unwrap_or_default()
         .claude_rules_in_dot_claude
+}
+
+/// Returns `true` if rules for the given project file should be written to
+/// `.cursor/rules/` (MDC files) rather than injected inline into `AGENTS.md`.
+///
+/// `key` can be an actual filename (e.g. `"AGENTS.md"`), `"_unified"`, or
+/// `"_project"`.
+///
+/// This gate deliberately returns `false` when another (non-Cursor) agent in
+/// the project also uses `AGENTS.md` as its instruction file: those agents
+/// still need the rules injected inline, so inline injection must not be
+/// suppressed.  The `.mdc` files are then written separately by the sync
+/// engine (see `sync_agent_configs_step`).
+pub fn project_uses_cursor_mdc_rules(project: &Project, key: &str) -> bool {
+    if !project.agents.iter().any(|a| a == "cursor") {
+        return false;
+    }
+    let cursor_file = agent::from_id("cursor")
+        .map(|a| a.project_file_name())
+        .unwrap_or("AGENTS.md");
+    if key != cursor_file && key != "_unified" && key != "_project" {
+        return false;
+    }
+    if !project
+        .agent_options
+        .get("cursor")
+        .cloned()
+        .unwrap_or_default()
+        .cursor_rules_in_dot_cursor
+    {
+        return false;
+    }
+    // Shared-file check: any other agent using the same instruction file
+    // still needs inline rules.
+    let shared = project
+        .agents
+        .iter()
+        .filter(|a| a.as_str() != "cursor")
+        .filter_map(|a| agent::from_id(a))
+        .any(|a| a.project_file_name() == cursor_file);
+    !shared
 }
 
 /// Collect the unique project filenames for all agents in a project.
@@ -653,6 +712,7 @@ mod tests {
             "claude".to_string(),
             AgentOptions {
                 claude_rules_in_dot_claude: true,
+                ..Default::default()
             },
         );
 
@@ -728,6 +788,7 @@ mod tests {
             "claude".to_string(),
             AgentOptions {
                 claude_rules_in_dot_claude: true,
+                ..Default::default()
             },
         );
 

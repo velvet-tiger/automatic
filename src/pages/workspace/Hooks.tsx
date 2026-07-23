@@ -17,8 +17,9 @@ import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 //
 // These constants mirror the events accepted by each vendor's hook loader.
 // They are static within a build — vendor doc updates require a recompile.
-// Source: https://code.claude.com/docs/en/hooks and
-// https://developers.openai.com/codex/hooks.
+// Source: https://code.claude.com/docs/en/hooks,
+// https://developers.openai.com/codex/hooks and
+// https://cursor.com/docs/hooks.
 
 const CLAUDE_CODE_EVENTS = [
   "SessionStart",
@@ -61,9 +62,36 @@ const CODEX_CLI_EVENTS = [
   "Stop",
 ] as const;
 
+// KEEP IN LOCKSTEP with CURSOR_SUPPORTED_EVENTS in
+// src-tauri/src/agent/cursor.rs — events listed here but missing there are
+// silently skipped at sync time.  Cursor uses camelCase event names.
+// Tab-completion hooks are deliberately excluded.
+const CURSOR_EVENTS = [
+  "sessionStart",
+  "sessionEnd",
+  "beforeSubmitPrompt",
+  "preToolUse",
+  "postToolUse",
+  "postToolUseFailure",
+  "beforeShellExecution",
+  "afterShellExecution",
+  "beforeMCPExecution",
+  "afterMCPExecution",
+  "beforeReadFile",
+  "afterFileEdit",
+  "stop",
+  "subagentStart",
+  "subagentStop",
+  "preCompact",
+  "afterAgentResponse",
+  "afterAgentThought",
+  "workspaceOpen",
+] as const;
+
 const EVENTS_BY_AGENT: Record<string, readonly string[]> = {
   claude: CLAUDE_CODE_EVENTS,
   codex: CODEX_CLI_EVENTS,
+  cursor: CURSOR_EVENTS,
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────

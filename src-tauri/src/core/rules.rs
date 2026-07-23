@@ -522,8 +522,10 @@ fn migrate_checklist_to_process(rules_dir: &Path) -> Result<(), String> {
                     }
                 }
 
-                // 3. Rename .claude/rules/automatic-checklist.md if present.
+                // 3. Rename .claude/rules/automatic-checklist.md and the
+                //    .cursor/rules/ MDC equivalent if present.
                 rename_dot_claude_rule(dir, OLD, NEW);
+                rename_cursor_mdc_rule(dir, OLD, NEW);
 
                 continue; // registry entry is just a pointer — skip it
             }
@@ -638,6 +640,7 @@ fn migrate_remove_default_rules(rules_dir: &Path, removed: &[&str]) -> Result<()
                 }
                 for &name in &deleted {
                     remove_dot_claude_rule(dir, name);
+                    remove_cursor_mdc_rule(dir, name);
                 }
                 continue;
             }
@@ -700,6 +703,45 @@ fn remove_dot_claude_rule(project_dir: &str, name: &str) {
     if let Ok(content) = fs::read_to_string(&path) {
         if content.starts_with(MANAGED_HEADER) {
             let _ = fs::remove_file(&path);
+        }
+    }
+}
+
+/// Delete `<project_dir>/.cursor/rules/<name>.mdc` when it exists and carries
+/// the Automatic-managed frontmatter key.  User-authored files are never
+/// deleted.
+fn remove_cursor_mdc_rule(project_dir: &str, name: &str) {
+    let path = std::path::PathBuf::from(project_dir)
+        .join(".cursor")
+        .join("rules")
+        .join(format!("{}.mdc", name));
+
+    if !path.exists() {
+        return;
+    }
+    if let Ok(content) = fs::read_to_string(&path) {
+        if super::rules_injection::is_managed_mdc_content(&content) {
+            let _ = fs::remove_file(&path);
+        }
+    }
+}
+
+/// Rename `<project_dir>/.cursor/rules/<old>.mdc` to `<new>.mdc` when it
+/// exists and carries the Automatic-managed frontmatter key.  User-authored
+/// files are never renamed.
+fn rename_cursor_mdc_rule(project_dir: &str, old_name: &str, new_name: &str) {
+    let rules_dir = std::path::PathBuf::from(project_dir)
+        .join(".cursor")
+        .join("rules");
+    let old_path = rules_dir.join(format!("{}.mdc", old_name));
+    let new_path = rules_dir.join(format!("{}.mdc", new_name));
+
+    if !old_path.exists() {
+        return;
+    }
+    if let Ok(content) = fs::read_to_string(&old_path) {
+        if super::rules_injection::is_managed_mdc_content(&content) {
+            let _ = fs::rename(&old_path, &new_path);
         }
     }
 }

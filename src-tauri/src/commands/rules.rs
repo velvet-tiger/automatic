@@ -75,6 +75,12 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
                     .unwrap_or(false);
             }
 
+            // Same for Cursor's .cursor/rules/ MDC mode.
+            if core::project_uses_cursor_mdc_rules(project, key) {
+                return core::is_cursor_mdc_rules_current(&project.directory, rules)
+                    .unwrap_or(false);
+            }
+
             // "_unified" and "_project" both apply to all agent instruction
             // files.  Expand them to the actual filenames for the sync check.
             let paths: Vec<PathBuf> = if *key == "_unified" || *key == "_project" {

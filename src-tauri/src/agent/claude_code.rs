@@ -272,25 +272,8 @@ fn sync_claude_code_hooks(
                     .map_err(|e| format!("Failed to create .claude/hooks/: {}", e))?;
                 hooks_dir_created = true;
             }
-            // Pick an extension based on the interpreter so the filename hints
-            // at content type even though Claude Code only cares about the
-            // shebang / `command`.
-            let ext = script_extension_for_interpreter(interpreter);
-            let script_path = hooks_scripts_dir.join(format!("{}.{}", hook_machine_id(hook), ext));
-            let body = annotate_managed_script(&ensure_shebang(script, interpreter));
-            fs::write(&script_path, body)
-                .map_err(|e| format!("Failed to write hook script '{}': {}", script_path.display(), e))?;
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = fs::metadata(&script_path) {
-                    let mut perms = meta.permissions();
-                    perms.set_mode(0o755);
-                    let _ = fs::set_permissions(&script_path, perms);
-                }
-            }
-
+            let script_path =
+                super::write_managed_hook_script(&hooks_scripts_dir, hook, interpreter, script)?;
             managed_script_paths.push(script_path.clone());
             written.push(script_path.display().to_string());
         }
@@ -361,79 +344,11 @@ fn sync_claude_code_hooks(
 /// the on-disk filename from the `Hook` value, so use a normalised version of
 /// the display name as a fallback.
 fn hook_machine_id(hook: &crate::core::Hook) -> String {
-    // Prefer a slug derived from the display name; if that produces an empty
-    // string, fall back to a generic placeholder that still produces a valid
-    // filename.
-    let slug: String = hook
-        .name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string();
-
-    if slug.is_empty() {
-        "hook".to_string()
-    } else {
-        slug
-    }
+    super::hook_slug(hook)
 }
 
 fn script_extension_for_interpreter(interpreter: &str) -> &'static str {
-    let lower = interpreter.trim().to_ascii_lowercase();
-    if lower.ends_with("python") || lower.ends_with("python3") {
-        "py"
-    } else if lower.ends_with("node") || lower.ends_with("nodejs") {
-        "js"
-    } else if lower.ends_with("zsh") {
-        "zsh"
-    } else if lower.ends_with("fish") {
-        "fish"
-    } else if lower.ends_with("pwsh") || lower.ends_with("powershell") {
-        "ps1"
-    } else {
-        "sh"
-    }
-}
-
-/// Drop a marker comment into the script body so `cleanup_orphaned_managed_scripts`
-/// can later identify files we wrote without disturbing user-authored scripts
-/// living next to ours in `.claude/hooks/`.
-fn annotate_managed_script(body: &str) -> String {
-    const MARKER: &str = "# managed-by-automatic — do not edit by hand\n";
-    if body.contains("managed-by-automatic") {
-        return body.to_string();
-    }
-    if let Some(rest) = body.strip_prefix("#!") {
-        if let Some(newline_idx) = rest.find('\n') {
-            let (shebang_line, rest_after) = body.split_at("#!".len() + newline_idx + 1);
-            return format!("{}{}{}", shebang_line, MARKER, rest_after);
-        }
-    }
-    format!("{}{}", MARKER, body)
-}
-
-fn ensure_shebang(script: &str, interpreter: &str) -> String {
-    let trimmed = script.trim_start();
-    if trimmed.starts_with("#!") {
-        return script.to_string();
-    }
-    let interp = interpreter.trim();
-    if interp.is_empty() {
-        return script.to_string();
-    }
-    let shebang = if interp.starts_with('/') {
-        format!("#!{}\n", interp)
-    } else {
-        format!("#!/usr/bin/env {}\n", interp)
-    };
-    format!("{}{}", shebang, script)
+    super::hook_script_extension(interpreter)
 }
 
 /// Remove every handler in `hooks_obj` that carries the managed-by-automatic
@@ -596,48 +511,13 @@ fn prune_empty_hook_entries(hooks_obj: &mut Map<String, Value>) {
     }
 }
 
-/// Delete script files in `.claude/hooks/` that look like ours (filename
-/// matches our slug pattern) but are not in the current keep-list. We use the
-/// filename pattern instead of metadata because Claude Code's settings.json
-/// only stores the path string, not provenance.
+/// Delete leftover managed script files in `.claude/hooks/` — see
+/// [`super::cleanup_managed_hook_scripts`].
 fn cleanup_orphaned_managed_scripts(
     scripts_dir: &Path,
     keep_paths: &[PathBuf],
 ) -> Result<(), String> {
-    if !scripts_dir.exists() {
-        return Ok(());
-    }
-    let entries = match fs::read_dir(scripts_dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-
-    let keep_names: std::collections::HashSet<String> = keep_paths
-        .iter()
-        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
-        .collect();
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        // Only consider files whose body advertises managed-by-automatic to
-        // avoid deleting user-authored scripts. We do not delete based on
-        // filename alone.
-        if keep_names.contains(name) {
-            continue;
-        }
-        if let Ok(content) = fs::read_to_string(&path) {
-            if content.contains("managed-by-automatic") {
-                let _ = fs::remove_file(&path);
-            }
-        }
-    }
-    Ok(())
+    super::cleanup_managed_hook_scripts(scripts_dir, keep_paths)
 }
 
 /// Writes `content` to `final_path` via a temp file + rename, so a crash or

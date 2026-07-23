@@ -1387,6 +1387,155 @@ pub(crate) fn is_automatic_proxy_stub(config: &Value) -> bool {
     }
 }
 
+// ── Hook sync helpers ───────────────────────────────────────────────────────
+//
+// Shared by every agent that syncs lifecycle hooks (Claude Code, Codex CLI,
+// Cursor).  Script-handler bodies are written into an agent-specific scripts
+// directory with a shebang, a `managed-by-automatic` marker comment, and 0755
+// permissions; the marker is what later identifies files safe to clean up.
+
+/// Stable identifier used as the script filename stem — a slug derived from
+/// the hook's display name, falling back to "hook" when it slugs to nothing.
+pub(crate) fn hook_slug(hook: &crate::core::Hook) -> String {
+    let slug: String = hook
+        .name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if slug.is_empty() {
+        "hook".to_string()
+    } else {
+        slug
+    }
+}
+
+/// Pick a filename extension for a script handler based on its interpreter so
+/// the filename hints at the content type.
+pub(crate) fn hook_script_extension(interpreter: &str) -> &'static str {
+    let lower = interpreter.trim().to_ascii_lowercase();
+    if lower.ends_with("python") || lower.ends_with("python3") {
+        "py"
+    } else if lower.ends_with("node") || lower.ends_with("nodejs") {
+        "js"
+    } else if lower.ends_with("zsh") {
+        "zsh"
+    } else if lower.ends_with("fish") {
+        "fish"
+    } else if lower.ends_with("pwsh") || lower.ends_with("powershell") {
+        "ps1"
+    } else {
+        "sh"
+    }
+}
+
+/// Prepend a shebang derived from `interpreter` when the script has none.
+pub(crate) fn hook_ensure_shebang(script: &str, interpreter: &str) -> String {
+    let trimmed = script.trim_start();
+    if trimmed.starts_with("#!") {
+        return script.to_string();
+    }
+    let interp = interpreter.trim();
+    if interp.is_empty() {
+        return script.to_string();
+    }
+    let shebang = if interp.starts_with('/') {
+        format!("#!{}\n", interp)
+    } else {
+        format!("#!/usr/bin/env {}\n", interp)
+    };
+    format!("{}{}", shebang, script)
+}
+
+/// Drop a marker comment into the script body so cleanup can later identify
+/// files we wrote without disturbing user-authored scripts living next to
+/// ours in the scripts directory.
+pub(crate) fn hook_annotate_managed_script(body: &str) -> String {
+    const MARKER: &str = "# managed-by-automatic — do not edit by hand\n";
+    if body.contains("managed-by-automatic") {
+        return body.to_string();
+    }
+    if let Some(rest) = body.strip_prefix("#!") {
+        if let Some(newline_idx) = rest.find('\n') {
+            let (shebang_line, rest_after) = body.split_at("#!".len() + newline_idx + 1);
+            return format!("{}{}{}", shebang_line, MARKER, rest_after);
+        }
+    }
+    format!("{}{}", MARKER, body)
+}
+
+/// Write a script-handler body to `<scripts_dir>/<slug>.<ext>` with shebang,
+/// managed marker, and 0755 permissions.  Returns the written path.
+pub(crate) fn write_managed_hook_script(
+    scripts_dir: &Path,
+    hook: &crate::core::Hook,
+    interpreter: &str,
+    script: &str,
+) -> Result<PathBuf, String> {
+    let ext = hook_script_extension(interpreter);
+    let path = scripts_dir.join(format!("{}.{}", hook_slug(hook), ext));
+    let body = hook_annotate_managed_script(&hook_ensure_shebang(script, interpreter));
+    fs::write(&path, body)
+        .map_err(|e| format!("Failed to write hook script '{}': {}", path.display(), e))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = fs::metadata(&path) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&path, perms);
+        }
+    }
+    Ok(path)
+}
+
+/// Delete script files in the scripts directory whose body carries the
+/// `managed-by-automatic` marker but are not in the current keep-list.
+/// User-authored scripts (no marker) are never deleted.
+pub(crate) fn cleanup_managed_hook_scripts(
+    scripts_dir: &Path,
+    keep_paths: &[PathBuf],
+) -> Result<(), String> {
+    if !scripts_dir.exists() {
+        return Ok(());
+    }
+    let entries = match fs::read_dir(scripts_dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(()),
+    };
+
+    let keep_names: HashSet<String> = keep_paths
+        .iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+        .collect();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if keep_names.contains(name) {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&path) {
+            if content.contains("managed-by-automatic") {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+    Ok(())
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

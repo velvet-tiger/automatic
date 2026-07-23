@@ -278,6 +278,176 @@ pub fn is_dot_claude_rules_current(
     Ok(true)
 }
 
+// ── .cursor/rules/ MDC-based rules ──────────────────────────────────────────
+
+/// Frontmatter key marking an `.mdc` rule file as Automatic-managed.
+///
+/// Unlike `.claude/rules/*.md`, an HTML comment before the `---` frontmatter
+/// would break Cursor's MDC parsing, so ownership is declared *inside* the
+/// frontmatter — consistent with the `automatic-managed: true` convention used
+/// for command files.
+const CURSOR_MDC_MANAGED_KEY: &str = "automatic-managed: true";
+
+/// Returns `true` if `.mdc` content carries the Automatic-managed frontmatter key.
+pub(crate) fn is_managed_mdc_content(content: &str) -> bool {
+    let Some(rest) = content.strip_prefix("---\n") else {
+        return false;
+    };
+    let Some(end) = rest.find("\n---") else {
+        return false;
+    };
+    rest[..end]
+        .lines()
+        .any(|line| line.trim() == CURSOR_MDC_MANAGED_KEY)
+}
+
+/// Render a library rule as a Cursor MDC file.
+///
+/// `alwaysApply: true` matches the semantics of inline injection (rules are
+/// unconditionally part of the context).  The rule's display name becomes the
+/// `description` so the file is self-describing in Cursor's rules UI.
+fn render_cursor_mdc_rule(display_name: &str, content: &str) -> String {
+    // Minimal YAML string escaping for the description value.
+    let escaped = display_name.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        "---\ndescription: \"{}\"\nalwaysApply: true\n{}\n---\n\n{}\n",
+        escaped,
+        CURSOR_MDC_MANAGED_KEY,
+        content.trim_end()
+    )
+}
+
+/// Read a rule's display name + content from the library.
+/// Falls back to the machine name when the display name is empty.
+fn read_rule_for_mdc(machine_name: &str) -> Option<(String, String)> {
+    let raw = read_rule(machine_name).ok()?;
+    let rule: Rule = serde_json::from_str(&raw).ok()?;
+    if rule.content.trim().is_empty() {
+        return None;
+    }
+    let display = if rule.name.trim().is_empty() {
+        machine_name.to_string()
+    } else {
+        rule.name.clone()
+    };
+    Some((display, rule.content))
+}
+
+/// Write rules as individual MDC files under `<project_dir>/.cursor/rules/`.
+///
+/// Cursor's native project-rule format: each rule becomes
+/// `.cursor/rules/<machine_name>.mdc` with YAML frontmatter.  Files managed by
+/// Automatic carry an `automatic-managed: true` frontmatter key; previously
+/// managed files no longer in the rule list are deleted, user-authored `.mdc`
+/// files are never touched.
+///
+/// Returns the list of files written or removed.
+pub fn sync_rules_to_cursor_mdc_rules(
+    project_dir: &str,
+    rule_names: &[String],
+) -> Result<Vec<String>, String> {
+    let rules_dir = PathBuf::from(project_dir).join(".cursor").join("rules");
+    fs::create_dir_all(&rules_dir)
+        .map_err(|e| format!("Failed to create .cursor/rules/: {}", e))?;
+
+    let mut touched: Vec<String> = Vec::new();
+    let intended: HashSet<String> = rule_names.iter().map(|n| format!("{}.mdc", n)).collect();
+
+    // Remove stale Automatic-managed files.
+    if let Ok(entries) = fs::read_dir(&rules_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
+                continue;
+            }
+            let file_name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if intended.contains(&file_name) {
+                continue; // Will be (re-)written below.
+            }
+            if let Ok(content) = fs::read_to_string(&path) {
+                if is_managed_mdc_content(&content) && fs::remove_file(&path).is_ok() {
+                    touched.push(path.display().to_string());
+                }
+            }
+        }
+    }
+
+    // Write each rule as `<machine_name>.mdc` (write-if-different).
+    for machine_name in rule_names {
+        let Some((display, content)) = read_rule_for_mdc(machine_name) else {
+            continue; // Skip missing or empty rules silently.
+        };
+
+        let file_path = rules_dir.join(format!("{}.mdc", machine_name));
+        let file_content = render_cursor_mdc_rule(&display, &content);
+
+        let existing = fs::read_to_string(&file_path).unwrap_or_default();
+        if existing != file_content {
+            fs::write(&file_path, &file_content)
+                .map_err(|e| format!("Failed to write rule '{}': {}", machine_name, e))?;
+            touched.push(file_path.display().to_string());
+        }
+    }
+
+    Ok(touched)
+}
+
+/// Read-only check: returns `true` if the on-disk `.cursor/rules/` directory
+/// already contains exactly the MDC files that would be generated from
+/// `rule_names` (same filenames, same content, no extra managed files).
+pub fn is_cursor_mdc_rules_current(
+    project_dir: &str,
+    rule_names: &[String],
+) -> Result<bool, String> {
+    let rules_dir = PathBuf::from(project_dir).join(".cursor").join("rules");
+
+    let mut managed_on_disk: HashSet<String> = HashSet::new();
+    if let Ok(entries) = fs::read_dir(&rules_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
+                continue;
+            }
+            if let Ok(content) = fs::read_to_string(&path) {
+                if is_managed_mdc_content(&content) {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        managed_on_disk.insert(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let intended: HashSet<String> = rule_names
+        .iter()
+        .filter(|n| read_rule_for_mdc(n).is_some())
+        .map(|n| format!("{}.mdc", n))
+        .collect();
+
+    if managed_on_disk != intended {
+        return Ok(false);
+    }
+
+    for machine_name in rule_names {
+        let Some((display, content)) = read_rule_for_mdc(machine_name) else {
+            continue;
+        };
+        let expected = render_cursor_mdc_rule(&display, &content);
+        let actual = match fs::read_to_string(rules_dir.join(format!("{}.mdc", machine_name))) {
+            Ok(c) => c,
+            Err(_) => return Ok(false),
+        };
+        if actual != expected {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
 // ── Instructions Index Mode ──────────────────────────────────────────────────
 //
 // When a project has `instructions_index_mode: true`, rules are written as
@@ -1109,6 +1279,113 @@ mod tests {
 
         // User file should be untouched.
         assert!(rules_dir.join("user-file.md").exists());
+    }
+
+    // ── sync_rules_to_cursor_mdc_rules ───────────────────────────────────────
+
+    #[test]
+    fn mdc_sync_creates_cursor_rules_directory() {
+        let dir = tmp();
+        let rules_dir = dir.path().join(".cursor").join("rules");
+        assert!(!rules_dir.exists());
+
+        sync_rules_to_cursor_mdc_rules(dir.path().to_str().unwrap(), &no_rules()).expect("sync");
+
+        assert!(rules_dir.exists());
+    }
+
+    #[test]
+    fn mdc_sync_with_no_rules_removes_managed_files() {
+        let dir = tmp();
+        let rules_dir = dir.path().join(".cursor").join("rules");
+        fs::create_dir_all(&rules_dir).expect("create dir");
+
+        let managed = "---\ndescription: \"Old\"\nalwaysApply: true\nautomatic-managed: true\n---\n\nOld content.\n";
+        fs::write(rules_dir.join("old-rule.mdc"), managed).expect("write managed");
+
+        sync_rules_to_cursor_mdc_rules(dir.path().to_str().unwrap(), &no_rules()).expect("sync");
+
+        assert!(!rules_dir.join("old-rule.mdc").exists());
+    }
+
+    #[test]
+    fn mdc_sync_does_not_remove_unmanaged_user_files() {
+        let dir = tmp();
+        let rules_dir = dir.path().join(".cursor").join("rules");
+        fs::create_dir_all(&rules_dir).expect("create dir");
+
+        // User .mdc without the managed frontmatter key, and one with
+        // frontmatter but no managed key.
+        fs::write(rules_dir.join("user-plain.mdc"), "# User wrote this").expect("write");
+        fs::write(
+            rules_dir.join("user-fm.mdc"),
+            "---\ndescription: \"Mine\"\nglobs: \"src/**\"\n---\n\nUser rule.\n",
+        )
+        .expect("write");
+
+        sync_rules_to_cursor_mdc_rules(dir.path().to_str().unwrap(), &no_rules()).expect("sync");
+
+        assert!(rules_dir.join("user-plain.mdc").exists());
+        assert!(rules_dir.join("user-fm.mdc").exists());
+    }
+
+    #[test]
+    fn mdc_managed_detection() {
+        assert!(is_managed_mdc_content(
+            "---\ndescription: \"X\"\nautomatic-managed: true\n---\n\nBody"
+        ));
+        assert!(!is_managed_mdc_content("# Plain markdown"));
+        assert!(!is_managed_mdc_content(
+            "---\ndescription: \"X\"\n---\n\nautomatic-managed: true"
+        ));
+    }
+
+    #[test]
+    fn mdc_render_includes_frontmatter_and_escapes_description() {
+        let rendered = render_cursor_mdc_rule("My \"quoted\" rule", "Body content.");
+        assert!(rendered.starts_with("---\n"));
+        assert!(rendered.contains("description: \"My \\\"quoted\\\" rule\""));
+        assert!(rendered.contains("alwaysApply: true"));
+        assert!(rendered.contains("automatic-managed: true"));
+        assert!(rendered.ends_with("Body content.\n"));
+        assert!(is_managed_mdc_content(&rendered));
+    }
+
+    #[test]
+    fn mdc_sync_writes_library_rule_and_reports_current() {
+        let home = tempfile::tempdir().expect("home tempdir");
+        crate::core::paths::with_test_home(home.path().to_path_buf(), || {
+            let rules_lib = crate::core::rules::get_rules_dir().expect("rules dir");
+            fs::create_dir_all(&rules_lib).expect("create library rules dir");
+            fs::write(
+                rules_lib.join("my-rule.json"),
+                r#"{"name":"My Rule","content":"Always be testing."}"#,
+            )
+            .expect("write library rule");
+
+            let dir = tempfile::tempdir().expect("tempdir");
+            let project_dir = dir.path().to_str().unwrap();
+            let rule_names = vec!["my-rule".to_string()];
+
+            let touched =
+                sync_rules_to_cursor_mdc_rules(project_dir, &rule_names).expect("sync");
+            assert_eq!(touched.len(), 1);
+
+            let on_disk =
+                fs::read_to_string(dir.path().join(".cursor/rules/my-rule.mdc")).expect("read");
+            assert!(on_disk.contains("description: \"My Rule\""));
+            assert!(on_disk.contains("Always be testing."));
+
+            // Reported current after sync, and idempotent.
+            assert!(is_cursor_mdc_rules_current(project_dir, &rule_names).expect("check"));
+            let touched2 =
+                sync_rules_to_cursor_mdc_rules(project_dir, &rule_names).expect("re-sync");
+            assert!(touched2.is_empty());
+
+            // Modifying the managed file flips the check.
+            fs::write(dir.path().join(".cursor/rules/my-rule.mdc"), "---\nautomatic-managed: true\n---\ntampered").expect("tamper");
+            assert!(!is_cursor_mdc_rules_current(project_dir, &rule_names).expect("check"));
+        });
     }
 
     // ── strip_index_section ──────────────────────────────────────────────────

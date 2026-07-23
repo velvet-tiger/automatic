@@ -21,6 +21,7 @@ export interface AgentInfo {
 /** Per-agent configuration options (mirrors the Rust AgentOptions struct). */
 export interface AgentOptions {
   claude_rules_in_dot_claude: boolean;
+  cursor_rules_in_dot_cursor: boolean;
 }
 
 /** Describes one toggleable option for an agent. */
@@ -44,11 +45,20 @@ const AGENT_OPTION_DEFS: Record<string, OptionDef[]> = {
         "them into CLAUDE.md. Claude Code loads these files automatically every session.",
     },
   ],
+  cursor: [
+    {
+      key: "cursor_rules_in_dot_cursor",
+      label: "Store rules in .cursor/rules/",
+      description:
+        "Write each rule as an individual .mdc file under .cursor/rules/ instead of injecting " +
+        "them into AGENTS.md. This is Cursor's native project-rule format.",
+    },
+  ],
 };
 
 /** Default values for AgentOptions — must match Rust defaults. */
 function defaultOptions(): AgentOptions {
-  return { claude_rules_in_dot_claude: true };
+  return { claude_rules_in_dot_claude: true, cursor_rules_in_dot_cursor: false };
 }
 
 interface AgentSelectorProps {

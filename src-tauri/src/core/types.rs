@@ -231,12 +231,23 @@ pub struct AgentOptions {
     /// Set to `false` to revert to the legacy inline-injection behaviour.
     #[serde(default = "default_true")]
     pub claude_rules_in_dot_claude: bool,
+
+    /// **Cursor only.**  When `true`, rules are written as individual MDC
+    /// files under `.cursor/rules/` (with YAML frontmatter) rather than being
+    /// injected inline into `AGENTS.md`.  This is Cursor's native project-rule
+    /// format.
+    ///
+    /// Defaults to `false` so existing projects keep the inline behaviour;
+    /// inline rules in `AGENTS.md` remain fully supported by Cursor.
+    #[serde(default)]
+    pub cursor_rules_in_dot_cursor: bool,
 }
 
 impl Default for AgentOptions {
     fn default() -> Self {
         Self {
             claude_rules_in_dot_claude: true,
+            cursor_rules_in_dot_cursor: false,
         }
     }
 }

@@ -960,7 +960,7 @@ pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
 ///
 /// `skill_name` is the bare skill name (e.g. `"my-skill"`).  This deletes the
 /// skill directory from every agent's skill location within the project directory
-/// (e.g. `.agents/skills/<name>`, `.claude/skills/<name>`, `.cursor/skills/<name>`).
+/// (e.g. `.agents/skills/<name>`, `.claude/skills/<name>`).
 ///
 /// Call this when the user chooses "Remove from disk" in the drift resolution UI
 /// for a stale skill directory.

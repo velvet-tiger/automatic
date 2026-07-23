@@ -500,21 +500,7 @@ fn sync_codex_hooks(
             script,
         } = &hook.handler
         {
-            let ext = codex_script_extension(interpreter);
-            let slug = codex_hook_slug(hook);
-            let path = scripts_dir.join(format!("{}.{}", slug, ext));
-            let body = codex_annotate_managed_script(&codex_ensure_shebang(script, interpreter));
-            fs::write(&path, body)
-                .map_err(|e| format!("Failed to write Codex hook script '{}': {}", path.display(), e))?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = fs::metadata(&path) {
-                    let mut perms = meta.permissions();
-                    perms.set_mode(0o755);
-                    let _ = fs::set_permissions(&path, perms);
-                }
-            }
+            let path = super::write_managed_hook_script(&scripts_dir, hook, interpreter, script)?;
             managed_script_paths.push(path.clone());
             written.push(path.display().to_string());
         }
@@ -582,107 +568,15 @@ fn codex_handler_value(hook: &crate::core::Hook) -> Value {
 }
 
 fn codex_hook_slug(hook: &crate::core::Hook) -> String {
-    let slug: String = hook
-        .name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string();
-    if slug.is_empty() {
-        "hook".to_string()
-    } else {
-        slug
-    }
+    super::hook_slug(hook)
 }
 
 fn codex_script_extension(interpreter: &str) -> &'static str {
-    let lower = interpreter.trim().to_ascii_lowercase();
-    if lower.ends_with("python") || lower.ends_with("python3") {
-        "py"
-    } else if lower.ends_with("node") || lower.ends_with("nodejs") {
-        "js"
-    } else if lower.ends_with("zsh") {
-        "zsh"
-    } else if lower.ends_with("fish") {
-        "fish"
-    } else if lower.ends_with("pwsh") || lower.ends_with("powershell") {
-        "ps1"
-    } else {
-        "sh"
-    }
+    super::hook_script_extension(interpreter)
 }
 
-fn codex_ensure_shebang(script: &str, interpreter: &str) -> String {
-    let trimmed = script.trim_start();
-    if trimmed.starts_with("#!") {
-        return script.to_string();
-    }
-    let interp = interpreter.trim();
-    if interp.is_empty() {
-        return script.to_string();
-    }
-    let shebang = if interp.starts_with('/') {
-        format!("#!{}\n", interp)
-    } else {
-        format!("#!/usr/bin/env {}\n", interp)
-    };
-    format!("{}{}", shebang, script)
-}
-
-fn codex_annotate_managed_script(body: &str) -> String {
-    const MARKER: &str = "# managed-by-automatic — do not edit by hand\n";
-    if body.contains("managed-by-automatic") {
-        return body.to_string();
-    }
-    if let Some(rest) = body.strip_prefix("#!") {
-        if let Some(newline_idx) = rest.find('\n') {
-            let (shebang_line, rest_after) = body.split_at("#!".len() + newline_idx + 1);
-            return format!("{}{}{}", shebang_line, MARKER, rest_after);
-        }
-    }
-    format!("{}{}", MARKER, body)
-}
-
-fn cleanup_codex_scripts(
-    scripts_dir: &Path,
-    keep_paths: &[PathBuf],
-) -> Result<(), String> {
-    if !scripts_dir.exists() {
-        return Ok(());
-    }
-    let entries = match fs::read_dir(scripts_dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-    let keep_names: std::collections::HashSet<String> = keep_paths
-        .iter()
-        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
-        .collect();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        if keep_names.contains(name) {
-            continue;
-        }
-        if let Ok(content) = fs::read_to_string(&path) {
-            if content.contains("managed-by-automatic") {
-                let _ = fs::remove_file(&path);
-            }
-        }
-    }
-    Ok(())
+fn cleanup_codex_scripts(scripts_dir: &Path, keep_paths: &[PathBuf]) -> Result<(), String> {
+    super::cleanup_managed_hook_scripts(scripts_dir, keep_paths)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

@@ -178,6 +178,11 @@ fn sync_to_directory_inner(
         ProjectMode::Normal => dir.clone(),
     };
 
+    // One-time migration: Cursor's instruction file moved from the legacy
+    // `.cursorrules` to `AGENTS.md`.  Fold any leftover legacy file into the
+    // new location before the instruction pipeline runs.
+    migrate_legacy_cursorrules(&effective_dir, project);
+
     // Read MCP server configs from the Automatic registry and build the
     // selected server map (includes stripping internal fields and OAuth proxy
     // substitution).  Uses the shared helper so drift detection produces
@@ -250,6 +255,91 @@ fn sync_to_directory_inner(
     sync_gitignore_step(&dir, project)?;
 
     Ok(written_files)
+}
+
+/// One-time migration: fold a legacy `.cursorrules` file into `AGENTS.md`.
+///
+/// Cursor's `project_file_name()` changed from `.cursorrules` (legacy) to
+/// `AGENTS.md`.  Existing projects synced by an older Automatic still carry a
+/// `.cursorrules` with our managed sections; on the first sync after upgrade:
+///
+/// - If `AGENTS.md` is absent or has no user content, the user content of
+///   `.cursorrules` is moved there and the legacy file is deleted.
+/// - If both files carry identical user content (or `.cursorrules` has none),
+///   the legacy file is simply deleted.
+/// - If both carry different non-empty user content, `.cursorrules` is kept
+///   but our managed sections are stripped from it — the user resolves the
+///   remainder manually.
+///
+/// Bookkeeping mirrors the move: the stale `.cursorrules` instruction hash is
+/// dropped and its drift snapshot is renamed to `AGENTS.md` (when no AGENTS.md
+/// snapshot exists yet) so the first post-upgrade drift check stays quiet.
+///
+/// Never fatal: failures are logged and the sync continues.
+fn migrate_legacy_cursorrules(effective_dir: &std::path::Path, project: &mut Project) {
+    if !project.agents.iter().any(|a| a == "cursor") {
+        return;
+    }
+    let legacy_path = effective_dir.join(".cursorrules");
+    if !legacy_path.is_file() {
+        return;
+    }
+
+    let dir_str = match effective_dir.to_str() {
+        Some(s) => s,
+        None => return,
+    };
+
+    let legacy_user = crate::core::read_project_file(dir_str, ".cursorrules").unwrap_or_default();
+    let agents_md_user = crate::core::read_project_file(dir_str, "AGENTS.md").unwrap_or_default();
+
+    let migrated = if legacy_user.trim().is_empty() || legacy_user.trim() == agents_md_user.trim() {
+        // Nothing user-authored to preserve (or already present) — drop the file.
+        true
+    } else if agents_md_user.trim().is_empty() {
+        // Move user content across.
+        match crate::core::save_project_file(dir_str, "AGENTS.md", &legacy_user) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("[automatic] .cursorrules migration: failed to write AGENTS.md: {}", e);
+                false
+            }
+        }
+    } else {
+        // Conflict: both files have different user content.  Keep the legacy
+        // file but strip our managed sections out of it, then leave it alone.
+        eprintln!(
+            "[automatic] .cursorrules migration: AGENTS.md already has different content; \
+             keeping .cursorrules (managed sections stripped) for manual review"
+        );
+        if legacy_user.trim() != fs::read_to_string(&legacy_path).unwrap_or_default().trim() {
+            let _ = fs::write(&legacy_path, &legacy_user);
+        }
+        false
+    };
+
+    if migrated {
+        if let Err(e) = fs::remove_file(&legacy_path) {
+            eprintln!("[automatic] .cursorrules migration: failed to remove legacy file: {}", e);
+        }
+    }
+
+    // Bookkeeping (both branches): the `.cursorrules` hash entry is stale
+    // either way — when migrated the file is gone, when conflicted the file is
+    // no longer Automatic-managed.
+    project.instruction_file_hashes.remove(".cursorrules");
+    let snap_dir = std::path::PathBuf::from(&project.directory)
+        .join(".automatic")
+        .join("snapshots");
+    let legacy_snap = snap_dir.join(".cursorrules");
+    if legacy_snap.is_file() {
+        let agents_snap = snap_dir.join("AGENTS.md");
+        if migrated && !agents_snap.exists() {
+            let _ = fs::rename(&legacy_snap, &agents_snap);
+        } else {
+            let _ = fs::remove_file(&legacy_snap);
+        }
+    }
 }
 
 /// Maintain the Automatic-managed `.gitignore` block at the project root.
@@ -442,6 +532,36 @@ fn sync_agent_configs_step(
                     written_files.extend(user_agent_files);
                 }
 
+                // Cursor: when the `.cursor/rules/` option is on but AGENTS.md
+                // is shared with another agent, inline injection stays active
+                // (the other agent needs it) and `sync_instruction_rules` never
+                // fires for Cursor — so the `.mdc` files are written here.
+                if agent_id == "cursor"
+                    && project
+                        .agent_options
+                        .get("cursor")
+                        .cloned()
+                        .unwrap_or_default()
+                        .cursor_rules_in_dot_cursor
+                    && !crate::core::project_uses_cursor_mdc_rules(
+                        project,
+                        agent_instance.project_file_name(),
+                    )
+                {
+                    let rules = resolve_rules_for_target(
+                        project,
+                        agent_instance.project_file_name(),
+                        project.instruction_mode == "unified",
+                    );
+                    let write_dir_str = dir.to_str().unwrap_or(&project.directory);
+                    match crate::core::sync_rules_to_cursor_mdc_rules(write_dir_str, &rules) {
+                        Ok(touched) => written_files.extend(touched),
+                        Err(e) => {
+                            eprintln!("Failed to sync rules to .cursor/rules/: {}", e)
+                        }
+                    }
+                }
+
                 if let Some(commands_dir) = agent_instance.commands_dir(dir) {
                     let custom_commands = project.custom_commands.as_deref().unwrap_or(&[]);
                     let command_files = if agent_instance.commands_file_ext() == "md" {
@@ -616,6 +736,35 @@ fn resolve_unified_instruction_content(
     }
 }
 
+/// Resolve the library rule list that applies to `filename`, including the
+/// mandatory Automatic rules and the optional gitignore rule.
+///
+/// Shared by [`sync_instruction_target_file`] and the Cursor `.mdc` write in
+/// [`sync_agent_configs_step`] so both produce identical rule sets.
+fn resolve_rules_for_target(
+    project: &Project,
+    filename: &str,
+    use_unified_rules: bool,
+) -> Vec<String> {
+    let user_rules: Vec<String> = project
+        .file_rules
+        .get("_project")
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            if use_unified_rules {
+                project.file_rules.get("_unified")
+            } else {
+                project.file_rules.get(filename)
+            }
+        })
+        .cloned()
+        .unwrap_or_default();
+    crate::core::with_gitignore_rule(
+        crate::core::ensure_automatic_rules(&user_rules),
+        project.manage_gitignore,
+    )
+}
+
 fn sync_instruction_target_file(
     dir: &PathBuf,
     project: &Project,
@@ -630,23 +779,7 @@ fn sync_instruction_target_file(
         return Err(format!("Unknown agent '{}'", agent_id));
     };
 
-    let user_rules: Vec<String> = project
-        .file_rules
-        .get("_project")
-        .filter(|v| !v.is_empty())
-        .or_else(|| {
-            if use_unified_rules {
-                project.file_rules.get("_unified")
-            } else {
-                project.file_rules.get(filename)
-            }
-        })
-        .cloned()
-        .unwrap_or_default();
-    let rules = crate::core::with_gitignore_rule(
-        crate::core::ensure_automatic_rules(&user_rules),
-        project.manage_gitignore,
-    );
+    let rules = resolve_rules_for_target(project, filename, use_unified_rules);
     let custom_contents: Vec<String> = project
         .custom_rules
         .iter()
@@ -656,7 +789,13 @@ fn sync_instruction_target_file(
     let custom_rule_structs = project.custom_rules.clone();
     let file_path = dir.join(filename).display().to_string();
     let project_groups = crate::core::groups_for_project(&project.name);
-    let uses_dot_claude_rules = crate::core::project_uses_dot_claude_rules(project, filename);
+    // Does this agent route library rules to its own rules directory
+    // (.claude/rules/ or .cursor/rules/) instead of inline injection?
+    let uses_agent_rules_dir = match agent_id {
+        "claude" => crate::core::project_uses_dot_claude_rules(project, filename),
+        "cursor" => crate::core::project_uses_cursor_mdc_rules(project, filename),
+        _ => false,
+    };
 
     crate::core::save_project_file(write_dir, filename, user_content)?;
     let _ = crate::core::inject_groups_into_project_file(
@@ -667,9 +806,9 @@ fn sync_instruction_target_file(
     );
 
     let mut custom_rules_handled = false;
-    if uses_dot_claude_rules {
+    if uses_agent_rules_dir {
         // When write_dir differs from project.directory (Silent mode), redirect
-        // the .claude/rules/ writes to write_dir by using a temporary project.
+        // the agent rules-dir writes to write_dir by using a temporary project.
         let tmp_project;
         let project_for_rules: &Project = if write_dir != project.directory {
             tmp_project = crate::core::Project {
@@ -692,7 +831,7 @@ fn sync_instruction_target_file(
         }
     }
 
-    if project.instructions_index_mode && !uses_dot_claude_rules {
+    if project.instructions_index_mode && !uses_agent_rules_dir {
         // .automatic/instructions/ lives inside .automatic/ — never redirect it to
         // the Silent write root.  Always write to the real project directory.
         match crate::core::sync_rules_to_automatic_instructions(
@@ -1027,6 +1166,77 @@ mod tests {
             read_project_file(dir.path().to_str().unwrap(), ".clinerules/automatic.md")
                 .expect("read migrated project file");
         assert_eq!(user_content.trim(), legacy_content.trim());
+    }
+
+    fn make_cursor_project(dir: &str) -> Project {
+        Project {
+            name: "test-project".to_string(),
+            directory: dir.to_string(),
+            agents: vec!["cursor".to_string()],
+            instruction_mode: "per-agent".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn sync_migrates_legacy_cursorrules_to_agents_md() {
+        let dir = tmp();
+        let legacy_content = "# Legacy Cursor Instructions\n\nKeep this during upgrade.";
+        fs::write(dir.path().join(".cursorrules"), legacy_content).expect("write legacy file");
+        let mut project = make_cursor_project(dir.path().to_str().unwrap());
+        project
+            .instruction_file_hashes
+            .insert(".cursorrules".to_string(), "stale-hash".to_string());
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        assert!(
+            !dir.path().join(".cursorrules").exists(),
+            "legacy .cursorrules should be removed after migration"
+        );
+        let user_content =
+            read_project_file(dir.path().to_str().unwrap(), "AGENTS.md").expect("read AGENTS.md");
+        assert_eq!(user_content.trim(), legacy_content.trim());
+        assert!(
+            !project.instruction_file_hashes.contains_key(".cursorrules"),
+            "stale .cursorrules hash entry should be dropped"
+        );
+
+        // Re-sync is a no-op for the migration.
+        sync_project_without_autodetect(&mut project).expect("re-sync");
+        assert!(!dir.path().join(".cursorrules").exists());
+        let user_content =
+            read_project_file(dir.path().to_str().unwrap(), "AGENTS.md").expect("read AGENTS.md");
+        assert_eq!(user_content.trim(), legacy_content.trim());
+    }
+
+    #[test]
+    fn sync_keeps_conflicting_cursorrules_stripped_but_intact() {
+        let dir = tmp();
+        let agents_content = "# Agents\n\nAGENTS.md-specific content.";
+        let legacy_user = "# Legacy Cursor Instructions\n\nDifferent content.";
+        let legacy_raw = format!(
+            "{legacy_user}\n\n<!-- automatic:rules:start -->\nmanaged rules\n<!-- automatic:rules:end -->\n"
+        );
+        fs::write(dir.path().join("AGENTS.md"), agents_content).expect("write AGENTS.md");
+        fs::write(dir.path().join(".cursorrules"), &legacy_raw).expect("write legacy file");
+        let mut project = make_cursor_project(dir.path().to_str().unwrap());
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        let legacy_on_disk =
+            fs::read_to_string(dir.path().join(".cursorrules")).expect("legacy file kept");
+        assert!(
+            legacy_on_disk.contains(legacy_user),
+            "conflicting .cursorrules user content must survive"
+        );
+        assert!(
+            !legacy_on_disk.contains("automatic:rules:start"),
+            "managed sections should be stripped from the kept legacy file"
+        );
+        let agents_user =
+            read_project_file(dir.path().to_str().unwrap(), "AGENTS.md").expect("read AGENTS.md");
+        assert_eq!(agents_user.trim(), agents_content.trim());
     }
 
     #[test]

@@ -24,7 +24,10 @@ export function AgentsPanel({ project, setProject, setDirty, availableAgents, ad
         emptyMessage="No agent tools selected. Add tools to enable config sync."
         agentOptions={project.agent_options}
         onOptionChange={(agentId, patch) => {
-          const current: AgentOptions = project.agent_options?.[agentId] ?? { claude_rules_in_dot_claude: true };
+          const current: AgentOptions = project.agent_options?.[agentId] ?? {
+            claude_rules_in_dot_claude: true,
+            cursor_rules_in_dot_cursor: false,
+          };
           setProject({
             ...project,
             agent_options: {

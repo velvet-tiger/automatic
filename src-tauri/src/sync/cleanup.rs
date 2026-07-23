@@ -72,6 +72,14 @@ pub fn remove_agent_from_project(
         removed.extend(cleanup_claude_project_files(&dir, &opts));
     }
 
+    // Cursor-specific cleanup: remove Automatic-managed .cursor/rules/*.mdc
+    // files and managed hook entries, strip the AGENTS.md rules block only
+    // when no remaining agent still uses AGENTS.md, then prune .cursor/ if
+    // it is now empty.
+    if agent_id == "cursor" {
+        removed.extend(cleanup_cursor_project_files(&dir, &remaining));
+    }
+
     // Update and persist the project
     project.agents = remaining;
     project.updated_at = chrono::Utc::now().to_rfc3339();
@@ -141,6 +149,11 @@ pub fn get_agent_cleanup_preview(project: &Project, agent_id: &str) -> Result<Ve
         preview.extend(claude_cleanup_preview(&dir, &opts));
     }
 
+    // Include Cursor-specific files in the preview
+    if agent_id == "cursor" {
+        preview.extend(cursor_cleanup_preview(&dir, &remaining));
+    }
+
     Ok(preview)
 }
 
@@ -196,6 +209,111 @@ fn cleanup_claude_project_files(dir: &PathBuf, opts: &AgentOptions) -> Vec<Strin
     }
 
     touched
+}
+
+// ── Cursor-specific cleanup helpers ─────────────────────────────────────────
+
+/// Returns `true` if any of the `remaining` agent ids still uses `AGENTS.md`
+/// as its instruction file.
+fn remaining_agents_use_agents_md(remaining: &[String]) -> bool {
+    remaining
+        .iter()
+        .filter_map(|id| agent::from_id(id))
+        .any(|a| a.project_file_name() == "AGENTS.md")
+}
+
+/// Strip Automatic-managed content from Cursor-specific project files.
+///
+/// Actions:
+/// 1. Strip the managed rules block from `AGENTS.md` — but only when no
+///    remaining agent still uses `AGENTS.md` (a shared file must stay intact;
+///    the post-removal re-sync of the remaining agents refreshes it).
+/// 2. Delete every Automatic-managed `.cursor/rules/*.mdc` file.
+/// 3. Remove Automatic-managed hook entries and scripts via `sync_hooks`
+///    with an empty hook list.
+/// 4. Attempt to remove `.cursor/rules/` and `.cursor/` if now empty.
+///
+/// Returns the paths of files deleted or modified.
+fn cleanup_cursor_project_files(dir: &PathBuf, remaining: &[String]) -> Vec<String> {
+    let mut touched: Vec<String> = Vec::new();
+
+    // 1. Strip managed rules block from AGENTS.md when Cursor was its only user.
+    if !remaining_agents_use_agents_md(remaining) {
+        let agents_md = dir.join("AGENTS.md");
+        if agents_md.exists() {
+            if let Ok(content) = fs::read_to_string(&agents_md) {
+                let stripped = crate::core::strip_rules_section_pub(&content);
+                if stripped != content && fs::write(&agents_md, stripped).is_ok() {
+                    touched.push(agents_md.display().to_string());
+                }
+            }
+        }
+    }
+
+    // 2. Remove Automatic-managed .cursor/rules/*.mdc files (regardless of the
+    // current option value — they may have been written when it was enabled).
+    let rules_dir = dir.join(".cursor").join("rules");
+    if rules_dir.exists() {
+        match crate::core::sync_rules_to_cursor_mdc_rules(&dir.display().to_string(), &[]) {
+            Ok(removed) => touched.extend(removed),
+            Err(e) => eprintln!("Failed to clean .cursor/rules/ on agent removal: {}", e),
+        }
+        let _ = fs::remove_dir(&rules_dir); // silently ignored when non-empty
+    }
+
+    // 3. Remove managed hook entries and scripts.
+    if let Some(cursor) = agent::from_id("cursor") {
+        match cursor.sync_hooks(dir, &[]) {
+            Ok(removed) => touched.extend(removed),
+            Err(e) => eprintln!("Failed to clean Cursor hooks on agent removal: {}", e),
+        }
+    }
+
+    // 4. Attempt to remove .cursor/ if it is now empty.
+    let dot_cursor = dir.join(".cursor");
+    if dot_cursor.exists() {
+        let _ = fs::remove_dir(&dot_cursor); // silently ignored when non-empty
+    }
+
+    touched
+}
+
+/// Return the paths that [`cleanup_cursor_project_files`] would touch —
+/// used to populate the confirmation preview before the user commits.
+fn cursor_cleanup_preview(dir: &PathBuf, remaining: &[String]) -> Vec<String> {
+    let mut preview: Vec<String> = Vec::new();
+
+    // AGENTS.md if it contains a managed rules block and Cursor is its only user.
+    if !remaining_agents_use_agents_md(remaining) {
+        let agents_md = dir.join("AGENTS.md");
+        if agents_md.exists() {
+            if let Ok(content) = fs::read_to_string(&agents_md) {
+                if content.contains("<!-- automatic:rules:start -->") {
+                    preview.push(agents_md.display().to_string());
+                }
+            }
+        }
+    }
+
+    // Automatic-managed .cursor/rules/*.mdc files.
+    let rules_dir = dir.join(".cursor").join("rules");
+    if rules_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&rules_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
+                    continue;
+                }
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if crate::core::is_managed_mdc_content(&content) {
+                        preview.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    preview
 }
 
 /// Return the paths that [`cleanup_claude_project_files`] would touch —

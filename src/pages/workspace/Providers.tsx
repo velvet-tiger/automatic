@@ -36,6 +36,17 @@ const AGENT_OPTION_DEFS: Record<string, AgentOptionDef[]> = {
       hardDefault: true,
     },
   ],
+  cursor: [
+    {
+      key: "cursor_rules_in_dot_cursor",
+      label: "Store rules in .cursor/rules/",
+      description:
+        "Write each rule as an individual .mdc file under .cursor/rules/ " +
+        "instead of injecting them inline into AGENTS.md. " +
+        "This is Cursor's native project-rule format.",
+      hardDefault: false,
+    },
+  ],
 };
 
 interface AgentWithProjects {
@@ -166,6 +177,7 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
       const raw: any = await invoke("read_settings");
       const existing: AgentOptions = {
         claude_rules_in_dot_claude: true,
+        cursor_rules_in_dot_cursor: false,
         ...(raw.default_agent_options?.[agentId] ?? {}),
       };
       const updated = {
@@ -365,6 +377,12 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
                           description="Automatic can sync project commands to this agent"
                           unsupportedDescription="This agent does not support project-local commands"
                           supported={selected.capabilities.commands}
+                        />
+                        <CapabilityRow
+                          label="Hooks"
+                          description="Automatic can sync lifecycle hooks to this agent"
+                          unsupportedDescription="This agent does not support lifecycle hooks"
+                          supported={selected.capabilities.hooks}
                         />
                       </div>
                       {selected.mcp_note && (
