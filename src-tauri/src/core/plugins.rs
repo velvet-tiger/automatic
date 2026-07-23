@@ -211,6 +211,18 @@ fn write_automatic_plugin(plugin_dir: &std::path::Path) -> Result<(), String> {
     // AUTOMATIC_PROJECT env var.  A plugin-level .mcp.json would create a
     // duplicate "automatic" server without project context, causing Claude
     // Code to deduplicate and drop tools.
+    //
+    // Older builds DID write a plugin-level .mcp.json, and the binary path
+    // captured in it can be dead — e.g. an ephemeral App Translocation path
+    // from a quarantined first launch.  Because plugin installs copy this
+    // directory verbatim into the agent's plugin cache, a stale file here
+    // resurfaces on every reinstall and agents keep trying to spawn a binary
+    // that no longer exists.  Actively remove it.
+    let stale_mcp_json = plugin_dir.join(".mcp.json");
+    if stale_mcp_json.exists() {
+        std::fs::remove_file(&stale_mcp_json)
+            .map_err(|e| format!("Failed to remove stale plugin .mcp.json: {}", e))?;
+    }
 
     // hooks/hooks.json
     let hooks_dir = plugin_dir.join("hooks");

@@ -339,6 +339,25 @@ pub fn automatic_binary_path() -> String {
                 return candidate.display().to_string();
             }
         }
+
+        // A quarantined launch runs the app from an ephemeral App
+        // Translocation mount (/private/var/folders/…/AppTranslocation/…).
+        // That path dies with the mount — persisting it into MCP configs
+        // leaves every agent spawning a binary that no longer exists
+        // (ENOENT).  The alias check above also fails here, because the CLI
+        // symlink resolves to the real install location rather than the
+        // mount.  Prefer any live CLI symlink over ever emitting the
+        // translocated path.
+        if canonical
+            .components()
+            .any(|c| c.as_os_str() == "AppTranslocation")
+        {
+            for candidate in unix_cli_symlink_candidates() {
+                if std::fs::canonicalize(&candidate).is_ok() {
+                    return candidate.display().to_string();
+                }
+            }
+        }
     }
 
     canonical.display().to_string()
