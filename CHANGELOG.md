@@ -4,6 +4,18 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-07-23
+
+### Added
+
+- Cursor support has been modernized to match current Cursor, and the "(Beta)" label is gone. Instructions now sync to `AGENTS.md` instead of the legacy `.cursorrules`, with a one-time migration that folds user content across (on conflict the legacy file is kept with managed sections stripped for manual review). Hooks now sync to `.cursor/hooks.json`, with ownership tracked in a sidecar manifest so the vendor file stays schema-clean and user-authored or user-edited handlers always survive; the Hooks page gains Cursor's event catalogue. Commands sync to `.cursor/commands/`. A new per-project agent option (default off) additionally writes library rules as native `.cursor/rules/*.mdc` files with frontmatter, mirroring the `.claude/rules/` pattern for drift, rename/delete propagation, and cleanup. Stdio MCP entries now carry an explicit `"type": "stdio"` per Cursor's docs. ([7f52818](https://github.com/velvet-tiger/automatic/commit/7f52818))
+
+### Fixed
+
+- A stale plugin-level `.mcp.json`, written into the plugin marketplace source by an old build running quarantined (App-Translocated) and pointing at an ephemeral `/private/var/.../AppTranslocation/...` binary path, kept resurfacing in agent plugin caches on every reinstall and made agents spawn a dead path. The stale file is now actively deleted when the plugin is written, and Automatic refuses to emit a translocated binary path, preferring the live CLI symlink. ([14b5d08](https://github.com/velvet-tiger/automatic/commit/14b5d08))
+- Alternating launches through the CLI symlink and the app bundle no longer trigger resync storms. macOS reports the invocation path, so the same binary appeared as two different strings and every `mcp-serve` spawn flagged a "binary change" — rewriting `.mcp.json`, skills, and `.automatic` content across all projects every few seconds and flashing Vite reloads in projects watching those files. Binary paths are now resolved once, canonically, and compared by target identity so an alias is never a change but a genuinely stale path still triggers repair. ([0f91c48](https://github.com/velvet-tiger/automatic/commit/0f91c48))
+- A project could show duplicate case-variant rows for one MCP server (for example `Sentry` and `sentry`): the global registry is case-insensitive on disk, but project membership checks were exact-match, so Add-from-Library and autodetect could each land their own casing. Project MCP lists are now de-duplicated case-insensitively on save and read, discovery uses a case-insensitive membership check, and a case-only change is no longer mis-logged as a remove + add. ([ff13b1c](https://github.com/velvet-tiger/automatic/commit/ff13b1c))
+
 ## [1.14.3] - 2026-07-22
 
 ### Fixed
