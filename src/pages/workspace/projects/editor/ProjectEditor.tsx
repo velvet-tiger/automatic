@@ -216,14 +216,21 @@ export function ProjectEditor({
       hooks: string[];
       rules: string[];
     };
-    hasUnifiedContent: boolean;
+    /** True when the template carried unified instruction content, which only
+     *  reaches disk on the next save. Every other asset is already persisted. */
     saveRequired: boolean;
   } | null>(null);
   /** Names of templates seeded into the new-project wizard so its panels can show provenance. */
   const [selectedProjectTemplates, setSelectedProjectTemplates] = useState<string[]>([]);
   // Pending unified instruction content + rules to write after next save (from template applies).
   // Each entry corresponds to one applied template; contents are concatenated on flush.
-  const pendingUnifiedInstruction = useRef<{ content: string; rules: string[] }[] | null>(null);
+  // `projectName` records who the entries belong to so switching projects with an
+  // unsaved apply cannot write one project's instruction into another; `null`
+  // means the project currently being created by the wizard, which has no name yet.
+  const pendingUnifiedInstruction = useRef<{
+    projectName: string | null;
+    entries: { content: string; rules: string[] }[];
+  } | null>(null);
 
   // Project file state
   const [projectFiles, setProjectFiles] = useState<ProjectFileInfo[]>([]);
@@ -878,7 +885,6 @@ export function ProjectEditor({
     if (!project || !templateName) return;
 
     const before = project;
-    const tmpl = availableProjectTemplates.find((t) => t.name === templateName);
 
     try {
       const raw: string = await invoke("apply_templates_to_project", {
@@ -889,28 +895,37 @@ export function ProjectEditor({
 
       setProject(result.project);
 
-      const hasUnifiedContent = !!(tmpl?.unified_instruction && tmpl.unified_instruction.trim());
-      if (result.pending_unified.length > 0) {
-        pendingUnifiedInstruction.current = result.pending_unified;
+      // The backend has already merged and persisted every asset, rules
+      // included. Only unified instruction content is left for the frontend to
+      // write, so it waits for the next save.
+      const withContent = result.pending_unified.filter((e) => e.content.trim());
+      if (withContent.length > 0) {
+        pendingUnifiedInstruction.current = {
+          projectName: project.name,
+          entries: withContent,
+        };
         setDirty(true);
       }
 
-      const existingRules = (before.file_rules ?? {})["_project"] ?? [];
+      const addedItems = (prev: string[] = [], next: string[] = []) =>
+        next.filter((item) => !prev.includes(item));
       const added = {
-        agents: (tmpl?.agents ?? []).filter((a) => !before.agents.includes(a)),
-        skills: (tmpl?.skills ?? []).filter((s) => !before.skills.includes(s)),
-        mcp_servers: (tmpl?.mcp_servers ?? []).filter((m) => !before.mcp_servers.includes(m)),
-        user_agents: (tmpl?.user_agents ?? []).filter((a) => !(before.user_agents ?? []).includes(a)),
-        user_commands: (tmpl?.user_commands ?? []).filter((c) => !(before.user_commands ?? []).includes(c)),
-        hooks: (tmpl?.hooks ?? []).filter((h) => !(before.hooks ?? []).includes(h)),
-        rules: (tmpl?.unified_rules ?? []).filter((r) => !existingRules.includes(r)),
+        agents: addedItems(before.agents, result.project.agents),
+        skills: addedItems(before.skills, result.project.skills),
+        mcp_servers: addedItems(before.mcp_servers, result.project.mcp_servers),
+        user_agents: addedItems(before.user_agents, result.project.user_agents),
+        user_commands: addedItems(before.user_commands, result.project.user_commands),
+        hooks: addedItems(before.hooks, result.project.hooks),
+        rules: addedItems(
+          (before.file_rules ?? {})["_project"],
+          (result.project.file_rules ?? {})["_project"]
+        ),
       };
 
       setTemplateApplyResult({
         templateName,
         added,
-        hasUnifiedContent,
-        saveRequired: result.pending_unified.length > 0,
+        saveRequired: withContent.length > 0,
       });
       setError(null);
     } catch (err: unknown) {
@@ -1774,10 +1789,13 @@ export function ProjectEditor({
         };
         if (wizardPending.length > 0) {
           // Merge with any previously stashed pending entries (e.g. from startCreate)
-          pendingUnifiedInstruction.current = [
-            ...(pendingUnifiedInstruction.current ?? []),
-            ...wizardPending,
-          ];
+          pendingUnifiedInstruction.current = {
+            projectName: null,
+            entries: [
+              ...(pendingUnifiedInstruction.current?.entries ?? []),
+              ...wizardPending,
+            ],
+          };
         }
       }
 
@@ -1825,18 +1843,23 @@ export function ProjectEditor({
 
       // Write any pending unified instruction content from one or more template applies.
       // Multiple entries are concatenated with a separator; rules are unioned across all.
+      // A stash owned by a different project is left alone — it belongs to whoever
+      // saves that project next, not to this save.
       const pending = pendingUnifiedInstruction.current;
-      if (pending !== null && pending.length > 0 && toSave.directory && toSave.agents.length > 0) {
+      const pendingIsOurs =
+        pending !== null && (pending.projectName === null || pending.projectName === name);
+      if (pending !== null && pendingIsOurs && pending.entries.length > 0 && toSave.directory && toSave.agents.length > 0) {
         pendingUnifiedInstruction.current = null;
-        const mergedRules = [...new Set(pending.flatMap((e) => e.rules))];
-        const mergedContent = pending
+        const mergedRules = [...new Set(pending.entries.flatMap((e) => e.rules))];
+        const mergedContent = pending.entries
           .map((e) => e.content)
           .filter(Boolean)
           .join("\n\n---\n\n");
-        // If any template had rules, persist them into file_rules._project before writing.
-        // Using _project (not _unified) ensures template rules are visible in the Rules tab
-        // and are not silently dropped when the user later toggles rules from the Rules UI
-        // (which only reads/writes _project).
+        // Rules reaching here come from the create wizard, which merges templates
+        // against a project that does not exist on disk yet. Applies to an existing
+        // project are already persisted by `apply_templates_to_project`, so this
+        // union is a no-op for them. `_project` is the key the Rules tab reads and
+        // writes, so rules stored there survive later toggles from the Rules UI.
         if (mergedRules.length > 0) {
           const latestRaw: string = await invoke("read_project", { name });
           const latestProj = JSON.parse(latestRaw);
@@ -1953,9 +1976,8 @@ export function ProjectEditor({
         }
       : baseProject;
 
-    if (pendingEntries.length > 0) {
-      pendingUnifiedInstruction.current = pendingEntries;
-    }
+    pendingUnifiedInstruction.current =
+      pendingEntries.length > 0 ? { projectName: null, entries: pendingEntries } : null;
 
     setProject(initialProject);
     setDirty(true);

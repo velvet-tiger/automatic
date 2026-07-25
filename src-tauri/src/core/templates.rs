@@ -453,14 +453,18 @@ pub struct ApplyTemplatesResult {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PendingUnifiedEntry {
     pub content: String,
+    /// Already merged into `file_rules._project` by the merge — reported here
+    /// only so callers can summarise the change and so the create wizard can
+    /// apply them to a project that does not exist on disk yet.
     pub rules: Vec<String>,
 }
 
 /// Merge one or more templates into an existing project.
 ///
-/// Each template's assets are unioned into the project. Unified instructions
-/// are collected and returned (not written to disk here — the frontend feeds
-/// them into the instruction editor so the user can review before saving).
+/// Each template's assets — including its rules — are unioned into the project
+/// and persisted. Unified instruction *content* is collected and returned
+/// instead of written, so the frontend can feed it into the instruction editor
+/// for the user to review before saving.
 ///
 /// `project_files` from templates are written to the project directory
 /// immediately via `save_project_file`.
@@ -515,17 +519,28 @@ pub(crate) fn merge_templates_into_project(
         union_vec(&mut project.user_commands, &tmpl.user_commands);
         union_vec(&mut project.hooks, &tmpl.hooks);
 
+        // `_project` is the canonical rule key: the Rules tab reads and writes
+        // only this key, and `save_project_file` prefers it over the legacy
+        // `_unified`/per-file keys when rendering instruction files.
+        if !tmpl.unified_rules.is_empty() {
+            union_vec(
+                project.file_rules.entry("_project".to_string()).or_default(),
+                &tmpl.unified_rules,
+            );
+        }
+
         if project.description.is_empty() && !tmpl.description.is_empty() {
             project.description.clone_from(&tmpl.description);
         }
 
         let has_content = !tmpl.unified_instruction.trim().is_empty();
         let has_rules = !tmpl.unified_rules.is_empty();
-        // Collect pending entry whenever there is content OR rules to apply.
-        // Rules alone are still returned so the frontend can persist them to
-        // file_rules._project — but they do NOT trigger a mode switch to
-        // "unified", because writing empty content in unified mode would
-        // overwrite existing per-agent instruction files.
+        // Rules are echoed back alongside the content so callers can summarise
+        // what a template contributed and so the create wizard — which merges
+        // against a project that does not exist on disk yet — can apply them
+        // itself. They do NOT trigger a mode switch to "unified", because
+        // writing empty content in unified mode would overwrite existing
+        // per-agent instruction files.
         if has_content || has_rules {
             pending_unified.push(PendingUnifiedEntry {
                 content: tmpl.unified_instruction.clone(),
@@ -729,6 +744,7 @@ mod tests {
             user_agents: vec!["researcher".into()],
             user_commands: vec!["lint".into()],
             hooks: vec!["log-session".into()],
+            unified_rules: vec!["rule-a".into()],
             ..Default::default()
         };
 
@@ -746,7 +762,111 @@ mod tests {
         assert_eq!(result.project.user_agents, vec!["researcher"]);
         assert_eq!(result.project.user_commands, vec!["lint"]);
         assert_eq!(result.project.hooks, vec!["log-session"]);
+        assert_eq!(
+            result.project.file_rules.get("_project"),
+            Some(&vec!["rule-a".to_string()])
+        );
         assert_eq!(result.project.description, "A template");
+    }
+
+    // ── Rules ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn merge_unions_unified_rules_into_project_file_rules() {
+        let mut project = empty_project();
+
+        let tmpl = ProjectTemplate {
+            name: "rules-only".into(),
+            unified_rules: vec!["rule-a".into(), "rule-b".into()],
+            ..Default::default()
+        };
+
+        let result =
+            merge_templates_into_project(&mut project, &[tmpl]).expect("merge should succeed");
+
+        assert_eq!(
+            result.project.file_rules.get("_project"),
+            Some(&vec!["rule-a".to_string(), "rule-b".to_string()]),
+            "template rules should land in file_rules._project"
+        );
+        assert_ne!(
+            result.project.instruction_mode, "unified",
+            "rules alone must not switch the project to unified mode"
+        );
+    }
+
+    #[test]
+    fn merge_deduplicates_rules_against_existing_and_across_templates() {
+        let mut project = empty_project();
+        project
+            .file_rules
+            .insert("_project".into(), vec!["rule-a".into()]);
+
+        let tmpl1 = ProjectTemplate {
+            name: "tmpl1".into(),
+            unified_rules: vec!["rule-a".into(), "rule-b".into()],
+            ..Default::default()
+        };
+        let tmpl2 = ProjectTemplate {
+            name: "tmpl2".into(),
+            unified_rules: vec!["rule-b".into(), "rule-c".into()],
+            ..Default::default()
+        };
+
+        let result = merge_templates_into_project(&mut project, &[tmpl1, tmpl2])
+            .expect("merge should succeed");
+
+        assert_eq!(
+            result.project.file_rules.get("_project"),
+            Some(&vec![
+                "rule-a".to_string(),
+                "rule-b".to_string(),
+                "rule-c".to_string()
+            ]),
+            "existing rules keep their position and duplicates are skipped"
+        );
+    }
+
+    #[test]
+    fn merge_leaves_file_rules_untouched_when_template_has_no_rules() {
+        let mut project = empty_project();
+
+        let tmpl = make_template("no-rules");
+
+        let result =
+            merge_templates_into_project(&mut project, &[tmpl]).expect("merge should succeed");
+
+        assert!(
+            result.project.file_rules.is_empty(),
+            "a template without rules must not create an empty _project key"
+        );
+    }
+
+    #[test]
+    fn merge_preserves_per_file_rule_keys() {
+        let mut project = empty_project();
+        project
+            .file_rules
+            .insert("CLAUDE.md".into(), vec!["existing-rule".into()]);
+
+        let tmpl = ProjectTemplate {
+            name: "tmpl".into(),
+            unified_rules: vec!["rule-a".into()],
+            ..Default::default()
+        };
+
+        let result =
+            merge_templates_into_project(&mut project, &[tmpl]).expect("merge should succeed");
+
+        assert_eq!(
+            result.project.file_rules.get("CLAUDE.md"),
+            Some(&vec!["existing-rule".to_string()]),
+            "per-file rule keys must survive a template apply"
+        );
+        assert_eq!(
+            result.project.file_rules.get("_project"),
+            Some(&vec!["rule-a".to_string()])
+        );
     }
 
     #[test]
@@ -874,7 +994,11 @@ mod tests {
             result.project.instruction_mode, "unified",
             "rules-only template must not switch instruction_mode to unified"
         );
-        // Rules are still returned in pending_unified so the frontend can persist them.
+        assert_eq!(
+            result.project.file_rules.get("_project"),
+            Some(&vec!["automatic-service".to_string()]),
+            "rules must be persisted even when the template has no instruction content"
+        );
         assert_eq!(result.pending_unified.len(), 1);
         assert_eq!(result.pending_unified[0].rules, vec!["automatic-service"]);
         assert_eq!(result.pending_unified[0].content, "");

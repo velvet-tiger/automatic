@@ -29,7 +29,6 @@ export function ApplyProjectTemplateModal({
       hooks: string[];
       rules: string[];
     };
-    hasUnifiedContent: boolean;
     saveRequired: boolean;
   } | null;
   onAcknowledge: () => void;
@@ -181,7 +180,6 @@ export function ApplyTemplateResultView({
       hooks: string[];
       rules: string[];
     };
-    hasUnifiedContent: boolean;
     saveRequired: boolean;
   };
   onAcknowledge: () => void;
@@ -197,7 +195,7 @@ export function ApplyTemplateResultView({
   ].filter((s) => s.items.length > 0);
 
   const totalAdded = sections.reduce((n, s) => n + s.items.length, 0);
-  const nothingChanged = totalAdded === 0 && !result.hasUnifiedContent;
+  const nothingChanged = totalAdded === 0 && !result.saveRequired;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -254,7 +252,7 @@ export function ApplyTemplateResultView({
                 </p>
               )}
 
-              {result.hasUnifiedContent && result.saveRequired && (
+              {result.saveRequired && (
                 <div className="mt-4 px-3 py-2.5 bg-brand/10 border border-brand/30 rounded-md">
                   <p className="text-[12px] text-text-base leading-relaxed">
                     The template includes a unified instruction. Save the project to write it to disk.

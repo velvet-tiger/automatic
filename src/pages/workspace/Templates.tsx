@@ -824,87 +824,50 @@ export default function Templates({
     }
   };
 
-  // Apply template to a project (merge, non-destructive)
+  // Apply template to a project (merge, non-destructive).
+  // `apply_templates_to_project` owns all merging, deduplication, rule
+  // attachment, project-file writing and syncing, so this shares one
+  // implementation with the project editor's Apply Template action. It reads the
+  // template from disk, so unsaved edits are not applied.
   const applyToProject = async (projectName: string) => {
-    if (!template) return;
-    const proj = allProjects.find((p) => p.name === projectName);
-    if (!proj) return;
+    if (!template || !selectedName) return;
     try {
-      // Only switch to unified mode when the template has actual instruction content.
-      // Rules alone do not justify the switch: they can be applied in per-agent mode
-      // via file_rules._project, and writing an empty unified file would overwrite
-      // existing per-agent instruction files with nothing.
-      const hasUnifiedContent = !!(template.unified_instruction && template.unified_instruction.trim());
-      const hasUnifiedRules = (template.unified_rules || []).length > 0;
-      const updated: Project = {
-        ...proj,
-        description: proj.description || template.description,
-        agents: [...new Set([...proj.agents, ...template.agents])],
-        skills: [...new Set([...proj.skills, ...template.skills])],
-        mcp_servers: [...new Set([...proj.mcp_servers, ...template.mcp_servers])],
-        providers: [...new Set([...proj.providers, ...template.providers])],
-        ...(template.user_agents.length > 0
-          ? { user_agents: [...new Set([...(proj.user_agents ?? []), ...template.user_agents])] }
-          : {}),
-        ...(template.user_commands.length > 0
-          ? { user_commands: [...new Set([...(proj.user_commands ?? []), ...template.user_commands])] }
-          : {}),
-        ...(template.hooks.length > 0
-          ? { hooks: [...new Set([...(proj.hooks ?? []), ...template.hooks])] }
-          : {}),
-        ...(hasUnifiedContent ? { instruction_mode: "unified" } : {}),
-      };
-      await invoke("save_project", { name: projectName, data: JSON.stringify(updated, null, 2) });
+      const raw: string = await invoke("apply_templates_to_project", {
+        projectName,
+        templateNames: [selectedName],
+      });
+      const result: { pending_unified: { content: string; rules: string[] }[] } = JSON.parse(raw);
 
-      // Apply rules and/or instruction content to the project.
-      if (hasUnifiedContent || hasUnifiedRules) {
-        // Re-read the just-saved project so we have the exact on-disk state
-        // (save_project may have synced additional fields) before mutating it.
-        const latestRaw: string = await invoke("read_project", { name: projectName });
-        const latestProj = JSON.parse(latestRaw);
-        if (hasUnifiedRules) {
-          // Merge template rules into _project (the canonical key used by the
-          // Rules tab and sync engine).  Using _project ensures template rules
-          // are visible in the Rules UI and are not silently dropped when the
-          // user later toggles rules from the Rules tab (which only writes _project).
-          const existingProjectRules: string[] = (latestProj.file_rules || {})["_project"] || [];
-          const mergedRules = [...new Set([...existingProjectRules, ...(template.unified_rules || [])])];
-          const withRules = {
-            ...latestProj,
-            file_rules: {
-              ...(latestProj.file_rules || {}),
-              _project: mergedRules,
-            },
-          };
-          await invoke("save_project", { name: projectName, data: JSON.stringify(withRules, null, 2) });
-        }
-        // Only write instruction content if the template actually provides it.
-        // Skipping this for rules-only templates prevents overwriting existing
-        // per-agent instruction files with empty content.
-        if (hasUnifiedContent) {
+      // The unified instruction is the one asset the backend hands back instead
+      // of writing, so the caller decides where it lands. Rules-only templates
+      // yield no content, which keeps existing per-agent instruction files from
+      // being overwritten with nothing.
+      const mergedContent = result.pending_unified
+        .map((e) => e.content)
+        .filter((c) => c.trim())
+        .join("\n\n---\n\n");
+      let instructionError: string | null = null;
+      if (mergedContent) {
+        try {
           await invoke("save_project_file", {
             name: projectName,
             filename: "_unified",
-            content: template.unified_instruction,
+            content: mergedContent,
           });
-        }
-      }
-
-      // Write project files to the project's directory (non-destructive: only if file doesn't exist)
-      for (const pf of template.project_files) {
-        if (pf.filename && pf.content) {
-          try {
-            await invoke("save_project_file", {
-              name: projectName,
-              filename: pf.filename,
-              content: pf.content,
-            });
-          } catch { /* skip files that can't be written (e.g. no directory set) */ }
+        } catch (err: unknown) {
+          // Typically no directory or no agents configured yet. Everything else
+          // about the apply already succeeded, so report it without discarding.
+          instructionError = String(err);
         }
       }
 
       await loadAllProjects();
       setShowApplyPicker(false);
+      setError(
+        instructionError
+          ? `Applied to "${projectName}", but its instruction could not be written: ${instructionError}`
+          : null
+      );
       setApplyStatus(`Applied to "${projectName}"`);
       setTimeout(() => setApplyStatus(null), 3000);
     } catch (err: any) {
