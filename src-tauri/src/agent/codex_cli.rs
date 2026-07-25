@@ -39,6 +39,34 @@ impl Agent for CodexCli {
 
     // ── Config writing ──────────────────────────────────────────────────
 
+    /// TOML has no variable interpolation and Codex performs none, so a
+    /// `${KEY}` placeholder would be handed to the server verbatim.  Codex's
+    /// own mechanism is `env_vars`: a list of names to forward from the host
+    /// environment, kept out of the `env` table so no value is written at all.
+    fn rewrite_inherited_env(&self, server: &mut Map<String, Value>, keys: &[String]) {
+        if let Some(Value::Object(env)) = server.get_mut("env") {
+            for key in keys {
+                env.remove(key);
+            }
+            if env.is_empty() {
+                server.remove("env");
+            }
+        }
+
+        let mut forwarded: Vec<Value> = server
+            .get("env_vars")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for key in keys {
+            let entry = Value::String(key.clone());
+            if !forwarded.contains(&entry) {
+                forwarded.push(entry);
+            }
+        }
+        server.insert("env_vars".to_string(), Value::Array(forwarded));
+    }
+
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         let codex_dir = dir.join(".codex");
         if !codex_dir.exists() {
@@ -57,17 +85,21 @@ impl Agent for CodexCli {
 
             toml_content.push_str(&format!("[mcp_servers.{}]\n", name));
 
+            // Codex has no `type`/`transport` key: a `command` selects stdio and
+            // a `url` selects streamable HTTP.  Supplying both is a
+            // configuration error, so the transport picks exactly one branch.
             match transport {
                 "http" | "sse" => {
-                    toml_content.push_str(&format!("type = \"{}\"\n", transport));
-
                     if let Some(url) = config.get("url").and_then(|v| v.as_str()) {
                         toml_content.push_str(&format!("url = \"{}\"\n", escape_toml_string(url)));
                     }
 
+                    // Codex spells static headers `http_headers`; a plain
+                    // `headers` table is an unknown key and is ignored.
                     if let Some(headers) = config.get("headers").and_then(|v| v.as_object()) {
                         if !headers.is_empty() {
-                            toml_content.push_str(&format!("\n[mcp_servers.{}.headers]\n", name));
+                            toml_content
+                                .push_str(&format!("\n[mcp_servers.{}.http_headers]\n", name));
                             for (key, val) in headers {
                                 if let Some(val_str) = val.as_str() {
                                     toml_content.push_str(&format!(
@@ -95,14 +127,33 @@ impl Agent for CodexCli {
                         toml_content.push_str(&format!("args = [{}]\n", args_str.join(", ")));
                     }
 
+                    if let Some(cwd) = config.get("cwd").and_then(|v| v.as_str()) {
+                        toml_content.push_str(&format!("cwd = \"{}\"\n", escape_toml_string(cwd)));
+                    }
+
+                    // Host variables to forward, populated by
+                    // `rewrite_inherited_env` below.  Must precede the `env`
+                    // sub-table: once a sub-table is opened, later bare keys
+                    // would belong to it instead of the server table.
+                    if let Some(env_vars) = config.get("env_vars").and_then(|v| v.as_array()) {
+                        let names: Vec<String> = env_vars
+                            .iter()
+                            .filter_map(|v| v.as_str())
+                            .map(|v| format!("\"{}\"", escape_toml_string(v)))
+                            .collect();
+                        if !names.is_empty() {
+                            toml_content.push_str(&format!("env_vars = [{}]\n", names.join(", ")));
+                        }
+                    }
+
                     if let Some(env) = config.get("env").and_then(|v| v.as_object()) {
                         if !env.is_empty() {
                             toml_content.push_str(&format!("\n[mcp_servers.{}.env]\n", name));
                             for (key, val) in env {
                                 if let Some(val_str) = val.as_str() {
                                     toml_content.push_str(&format!(
-                                        "{} = \"{}\"\n",
-                                        key,
+                                        "\"{}\" = \"{}\"\n",
+                                        escape_toml_string(key),
                                         escape_toml_string(val_str)
                                     ));
                                 }
@@ -641,8 +692,11 @@ mod tests {
 
         let content = fs::read_to_string(dir.path().join(".codex/config.toml")).unwrap();
         assert!(content.contains("[mcp_servers.remote-api]"));
-        assert!(content.contains("type = \"http\""));
+        // Codex infers streamable HTTP from the presence of `url`; it has no
+        // `type`/`transport` key.
+        assert!(!content.contains("type = "));
         assert!(content.contains("url = \"https://api.example.com/mcp\""));
+        assert!(content.contains("[mcp_servers.remote-api.http_headers]"));
         assert!(content.contains("Authorization"));
     }
 

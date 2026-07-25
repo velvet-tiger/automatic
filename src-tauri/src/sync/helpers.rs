@@ -195,11 +195,11 @@ pub(crate) fn build_selected_servers(
                     }),
                 );
             } else {
-                // For stdio servers, replace empty env values with ${KEY} so
-                // the agent expands them from the shell environment at runtime.
-                let mut server = cleaned;
-                apply_env_inheritance(&mut server);
-                selected_servers.insert(server_name.clone(), server);
+                // Empty env values are left as-is here: they are the canonical
+                // "inherit from the environment" marker, and each agent renders
+                // them in its own placeholder syntax via
+                // `agent::prepare_mcp_servers` at write time.
+                selected_servers.insert(server_name.clone(), cleaned);
             }
         }
     }
@@ -215,24 +215,6 @@ pub(crate) fn strip_internal_fields(mut value: Value) -> Value {
         map.retain(|key, _| !key.starts_with('_'));
     }
     value
-}
-
-/// Replace empty env values with `${KEY}` so the agent's shell-variable
-/// expansion picks up the value from the user's environment at runtime,
-/// keeping the literal secret out of the project config file.
-///
-/// Claude Code supports `${VAR}` / `${VAR:-default}` expansion in `.mcp.json`.
-/// An empty string stored in Automatic signals "inherit from shell".
-pub(crate) fn apply_env_inheritance(config: &mut Value) {
-    if let Some(env) = config.get_mut("env") {
-        if let Value::Object(ref mut map) = env {
-            for (key, val) in map.iter_mut() {
-                if val.as_str() == Some("") {
-                    *val = Value::String(format!("${{{}}}", key));
-                }
-            }
-        }
-    }
 }
 
 /// Extract the machine name (slug) from agent frontmatter content.

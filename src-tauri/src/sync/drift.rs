@@ -508,8 +508,9 @@ fn collect_mcp_drift(
         Err(_) => return,
     };
 
+    let prepared = agent::prepare_mcp_servers(agent_instance, servers);
     if agent_instance
-        .write_mcp_config(tmp.path(), servers)
+        .write_mcp_config(tmp.path(), &prepared)
         .is_err()
     {
         return;

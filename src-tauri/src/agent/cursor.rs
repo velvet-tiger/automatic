@@ -112,8 +112,16 @@ impl Agent for Cursor {
 
     // ── Config writing ──────────────────────────────────────────────────
 
+    /// Cursor resolves `${env:NAME}`; the bare `${NAME}` form Claude Code uses
+    /// is passed through as a literal string.
+    fn rewrite_inherited_env(&self, server: &mut Map<String, Value>, keys: &[String]) {
+        super::substitute_inherited_env(server, keys, |key| format!("${{env:{}}}", key));
+    }
+
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
-        // Cursor uses the same mcpServers JSON format as Claude Code.
+        // Cursor's `mcpServers` map looks like Claude Code's but diverges on
+        // two points: OAuth client details live under `auth` in SCREAMING_CASE,
+        // and `enabled`/`timeout` are not part of the schema on any transport.
         let mut cursor_servers = Map::new();
 
         for (name, config) in servers {
@@ -124,12 +132,14 @@ impl Agent for Cursor {
 
             let mut server = config.clone();
             if let Some(obj) = server.as_object_mut() {
+                obj.remove("enabled");
+                obj.remove("timeout");
+
                 if transport == "stdio" {
-                    // Cursor expects an explicit "type": "stdio"; strip only
-                    // Automatic-internal fields.
+                    // Cursor's reference table lists `type` as required.
                     obj.insert("type".to_string(), Value::String("stdio".to_string()));
-                    obj.remove("enabled");
-                    obj.remove("timeout");
+                } else if let Some(auth) = cursor_auth_block(obj.remove("oauth")) {
+                    obj.insert("auth".to_string(), auth);
                 }
             }
             cursor_servers.insert(name.clone(), server);
@@ -212,6 +222,56 @@ impl Agent for Cursor {
 /// Pass-through normaliser: Cursor's format is already canonical.
 fn identity(v: Value) -> Value {
     v
+}
+
+/// Translate Automatic's `oauth` block into Cursor's `auth` block.
+///
+/// Automatic stores `{clientId, clientSecret, scope, callbackPort}`; Cursor
+/// expects `{CLIENT_ID, CLIENT_SECRET, scopes}` and registers its own fixed
+/// redirect URLs, so `callbackPort` has no counterpart and is dropped.  A block
+/// without a client id gives Cursor nothing to work with, so it is omitted and
+/// Cursor falls back to Dynamic Client Registration.
+fn cursor_auth_block(oauth: Option<Value>) -> Option<Value> {
+    let source = oauth?;
+    let source = source.as_object()?;
+
+    let client_id = source
+        .get("clientId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+
+    let mut auth = Map::new();
+    auth.insert(
+        "CLIENT_ID".to_string(),
+        Value::String(client_id.to_string()),
+    );
+
+    if let Some(secret) = source
+        .get("clientSecret")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        auth.insert(
+            "CLIENT_SECRET".to_string(),
+            Value::String(secret.to_string()),
+        );
+    }
+
+    // Automatic stores the space-separated OAuth `scope` string; Cursor takes
+    // an array.  When empty, omitting the key lets Cursor discover
+    // `scopes_supported` from the authorization server metadata.
+    let scopes: Vec<Value> = source
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(|s| Value::String(s.to_string()))
+        .collect();
+    if !scopes.is_empty() {
+        auth.insert("scopes".to_string(), Value::Array(scopes));
+    }
+
+    Some(Value::Object(auth))
 }
 
 // ── Hooks ────────────────────────────────────────────────────────────────────

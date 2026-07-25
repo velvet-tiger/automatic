@@ -23,6 +23,8 @@ mod goose;
 mod junie;
 mod kilo_code;
 mod kiro;
+#[cfg(test)]
+mod mcp_format_tests;
 mod opencode;
 mod pi;
 mod warp;
@@ -148,6 +150,21 @@ pub trait Agent: Send + Sync {
     /// Write MCP server configs to the project directory in this agent's
     /// native format.  Returns the path of the file written.
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String>;
+
+    /// Rewrite the "inherit from the environment" markers of one server entry.
+    ///
+    /// Automatic stores an empty string in `env` to mean "read this from the
+    /// environment at launch rather than hardcoding it here".  Agents spell
+    /// that differently, so [`prepare_mcp_servers`] delegates the rewrite per
+    /// agent at write time and the secret itself never lands in a project file.
+    ///
+    /// The default substitutes Claude Code's `${KEY}` in place, which most
+    /// agents follow.  Agents whose config format has no interpolation at all
+    /// (Codex CLI's TOML) override this to reference the variables some other
+    /// way, since a placeholder would reach the server as a literal string.
+    fn rewrite_inherited_env(&self, server: &mut Map<String, Value>, keys: &[String]) {
+        substitute_inherited_env(server, keys, |key| format!("${{{}}}", key));
+    }
 
     /// Copy selected skills into the project directory at the right
     /// location for this agent.  Returns the list of files written.
@@ -1312,6 +1329,61 @@ pub(crate) fn cli_available(cli_name: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Replace each inherited key's `env` value in place with `render(key)`.
+///
+/// Shared by every agent whose config format supports variable expansion; the
+/// only difference between them is the spelling of the placeholder.
+pub(crate) fn substitute_inherited_env(
+    server: &mut Map<String, Value>,
+    keys: &[String],
+    render: impl Fn(&str) -> String,
+) {
+    let Some(Value::Object(env)) = server.get_mut("env") else {
+        return;
+    };
+    for key in keys {
+        env.insert(key.clone(), Value::String(render(key)));
+    }
+}
+
+/// Render the canonical MCP server map into the form an agent's writer expects:
+/// expand "inherit from the environment" markers into that agent's own
+/// placeholder syntax and drop Automatic-internal metadata.
+///
+/// Both the sync engine and drift detection must call this before
+/// [`Agent::write_mcp_config`].  If only one of them does, the expected config
+/// and the config on disk disagree and every project reports permanent drift.
+pub(crate) fn prepare_mcp_servers(
+    agent: &dyn Agent,
+    servers: &Map<String, Value>,
+) -> Map<String, Value> {
+    let mut prepared = Map::new();
+
+    for (name, config) in servers {
+        let mut server = config.clone();
+        if let Some(obj) = server.as_object_mut() {
+            obj.retain(|key, _| !key.starts_with('_'));
+
+            let inherited: Vec<String> = obj
+                .get("env")
+                .and_then(|env| env.as_object())
+                .map(|env| {
+                    env.iter()
+                        .filter(|(_, value)| value.as_str() == Some(""))
+                        .map(|(key, _)| key.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !inherited.is_empty() {
+                agent.rewrite_inherited_env(obj, &inherited);
+            }
+        }
+        prepared.insert(name.clone(), server);
+    }
+
+    prepared
 }
 
 /// Read a JSON config file containing MCP server definitions, extract them,
