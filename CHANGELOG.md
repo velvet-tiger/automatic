@@ -4,6 +4,13 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.15.1] - 2026-07-26
+
+### Fixed
+
+- Cursor and Codex MCP configs are now written in each agent's own dialect instead of a Claude Code schema with minor tweaks. Cursor gets `${env:VAR}` placeholders and an `auth` block; Codex gets transport inferred from `command`/`url` (no `type`), Authorization via the fields it actually reads, and `cwd` preserved. Inherited env is resolved per agent at write time so sync and drift always agree on the expected file. ([bdc8bac](https://github.com/velvet-tiger/automatic/commit/bdc8bac))
+- Applying a project template now includes its rules. Rules were previously diverted into a pending side-channel that the Rules tab never showed, and rules-only templates (or the CLI init path) could discard them entirely. Pending instruction content is also scoped to its owning project so an unsaved apply cannot write one project's instruction into another. ([daf7fee](https://github.com/velvet-tiger/automatic/commit/daf7fee))
+
 ## [1.15.0] - 2026-07-23
 
 ### Added
