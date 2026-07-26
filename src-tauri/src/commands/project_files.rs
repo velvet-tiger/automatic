@@ -246,7 +246,9 @@ pub fn inspect_unified_candidates(name: &str) -> Result<String, String> {
     let mut candidates: Vec<UnifiedCandidate> = Vec::new();
 
     for agent_id in &project.agents {
-        let Some(a) = agent::from_id(agent_id) else { continue };
+        let Some(a) = agent::from_id(agent_id) else {
+            continue;
+        };
         if !a.capabilities().instructions {
             continue;
         }

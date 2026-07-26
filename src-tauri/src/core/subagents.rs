@@ -631,7 +631,9 @@ mod tests {
 
             let err = result.expect_err("unsafe agent should be blocked");
             assert!(err.contains("prompt-override"), "unexpected error: {err}");
-            assert!(!home.join(".automatic-dev/library/subagents/unsafe-agent.md").exists());
+            assert!(!home
+                .join(".automatic-dev/library/subagents/unsafe-agent.md")
+                .exists());
         });
     }
 

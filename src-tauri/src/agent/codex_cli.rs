@@ -529,8 +529,7 @@ fn sync_codex_hooks(
         return Ok(written);
     }
 
-    fs::create_dir_all(&codex_dir)
-        .map_err(|e| format!("Failed to create .codex/: {}", e))?;
+    fs::create_dir_all(&codex_dir).map_err(|e| format!("Failed to create .codex/: {}", e))?;
 
     let mut managed_script_paths: Vec<PathBuf> = Vec::new();
     let mut needs_scripts_dir = false;
@@ -587,8 +586,8 @@ fn sync_codex_hooks(
     }
 
     let document = serde_json::json!({ "hooks": hooks_root });
-    let pretty = serde_json::to_string_pretty(&document)
-        .map_err(|e| format!("JSON error: {}", e))?;
+    let pretty =
+        serde_json::to_string_pretty(&document).map_err(|e| format!("JSON error: {}", e))?;
     fs::write(&hooks_file, format!("{}\n", pretty))
         .map_err(|e| format!("Failed to write .codex/hooks.json: {}", e))?;
     written.push(hooks_file.display().to_string());
@@ -613,7 +612,10 @@ fn codex_handler_value(hook: &crate::core::Hook) -> Value {
     };
     handler.insert("command".to_string(), Value::String(command_str));
     if let Some(t) = hook.timeout_sec {
-        handler.insert("timeout".to_string(), Value::Number(serde_json::Number::from(t)));
+        handler.insert(
+            "timeout".to_string(),
+            Value::Number(serde_json::Number::from(t)),
+        );
     }
     Value::Object(handler)
 }

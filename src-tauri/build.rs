@@ -8,7 +8,12 @@ fn main() {
     //
     // We only parse .env when the key is NOT already in the shell environment,
     // so CI values are never shadowed.
-    let keys_to_forward = ["ATTIO_API_KEY", "AMPLITUDE_API_KEY", "VITE_FLAGS", "AUTOMATIC_WEBAPP_URL"];
+    let keys_to_forward = [
+        "ATTIO_API_KEY",
+        "AMPLITUDE_API_KEY",
+        "VITE_FLAGS",
+        "AUTOMATIC_WEBAPP_URL",
+    ];
     let missing: Vec<&str> = keys_to_forward
         .iter()
         .copied()

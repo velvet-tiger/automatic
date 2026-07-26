@@ -119,10 +119,7 @@ pub enum MemoryAction {
         pattern: Option<String>,
     },
     /// Print the value for a single memory key.
-    Get {
-        project: String,
-        key: String,
-    },
+    Get { project: String, key: String },
     /// Write or overwrite a memory entry. The source defaults to `cli`.
     Set {
         project: String,
@@ -133,10 +130,7 @@ pub enum MemoryAction {
         source: String,
     },
     /// Substring search across memory keys and values.
-    Search {
-        project: String,
-        query: String,
-    },
+    Search { project: String, query: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -244,8 +238,8 @@ impl From<String> for CliError {
 }
 
 mod init;
-mod memory;
 mod mcp;
+mod memory;
 mod projects;
 mod rules;
 mod skills;
@@ -292,7 +286,12 @@ mod tests {
         let cli = Cli::try_parse_from(["automatic", "--json", "projects", "list"]).unwrap();
         assert!(cli.json);
         assert!(!cli.quiet);
-        assert!(matches!(cli.command, Command::Projects { action: ProjectsAction::List }));
+        assert!(matches!(
+            cli.command,
+            Command::Projects {
+                action: ProjectsAction::List
+            }
+        ));
     }
 
     #[test]
@@ -308,8 +307,7 @@ mod tests {
 
     #[test]
     fn parses_memory_set_with_default_source() {
-        let cli =
-            Cli::try_parse_from(["automatic", "memory", "set", "proj", "k", "v"]).unwrap();
+        let cli = Cli::try_parse_from(["automatic", "memory", "set", "proj", "k", "v"]).unwrap();
         match cli.command {
             Command::Memory {
                 action:

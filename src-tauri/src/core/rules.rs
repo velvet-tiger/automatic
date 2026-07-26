@@ -569,9 +569,8 @@ fn migrate_remove_default_rules(rules_dir: &Path, removed: &[&str]) -> Result<()
             if owned_by_plugin {
                 continue;
             }
-            fs::remove_file(&path).map_err(|e| {
-                format!("Failed to remove orphaned rule file {}.json: {}", name, e)
-            })?;
+            fs::remove_file(&path)
+                .map_err(|e| format!("Failed to remove orphaned rule file {}.json: {}", name, e))?;
         }
         // Whether or not the file existed, scrub stale references below.
         deleted.push(name);
@@ -624,9 +623,7 @@ fn migrate_remove_default_rules(rules_dir: &Path, removed: &[&str]) -> Result<()
                 .join("project.json");
             if config_path.exists() {
                 if let Ok(config_raw) = fs::read_to_string(&config_path) {
-                    if let Ok(mut config) =
-                        serde_json::from_str::<serde_json::Value>(&config_raw)
-                    {
+                    if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&config_raw) {
                         let mut changed = false;
                         for &name in &deleted {
                             changed |= remove_rule_from_file_rules(&mut config, name);
@@ -1160,10 +1157,7 @@ mod tests {
         let result = ensure_automatic_rules(&rules);
         assert_eq!(
             result,
-            vec![
-                MANDATORY_RULE.to_string(),
-                "automatic-process".to_string(),
-            ],
+            vec![MANDATORY_RULE.to_string(), "automatic-process".to_string(),],
             "duplicate user rule should be collapsed; mandatory rule still prepended once"
         );
     }
@@ -1195,11 +1189,8 @@ mod tests {
         let mut project = serde_json::json!({
             "file_rules": { "_project": ["automatic-checklist", "other"] }
         });
-        let changed = replace_rule_in_file_rules(
-            &mut project,
-            "automatic-checklist",
-            "automatic-process",
-        );
+        let changed =
+            replace_rule_in_file_rules(&mut project, "automatic-checklist", "automatic-process");
         assert!(changed);
         assert_eq!(
             project["file_rules"]["_project"],
@@ -1216,11 +1207,8 @@ mod tests {
         let mut project = serde_json::json!({
             "file_rules": { "_project": ["automatic-checklist", "automatic-process"] }
         });
-        let changed = replace_rule_in_file_rules(
-            &mut project,
-            "automatic-checklist",
-            "automatic-process",
-        );
+        let changed =
+            replace_rule_in_file_rules(&mut project, "automatic-checklist", "automatic-process");
         assert!(changed);
         assert_eq!(
             project["file_rules"]["_project"],
@@ -1233,11 +1221,8 @@ mod tests {
         let mut project = serde_json::json!({
             "file_rules": { "_project": ["automatic-process", "other"] }
         });
-        let changed = replace_rule_in_file_rules(
-            &mut project,
-            "automatic-checklist",
-            "automatic-process",
-        );
+        let changed =
+            replace_rule_in_file_rules(&mut project, "automatic-checklist", "automatic-process");
         assert!(!changed, "no checklist entry — nothing to change");
         assert_eq!(
             project["file_rules"]["_project"],
@@ -1253,11 +1238,8 @@ mod tests {
                 "AGENTS.md": ["automatic-checklist", "automatic-process"],
             }
         });
-        let changed = replace_rule_in_file_rules(
-            &mut project,
-            "automatic-checklist",
-            "automatic-process",
-        );
+        let changed =
+            replace_rule_in_file_rules(&mut project, "automatic-checklist", "automatic-process");
         assert!(changed);
         assert_eq!(
             project["file_rules"]["_project"],
@@ -1400,10 +1382,9 @@ mod tests {
                 !rules_dir.join("automatic-commands.json").exists(),
                 "orphaned rule file should be deleted"
             );
-            let config: serde_json::Value = serde_json::from_str(
-                &fs::read_to_string(config_dir.join("project.json")).unwrap(),
-            )
-            .unwrap();
+            let config: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(config_dir.join("project.json")).unwrap())
+                    .unwrap();
             assert_eq!(
                 config["file_rules"]["_project"],
                 serde_json::json!(["automatic-service"]),

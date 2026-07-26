@@ -131,8 +131,8 @@ impl OpenAiCompatClient {
     }
 
     fn extract_text_from_response(body: &str) -> Result<String, String> {
-        let parsed: serde_json::Value = serde_json::from_str(body)
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(body).map_err(|e| format!("Failed to parse response: {}", e))?;
 
         parsed
             .get("choices")
@@ -267,7 +267,10 @@ impl AgentClient for OpenAiCompatClient {
             _ => "end_turn".to_string(),
         };
 
-        let message = choice.get("message").cloned().unwrap_or(serde_json::json!({}));
+        let message = choice
+            .get("message")
+            .cloned()
+            .unwrap_or(serde_json::json!({}));
         let content_blocks = openai_response_to_neutral_blocks(&message);
 
         Ok(AgentTurnResponse {

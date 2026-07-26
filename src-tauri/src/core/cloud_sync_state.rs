@@ -129,8 +129,7 @@ pub fn load_or_init() -> Result<CloudSyncState, String> {
 pub fn save(state: &CloudSyncState) -> Result<(), String> {
     let path = state_file_path()?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create state dir: {}", e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("failed to create state dir: {}", e))?;
     }
     write_atomic(&path, state)
 }
@@ -189,12 +188,10 @@ fn default_display_name() -> String {
 
 impl CloudSyncState {
     /// Look up what the client last confirmed with the server for an asset.
-    pub fn seen_for<'a>(
-        &'a self,
-        kind: &str,
-        machine_name: &str,
-    ) -> Option<&'a SeenEntry> {
-        self.seen.get(kind).and_then(|inner| inner.get(machine_name))
+    pub fn seen_for<'a>(&'a self, kind: &str, machine_name: &str) -> Option<&'a SeenEntry> {
+        self.seen
+            .get(kind)
+            .and_then(|inner| inner.get(machine_name))
     }
 
     /// Record a freshly-accepted asset into `seen`, replacing any prior entry.
@@ -205,16 +202,13 @@ impl CloudSyncState {
         content_hash: &str,
         updated_at: &str,
     ) {
-        self.seen
-            .entry(kind.to_string())
-            .or_default()
-            .insert(
-                machine_name.to_string(),
-                SeenEntry {
-                    content_hash: content_hash.to_string(),
-                    updated_at: updated_at.to_string(),
-                },
-            );
+        self.seen.entry(kind.to_string()).or_default().insert(
+            machine_name.to_string(),
+            SeenEntry {
+                content_hash: content_hash.to_string(),
+                updated_at: updated_at.to_string(),
+            },
+        );
     }
 
     /// Remove an entry from `seen` — either because the asset was tombstoned
@@ -257,7 +251,12 @@ mod tests {
         use_temp_home(|| {
             let mut state = load_or_init().expect("init");
             let original_id = state.device_id.clone();
-            state.mark_seen("skill", "laravel-specialist", "abc123", "2026-04-18T10:00:00Z");
+            state.mark_seen(
+                "skill",
+                "laravel-specialist",
+                "abc123",
+                "2026-04-18T10:00:00Z",
+            );
             state.last_sync_at = Some("2026-04-18T10:15:00Z".to_string());
             save(&state).expect("save");
 

@@ -30,7 +30,8 @@ fn show(name: &str, opts: OutputOptions) -> Result<(), CliError> {
     // `Project` struct. In `--json` mode we hand that through verbatim; in
     // human mode we parse it back to extract a short summary.
     let raw = core::read_project(name).map_err(CliError::from)?;
-    let human = || match serde_json::from_str::<core::Project>(&raw) {
+    let human = || {
+        match serde_json::from_str::<core::Project>(&raw) {
         Ok(project) => format!(
             "Name:       {}\nDirectory:  {}\nSkills:     {}\nMCP:        {}\nAgents:     {}\nUpdated:    {}",
             project.name,
@@ -45,6 +46,7 @@ fn show(name: &str, opts: OutputOptions) -> Result<(), CliError> {
             project.updated_at,
         ),
         Err(_) => raw.clone(),
+    }
     };
     emit_raw_json(opts, &raw, &human()).map_err(CliError::Io)
 }

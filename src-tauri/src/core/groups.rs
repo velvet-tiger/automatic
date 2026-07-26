@@ -129,10 +129,7 @@ pub fn remove_project_from_all_groups(project_name: &str) -> Result<Vec<String>,
 /// group already contains `new_name`, the stale `old_name` entry is dropped
 /// (deduplication) rather than producing a duplicate. Returns the names of
 /// groups that were modified.
-pub fn rename_project_in_all_groups(
-    old_name: &str,
-    new_name: &str,
-) -> Result<Vec<String>, String> {
+pub fn rename_project_in_all_groups(old_name: &str, new_name: &str) -> Result<Vec<String>, String> {
     let groups_dir = get_groups_dir()?;
     rename_project_in_all_groups_in_dir(&groups_dir, old_name, new_name)
 }
@@ -144,9 +141,7 @@ pub fn rename_project_in_all_groups(
 /// Intended as a one-shot startup migration to heal pre-existing stale
 /// references left over from before `delete_project` and `rename_project`
 /// started cleaning up their own group entries. Idempotent.
-pub fn scrub_orphan_project_references(
-    live_projects: &[String],
-) -> Result<Vec<String>, String> {
+pub fn scrub_orphan_project_references(live_projects: &[String]) -> Result<Vec<String>, String> {
     let groups_dir = get_groups_dir()?;
     scrub_orphan_project_references_in_dir(&groups_dir, live_projects)
 }
@@ -197,7 +192,10 @@ fn remove_project_from_all_groups_in_dir(
         let mut group = match read_group_from_dir(groups_dir, &name) {
             Ok(g) => g,
             Err(e) => {
-                eprintln!("groups cleanup: skipping unreadable group '{}': {}", name, e);
+                eprintln!(
+                    "groups cleanup: skipping unreadable group '{}': {}",
+                    name, e
+                );
                 continue;
             }
         };
@@ -314,7 +312,9 @@ mod tests {
     }
 
     fn read_projects(groups_dir: &PathBuf, name: &str) -> Vec<String> {
-        read_group_from_dir(groups_dir, name).expect("read").projects
+        read_group_from_dir(groups_dir, name)
+            .expect("read")
+            .projects
     }
 
     // ── remove_project_from_all_groups ───────────────────────────────────────
@@ -380,7 +380,8 @@ mod tests {
     fn rename_is_no_op_when_old_name_absent() {
         let (_tmp, groups_dir) = setup();
         write_group(&groups_dir, "foo", &["a"]);
-        let affected = rename_project_in_all_groups_in_dir(&groups_dir, "ghost", "z").expect("rename");
+        let affected =
+            rename_project_in_all_groups_in_dir(&groups_dir, "ghost", "z").expect("rename");
         assert!(affected.is_empty());
         assert_eq!(read_projects(&groups_dir, "foo"), vec!["a"]);
     }

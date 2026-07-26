@@ -1585,7 +1585,11 @@ pub(crate) fn cleanup_managed_hook_scripts(
 
     let keep_names: HashSet<String> = keep_paths
         .iter()
-        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+        .filter_map(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+        })
         .collect();
 
     for entry in entries.flatten() {

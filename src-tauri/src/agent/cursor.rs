@@ -469,8 +469,7 @@ fn sync_cursor_hooks(
                 .cloned()
                 .unwrap_or_else(|| Value::Number(serde_json::Number::from(1u32))),
         );
-        fs::create_dir_all(&cursor_dir)
-            .map_err(|e| format!("Failed to create .cursor/: {}", e))?;
+        fs::create_dir_all(&cursor_dir).map_err(|e| format!("Failed to create .cursor/: {}", e))?;
         write_cursor_hooks_file(&hooks_file, doc_obj, &mut written)?;
     }
 
@@ -742,10 +741,8 @@ mod tests {
         assert!(handlers[0].get("_managedBy").is_none());
 
         // Ownership is recorded in the sidecar manifest instead.
-        let manifest = fs::read_to_string(
-            dir.path().join(".automatic/state/cursor-hooks.json"),
-        )
-        .expect("manifest exists");
+        let manifest = fs::read_to_string(dir.path().join(".automatic/state/cursor-hooks.json"))
+            .expect("manifest exists");
         assert!(manifest.contains("sessionStart"));
     }
 
@@ -815,7 +812,9 @@ mod tests {
             "file should be removed when only managed entries remain"
         );
         assert!(
-            !dir.path().join(".automatic/state/cursor-hooks.json").exists(),
+            !dir.path()
+                .join(".automatic/state/cursor-hooks.json")
+                .exists(),
             "manifest should be removed when empty"
         );
     }

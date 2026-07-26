@@ -127,13 +127,8 @@ fn resolve_directory(directory: Option<&str>) -> Result<PathBuf, CliError> {
     // with `PathBuf::from`, so a relative path would resolve against the
     // *current* working directory at sync time. Canonicalise here so that
     // the value sync sees is stable regardless of any cwd changes.
-    std::fs::canonicalize(&path).map_err(|e| {
-        CliError::Io(format!(
-            "Failed to resolve {}: {}",
-            path.display(),
-            e
-        ))
-    })
+    std::fs::canonicalize(&path)
+        .map_err(|e| CliError::Io(format!("Failed to resolve {}: {}", path.display(), e)))
 }
 
 /// Derive a synthetic project name from the target directory's basename.

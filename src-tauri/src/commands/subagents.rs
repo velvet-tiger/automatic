@@ -23,7 +23,8 @@ pub fn save_subagent(machine_name: String, name: String, content: String) -> Res
 
     if !core::is_valid_agent_machine_name(&machine_name) {
         return Err(
-            "Invalid sub-agent machine name. Use lowercase letters, digits, and hyphens only.".into(),
+            "Invalid sub-agent machine name. Use lowercase letters, digits, and hyphens only."
+                .into(),
         );
     }
 

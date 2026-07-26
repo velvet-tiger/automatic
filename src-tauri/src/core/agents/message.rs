@@ -115,7 +115,10 @@ fn block_to_anthropic(block: &ContentBlock) -> Value {
             "name": name,
             "input": input,
         }),
-        ContentBlock::ToolResult { tool_use_id, content } => json!({
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+        } => json!({
             "type": "tool_result",
             "tool_use_id": tool_use_id,
             "content": content,
@@ -232,7 +235,11 @@ pub fn neutral_to_openai(msg: &NeutralMessage) -> Vec<Value> {
 
             // Tool results become individual `role:tool` messages.
             for block in &tool_results {
-                if let ContentBlock::ToolResult { tool_use_id, content } = block {
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                } = block
+                {
                     output.push(json!({
                         "role": "tool",
                         "tool_call_id": tool_use_id,
@@ -260,7 +267,9 @@ pub fn openai_response_to_neutral_blocks(response: &Value) -> Vec<ContentBlock> 
     // Plain text content.
     if let Some(text) = response.get("content").and_then(|c| c.as_str()) {
         if !text.is_empty() {
-            blocks.push(ContentBlock::Text { text: text.to_string() });
+            blocks.push(ContentBlock::Text {
+                text: text.to_string(),
+            });
         }
     }
 
@@ -367,7 +376,9 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         assert_eq!(
             blocks[0],
-            ContentBlock::Text { text: "Hello there".into() }
+            ContentBlock::Text {
+                text: "Hello there".into()
+            }
         );
     }
 
@@ -395,7 +406,9 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         assert_eq!(
             blocks[0],
-            ContentBlock::Text { text: "just a string".into() }
+            ContentBlock::Text {
+                text: "just a string".into()
+            }
         );
     }
 
@@ -407,7 +420,9 @@ mod tests {
                 name: "read_file".into(),
                 input: json!({ "path": "src/main.rs" }),
             },
-            ContentBlock::Text { text: "I'll read that file.".into() },
+            ContentBlock::Text {
+                text: "I'll read that file.".into(),
+            },
         ];
         let msg = NeutralMessage::assistant_blocks(original.clone());
         let wire = neutral_to_anthropic(&msg);
@@ -487,7 +502,12 @@ mod tests {
         let response = json!({ "role": "assistant", "content": "Done." });
         let blocks = openai_response_to_neutral_blocks(&response);
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0], ContentBlock::Text { text: "Done.".into() });
+        assert_eq!(
+            blocks[0],
+            ContentBlock::Text {
+                text: "Done.".into()
+            }
+        );
     }
 
     // ── ToolDef formatting ────────────────────────────────────────────────────

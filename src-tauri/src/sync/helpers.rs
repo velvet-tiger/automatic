@@ -49,9 +49,7 @@ pub(crate) fn load_skill_contents(skill_names: &[String]) -> Vec<(String, String
 /// project's library-backed `skills` list.  Library wins because
 /// `copy_skills_to_project` writes library content to disk; a stale
 /// custom_skills snapshot would otherwise produce perpetual drift.
-pub(crate) fn build_skill_contents(
-    project: &Project,
-) -> (Vec<(String, String)>, Vec<String>) {
+pub(crate) fn build_skill_contents(project: &Project) -> (Vec<(String, String)>, Vec<String>) {
     let mut skill_contents = load_skill_contents(&project.skills);
     let library_skill_names: HashSet<&str> = project.skills.iter().map(|s| s.as_str()).collect();
     let custom_skills = project.custom_skills.as_deref().unwrap_or(&[]);

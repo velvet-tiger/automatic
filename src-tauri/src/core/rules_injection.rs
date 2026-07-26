@@ -1367,8 +1367,7 @@ mod tests {
             let project_dir = dir.path().to_str().unwrap();
             let rule_names = vec!["my-rule".to_string()];
 
-            let touched =
-                sync_rules_to_cursor_mdc_rules(project_dir, &rule_names).expect("sync");
+            let touched = sync_rules_to_cursor_mdc_rules(project_dir, &rule_names).expect("sync");
             assert_eq!(touched.len(), 1);
 
             let on_disk =
@@ -1383,7 +1382,11 @@ mod tests {
             assert!(touched2.is_empty());
 
             // Modifying the managed file flips the check.
-            fs::write(dir.path().join(".cursor/rules/my-rule.mdc"), "---\nautomatic-managed: true\n---\ntampered").expect("tamper");
+            fs::write(
+                dir.path().join(".cursor/rules/my-rule.mdc"),
+                "---\nautomatic-managed: true\n---\ntampered",
+            )
+            .expect("tamper");
             assert!(!is_cursor_mdc_rules_current(project_dir, &rule_names).expect("check"));
         });
     }

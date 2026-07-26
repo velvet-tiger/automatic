@@ -231,8 +231,7 @@ pub fn remove_managed_block(project_dir: &Path) -> Result<(), String> {
 
     if content.is_empty() {
         // The block was the only content; do not leave an empty file behind.
-        fs::remove_file(&path)
-            .map_err(|e| format!("Failed to remove {}: {e}", path.display()))?;
+        fs::remove_file(&path).map_err(|e| format!("Failed to remove {}: {e}", path.display()))?;
     } else {
         fs::write(&path, content)
             .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;

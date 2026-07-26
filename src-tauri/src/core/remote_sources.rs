@@ -320,10 +320,7 @@ pub fn resolve_base_dir(repo: &str, directory: Option<&str>) -> Result<PathBuf, 
                 .canonicalize()
                 .map_err(|e| format!("Failed to resolve directory '{}': {}", dir, e))?;
             if !canonical_base.starts_with(&canonical_clone) {
-                return Err(format!(
-                    "Directory '{}' escapes the repository root",
-                    dir
-                ));
+                return Err(format!("Directory '{}' escapes the repository root", dir));
             }
 
             Ok(canonical_base)

@@ -104,18 +104,18 @@ pub fn save_project_file_for_project(
     // legacy per-file / unified keys so that saves are consistent with sync.
     // Mandatory rules (e.g. automatic-service) are always included.
     let rules: Vec<String> = with_gitignore_rule(
-        ensure_automatic_rules(
-            &if let Some(r) = project.file_rules.get("_project").filter(|v| !v.is_empty()) {
-                r.clone()
-            } else {
-                let rule_key = if is_unified { "_unified" } else { filename };
-                project
-                    .file_rules
-                    .get(rule_key)
-                    .cloned()
-                    .unwrap_or_default()
-            },
-        ),
+        ensure_automatic_rules(&if let Some(r) =
+            project.file_rules.get("_project").filter(|v| !v.is_empty())
+        {
+            r.clone()
+        } else {
+            let rule_key = if is_unified { "_unified" } else { filename };
+            project
+                .file_rules
+                .get(rule_key)
+                .cloned()
+                .unwrap_or_default()
+        }),
         project.manage_gitignore,
     );
 

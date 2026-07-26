@@ -527,7 +527,11 @@ pub(crate) async fn wait_for_callback(listener: TcpListener) -> Result<(String, 
         if !path.starts_with("/callback") {
             send_http_response(
                 &mut stream,
-                &callback_page(CallbackStatus::Info, "Not Found", "This page does not exist."),
+                &callback_page(
+                    CallbackStatus::Info,
+                    "Not Found",
+                    "This page does not exist.",
+                ),
             )
             .await;
             continue;
@@ -540,7 +544,11 @@ pub(crate) async fn wait_for_callback(listener: TcpListener) -> Result<(String, 
             Err(_) => {
                 send_http_response(
                     &mut stream,
-                    &callback_page(CallbackStatus::Error, "Bad Request", "The callback URL could not be parsed."),
+                    &callback_page(
+                        CallbackStatus::Error,
+                        "Bad Request",
+                        "The callback URL could not be parsed.",
+                    ),
                 )
                 .await;
                 continue;
@@ -569,7 +577,11 @@ pub(crate) async fn wait_for_callback(listener: TcpListener) -> Result<(String, 
             None => {
                 send_http_response(
                     &mut stream,
-                    &callback_page(CallbackStatus::Error, "Bad Request", "Missing authorization code."),
+                    &callback_page(
+                        CallbackStatus::Error,
+                        "Bad Request",
+                        "Missing authorization code.",
+                    ),
                 )
                 .await;
                 continue;
@@ -580,7 +592,11 @@ pub(crate) async fn wait_for_callback(listener: TcpListener) -> Result<(String, 
             None => {
                 send_http_response(
                     &mut stream,
-                    &callback_page(CallbackStatus::Error, "Bad Request", "Missing state parameter."),
+                    &callback_page(
+                        CallbackStatus::Error,
+                        "Bad Request",
+                        "Missing state parameter.",
+                    ),
                 )
                 .await;
                 continue;

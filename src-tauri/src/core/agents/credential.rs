@@ -91,8 +91,7 @@ pub fn load_credential(agent_id: &str) -> Option<AgentCredential> {
 
 /// Store a `SingleToken` credential for `agent_id` in the OS keychain.
 pub fn store_token(agent_id: &str, token: &str) -> Result<(), String> {
-    let entry =
-        Entry::new(crate::core::KEYCHAIN_SERVICE, agent_id).map_err(|e| e.to_string())?;
+    let entry = Entry::new(crate::core::KEYCHAIN_SERVICE, agent_id).map_err(|e| e.to_string())?;
     entry.set_password(token).map_err(|e| e.to_string())
 }
 
@@ -103,8 +102,7 @@ pub fn has_credential(agent_id: &str) -> bool {
 
 /// Remove the stored credential for `agent_id` from the OS keychain.
 pub fn delete_credential(agent_id: &str) -> Result<(), String> {
-    let entry =
-        Entry::new(crate::core::KEYCHAIN_SERVICE, agent_id).map_err(|e| e.to_string())?;
+    let entry = Entry::new(crate::core::KEYCHAIN_SERVICE, agent_id).map_err(|e| e.to_string())?;
     entry.delete_credential().map_err(|e| e.to_string())
 }
 
@@ -113,5 +111,9 @@ pub fn delete_credential(agent_id: &str) -> Result<(), String> {
 fn read_keychain_token(key: &str) -> Option<String> {
     let entry = Entry::new(crate::core::KEYCHAIN_SERVICE, key).ok()?;
     let pw = entry.get_password().ok()?;
-    if pw.is_empty() { None } else { Some(pw) }
+    if pw.is_empty() {
+        None
+    } else {
+        Some(pw)
+    }
 }

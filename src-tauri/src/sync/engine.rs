@@ -171,7 +171,11 @@ fn sync_to_directory_inner(
         ProjectMode::Silent => {
             let silent_dir = dir.join(".automatic").join("silent");
             fs::create_dir_all(&silent_dir).map_err(|e| {
-                format!("Failed to create silent sync dir '{}': {}", silent_dir.display(), e)
+                format!(
+                    "Failed to create silent sync dir '{}': {}",
+                    silent_dir.display(),
+                    e
+                )
             })?;
             silent_dir
         }
@@ -301,7 +305,10 @@ fn migrate_legacy_cursorrules(effective_dir: &std::path::Path, project: &mut Pro
         match crate::core::save_project_file(dir_str, "AGENTS.md", &legacy_user) {
             Ok(()) => true,
             Err(e) => {
-                eprintln!("[automatic] .cursorrules migration: failed to write AGENTS.md: {}", e);
+                eprintln!(
+                    "[automatic] .cursorrules migration: failed to write AGENTS.md: {}",
+                    e
+                );
                 false
             }
         }
@@ -320,7 +327,10 @@ fn migrate_legacy_cursorrules(effective_dir: &std::path::Path, project: &mut Pro
 
     if migrated {
         if let Err(e) = fs::remove_file(&legacy_path) {
-            eprintln!("[automatic] .cursorrules migration: failed to remove legacy file: {}", e);
+            eprintln!(
+                "[automatic] .cursorrules migration: failed to remove legacy file: {}",
+                e
+            );
         }
     }
 
@@ -653,8 +663,8 @@ fn sync_instruction_files_step(
         }
     } else {
         for target in instruction_targets {
-            let user_content = crate::core::read_project_file(write_dir, &target.filename)
-                .unwrap_or_default();
+            let user_content =
+                crate::core::read_project_file(write_dir, &target.filename).unwrap_or_default();
             sync_instruction_target_file(
                 dir,
                 project,
@@ -820,9 +830,12 @@ fn sync_instruction_target_file(
         } else {
             project
         };
-        if let Some(touched) =
-            agent_instance.sync_instruction_rules(project_for_rules, filename, &rules, &custom_contents)?
-        {
+        if let Some(touched) = agent_instance.sync_instruction_rules(
+            project_for_rules,
+            filename,
+            &rules,
+            &custom_contents,
+        )? {
             custom_rules_handled = true;
             for path in touched {
                 if !written_files.contains(&path) {
@@ -928,7 +941,7 @@ fn record_instruction_state_step(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{CustomRule, read_project_file, save_project_file_for_project};
+    use crate::core::{read_project_file, save_project_file_for_project, CustomRule};
     use tempfile::TempDir;
 
     const USER_INSTRUCTIONS: &str = "# Instructions\n\nFollow the project conventions.";

@@ -195,9 +195,8 @@ mod unix {
 
     pub(super) fn install_impl() -> Result<String, String> {
         let binary_path = current_binary_path()?;
-        let install_path = preferred_install_path().ok_or_else(|| {
-            "Automatic CLI install is not supported on this platform".to_string()
-        })?;
+        let install_path = preferred_install_path()
+            .ok_or_else(|| "Automatic CLI install is not supported on this platform".to_string())?;
 
         if let Some(parent) = install_path.parent() {
             if !parent.exists() {
@@ -339,9 +338,8 @@ mod windows {
         let install_path = bin_dir.join(WINDOWS_CLI_EXE_NAME);
         let source = source_cli_binary()?;
 
-        std::fs::create_dir_all(&bin_dir).map_err(|e| {
-            format!("Failed to create {}: {}", bin_dir.display(), e)
-        })?;
+        std::fs::create_dir_all(&bin_dir)
+            .map_err(|e| format!("Failed to create {}: {}", bin_dir.display(), e))?;
 
         // Overwrite is fine — the source is the canonical version that
         // ships with this install of Automatic.
@@ -364,9 +362,8 @@ mod windows {
 
         let mut steps: Vec<String> = Vec::new();
         if install_path.exists() {
-            std::fs::remove_file(&install_path).map_err(|e| {
-                format!("Failed to remove {}: {}", install_path.display(), e)
-            })?;
+            std::fs::remove_file(&install_path)
+                .map_err(|e| format!("Failed to remove {}: {}", install_path.display(), e))?;
             steps.push(format!("Removed {}", install_path.display()));
         }
 
@@ -394,7 +391,10 @@ mod windows {
         let local = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .ok_or_else(|| "%LOCALAPPDATA% is not set".to_string())?;
-        Ok(local.join("Programs").join(WINDOWS_BIN_DIR_NAME).join("bin"))
+        Ok(local
+            .join("Programs")
+            .join(WINDOWS_BIN_DIR_NAME)
+            .join("bin"))
     }
 
     /// Find the bundled `automatic-cli.exe`. The Tauri Windows installer
@@ -501,7 +501,7 @@ mod windows {
     fn broadcast_environment_change() {
         use windows_sys::Win32::Foundation::{LPARAM, WPARAM};
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            HWND_BROADCAST, SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+            SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
         };
         let param: Vec<u16> = "Environment\0".encode_utf16().collect();
         let mut result: usize = 0;

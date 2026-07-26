@@ -735,13 +735,8 @@ pub fn migrate_agents_skills_to_library() -> Result<Vec<String>, String> {
         let dest = library_dir.join(name);
         if dest.exists() {
             // Library already owns this skill; just remove the old copy.
-            fs::remove_dir_all(&src).map_err(|e| {
-                format!(
-                    "Failed to remove legacy skill {}: {}",
-                    src.display(),
-                    e
-                )
-            })?;
+            fs::remove_dir_all(&src)
+                .map_err(|e| format!("Failed to remove legacy skill {}: {}", src.display(), e))?;
             migrated.push(name.clone());
             continue;
         }
@@ -781,7 +776,8 @@ fn copy_dir_recursive_for_migration(src: &PathBuf, dest: &PathBuf) -> Result<(),
         fs::create_dir_all(dest)
             .map_err(|e| format!("Failed to create {}: {}", dest.display(), e))?;
     }
-    for entry in fs::read_dir(src).map_err(|e| format!("Failed to read {}: {}", src.display(), e))?
+    for entry in
+        fs::read_dir(src).map_err(|e| format!("Failed to read {}: {}", src.display(), e))?
     {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
         let path = entry.path();

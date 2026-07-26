@@ -64,11 +64,7 @@ pub struct Delta {
 ///
 /// `now_rfc3339` is the client's current timestamp in RFC 3339 UTC; injected
 /// rather than read from the clock so tests are deterministic.
-pub fn diff(
-    disk: &[DiskAsset],
-    state: &CloudSyncState,
-    now_rfc3339: &str,
-) -> Delta {
+pub fn diff(disk: &[DiskAsset], state: &CloudSyncState, now_rfc3339: &str) -> Delta {
     let mut upserts: Vec<UpsertRecord> = Vec::new();
     let mut disk_by_key: HashMap<(String, String), &DiskAsset> = HashMap::with_capacity(disk.len());
 
@@ -130,10 +126,17 @@ pub fn diff(
     }
 
     // Stable ordering — makes tests and server logs readable.
-    upserts.sort_by(|a, b| (a.kind.as_str(), a.machine_name.as_str()).cmp(&(b.kind.as_str(), b.machine_name.as_str())));
-    new_tombstones.sort_by(|a, b| (a.kind.as_str(), a.machine_name.as_str()).cmp(&(b.kind.as_str(), b.machine_name.as_str())));
+    upserts.sort_by(|a, b| {
+        (a.kind.as_str(), a.machine_name.as_str()).cmp(&(b.kind.as_str(), b.machine_name.as_str()))
+    });
+    new_tombstones.sort_by(|a, b| {
+        (a.kind.as_str(), a.machine_name.as_str()).cmp(&(b.kind.as_str(), b.machine_name.as_str()))
+    });
 
-    Delta { upserts, new_tombstones }
+    Delta {
+        upserts,
+        new_tombstones,
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

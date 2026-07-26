@@ -162,7 +162,13 @@ pub async fn chat_structured(
     let model_str = resolve_model(&agent_id, model.as_deref());
     let neutral = ai_messages_to_neutral(&messages);
     active_client(&key)
-        .chat_structured_dyn(&neutral, Some(&model_str), system.as_deref(), max_tokens, &schema)
+        .chat_structured_dyn(
+            &neutral,
+            Some(&model_str),
+            system.as_deref(),
+            max_tokens,
+            &schema,
+        )
         .await
 }
 
@@ -281,8 +287,7 @@ async fn chat_with_tools_inner(
                 .ok_or_else(|| "Agent returned no text content".to_string())?;
 
             // Serialise the neutral history to Values for backward-compat callers.
-            let json_history: Vec<Value> =
-                history.iter().map(neutral_to_anthropic).collect();
+            let json_history: Vec<Value> = history.iter().map(neutral_to_anthropic).collect();
 
             return Ok((text, json_history));
         }
@@ -472,8 +477,8 @@ fn read_template_tool_def() -> ToolDef {
 fn list_mcp_servers_tool_def() -> ToolDef {
     ToolDef {
         name: "list_mcp_servers".into(),
-        description:
-            "List all MCP server configuration names registered in the Automatic library.".into(),
+        description: "List all MCP server configuration names registered in the Automatic library."
+            .into(),
         parameters: json!({ "type": "object", "properties": {}, "required": [] }),
     }
 }
@@ -481,9 +486,10 @@ fn list_mcp_servers_tool_def() -> ToolDef {
 fn read_mcp_server_tool_def() -> ToolDef {
     ToolDef {
         name: "read_mcp_server".into(),
-        description: "Read the configuration for a single MCP server from the Automatic library by name. \
+        description:
+            "Read the configuration for a single MCP server from the Automatic library by name. \
             Returns the JSON config (command, args, env, etc.)."
-            .into(),
+                .into(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -692,14 +698,7 @@ fn execute_search_discover_templates(input: &Value) -> String {
 
 /// Filenames (exact, case-insensitive match against the final path component)
 /// that are never readable regardless of directory.
-const SECRET_FILENAMES: &[&str] = &[
-    ".env",
-    "credentials",
-    "config",
-    ".netrc",
-    "token",
-    "tokens",
-];
+const SECRET_FILENAMES: &[&str] = &[".env", "credentials", "config", ".netrc", "token", "tokens"];
 
 /// Filename *prefixes* (case-insensitive) — any filename that starts with one
 /// of these is blocked regardless of suffix.
@@ -812,30 +811,28 @@ pub(crate) fn execute_read_file(input: &Value, working_dir: &Path) -> String {
 
     match resolved.metadata() {
         Err(_) => return format!("Error: Path does not exist: '{}'.", path_str),
-        Ok(meta) if meta.is_dir() => {
-            match std::fs::read_dir(&resolved) {
-                Err(e) => return format!("Error reading directory: {}", e),
-                Ok(entries) => {
-                    let mut names: Vec<String> = entries
-                        .filter_map(|e| e.ok())
-                        .map(|e| {
-                            let name = e.file_name().to_string_lossy().to_string();
-                            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                                name + "/"
-                            } else {
-                                name
-                            }
-                        })
-                        .collect();
-                    names.sort();
-                    return format!(
-                        "<path>{}</path>\n<type>directory</type>\n<entries>\n{}\n</entries>",
-                        resolved.display(),
-                        names.join("\n")
-                    );
-                }
+        Ok(meta) if meta.is_dir() => match std::fs::read_dir(&resolved) {
+            Err(e) => return format!("Error reading directory: {}", e),
+            Ok(entries) => {
+                let mut names: Vec<String> = entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| {
+                        let name = e.file_name().to_string_lossy().to_string();
+                        if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                            name + "/"
+                        } else {
+                            name
+                        }
+                    })
+                    .collect();
+                names.sort();
+                return format!(
+                    "<path>{}</path>\n<type>directory</type>\n<entries>\n{}\n</entries>",
+                    resolved.display(),
+                    names.join("\n")
+                );
             }
-        }
+        },
         Ok(_) => {}
     }
 
@@ -1299,10 +1296,16 @@ mod tests {
         fs::create_dir(dir.path().join("subdir")).expect("mkdir");
         let input = json!({ "path": dir.path().to_str().unwrap() });
         let output = execute_read_file(&input, dir.path());
-        assert!(output.contains("<type>directory</type>"), "should be directory type");
+        assert!(
+            output.contains("<type>directory</type>"),
+            "should be directory type"
+        );
         assert!(output.contains("alpha.txt"), "should list alpha.txt");
         assert!(output.contains("beta.txt"), "should list beta.txt");
-        assert!(output.contains("subdir/"), "subdirectory should have trailing slash");
+        assert!(
+            output.contains("subdir/"),
+            "subdirectory should have trailing slash"
+        );
     }
 
     #[test]
@@ -1317,7 +1320,11 @@ mod tests {
             "binary file should be rejected, got: {}",
             output
         );
-        assert!(output.contains("binary"), "should mention binary, got: {}", output);
+        assert!(
+            output.contains("binary"),
+            "should mention binary, got: {}",
+            output
+        );
     }
 
     #[test]
@@ -1330,7 +1337,11 @@ mod tests {
             "missing path param should error, got: {}",
             output
         );
-        assert!(output.contains("path"), "should mention missing 'path', got: {}", output);
+        assert!(
+            output.contains("path"),
+            "should mention missing 'path', got: {}",
+            output
+        );
     }
 
     #[test]
@@ -1398,7 +1409,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join(".env");
         fs::write(&f, "SECRET=x").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".env must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".env must be blocked"
+        );
     }
 
     #[test]
@@ -1406,7 +1420,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join(".env.local");
         fs::write(&f, "SECRET=x").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".env.local must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".env.local must be blocked"
+        );
     }
 
     #[test]
@@ -1414,7 +1431,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join(".env.production");
         fs::write(&f, "SECRET=x").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".env.production must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".env.production must be blocked"
+        );
     }
 
     #[test]
@@ -1424,7 +1444,10 @@ mod tests {
         fs::create_dir(&sub).unwrap();
         let f = sub.join(".env");
         fs::write(&f, "SECRET=x").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "nested .env must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "nested .env must be blocked"
+        );
     }
 
     #[test]
@@ -1434,7 +1457,10 @@ mod tests {
         fs::create_dir_all(&sub).unwrap();
         let f = sub.join(".env.staging");
         fs::write(&f, "SECRET=x").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "nested .env.staging must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "nested .env.staging must be blocked"
+        );
     }
 
     #[test]
@@ -1442,7 +1468,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_rsa");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_rsa must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_rsa must be blocked"
+        );
     }
 
     #[test]
@@ -1450,7 +1479,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_rsa.pub");
         fs::write(&f, "ssh-rsa AAAA...").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_rsa.pub must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_rsa.pub must be blocked"
+        );
     }
 
     #[test]
@@ -1458,7 +1490,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_rsa_backup");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_rsa_backup must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_rsa_backup must be blocked"
+        );
     }
 
     #[test]
@@ -1466,7 +1501,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_ed25519");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_ed25519 must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_ed25519 must be blocked"
+        );
     }
 
     #[test]
@@ -1474,7 +1512,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_ed25519.pub");
         fs::write(&f, "ssh-ed25519 AAAA...").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_ed25519.pub must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_ed25519.pub must be blocked"
+        );
     }
 
     #[test]
@@ -1482,7 +1523,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_ecdsa");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_ecdsa must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_ecdsa must be blocked"
+        );
     }
 
     #[test]
@@ -1490,7 +1534,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("id_dsa");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "id_dsa must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "id_dsa must be blocked"
+        );
     }
 
     #[test]
@@ -1500,7 +1547,10 @@ mod tests {
         fs::create_dir(&sub).unwrap();
         let f = sub.join("id_rsa");
         fs::write(&f, "KEY").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), "nested id_rsa must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            "nested id_rsa must be blocked"
+        );
     }
 
     #[test]
@@ -1510,7 +1560,10 @@ mod tests {
         fs::create_dir(&ssh).unwrap();
         let f = ssh.join("known_hosts");
         fs::write(&f, "github.com ssh-rsa AAAA").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".ssh/known_hosts must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".ssh/known_hosts must be blocked"
+        );
     }
 
     #[test]
@@ -1520,7 +1573,10 @@ mod tests {
         fs::create_dir(&ssh).unwrap();
         let f = ssh.join("authorized_keys");
         fs::write(&f, "ssh-rsa AAAA").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".ssh/authorized_keys must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".ssh/authorized_keys must be blocked"
+        );
     }
 
     #[test]
@@ -1530,7 +1586,10 @@ mod tests {
         fs::create_dir(&ssh).unwrap();
         let f = ssh.join("config");
         fs::write(&f, "Host *").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".ssh/config must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".ssh/config must be blocked"
+        );
     }
 
     #[test]
@@ -1540,7 +1599,10 @@ mod tests {
         fs::create_dir(&aws).unwrap();
         let f = aws.join("credentials");
         fs::write(&f, "[default]\naws_access_key_id = AKIA...").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".aws/credentials must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".aws/credentials must be blocked"
+        );
     }
 
     #[test]
@@ -1550,7 +1612,10 @@ mod tests {
         fs::create_dir(&aws).unwrap();
         let f = aws.join("config");
         fs::write(&f, "[default]\nregion = us-east-1").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".aws/config must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".aws/config must be blocked"
+        );
     }
 
     #[test]
@@ -1560,7 +1625,10 @@ mod tests {
         fs::create_dir(&claude).unwrap();
         let f = claude.join("settings.json");
         fs::write(&f, r#"{"apiKey":"sk-..."}"#).unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".claude/settings.json must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".claude/settings.json must be blocked"
+        );
     }
 
     #[test]
@@ -1570,7 +1638,10 @@ mod tests {
         fs::create_dir(&claude).unwrap();
         let f = claude.join("custom_instructions.md");
         fs::write(&f, "some instructions").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".claude/* must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".claude/* must be blocked"
+        );
     }
 
     #[test]
@@ -1580,7 +1651,10 @@ mod tests {
         fs::create_dir(&gnupg).unwrap();
         let f = gnupg.join("secring.gpg");
         fs::write(&f, "GPG secret ring").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(), ".gnupg/* must be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_err(),
+            ".gnupg/* must be blocked"
+        );
     }
 
     #[test]
@@ -1588,7 +1662,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("envelope.txt");
         fs::write(&f, "not a secret").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(), "envelope.txt must NOT be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(),
+            "envelope.txt must NOT be blocked"
+        );
     }
 
     #[test]
@@ -1596,7 +1673,10 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("identity.txt");
         fs::write(&f, "user info").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(), "identity.txt must NOT be blocked");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(),
+            "identity.txt must NOT be blocked"
+        );
     }
 
     #[test]
@@ -1605,7 +1685,10 @@ mod tests {
         let f = dir.path().join("config");
         fs::write(&f, "some config").unwrap();
         let result = resolve_tool_path(f.to_str().unwrap(), dir.path());
-        assert!(result.is_err(), "bare 'config' filename is blocked (intentional trade-off)");
+        assert!(
+            result.is_err(),
+            "bare 'config' filename is blocked (intentional trade-off)"
+        );
     }
 
     #[test]
@@ -1614,7 +1697,11 @@ mod tests {
         let f = dir.path().join("config.json");
         fs::write(&f, r#"{"port":3000}"#).unwrap();
         let result = resolve_tool_path(f.to_str().unwrap(), dir.path());
-        assert!(result.is_ok(), "config.json in project root must be readable, got: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "config.json in project root must be readable, got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -1622,6 +1709,9 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let f = dir.path().join("README.md");
         fs::write(&f, "# Project").unwrap();
-        assert!(resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(), "README.md must be readable");
+        assert!(
+            resolve_tool_path(f.to_str().unwrap(), dir.path()).is_ok(),
+            "README.md must be readable"
+        );
     }
 }

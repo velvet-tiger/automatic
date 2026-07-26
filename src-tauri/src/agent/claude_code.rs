@@ -250,8 +250,7 @@ fn sync_claude_code_hooks(
 
     // Always ensure .claude/ exists so we can write the settings file even on
     // a project that has never been touched by Claude Code.
-    fs::create_dir_all(&claude_dir)
-        .map_err(|e| format!("Failed to create .claude/: {}", e))?;
+    fs::create_dir_all(&claude_dir).map_err(|e| format!("Failed to create .claude/: {}", e))?;
 
     let mut written = Vec::new();
 
@@ -281,9 +280,8 @@ fn sync_claude_code_hooks(
 
     // Load or initialise the settings document.
     let mut settings: Value = if settings_path.exists() {
-        let raw = fs::read_to_string(&settings_path).map_err(|e| {
-            format!("Failed to read .claude/settings.json: {}", e)
-        })?;
+        let raw = fs::read_to_string(&settings_path)
+            .map_err(|e| format!("Failed to read .claude/settings.json: {}", e))?;
         if raw.trim().is_empty() {
             Value::Object(Map::new())
         } else {
@@ -785,7 +783,12 @@ mod tests {
 
     // ── Hook sync ───────────────────────────────────────────────────────────
 
-    fn cmd_hook(name: &str, event: &str, matcher: Option<&str>, command: &str) -> crate::core::Hook {
+    fn cmd_hook(
+        name: &str,
+        event: &str,
+        matcher: Option<&str>,
+        command: &str,
+    ) -> crate::core::Hook {
         crate::core::Hook {
             name: name.to_string(),
             agent: "claude".to_string(),
@@ -903,12 +906,7 @@ mod tests {
         )
         .unwrap();
 
-        let hooks = vec![cmd_hook(
-            "managed",
-            "SessionStart",
-            None,
-            "echo managed",
-        )];
+        let hooks = vec![cmd_hook("managed", "SessionStart", None, "echo managed")];
         ClaudeCode.sync_hooks(dir.path(), &hooks).expect("sync");
 
         let raw = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
@@ -918,8 +916,16 @@ mod tests {
             .iter()
             .map(|h| h["command"].as_str().unwrap())
             .collect();
-        assert!(commands.contains(&"echo user-owned"), "user hook removed: {:?}", commands);
-        assert!(commands.contains(&"echo managed"), "managed hook missing: {:?}", commands);
+        assert!(
+            commands.contains(&"echo user-owned"),
+            "user hook removed: {:?}",
+            commands
+        );
+        assert!(
+            commands.contains(&"echo managed"),
+            "managed hook missing: {:?}",
+            commands
+        );
     }
 
     #[test]

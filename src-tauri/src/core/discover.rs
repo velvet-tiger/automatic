@@ -181,10 +181,12 @@ pub async fn get_featured_community() -> Result<String, String> {
 
     // Check whether the cached file is still fresh.
     let needs_fetch = match path.metadata().and_then(|m| m.modified()) {
-        Ok(modified) => SystemTime::now()
-            .duration_since(modified)
-            .unwrap_or(Duration::MAX)
-            > FEATURED_COMMUNITY_MAX_AGE,
+        Ok(modified) => {
+            SystemTime::now()
+                .duration_since(modified)
+                .unwrap_or(Duration::MAX)
+                > FEATURED_COMMUNITY_MAX_AGE
+        }
         Err(_) => true, // file missing or unreadable — fetch
     };
 
@@ -194,10 +196,7 @@ pub async fn get_featured_community() -> Result<String, String> {
                 // Validate the response is a JSON array before caching.
                 if serde_json::from_str::<Vec<serde_json::Value>>(&json).is_ok() {
                     if let Err(e) = std::fs::write(&path, &json) {
-                        eprintln!(
-                            "[automatic] Failed to cache featured-community.json: {}",
-                            e
-                        );
+                        eprintln!("[automatic] Failed to cache featured-community.json: {}", e);
                     }
                     return Ok(json);
                 }

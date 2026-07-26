@@ -1343,11 +1343,8 @@ mod propagation_tests {
     #[test]
     fn sync_projects_referencing_user_command_only_visits_referencing_projects() {
         with_temp_home(|_| {
-            core::save_user_command(
-                "review",
-                "---\ndescription: Review\n---\n\nLook hard.\n",
-            )
-            .expect("save user command");
+            core::save_user_command("review", "---\ndescription: Review\n---\n\nLook hard.\n")
+                .expect("save user command");
 
             let (_keep_a, dir_a) = make_project("project-a", |p| {
                 p.user_commands.push("review".to_string());

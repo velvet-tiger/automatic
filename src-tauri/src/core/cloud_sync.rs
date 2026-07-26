@@ -129,7 +129,11 @@ pub fn preview_sync() -> Result<SyncPreview, String> {
 
     let mut tombstones: BTreeMap<String, usize> = BTreeMap::new();
     // Pending + newly detected are both part of what we'd send.
-    for t in state.pending_tombstones.iter().chain(delta.new_tombstones.iter()) {
+    for t in state
+        .pending_tombstones
+        .iter()
+        .chain(delta.new_tombstones.iter())
+    {
         *tombstones.entry(t.kind.clone()).or_insert(0) += 1;
     }
 
@@ -545,11 +549,9 @@ fn write_skill_asset(machine_name: &str, payload: &Value) -> Result<(), String> 
 
     // Wipe + recreate so server is authoritative over the skill's full tree.
     if skill_dir.exists() {
-        fs::remove_dir_all(&skill_dir)
-            .map_err(|e| format!("failed to clear skill dir: {}", e))?;
+        fs::remove_dir_all(&skill_dir).map_err(|e| format!("failed to clear skill dir: {}", e))?;
     }
-    fs::create_dir_all(&skill_dir)
-        .map_err(|e| format!("failed to create skill dir: {}", e))?;
+    fs::create_dir_all(&skill_dir).map_err(|e| format!("failed to create skill dir: {}", e))?;
 
     for (rel_path, content) in files {
         // Defensive: the server validates these, but we never trust a remote
@@ -700,7 +702,8 @@ fn write_collection_asset(machine_name: &str, payload: &Value) -> Result<(), Str
     // since moved it to another collection we don't meddle.
     let registry = super::skills::read_skill_collections().unwrap_or_default();
     for skill in &current {
-        if !incoming.contains(skill) && registry.get(skill).map(|c| c.as_str()) == Some(machine_name)
+        if !incoming.contains(skill)
+            && registry.get(skill).map(|c| c.as_str()) == Some(machine_name)
         {
             let _ = super::skills::remove_skill_collection(skill);
         }
@@ -736,7 +739,9 @@ fn write_project_template_asset(machine_name: &str, payload: &Value) -> Result<(
 /// file. Lightweight parser — user_agents::extract_name_from_frontmatter is
 /// private, and we only need a best-effort fallback here.
 fn extract_frontmatter_name(content: &str) -> Option<String> {
-    let body = content.strip_prefix("---\n").or_else(|| content.strip_prefix("---\r\n"))?;
+    let body = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))?;
     let end = body.find("\n---").or_else(|| body.find("\r\n---"))?;
     for line in body[..end].lines() {
         let trimmed = line.trim();
@@ -942,10 +947,7 @@ async fn handle_sync_response(resp: reqwest::Response) -> Result<ServerSyncRespo
         .map_err(|e| format!("failed to parse sync response: {}", e))
 }
 
-async fn refresh_access_token(
-    client: &reqwest::Client,
-    webapp: &str,
-) -> Result<String, String> {
+async fn refresh_access_token(client: &reqwest::Client, webapp: &str) -> Result<String, String> {
     let refresh = keychain_load(REFRESH_TOKEN_USER)
         .map_err(|_| "Session expired. Please sign in again.".to_string())?;
 
@@ -964,7 +966,10 @@ async fn refresh_access_token(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!("Session refresh failed (HTTP {}): {}", status, text));
+        return Err(format!(
+            "Session refresh failed (HTTP {}): {}",
+            status, text
+        ));
     }
 
     #[derive(Deserialize)]
@@ -1045,10 +1050,7 @@ mod tests {
     fn scrub_handles_missing_env_gracefully() {
         let config = json!({ "command": "node", "args": [] });
         let scrubbed = scrub_mcp_config(&config);
-        assert_eq!(
-            scrubbed["env_keys"].as_array().map(|a| a.len()),
-            Some(0)
-        );
+        assert_eq!(scrubbed["env_keys"].as_array().map(|a| a.len()), Some(0));
     }
 
     #[test]
@@ -1067,7 +1069,10 @@ mod tests {
 
     #[test]
     fn name_to_machine_basic_conversions() {
-        assert_eq!(name_to_machine("Agent Project Brief"), "agent-project-brief");
+        assert_eq!(
+            name_to_machine("Agent Project Brief"),
+            "agent-project-brief"
+        );
         assert_eq!(name_to_machine("  Session Context  "), "session-context");
         assert_eq!(name_to_machine("A/B - Test"), "a-b-test");
         assert_eq!(name_to_machine("already-ok"), "already-ok");
@@ -1084,22 +1089,32 @@ mod tests {
             return false;
         }
         chars.all(|c| {
-            c.is_ascii_lowercase()
-                || c.is_ascii_digit()
-                || c == '.'
-                || c == '_'
-                || c == '-'
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-'
         })
     }
 
     #[test]
     fn name_to_machine_always_matches_server_regex() {
         let inputs = [
-            "Agent Project Brief", "  Session Context  ", "A/B - Test",
-            "already-ok", "", "UPPER CASE", "123abc", "-leading-dash",
-            ".leading-dot", "_leading-underscore", "trailing-dash-",
-            "trailing.dot.", "trailing_underscore_", "weird!@#$%^&*()chars",
-            "multi    spaces", "unicodé-name", "a", "9", "!!!",
+            "Agent Project Brief",
+            "  Session Context  ",
+            "A/B - Test",
+            "already-ok",
+            "",
+            "UPPER CASE",
+            "123abc",
+            "-leading-dash",
+            ".leading-dot",
+            "_leading-underscore",
+            "trailing-dash-",
+            "trailing.dot.",
+            "trailing_underscore_",
+            "weird!@#$%^&*()chars",
+            "multi    spaces",
+            "unicodé-name",
+            "a",
+            "9",
+            "!!!",
             &"x".repeat(200),
             &format!("{}{}", "x".repeat(120), "-".repeat(20)),
         ];
@@ -1108,7 +1123,8 @@ mod tests {
             assert!(
                 matches_server_regex(&machine),
                 "name_to_machine({:?}) = {:?} does not match server regex",
-                input, machine,
+                input,
+                machine,
             );
         }
     }
@@ -1122,10 +1138,7 @@ mod tests {
             "2026-04-18T10:15:00Z".to_string()
         );
         // UNIX epoch itself
-        assert_eq!(
-            format_rfc3339_utc(0),
-            "1970-01-01T00:00:00Z".to_string()
-        );
+        assert_eq!(format_rfc3339_utc(0), "1970-01-01T00:00:00Z".to_string());
         // A known sanity check — leap day 2024
         assert_eq!(
             format_rfc3339_utc(1_709_164_800),
@@ -1145,7 +1158,8 @@ mod tests {
             assert!(
                 matches_server_regex(&asset.machine_name),
                 "{}:{} does not match server regex",
-                asset.kind, asset.machine_name,
+                asset.kind,
+                asset.machine_name,
             );
         }
     }
@@ -1262,7 +1276,8 @@ mod tests {
             write_template_asset("my-template", &payload).expect("write template");
 
             let body =
-                fs::read_to_string(home.join(".automatic-dev/library/instructions/my-template.md")).unwrap();
+                fs::read_to_string(home.join(".automatic-dev/library/instructions/my-template.md"))
+                    .unwrap();
             assert_eq!(body, "# Template body");
         });
     }
@@ -1374,8 +1389,7 @@ mod tests {
         // other one.
         with_temp_home(|_| {
             super::super::skills::set_skill_collection("alpha", "old-set").expect("seed");
-            super::super::skills::set_skill_collection("alpha", "new-set")
-                .expect("move alpha");
+            super::super::skills::set_skill_collection("alpha", "new-set").expect("move alpha");
 
             // Now "old-set" server payload drops alpha. Since alpha is no
             // longer a member of old-set on disk, we mustn't touch it.

@@ -266,9 +266,7 @@ pub(super) const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
     ),
     (
         "terraform-aws-infrastructure",
-        include_str!(
-            "../../assets/discover/project-templates/terraform-aws-infrastructure.json"
-        ),
+        include_str!("../../assets/discover/project-templates/terraform-aws-infrastructure.json"),
     ),
     (
         "react-component-library",
@@ -300,9 +298,7 @@ pub(super) const BUNDLED_TEMPLATES: &[(&str, &str)] = &[
     ),
     (
         "docker-containerised-service",
-        include_str!(
-            "../../assets/discover/project-templates/docker-containerised-service.json"
-        ),
+        include_str!("../../assets/discover/project-templates/docker-containerised-service.json"),
     ),
     (
         "ruby-on-rails-api",
@@ -524,7 +520,10 @@ pub(crate) fn merge_templates_into_project(
         // `_unified`/per-file keys when rendering instruction files.
         if !tmpl.unified_rules.is_empty() {
             union_vec(
-                project.file_rules.entry("_project".to_string()).or_default(),
+                project
+                    .file_rules
+                    .entry("_project".to_string())
+                    .or_default(),
                 &tmpl.unified_rules,
             );
         }

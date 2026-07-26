@@ -1116,8 +1116,8 @@ impl AutomaticMcpServer {
     async fn list_hooks(&self) -> Result<CallToolResult, McpError> {
         match crate::core::list_hooks() {
             Ok(hooks) => {
-                let json = serde_json::to_string_pretty(&hooks)
-                    .unwrap_or_else(|_| "[]".to_string());
+                let json =
+                    serde_json::to_string_pretty(&hooks).unwrap_or_else(|_| "[]".to_string());
                 Ok(CallToolResult::success(vec![Content::text(json)]))
             }
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(

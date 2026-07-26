@@ -86,10 +86,7 @@ pub enum FileOp {
         payload: Value,
     },
     /// Delete an asset from disk. No-op if already absent.
-    DeleteAsset {
-        kind: String,
-        machine_name: String,
-    },
+    DeleteAsset { kind: String, machine_name: String },
 }
 
 /// Ordered list of disk operations produced by `apply_server_response`.
@@ -130,10 +127,9 @@ pub fn apply_server_response(
     //    will arrive in `remote_upserts` and be handled in step 5.
 
     // 3. applied_tombstones → drop from `seen` and `pending_tombstones`.
-    let applied: HashSet<(String, String)> =
-        iter_kind_name_map(&response.applied_tombstones)
-            .flat_map(|(kind, names)| names.into_iter().map(move |n| (kind.clone(), n)))
-            .collect();
+    let applied: HashSet<(String, String)> = iter_kind_name_map(&response.applied_tombstones)
+        .flat_map(|(kind, names)| names.into_iter().map(move |n| (kind.clone(), n)))
+        .collect();
     for (kind, name) in &applied {
         state.forget_seen(kind, name);
     }
@@ -405,7 +401,9 @@ mod tests {
         assert_eq!(plan.ops.len(), 2);
         // The delete is ordered AFTER the write so disk ends up empty.
         let last = plan.ops.last().unwrap();
-        assert!(matches!(last, FileOp::DeleteAsset { machine_name, .. } if machine_name == "flapper"));
+        assert!(
+            matches!(last, FileOp::DeleteAsset { machine_name, .. } if machine_name == "flapper")
+        );
     }
 
     #[test]

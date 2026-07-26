@@ -1,6 +1,8 @@
 use std::fs;
 
-use super::asset_security::{enforce_text_asset, scan_text_asset_report, validate_relative_asset_path, AssetKind};
+use super::asset_security::{
+    enforce_text_asset, scan_text_asset_report, validate_relative_asset_path, AssetKind,
+};
 use super::paths::get_library_skills_dir;
 use super::skill_store::record_skill_source;
 use super::skills::record_skill_scan_state;

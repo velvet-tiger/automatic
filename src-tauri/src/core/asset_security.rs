@@ -69,9 +69,8 @@ static EXTERNAL_EMBED_RE: Lazy<Regex> = Lazy::new(|| {
         .expect("external embed regex")
 });
 
-static HTML_COMMENT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?is)<!--(.*?)-->").expect("html comment regex")
-});
+static HTML_COMMENT_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?is)<!--(.*?)-->").expect("html comment regex"));
 
 static HIDDEN_COMMENT_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(ignore|system|developer|secret|tool|bash|shell)\b")
@@ -466,7 +465,10 @@ fn scan_text_asset(kind: AssetKind, content: &str) -> AssetSecurityReport {
 
 fn contains_instruction_like_html_comment(content: &str) -> bool {
     HTML_COMMENT_RE.captures_iter(content).any(|captures| {
-        let comment_body = captures.get(1).map(|capture| capture.as_str()).unwrap_or_default();
+        let comment_body = captures
+            .get(1)
+            .map(|capture| capture.as_str())
+            .unwrap_or_default();
         HIDDEN_COMMENT_KEYWORD_RE.is_match(comment_body)
     })
 }

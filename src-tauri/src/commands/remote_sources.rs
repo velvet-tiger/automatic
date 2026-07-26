@@ -19,8 +19,7 @@ pub fn fetch_remote_source(
     });
 
     let manifest = remote_sources::fetch_source_manifest(&repo, pin, dir.as_deref())?;
-    serde_json::to_string(&manifest)
-        .map_err(|e| format!("Failed to serialize manifest: {}", e))
+    serde_json::to_string(&manifest).map_err(|e| format!("Failed to serialize manifest: {}", e))
 }
 
 /// Install resources from a previously fetched source.
@@ -44,33 +43,30 @@ pub fn install_remote_source(
         None => None,
     };
 
-    let result = remote_sources::install_source(&repo, &manifest, selected_resources, dir.as_deref())?;
-    serde_json::to_string(&result)
-        .map_err(|e| format!("Failed to serialize install result: {}", e))
+    let result =
+        remote_sources::install_source(&repo, &manifest, selected_resources, dir.as_deref())?;
+    serde_json::to_string(&result).map_err(|e| format!("Failed to serialize install result: {}", e))
 }
 
 /// Update a previously installed source (pull latest + re-install).
 #[tauri::command]
 pub fn update_remote_source(repo: String) -> Result<String, String> {
     let result = remote_sources::update_source(&repo)?;
-    serde_json::to_string(&result)
-        .map_err(|e| format!("Failed to serialize update result: {}", e))
+    serde_json::to_string(&result).map_err(|e| format!("Failed to serialize update result: {}", e))
 }
 
 /// Remove a source and all resources it provided.
 #[tauri::command]
 pub fn remove_remote_source(repo: String) -> Result<String, String> {
     let removed = remote_sources::remove_source(&repo)?;
-    serde_json::to_string(&removed)
-        .map_err(|e| format!("Failed to serialize result: {}", e))
+    serde_json::to_string(&removed).map_err(|e| format!("Failed to serialize result: {}", e))
 }
 
 /// List all registered remote sources.
 #[tauri::command]
 pub fn list_remote_sources() -> Result<String, String> {
     let sources = remote_sources::list_sources()?;
-    serde_json::to_string(&sources)
-        .map_err(|e| format!("Failed to serialize sources: {}", e))
+    serde_json::to_string(&sources).map_err(|e| format!("Failed to serialize sources: {}", e))
 }
 
 /// Check for conflicts before installing a source.
@@ -80,8 +76,7 @@ pub fn check_source_conflicts(repo: String, dir: Option<String>) -> Result<Strin
     let base_dir = remote_sources::resolve_base_dir(&repo, dir.as_deref())?;
     let manifest = remote_sources::parse_manifest(&base_dir)?;
     let conflicts = remote_sources::check_conflicts(&manifest)?;
-    serde_json::to_string(&conflicts)
-        .map_err(|e| format!("Failed to serialize conflicts: {}", e))
+    serde_json::to_string(&conflicts).map_err(|e| format!("Failed to serialize conflicts: {}", e))
 }
 
 /// Handle an automatic:// deep link URI.
@@ -89,6 +84,5 @@ pub fn check_source_conflicts(repo: String, dir: Option<String>) -> Result<Strin
 #[tauri::command]
 pub fn handle_install_uri(uri: String) -> Result<String, String> {
     let params = remote_sources::parse_install_uri(&uri)?;
-    serde_json::to_string(&params)
-        .map_err(|e| format!("Failed to serialize: {}", e))
+    serde_json::to_string(&params).map_err(|e| format!("Failed to serialize: {}", e))
 }

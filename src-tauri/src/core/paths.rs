@@ -199,9 +199,8 @@ fn merge_dir_into(src: &Path, dest: &Path) -> Result<(), String> {
         if src_path.is_dir() {
             copy_dir_recursive(&src_path, &dest_path)?;
         } else {
-            fs::copy(&src_path, &dest_path).map_err(|e| {
-                format!("Failed to copy {}: {}", src_path.display(), e)
-            })?;
+            fs::copy(&src_path, &dest_path)
+                .map_err(|e| format!("Failed to copy {}: {}", src_path.display(), e))?;
         }
     }
     Ok(())
@@ -279,7 +278,10 @@ mod migration_tests {
             assert!(names.contains(&"rules"));
 
             let library = get_library_dir().unwrap();
-            assert_eq!(read_file(&library.join("instructions/Brief.md")), "hello brief");
+            assert_eq!(
+                read_file(&library.join("instructions/Brief.md")),
+                "hello brief"
+            );
             assert_eq!(read_file(&library.join("templates/foo.json")), "{}");
             assert_eq!(read_file(&library.join("subagents/qa.md")), "qa agent");
             assert_eq!(read_file(&library.join("rules/style.md")), "rule");
@@ -299,8 +301,14 @@ mod migration_tests {
             let automatic = get_automatic_dir().unwrap();
             // The two distinct shapes — markdown vs JSON — must end up
             // in the correct new home and never trade places.
-            write_file(&automatic.join("templates/AgentBrief.md"), "INSTRUCTIONS_BODY");
-            write_file(&automatic.join("project_templates/starter.json"), "TEMPLATES_BODY");
+            write_file(
+                &automatic.join("templates/AgentBrief.md"),
+                "INSTRUCTIONS_BODY",
+            );
+            write_file(
+                &automatic.join("project_templates/starter.json"),
+                "TEMPLATES_BODY",
+            );
 
             migrate_top_level_to_library().unwrap();
 
@@ -323,10 +331,7 @@ mod migration_tests {
             let automatic = get_automatic_dir().unwrap();
             // Library already has rule_b.md; legacy has rule_a.md. Both
             // should survive, and the legacy dir must be removed.
-            write_file(
-                &automatic.join("library/rules/rule_b.md"),
-                "in library",
-            );
+            write_file(&automatic.join("library/rules/rule_b.md"), "in library");
             write_file(&automatic.join("rules/rule_a.md"), "in legacy");
 
             migrate_top_level_to_library().unwrap();

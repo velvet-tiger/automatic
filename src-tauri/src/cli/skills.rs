@@ -42,10 +42,7 @@ fn search(query: &str, opts: OutputOptions) -> Result<(), CliError> {
         .collect();
 
     if filtered.is_empty() && !opts.json {
-        return Err(CliError::NotFound(format!(
-            "no skills matched '{}'",
-            query
-        )));
+        return Err(CliError::NotFound(format!("no skills matched '{}'", query)));
     }
     emit(opts, &filtered, || human_list(&filtered)).map_err(CliError::Io)
 }

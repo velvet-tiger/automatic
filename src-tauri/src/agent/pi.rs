@@ -154,7 +154,11 @@ impl Agent for Pi {
         // Pi's user-level override location.  The shared
         // `~/.config/mcp/mcp.json` is intentionally not read here — it is the
         // cross-tool shared config and another agent may already own it.
-        discover_mcp_servers_from_json(&home.join(".pi").join("agent").join("mcp.json"), "mcpServers", |v| v)
+        discover_mcp_servers_from_json(
+            &home.join(".pi").join("agent").join("mcp.json"),
+            "mcpServers",
+            |v| v,
+        )
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────
@@ -207,8 +211,7 @@ mod tests {
         let result = Pi.write_mcp_config(dir.path(), &servers).unwrap();
         assert!(result.contains(".pi/mcp.json") || result.contains(".pi\\mcp.json"));
 
-        let written =
-            fs::read_to_string(dir.path().join(".pi").join("mcp.json")).unwrap();
+        let written = fs::read_to_string(dir.path().join(".pi").join("mcp.json")).unwrap();
         let parsed: Value = serde_json::from_str(&written).unwrap();
         let server = &parsed["mcpServers"]["github"];
 
@@ -240,8 +243,7 @@ mod tests {
         );
 
         Pi.write_mcp_config(dir.path(), &servers).unwrap();
-        let written =
-            fs::read_to_string(dir.path().join(".pi").join("mcp.json")).unwrap();
+        let written = fs::read_to_string(dir.path().join(".pi").join("mcp.json")).unwrap();
         let parsed: Value = serde_json::from_str(&written).unwrap();
         let server = &parsed["mcpServers"]["remote"];
 
@@ -281,10 +283,7 @@ mod tests {
         fs::write(&agents_md, "# shared\n").unwrap();
 
         let removed = Pi.cleanup_mcp_config(dir.path());
-        assert!(
-            removed.is_empty(),
-            "Pi must not touch AGENTS.md on cleanup"
-        );
+        assert!(removed.is_empty(), "Pi must not touch AGENTS.md on cleanup");
         assert!(agents_md.exists());
     }
 
@@ -308,7 +307,10 @@ mod tests {
         assert!(caps.agents, "Pi supports sub-agents via pi-subagents");
         assert!(caps.skills);
         assert!(caps.instructions);
-        assert!(!caps.commands, "Pi commands (prompt templates) not synced yet");
+        assert!(
+            !caps.commands,
+            "Pi commands (prompt templates) not synced yet"
+        );
         assert!(!caps.hooks, "Pi has no hook concept");
     }
 
@@ -332,13 +334,10 @@ mod tests {
         let skills = vec![("my-skill".to_string(), "# My Skill\n".to_string())];
         let selected = vec!["my-skill".to_string()];
 
-        let written = Pi
-            .sync_skills(dir.path(), &skills, &selected, &[])
-            .unwrap();
+        let written = Pi.sync_skills(dir.path(), &skills, &selected, &[]).unwrap();
         assert_eq!(written.len(), 1);
 
-        let content =
-            fs::read_to_string(dir.path().join(".pi/skills/my-skill/SKILL.md")).unwrap();
+        let content = fs::read_to_string(dir.path().join(".pi/skills/my-skill/SKILL.md")).unwrap();
         assert_eq!(content, "# My Skill\n");
     }
 }

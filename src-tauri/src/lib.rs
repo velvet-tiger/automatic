@@ -65,9 +65,7 @@ pub fn run() {
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
                         let uri = url.as_str().to_string();
-                        if let Ok(params) =
-                            core::remote_sources::parse_install_uri(&uri)
-                        {
+                        if let Ok(params) = core::remote_sources::parse_install_uri(&uri) {
                             let _ = handle.emit("deep-link://install", &params);
                         } else {
                             eprintln!("[automatic] ignoring unrecognised deep link: {}", uri);

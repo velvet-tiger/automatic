@@ -268,7 +268,12 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         if let Some(agent_instance) = agent::from_id(agent_id) {
             let mut files: Vec<DriftedFile> = Vec::new();
 
-            collect_mcp_drift(agent_instance, &effective_dir, &selected_servers, &mut files);
+            collect_mcp_drift(
+                agent_instance,
+                &effective_dir,
+                &selected_servers,
+                &mut files,
+            );
             collect_skills_drift(
                 agent_instance,
                 &effective_dir,
