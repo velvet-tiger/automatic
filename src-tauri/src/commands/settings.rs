@@ -20,7 +20,12 @@ pub fn reset_settings() -> Result<(), String> {
 
 #[tauri::command]
 pub fn reinstall_defaults() -> Result<(), String> {
-    core::reinstall_defaults()
+    core::reinstall_defaults()?;
+    // Bundled skills/rules/instructions/subagents were just force-overwritten
+    // in the library. Propagate them to every configured project so the update
+    // never surfaces as drift.
+    crate::commands::projects::resync_all_projects();
+    Ok(())
 }
 
 #[tauri::command]

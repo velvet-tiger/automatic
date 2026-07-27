@@ -115,6 +115,21 @@ pub fn run_startup_housekeeping() {
     if let Err(e) = core::install_default_subagents() {
         eprintln!("[automatic] sub-agent install error: {}", e);
     }
+
+    // On an actual version upgrade the bundled skills, rules,
+    // sub-agents and instructions in the library have just been
+    // overwritten with new content. Re-sync every project *immediately*
+    // after those writes — before MCP/plugin housekeeping — so the GUI's
+    // early drift checks never see a window where the library is current
+    // but project copies are still stale. Gated on `force_reinstall` so
+    // this only runs once per upgrade.
+    if force_reinstall {
+        eprintln!(
+            "[automatic] bundled assets refreshed; re-syncing all projects to propagate updates"
+        );
+        commands::resync_all_projects();
+    }
+
     match core::install_plugin_marketplace() {
         Ok(msg) => eprintln!("[automatic] plugin startup: {}", msg),
         Err(e) => eprintln!("[automatic] plugin startup error: {}", e),
@@ -152,20 +167,4 @@ pub fn run_startup_housekeeping() {
     }
     // Reconcile tool/skill/rule registries with current plugin states.
     core::reconcile_plugin_resources_on_startup();
-
-    // On an actual version upgrade the bundled skills, rules,
-    // sub-agents and instructions in the library have just been
-    // overwritten with new content. Re-sync every project so any
-    // project that references one of these picks up the new
-    // library copy on disk. Without this the bundled assets in
-    // the library are current but the project copies remain
-    // stale, defeating the core invariant Automatic exists to
-    // enforce. Gated on `force_reinstall` so this only runs once
-    // per upgrade.
-    if force_reinstall {
-        eprintln!(
-            "[automatic] bundled assets refreshed; re-syncing all projects to propagate updates"
-        );
-        commands::resync_all_projects();
-    }
 }
