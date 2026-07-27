@@ -33,8 +33,21 @@
 //! (dev: `~/.automatic-dev/features.db`).
 
 use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
+
+/// Deserialize `Option<Option<T>>` so JSON `null` means "clear" (`Some(None)`),
+/// an omitted field means "leave unchanged" (`None`), and a value means "set".
+///
+/// Plain `Option<Option<T>>` cannot distinguish omitted from null — serde maps
+/// both to outer `None`, which is why clearing assignee/effort in the UI was a no-op.
+fn deserialize_double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Some(Option::deserialize(deserializer)?))
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -195,10 +208,14 @@ pub struct FeaturePatch {
     pub state: Option<String>,
     pub priority: Option<String>,
     /// `Some(None)` explicitly clears the assignee field.
+    /// JSON `null` clears; omit the field to leave unchanged.
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub assignee: Option<Option<String>>,
     pub tags: Option<Vec<String>>,
     pub linked_files: Option<Vec<String>>,
     /// `Some(None)` explicitly clears the effort field.
+    /// JSON `null` clears; omit the field to leave unchanged.
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub effort: Option<Option<String>>,
     /// Archive or unarchive. `Some(true)` archives; `Some(false)` unarchives.
     pub archived: Option<bool>,
@@ -1096,5 +1113,55 @@ mod tests {
         )
         .expect_err("invalid state should fail");
         assert!(err.contains("Invalid feature state"));
+    }
+
+    #[test]
+    fn feature_patch_null_assignee_deserializes_as_clear() {
+        let patch: FeaturePatch =
+            serde_json::from_str(r#"{"assignee":null}"#).expect("deserialize");
+        assert_eq!(patch.assignee, Some(None));
+        assert_eq!(patch.effort, None);
+        assert_eq!(patch.title, None);
+    }
+
+    #[test]
+    fn feature_patch_omitted_assignee_deserializes_as_unchanged() {
+        let patch: FeaturePatch = serde_json::from_str(r#"{"title":"x"}"#).expect("deserialize");
+        assert_eq!(patch.assignee, None);
+        assert_eq!(patch.effort, None);
+        assert_eq!(patch.title.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn feature_patch_null_effort_deserializes_as_clear() {
+        let patch: FeaturePatch = serde_json::from_str(r#"{"effort":null}"#).expect("deserialize");
+        assert_eq!(patch.effort, Some(None));
+        assert_eq!(patch.assignee, None);
+    }
+
+    #[test]
+    fn update_feature_clears_assignee_when_patch_sends_null() {
+        cleanup_test_features();
+        let feature = create_feature(
+            TEST_PROJECT,
+            "clear assignee feature",
+            "",
+            "medium",
+            Some("cursor"),
+            &[],
+            &[],
+            None,
+            Some("test"),
+            Some("todo"),
+        )
+        .expect("create should succeed");
+        assert_eq!(feature.assignee.as_deref(), Some("cursor"));
+
+        let patch: FeaturePatch =
+            serde_json::from_str(r#"{"assignee":null}"#).expect("deserialize clear patch");
+        let updated = update_feature(TEST_PROJECT, &feature.id, patch).expect("update");
+        assert_eq!(updated.assignee, None);
+
+        delete_feature(TEST_PROJECT, &feature.id).expect("cleanup");
     }
 }
