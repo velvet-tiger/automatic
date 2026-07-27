@@ -110,9 +110,14 @@ pub fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn save_project(name: &str, data: &str) -> Result<(), String> {
+pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<(), String> {
     let incoming: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    // Add Project wizard: refuse to overwrite an existing project/directory.
+    if creating.unwrap_or(false) {
+        core::assert_can_create_project(name, &incoming.directory)?;
+    }
 
     // No directory configured yet -- just persist to the registry and return.
     // There is nothing to sync until the user has pointed us at a real directory.
@@ -1642,6 +1647,83 @@ mod propagation_tests {
                 !dir_b.join(".claude").exists(),
                 "non-referencing project should NOT have been synced"
             );
+        });
+    }
+
+    #[test]
+    fn save_project_creating_true_rejects_existing_and_preserves_data() {
+        with_temp_home(|_| {
+            let project_dir = tempdir().expect("project dir");
+            let dir = project_dir.path().display().to_string();
+            let existing = core::Project {
+                name: "alpha".to_string(),
+                directory: dir.clone(),
+                skills: vec!["keep-me".to_string()],
+                agents: vec!["claude".to_string()],
+                ..Default::default()
+            };
+            let existing_json = serde_json::to_string_pretty(&existing).expect("json");
+            core::save_project("alpha", &existing_json).expect("seed");
+
+            let stub = core::Project {
+                name: "alpha".to_string(),
+                directory: dir,
+                ..Default::default()
+            };
+            let stub_json = serde_json::to_string_pretty(&stub).expect("stub json");
+
+            let err = save_project("alpha", &stub_json, Some(true))
+                .expect_err("creating over existing project must fail");
+            assert!(
+                err.contains("already exists"),
+                "unexpected error: {err}"
+            );
+
+            let raw = core::read_project("alpha").expect("read");
+            let loaded: core::Project = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(
+                loaded.skills,
+                vec!["keep-me".to_string()],
+                "failed create must not overwrite existing project data"
+            );
+        });
+    }
+
+    #[test]
+    fn save_project_without_creating_flag_still_updates_existing() {
+        with_temp_home(|_| {
+            let project_dir = tempdir().expect("project dir");
+            let dir = project_dir.path().display().to_string();
+            let existing = core::Project {
+                name: "alpha".to_string(),
+                directory: dir.clone(),
+                skills: vec!["old".to_string()],
+                agents: vec!["claude".to_string()],
+                ..Default::default()
+            };
+            core::save_project(
+                "alpha",
+                &serde_json::to_string_pretty(&existing).expect("json"),
+            )
+            .expect("seed");
+
+            let updated = core::Project {
+                name: "alpha".to_string(),
+                directory: dir,
+                skills: vec!["new".to_string()],
+                agents: vec!["claude".to_string()],
+                ..Default::default()
+            };
+            save_project(
+                "alpha",
+                &serde_json::to_string_pretty(&updated).expect("json"),
+                None,
+            )
+            .expect("normal save should update");
+
+            let raw = core::read_project("alpha").expect("read");
+            let loaded: core::Project = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(loaded.skills, vec!["new".to_string()]);
         });
     }
 }

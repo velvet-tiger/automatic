@@ -3001,10 +3001,16 @@ export function ProjectEditor({
                               setWizardDiscovering(true);
                               setError(null);
                               try {
-                                // Save minimal stub so autodetect can read it back
+                                // Save minimal stub so autodetect can read it back.
+                                // `creating: true` refuses to overwrite an existing
+                                // project name or directory already in the registry.
                                 const stub = { ...emptyProject(name), directory: dir, name };
                                 if (userId && !stub.created_by) stub.created_by = userId;
-                                await invoke("save_project", { name, data: JSON.stringify(stub, null, 2) });
+                                await invoke("save_project", {
+                                  name,
+                                  data: JSON.stringify(stub, null, 2),
+                                  creating: true,
+                                });
                                 // Track stub name so cancelCreate can clean it up if the user navigates away
                                 wizardStubName.current = name;
                                 // Run read-only autodetection
@@ -3042,8 +3048,13 @@ export function ProjectEditor({
                                 });
                                 setWizardDiscoveredAgents(detected.agents);
                                 setWizardStep(2);
-                              } catch (err: any) {
-                                setError(`Autodetect failed: ${err}`);
+                              } catch (err: unknown) {
+                                const msg = err instanceof Error ? err.message : String(err);
+                                const isDuplicate =
+                                  msg.includes("already exists")
+                                  || msg.includes("already registered")
+                                  || msg.includes("already has an Automatic project");
+                                setError(isDuplicate ? msg : `Autodetect failed: ${msg}`);
                               } finally {
                                 setWizardDiscovering(false);
                               }

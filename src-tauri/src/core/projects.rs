@@ -349,6 +349,97 @@ fn extract_frontmatter_name(content: &str) -> Option<String> {
     None
 }
 
+/// Compare two directory paths for equality, preferring canonical forms when
+/// both paths exist on disk so symlinks and trailing-slash variants match.
+fn directories_equivalent(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let path_a = PathBuf::from(a);
+    let path_b = PathBuf::from(b);
+    match (path_a.canonicalize(), path_b.canonicalize()) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => {
+            let na = a.trim_end_matches(['/', '\\']);
+            let nb = b.trim_end_matches(['/', '\\']);
+            na == nb
+        }
+    }
+}
+
+/// Read only the `directory` field from a registry entry, without loading or
+/// enriching the full project config (avoids write-back side effects).
+fn registry_directory_for(name: &str) -> Result<Option<String>, String> {
+    let projects_dir = get_projects_dir()?;
+    let registry_path = projects_dir.join(format!("{}.json", name));
+    if !registry_path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&registry_path).map_err(|e| e.to_string())?;
+    let value: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project registry data: {}", e))?;
+    Ok(value
+        .get("directory")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty()))
+}
+
+/// Return the registry name of the project that owns `directory`, if any.
+pub fn find_project_by_directory(directory: &str) -> Result<Option<String>, String> {
+    if directory.is_empty() {
+        return Ok(None);
+    }
+    for name in list_projects()? {
+        let Some(existing_dir) = registry_directory_for(&name)? else {
+            continue;
+        };
+        if directories_equivalent(&existing_dir, directory) {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
+}
+
+/// Refuse to create a project that would overwrite an existing registry entry
+/// or on-disk Automatic config. Used by the Add Project wizard.
+pub fn assert_can_create_project(name: &str, directory: &str) -> Result<(), String> {
+    if !is_valid_name(name) {
+        return Err("Invalid project name".into());
+    }
+
+    let projects_dir = get_projects_dir()?;
+    let registry_path = projects_dir.join(format!("{}.json", name));
+    if registry_path.exists() {
+        return Err(format!(
+            "A project named '{}' already exists. Open it from the project list instead of creating it again.",
+            name
+        ));
+    }
+
+    if directory.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(existing) = find_project_by_directory(directory)? {
+        return Err(format!(
+            "This directory is already registered as project '{}'. Open that project instead of creating it again.",
+            existing
+        ));
+    }
+
+    let config_path = project_config_path(directory);
+    if config_path.exists() {
+        return Err(
+            "This directory already has an Automatic project configuration. \
+             Open the existing project from the list, or remove `.automatic/project.json` if you intend to start over."
+                .into(),
+        );
+    }
+
+    Ok(())
+}
+
 pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid project name".into());
@@ -1013,6 +1104,95 @@ mod tests {
                 vec!["Foo".to_string()],
                 "disabled list is de-duplicated the same way"
             );
+        });
+    }
+
+    // ── create guards (Add Project must not overwrite) ───────────────────
+
+    #[test]
+    fn assert_can_create_rejects_existing_name() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let data = minimal_project("alpha");
+            save_project("alpha", &data).expect("save");
+
+            let err = assert_can_create_project("alpha", "")
+                .expect_err("duplicate name should be rejected");
+            assert!(
+                err.contains("already exists"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn assert_can_create_rejects_directory_already_registered() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project_dir = home.path().join("workspace");
+            fs::create_dir_all(&project_dir).expect("mkdir");
+            let dir = project_dir.to_str().unwrap().to_string();
+
+            let project = Project {
+                name: "alpha".to_string(),
+                directory: dir.clone(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                ..Default::default()
+            };
+            let data = serde_json::to_string(&project).expect("serialize");
+            save_project("alpha", &data).expect("save");
+
+            let err = assert_can_create_project("beta", &dir)
+                .expect_err("directory claimed by another project should be rejected");
+            assert!(
+                err.contains("already registered as project 'alpha'"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn assert_can_create_rejects_existing_on_disk_config() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project_dir = home.path().join("orphan-workspace");
+            let automatic_dir = project_dir.join(".automatic");
+            fs::create_dir_all(&automatic_dir).expect("mkdir");
+            fs::write(
+                automatic_dir.join("project.json"),
+                r#"{"name":"orphan","directory":"x"}"#,
+            )
+            .expect("write config");
+            let dir = project_dir.to_str().unwrap().to_string();
+
+            let err = assert_can_create_project("fresh", &dir)
+                .expect_err("on-disk project.json should be rejected");
+            assert!(
+                err.contains("already has an Automatic project"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn assert_can_create_allows_new_name_and_directory() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project_dir = home.path().join("new-workspace");
+            fs::create_dir_all(&project_dir).expect("mkdir");
+            let dir = project_dir.to_str().unwrap().to_string();
+
+            assert_can_create_project("brand-new", &dir)
+                .expect("new name and empty directory should be allowed");
         });
     }
 }
