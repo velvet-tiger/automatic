@@ -297,6 +297,8 @@ pub struct CreateFeatureParams {
     pub title: String,
     /// Markdown description of the work to be done
     pub description: Option<String>,
+    /// Initial state: backlog (default), todo, in_progress, review, complete, or cancelled
+    pub state: Option<String>,
     /// Priority: low, medium (default), or high
     pub priority: Option<String>,
     /// Agent id or name to assign this feature to
@@ -1826,7 +1828,7 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_create_feature",
-        description = "Create a new feature in a project's backlog. Returns the created feature including its id, which you will need for subsequent calls."
+        description = "Create a new feature in a project. Defaults to backlog; pass state to create in another column. Returns the created feature including its id, which you will need for subsequent calls."
     )]
     async fn create_feature(
         &self,
@@ -1846,11 +1848,12 @@ impl AutomaticMcpServer {
             p.linked_files.as_deref().unwrap_or(&[]),
             p.effort.as_deref(),
             p.created_by.as_deref(),
+            p.state.as_deref(),
         ) {
             Ok(feature) => {
                 let output = format!(
-                    "Feature created successfully.\n\n**ID:** `{}`\n**Title:** {}\n**State:** backlog\n**Priority:** {}\n",
-                    feature.id, feature.title, feature.priority
+                    "Feature created successfully.\n\n**ID:** `{}`\n**Title:** {}\n**State:** {}\n**Priority:** {}\n",
+                    feature.id, feature.title, feature.state, feature.priority
                 );
                 Ok(CallToolResult::success(vec![Content::text(output)]))
             }

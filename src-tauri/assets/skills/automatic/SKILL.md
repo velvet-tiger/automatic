@@ -152,7 +152,7 @@ Automatic provides project-scoped feature tracking. Features represent discrete 
 
 - **`automatic_list_features`**: List active (non-archived) features for a project. Optionally pass `state` to filter (e.g. `"todo"`). Pass `include_archived: true` to list archived features instead. Returns feature titles, IDs, priorities, efforts, and assignees grouped by state.
 - **`automatic_get_feature`**: Get full detail for a specific feature by `feature_id`, including description, archived status, and all update history. Works for both active and archived features.
-- **`automatic_create_feature`**: Create a new feature in the backlog. Requires `project` and `title`. Optional: `description`, `priority`, `assignee`, `tags`, `linked_files`, `effort`, `created_by`. Returns the created feature including its `id`.
+- **`automatic_create_feature`**: Create a new feature. Requires `project` and `title`. Optional: `description`, `state` (default `backlog`), `priority`, `assignee`, `tags`, `linked_files`, `effort`, `created_by`. Returns the created feature including its `id`.
 - **`automatic_update_feature`**: Update feature metadata fields (title, description, priority, assignee, tags, linked_files, effort). Omit any field to leave it unchanged.
 - **`automatic_set_feature_state`**: Change a feature's lifecycle state. Valid states: `backlog`, `todo`, `in_progress`, `review`, `complete`, `cancelled`.
 - **`automatic_archive_feature`**: Archive a feature — hides it from the Kanban board and from default list results. Preserves the feature's `state` for restoration.

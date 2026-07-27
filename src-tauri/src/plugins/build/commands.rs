@@ -39,6 +39,7 @@ pub fn create_feature(
     linked_files: Option<Vec<String>>,
     effort: Option<&str>,
     created_by: Option<&str>,
+    state: Option<&str>,
 ) -> Result<Feature, String> {
     crate::plugins::build::features::create_feature(
         project,
@@ -50,6 +51,7 @@ pub fn create_feature(
         linked_files.as_deref().unwrap_or(&[]),
         effort,
         created_by,
+        state,
     )
 }
 

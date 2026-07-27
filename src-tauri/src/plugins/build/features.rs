@@ -456,7 +456,11 @@ pub fn get_feature_with_updates(
     Ok(FeatureWithUpdates { feature, updates })
 }
 
-/// Create a new feature in the project's backlog.
+/// Create a new feature.
+///
+/// `state` defaults to `"backlog"` when `None` or empty. The chosen state is
+/// used for both the row and column position so create-from-UI respects the
+/// State selector in the Build tool.
 pub fn create_feature(
     project: &str,
     title: &str,
@@ -467,6 +471,7 @@ pub fn create_feature(
     linked_files: &[String],
     effort: Option<&str>,
     created_by: Option<&str>,
+    state: Option<&str>,
 ) -> Result<Feature, String> {
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
@@ -479,10 +484,18 @@ pub fn create_feature(
         EffortSize::from_str(e)?;
     }
 
+    let initial_state = match state.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => {
+            FeatureState::from_str(s)?;
+            s
+        }
+        None => FeatureState::Backlog.as_str(),
+    };
+
     let conn = open_conn()?;
     let id = new_id();
     let ts = now();
-    let position = next_position(&conn, project, "backlog")?;
+    let position = next_position(&conn, project, initial_state)?;
     let tags_json = encode_json_array(tags);
     let files_json = encode_json_array(linked_files);
 
@@ -490,12 +503,13 @@ pub fn create_feature(
         "INSERT INTO features
             (id, project, title, description, state, priority, assignee,
              tags, linked_files, effort, created_at, updated_at, created_by, position, archived)
-         VALUES (?1, ?2, ?3, ?4, 'backlog', ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?12, 0)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13, 0)",
         params![
             id,
             project,
             title.trim(),
             description,
+            initial_state,
             priority,
             assignee,
             tags_json,
@@ -1005,4 +1019,82 @@ pub fn format_feature_detail_markdown(fw: &FeatureWithUpdates) -> String {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_PROJECT: &str = "_test_feature_create_state";
+
+    fn cleanup_test_features() {
+        if let Ok(features) = list_features(TEST_PROJECT, None, true) {
+            for f in features {
+                let _ = delete_feature(TEST_PROJECT, &f.id);
+            }
+        }
+        if let Ok(features) = list_features(TEST_PROJECT, None, false) {
+            for f in features {
+                let _ = delete_feature(TEST_PROJECT, &f.id);
+            }
+        }
+    }
+
+    #[test]
+    fn create_feature_defaults_to_backlog() {
+        cleanup_test_features();
+        let feature = create_feature(
+            TEST_PROJECT,
+            "default state feature",
+            "",
+            "medium",
+            None,
+            &[],
+            &[],
+            None,
+            Some("test"),
+            None,
+        )
+        .expect("create should succeed");
+        assert_eq!(feature.state, "backlog");
+        delete_feature(TEST_PROJECT, &feature.id).expect("cleanup");
+    }
+
+    #[test]
+    fn create_feature_respects_requested_state() {
+        cleanup_test_features();
+        let feature = create_feature(
+            TEST_PROJECT,
+            "todo state feature",
+            "",
+            "medium",
+            None,
+            &[],
+            &[],
+            None,
+            Some("test"),
+            Some("todo"),
+        )
+        .expect("create should succeed");
+        assert_eq!(feature.state, "todo");
+        delete_feature(TEST_PROJECT, &feature.id).expect("cleanup");
+    }
+
+    #[test]
+    fn create_feature_rejects_invalid_state() {
+        let err = create_feature(
+            TEST_PROJECT,
+            "bad state feature",
+            "",
+            "medium",
+            None,
+            &[],
+            &[],
+            None,
+            Some("test"),
+            Some("not-a-state"),
+        )
+        .expect_err("invalid state should fail");
+        assert!(err.contains("Invalid feature state"));
+    }
 }

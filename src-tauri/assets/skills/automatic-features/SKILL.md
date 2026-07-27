@@ -66,12 +66,13 @@ The response includes an `Archived` field so you know immediately whether the fe
 
 ### `automatic_create_feature`
 
-Create a new feature in the project backlog.
+Create a new feature. Defaults to the project backlog; pass `state` to create in another column.
 
 ```
 project:      string         — project name (required)
 title:        string         — short title (required)
 description:  string (opt)   — markdown specification
+state:        string (opt)   — backlog | todo | in_progress | review | complete | cancelled (default: backlog)
 priority:     string (opt)   — low | medium | high (default: medium)
 assignee:     string (opt)   — agent id or name
 tags:         string[] (opt) — searchable labels
