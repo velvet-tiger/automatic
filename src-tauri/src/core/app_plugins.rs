@@ -211,6 +211,8 @@ fn write_state(state: &PluginState) -> Result<(), String> {
 ///
 /// - Enabled plugin with a tool declaration → write the tool to the registry.
 /// - Disabled plugin with a tool declaration → remove the tool from the registry.
+/// - Tool whose `plugin_id` is no longer in the bundled plugin set → remove it
+///   (covers plugins dropped from a release, e.g. Spec Kitty).
 ///
 /// This is idempotent: re-running it with the same state produces no net change.
 fn sync_plugin_tools(manifests: &[PluginManifest], state: &PluginState) {
@@ -245,6 +247,141 @@ fn sync_plugin_tools(manifests: &[PluginManifest], state: &PluginState) {
             let _ = delete_tool(&decl.name);
         }
     }
+
+    remove_orphaned_plugin_tools(manifests);
+}
+
+/// Delete tool definitions whose `plugin_id` no longer maps to a bundled
+/// plugin, then scrub those names from every project's `tools` list.
+///
+/// When a plugin is removed from `bundled_plugins()` (as Spec Kitty was),
+/// `sync_plugin_tools` no longer sees it, so the on-disk tool file and any
+/// project references would otherwise linger forever.  Manual tools
+/// (`plugin_id: None`) are never touched.
+fn remove_orphaned_plugin_tools(manifests: &[PluginManifest]) {
+    let known_plugin_ids: std::collections::HashSet<&str> =
+        manifests.iter().map(|m| m.id.as_str()).collect();
+
+    let names = match super::tools::list_tools() {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!(
+                "[automatic] failed to list tools while removing orphaned plugin tools: {}",
+                e
+            );
+            return;
+        }
+    };
+
+    let mut removed: Vec<String> = Vec::new();
+    for name in names {
+        let definition = match read_tool_definition(&name) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let Some(ref plugin_id) = definition.plugin_id else {
+            continue;
+        };
+        if known_plugin_ids.contains(plugin_id.as_str()) {
+            continue;
+        }
+        if let Err(e) = delete_tool(&name) {
+            eprintln!(
+                "[automatic] failed to remove orphaned plugin tool '{}' (plugin '{}'): {}",
+                name, plugin_id, e
+            );
+            continue;
+        }
+        eprintln!(
+            "[automatic] removed orphaned plugin tool '{}' (plugin '{}' no longer bundled)",
+            name, plugin_id
+        );
+        removed.push(name);
+    }
+
+    if !removed.is_empty() {
+        scrub_tools_from_projects(&removed);
+    }
+}
+
+/// Drop each of `tool_names` from every project's `tools` array.
+///
+/// Mirrors the rule-migration scrub: prefer `.automatic/project.json` when a
+/// project directory is set, otherwise update the registry entry directly.
+fn scrub_tools_from_projects(tool_names: &[String]) {
+    let projects_dir = match super::paths::get_projects_dir() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    if !projects_dir.exists() {
+        return;
+    }
+    let entries = match fs::read_dir(&projects_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let registry_path = entry.path();
+        if !registry_path.is_file()
+            || registry_path.extension().and_then(|e| e.to_str()) != Some("json")
+        {
+            continue;
+        }
+        let raw = match fs::read_to_string(&registry_path) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let mut value: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let project_dir = value
+            .get("directory")
+            .and_then(|d| d.as_str())
+            .filter(|d| !d.is_empty())
+            .map(|d| d.to_string());
+
+        if let Some(ref dir) = project_dir {
+            let config_path = std::path::PathBuf::from(dir)
+                .join(".automatic")
+                .join("project.json");
+            if config_path.exists() {
+                if let Ok(config_raw) = fs::read_to_string(&config_path) {
+                    if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&config_raw) {
+                        if remove_tools_from_value(&mut config, tool_names) {
+                            if let Ok(pretty) = serde_json::to_string_pretty(&config) {
+                                let _ = fs::write(&config_path, pretty);
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+        }
+
+        if remove_tools_from_value(&mut value, tool_names) {
+            if let Ok(pretty) = serde_json::to_string_pretty(&value) {
+                let _ = fs::write(&registry_path, pretty);
+            }
+        }
+    }
+}
+
+/// Remove each of `tool_names` from a project's `tools` array.
+/// Returns `true` if the array shrank.
+fn remove_tools_from_value(project: &mut serde_json::Value, tool_names: &[String]) -> bool {
+    let Some(arr) = project.get_mut("tools").and_then(|v| v.as_array_mut()) else {
+        return false;
+    };
+    let before = arr.len();
+    arr.retain(|e| {
+        e.as_str()
+            .map(|name| !tool_names.iter().any(|t| t == name))
+            .unwrap_or(true)
+    });
+    arr.len() != before
 }
 
 // ── Skill sync ──────────────────────────────────────────────────────────
@@ -599,7 +736,8 @@ pub fn is_app_plugin_enabled(id: &str) -> Result<bool, String> {
 
 /// Called once on app startup to reconcile the tools registry with the current
 /// plugin states.  Ensures that a tool is present iff its declaring plugin is
-/// enabled, even across app restarts.
+/// enabled, even across app restarts.  Also removes tools whose declaring
+/// plugin is no longer bundled.
 pub fn reconcile_plugin_resources_on_startup() {
     match read_state() {
         Ok(state) => {
@@ -614,5 +752,153 @@ pub fn reconcile_plugin_resources_on_startup() {
                 e
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::paths::{get_library_dir, get_projects_dir, with_test_home};
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    fn with_temp_home(test: impl FnOnce(&Path)) {
+        let tmp = TempDir::new().expect("tempdir");
+        with_test_home(tmp.path().to_path_buf(), || test(tmp.path()));
+    }
+
+    fn write_tool_file(tools_dir: &Path, name: &str, plugin_id: Option<&str>) {
+        fs::create_dir_all(tools_dir).expect("tools dir");
+        let mut def = serde_json::json!({
+            "name": name,
+            "display_name": name,
+            "description": "test tool",
+            "url": "https://example.com",
+            "kind": "other",
+            "created_at": "2026-01-01T00:00:00Z",
+        });
+        if let Some(pid) = plugin_id {
+            def["plugin_id"] = serde_json::Value::String(pid.to_string());
+        }
+        fs::write(
+            tools_dir.join(format!("{}.json", name)),
+            serde_json::to_string_pretty(&def).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn known_manifest(id: &str) -> PluginManifest {
+        PluginManifest {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: "test".into(),
+            version: "1.0.0".into(),
+            category: PluginCategory::Core,
+            enabled_by_default: true,
+            tool: None,
+            skills: vec![],
+            rules: vec![],
+        }
+    }
+
+    #[test]
+    fn remove_tools_from_value_drops_matching_names() {
+        let mut project = serde_json::json!({
+            "tools": ["build", "spec-kitty", "common-docs"]
+        });
+        let changed = remove_tools_from_value(
+            &mut project,
+            &["spec-kitty".to_string()],
+        );
+        assert!(changed);
+        assert_eq!(
+            project["tools"],
+            serde_json::json!(["build", "common-docs"])
+        );
+    }
+
+    #[test]
+    fn remove_tools_from_value_noop_when_absent() {
+        let mut project = serde_json::json!({ "tools": ["build"] });
+        let changed = remove_tools_from_value(
+            &mut project,
+            &["spec-kitty".to_string()],
+        );
+        assert!(!changed);
+        assert_eq!(project["tools"], serde_json::json!(["build"]));
+    }
+
+    #[test]
+    fn orphan_cleanup_deletes_unbundled_plugin_tool_and_scrubs_project() {
+        with_temp_home(|_home| {
+            let tools_dir = get_library_dir().unwrap().join("tools");
+            write_tool_file(&tools_dir, "build", Some("build"));
+            write_tool_file(&tools_dir, "spec-kitty", Some("spec-kitty"));
+            write_tool_file(&tools_dir, "manual-tool", None);
+
+            let projects_dir = get_projects_dir().unwrap();
+            fs::create_dir_all(&projects_dir).unwrap();
+            let proj_tmp = TempDir::new().unwrap();
+            let proj_dir = proj_tmp.path().to_path_buf();
+
+            fs::write(
+                projects_dir.join("demo.json"),
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "name": "demo",
+                    "directory": proj_dir.to_string_lossy(),
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+
+            let config_dir = proj_dir.join(".automatic");
+            fs::create_dir_all(&config_dir).unwrap();
+            fs::write(
+                config_dir.join("project.json"),
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "name": "demo",
+                    "directory": proj_dir.to_string_lossy(),
+                    "tools": ["build", "spec-kitty"]
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+
+            // Only "build" is still bundled — "spec-kitty" is orphaned.
+            remove_orphaned_plugin_tools(&[known_manifest("build")]);
+
+            assert!(tools_dir.join("build.json").exists());
+            assert!(
+                !tools_dir.join("spec-kitty.json").exists(),
+                "orphaned plugin tool should be deleted"
+            );
+            assert!(
+                tools_dir.join("manual-tool.json").exists(),
+                "manual tools must not be deleted"
+            );
+
+            let config: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(config_dir.join("project.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                config["tools"],
+                serde_json::json!(["build"]),
+                "project tools should drop the orphaned name"
+            );
+        });
+    }
+
+    #[test]
+    fn orphan_cleanup_is_idempotent_when_nothing_orphaned() {
+        with_temp_home(|_home| {
+            let tools_dir = get_library_dir().unwrap().join("tools");
+            write_tool_file(&tools_dir, "build", Some("build"));
+
+            remove_orphaned_plugin_tools(&[known_manifest("build")]);
+            remove_orphaned_plugin_tools(&[known_manifest("build")]);
+
+            assert!(tools_dir.join("build.json").exists());
+        });
     }
 }
