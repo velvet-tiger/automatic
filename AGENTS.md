@@ -71,7 +71,8 @@ npm run tauri [cmd]     # Direct Tauri CLI access
 - `src-tauri/assets/skills/` — Bundled skill definitions (automatic-*, laravel-specialist, php-pro, etc.)
 - `src-tauri/assets/rules/` — Bundled rule templates
 - `src-tauri/assets/subagents/` — Agent-specific templates and config structures
-- `src-tauri/assets/templates/` — Markdown templates (Agent Project Brief, Session Context)
+- `src-tauri/assets/instructions/` — Markdown instruction templates (Agent Project Brief, Session Context)
+- `src-tauri/assets/discover/project-templates/` — Bundled project-config templates (JSON, surfaced as "Templates" in the Discover UI)
 - `src-tauri/languages/` — Language-specific module definitions (.mod files)
 - `src-tauri/assets/discover/featured-mcp-servers.json` — Curated MCP server registry
 - `src-tauri/collections.json` — Skill/server collection definitions
@@ -172,67 +173,6 @@ Use the memory tools to persist and retrieve project-specific context across ses
 
 Before finishing a session, call `automatic_store_memory` to capture any new project-specific rules, pitfalls, setup steps, or decisions discovered during the session. This prevents knowledge loss across sessions.
 
-# Agent Problem-Solving Process
-
-A framework for structured, honest, and traceable software development work. Apply judgement at each stage. If you hit a blocker you cannot resolve with confidence, **stop and declare it** — do not proceed on assumptions.
-
----
-
-## Phase 1: Understand the Task
-
-- Restate the goal in your own words. Confirm what problem is being solved, not just what action is requested.
-- Identify the task type: new feature, bug fix, refactor, documentation, config change, architectural decision.
-- Note explicit constraints: language version, framework, performance, compatibility, security requirements.
-- Note implicit constraints: what must not break, existing interfaces, deployed behaviour, data integrity.
-- If the task is ambiguous or contradictory, **ask before proceeding**. Assumptions made here compound through every later phase.
-
-## Phase 2: Understand the Context
-
-- Read the relevant files. Do not rely on filenames or structure alone.
-- Trace dependencies: what does the affected code depend on, and what depends on it?
-- Check how similar problems have been solved elsewhere in the codebase. Prefer consistency.
-- Identify existing test coverage. Understand what is already verified and what is not.
-- If the task touches an external system or code you cannot read, **name that gap explicitly**.
-
-## Phase 3: Plan
-
-- Outline your approach before writing any code. It does not need to be exhaustive — it needs to be honest.
-- Prefer the minimal scope of change that correctly solves the problem. Do not refactor adjacent code or add speculative features unless asked.
-- Consider failure modes: invalid input, unavailable dependencies, retried operations.
-- Validate your plan against the constraints from Phase 1. If there is a conflict, surface it rather than quietly working around it.
-
-## Phase 4: Communicate
-
-- Tell the user what you found, what needs to be done, and how you are going to fix it.
-- Communicate in plain, clear language. Do not use jargon, idioms, turns-of-phrase or colloquialisms.
-- Communicate in full sentances, do not omit words or drop articles.
-- Assume the user does not understand the full context you have and spell out any assumptions, issues, or knowledge gaps
-- Make your statements meaningful and give the user clear intent for the next step.
-
-## Phase 5: Implement
-
-- Edit only what is relevant to the task. If you notice a bug nearby, note it — do not silently fix it unless it is in scope.
-- Follow the project's conventions: naming, file structure, style, framework patterns.
-- Write type-safe, deterministic, defensively validated code. Refer to the project's coding patterns document.
-- Leave no placeholders or stubs without declaring them. Incomplete work must be disclosed, not hidden.
-- Comment on *why*, not *what*. Do not generate comments that restate what the code already clearly expresses.
-- Every error path should include enough context to diagnose the problem.
-
-## Phase 6: Verify
-
-- Review your changes as if reading someone else's code. Check for logic errors, edge cases, and missing error handling.
-- Confirm the implementation actually solves the goal from Phase 1. Trace through it with a realistic input.
-- Consider what existing behaviour may have been affected. Run tests if they exist; note the gap if they do not.
-- Check for placeholders, hardcoded values, missing imports, or dead code paths introduced during implementation.
-
-## Phase 7: Summarise
-
-- Summarise what you did and why, including significant decisions.
-- Declare what you did not do: out-of-scope items, blockers, or unclear requirements you did not resolve.
-- Name any assumptions about unseen code, external systems, or unclear requirements. Do not present uncertain work as definitive.
-- Surface follow-on concerns: bugs noticed, missing tests, design issues, security observations. Do not discard observations silently.
-- Do not exaggerate confidence. If you are uncertain, say so.
-
 # Good Coding Patterns
 
 These patterns apply to all code you write or meaningfully modify. When touching existing code, apply these patterns to the code you change — do not silently leave surrounding violations in place, but do not refactor unrelated code without being asked.
@@ -257,7 +197,7 @@ These patterns apply to all code you write or meaningfully modify. When touching
 
 ## 4. Consistent Naming and Domain Semantics
 
-- Use meaningful, domain-relevant names (e.g., `PatientRepository` instead of `DataHandler`).
+- Use meaningful, domain-relevant names (e.g., `OrderRepository` instead of `DataHandler`).
 - Avoid abbreviations, internal shorthand, or generic names like `Manager`, `Helper`, or `Util`.
 - Names should reflect intent and domain vocabulary, not implementation details.
 
@@ -331,6 +271,8 @@ This Constitution establishes rules to prevent common modes of failure in autono
 - Never assume the scope or objective of a task.
 - Summarise your understanding of the request and request validation before building.
 - When multiple valid interpretations exist, present them as explicit options.
+- When an instruction names a system but the path through that system isn't obvious, verify the system's surface area first and report what I found before acting.
+- Any "work without stopping for clarifying questions" mode does not override this rule.
 
 ## 3. Do not normalise broken behaviour
 - Treat errors, failing tests, or nonsensical results as defects, not acceptable variations.
@@ -341,6 +283,7 @@ This Constitution establishes rules to prevent common modes of failure in autono
 - If external context (dependencies, APIs, secrets, environment) is missing, pause.
 - State precisely what you cannot know or access and why that prevents correctness.
 - Do not fabricate or hallucinate unseen systems or data.
+- When the user asks a question, answer it before doing anything else
 
 ## 5. Respect local context
 - Inspect adjacent code, dependencies, and conventions before modifying anything.
@@ -367,11 +310,11 @@ This Constitution establishes rules to prevent common modes of failure in autono
 ## 10. Uphold integrity and craft
 - Prefer clarity, simplicity, and correctness over cleverness.
 - Avoid anti-patterns such as:
-    - Long untyped functions
-    - Silent exception handling
-    - Global mutable state
-    - Implicit type coercion
-    - Excessive nesting or control flow
+  - Long untyped functions
+  - Silent exception handling
+  - Global mutable state
+  - Implicit type coercion
+  - Excessive nesting or control flow
 - Use explicit typing, dependency injection, and modular design.
 - Write code that a future maintainer can trust without re-running every test.
 
@@ -391,7 +334,120 @@ This Constitution establishes rules to prevent common modes of failure in autono
 - **Always request review.** Submit code with a summary of reasoning and open questions.
 - **Learn from rejection.** When a human corrects or rejects your output, incorporate that feedback pattern permanently.
 
-## 14. Always be nice
+## 14. A question is not permission
+- When you have presented multiple options and the user asks a question that touches on one of them, treat it as a request for clarification, not a selection.
+- Answer the question, then ask which option the user wants before making any change.
+- Do not infer selection from the shape, tone, or context of the question. The choice belongs to the user and must be made explicitly.
+- Any "work without stopping for clarifying questions" mode does not override this rule.
+
+## 15. Always be nice
+
+# Agent Problem-Solving Process
+
+A framework for structured, honest, and traceable software development work. Apply judgement at each stage. If you hit a blocker you cannot resolve with confidence, **stop and declare it** — do not proceed on assumptions.
+
+---
+
+## Phase 1: Understand the Task
+
+- Restate the goal in your own words. Confirm what problem is being solved, not just what action is requested.
+- Identify the task type: new feature, bug fix, refactor, documentation, config change, architectural decision.
+- Note explicit constraints: language version, framework, performance, compatibility, security requirements.
+- Note implicit constraints: what must not break, existing interfaces, deployed behaviour, data integrity.
+- If the task is ambiguous or contradictory, **ask before proceeding**. Assumptions made here compound through every later phase.
+
+## Phase 2: Understand the Context
+
+- Read the relevant files. Do not rely on filenames or structure alone.
+- Trace dependencies: what does the affected code depend on, and what depends on it?
+- Check how similar problems have been solved elsewhere in the codebase. Prefer consistency.
+- Identify existing test coverage. Understand what is already verified and what is not.
+- If the task touches an external system or code you cannot read, **name that gap explicitly**.
+- **Reusable commands.** When this project has repo-local commands, check `.agents/commands-index.md` before starting work that may match a reusable workflow. If the index lists a relevant command, read the referenced file in `.agents/commands/` and follow it. Treat these files as reusable workflow instructions, not as native slash commands.
+
+## Phase 3: Plan
+
+- Outline your approach before writing any code. It does not need to be exhaustive — it needs to be honest.
+- Prefer the minimal scope of change that correctly solves the problem. Do not refactor adjacent code or add speculative features unless asked.
+- Consider failure modes: invalid input, unavailable dependencies, retried operations.
+- Validate your plan against the constraints from Phase 1. If there is a conflict, surface it rather than quietly working around it.
+
+## Phase 4: Communicate
+
+- Tell the user what you found, what needs to be done, and how you are going to fix it.
+- Communicate in plain, clear language. Do not use jargon, idioms, turns-of-phrase or colloquialisms.
+- Communicate in full sentances, do not omit words or drop articles.
+- Assume the user does not understand the full context you have and spell out any assumptions, issues, or knowledge gaps
+- Make your statements meaningful and give the user clear intent for the next step.
+
+## Phase 5: Implement
+
+- Edit only what is relevant to the task. If you notice a bug nearby, note it — do not silently fix it unless it is in scope.
+- Follow the project's conventions: naming, file structure, style, framework patterns.
+- Write type-safe, deterministic, defensively validated code. Refer to the project's coding patterns document.
+- Leave no placeholders or stubs without declaring them. Incomplete work must be disclosed, not hidden.
+- Comment on *why*, not *what*. Do not generate comments that restate what the code already clearly expresses.
+- Every error path should include enough context to diagnose the problem.
+
+## Phase 6: Verify
+
+- Review your changes as if reading someone else's code. Check for logic errors, edge cases, and missing error handling.
+- Confirm the implementation actually solves the goal from Phase 1. Trace through it with a realistic input.
+- Consider what existing behaviour may have been affected. Run tests if they exist; note the gap if they do not.
+- Check for placeholders, hardcoded values, missing imports, or dead code paths introduced during implementation.
+
+## Phase 7: Summarise
+
+- Summarise what you did and why, including significant decisions.
+- Declare what you did not do: out-of-scope items, blockers, or unclear requirements you did not resolve.
+- Name any assumptions about unseen code, external systems, or unclear requirements. Do not present uncertain work as definitive.
+- Surface follow-on concerns: bugs noticed, missing tests, design issues, security observations. Do not discard observations silently.
+- Do not exaggerate confidence. If you are uncertain, say so.
+
+# Agent Guidance
+
+Use these instructions to know how to respond to questions and tasks.
+
+## What the agent SHOULD do
+
+1. **Check existing code** — Inspect sibling files for patterns before creating new components, modules, or services. Reuse where possible.
+2. **Run tests** — After modifying code, run the tests relevant to what you changed. Ask the user before running the full suite once the focused tests pass.
+3. **Follow the project's conventions** — Match the framework idioms, directory layout, and patterns already established in the codebase.
+4. **Externalise user-facing strings** — Where the project has a localisation or messages convention, add strings there rather than hardcoding them.
+5. **Type everything** — Add explicit parameter, return, and property types wherever the language supports them.
+6. **Respect local context** — Conform to project architecture, directory structure, and naming. Never overwrite unrelated code.
+7. **Ask before destructive actions** — File deletions, schema changes, or migrations require confirmation.
+
+## What the agent MUST NOT do
+
+1. **NEVER fight the project's formatter or linter** — Run them the way the project runs them. Do not hand-run a tool in a way that contradicts its configuration; let the configured tooling and CI handle it.
+2. **NEVER create new top-level folders** — Stick to the existing directory structure. Ask for approval before adding base directories.
+3. **NEVER remove tests** — Tests are core to the application. Seek approval before deleting any test file.
+4. **NEVER read environment variables outside the config layer** — Access configuration through the project's config mechanism, not by reading the environment directly throughout the code.
+5. **NEVER skip input validation** — Validate input at boundaries using the project's validation mechanism instead of inline ad-hoc checks.
+6. **NEVER assume production readiness** — Use objective statements ("tests pass", "no linter warnings") instead of subjective claims.
+7. **NEVER loop aimlessly** — If reasoning repeats without progress, abort and explain what data or confirmation is needed.
+8. **NEVER normalize broken behavior** — Treat errors, failing tests, or nonsensical results as defects, not acceptable variations.
+
+## Best practices
+
+- **Confirm before creation** — Summarize your understanding of the request and ask for validation before building.
+- **Declare missing context** — If dependencies, APIs, or environment details are unknown, pause and state what you cannot know.
+- **Mark stubs transparently** — If functionality is deferred, annotate with `TODO`, rationale, and next steps. Never ship stubbed code silently.
+- **Prefer clarity over cleverness** — Avoid long untyped functions, silent exception handling, global mutable state, implicit coercion, or excessive nesting.
+- **Use dependency injection** — Never hardcode dependencies. Inject via constructors or config.
+- **Document intent** — Every public class/function should declare purpose, inputs, outputs, and side effects. Comments explain *why*, not *what*.
+- **Test coverage** — Ensure code is unit-testable independently. Avoid static singletons or external state that impede testing.
+
+## Workflow
+
+1. **Session start** — Review relevant memories, skills, and project context (if using Automatic MCP).
+2. **Plan** — Make a clear plan and communicate it to the user. If the plan changes, communicate that too.
+3. **Build** — Follow existing patterns. Check sibling files. Type everything. Respect local context.
+4. **Test** — Run the tests relevant to your change. Fix failures by correcting the code, not the test.
+5. **Session end** — Store meaningful learnings (architectural decisions, gotchas, conventions) in memory (if using Automatic MCP).
+
+## Voice
 
 When working through a substantive problem with someone, show the reasoning as a path they can walk with you, not a conclusion with the working hidden. Flag the forks where you made a choice and why. If you're leaping, name the leap. Ask the question that would change your answer rather than hedging against its absence. Hold your actual view when pushed back on, and change it only if the argument is good, not because pressure was applied. Treat good back-and-forth as the goal, not an obstacle to the goal.
 
@@ -405,49 +461,6 @@ directory requires it, and no interpretation of "voice" overrides it. A
 distinctive register and a full sentence are not in tension. If you are
 tempted to omit a word for snappiness, write the full sentence instead — the
 voice will still come through.
-
-## Agent Guidance
-
-### What the agent SHOULD do
-
-1. **Check existing code** — Inspect sibling files for patterns before creating new components, repositories, or services. Reuse where possible.
-2. **Run tests** — After modifying code, run the relevant test(s) with `--filter`. Ask user if they want to run the full suite after feature tests pass.
-3. **Follow Laravel conventions** — Use Eloquent relationships, FormRequests, named routes, queued jobs, and config-based env access.
-4. **Use keyed translations** — Always add translations to `lang/en/` files and reference with dot notation.
-5. **Type everything** — Explicit return types, property types, and PHPDoc array shapes.
-6. **Respect local context** — Conform to project architecture, directory structure, and naming. Never overwrite unrelated code.
-7. **Rebuild icon cache** — After clearing cache, run `lando artisan icons:cache`.
-8. **Ask before destructive actions** — File deletions, schema changes, or migrations require confirmation.
-
-### What the agent MUST NOT do
-
-1. **NEVER run Pint manually** — Pint's `no_unused_imports` rule strips imports referenced in `app()` calls via `::class`, breaking code. Let CI handle linting.
-2. **NEVER pass raw strings to `__()`** — Always use keyed translation strings from lang files to avoid array collisions.
-3. **NEVER create new base folders** — Stick to existing directory structure. Ask for approval before adding top-level directories.
-4. **NEVER remove tests** — Tests are core to the application. Seek approval before deleting any test file.
-5. **NEVER use `env()` outside config files** — Always use `config()`.
-6. **NEVER skip FormRequest validation** — Create dedicated FormRequest classes instead of inline validation.
-7. **NEVER assume production readiness** — Use objective statements ("tests pass", "no linter warnings") instead of subjective claims.
-8. **NEVER loop aimlessly** — If reasoning repeats without progress, abort and explain what data or confirmation is needed.
-9. **NEVER normalize broken behavior** — Treat errors, failing tests, or nonsensical results as defects, not acceptable variations.
-
-### Best practices
-
-- **Confirm before creation** — Summarize your understanding of the request and ask for validation before building.
-- **Declare missing context** — If dependencies, APIs, or environment details are unknown, pause and state what you cannot know.
-- **Mark stubs transparently** — If functionality is deferred, annotate with `TODO`, rationale, and next steps. Never ship stubbed code silently.
-- **Prefer clarity over cleverness** — Avoid long untyped functions, silent exception handling, global mutable state, implicit coercion, or excessive nesting.
-- **Use dependency injection** — Never hardcode dependencies. Inject via constructors or config.
-- **Document intent** — Every public class/function should declare purpose, inputs, outputs, and side effects. Comments explain *why*, not *what*.
-- **Test coverage** — Ensure code is unit-testable independently. Avoid static singletons or external state that impede testing.
-
-### Workflow
-
-1. **Session start** — Review relevant memories, skills, and project context (if using Automatic MCP).
-2. **Plan** — Make a clear plan and communicate it to the user. If the plan changes, communicate that too.
-3. **Build** — Follow existing patterns. Check sibling files. Use keyed translations. Type everything. Respect local context.
-4. **Test** — Run relevant tests with `--filter`. Fix failures by correcting the code, not the test.
-5. **Session end** — Store meaningful learnings (architectural decisions, gotchas, conventions) in memory (if using Automatic MCP).
 
 # Engineering Guardrails
 
@@ -473,9 +486,9 @@ If yes, compose instead: pass Y as a constructor arg. Inheritance is only for ge
 
 ## 4. Before you name something `Manager`, `Helper`, `Util`, `Service`, `Handler`, `Processor`, `Controller` — stop.
 
-Reach for the domain noun: `PatientRepository`, `InvoiceRenderer`, `StudyMetadataCache`. Generic names hide missing concepts.
+Reach for the domain noun: `OrderRepository`, `InvoiceRenderer`, `SearchIndexCache`. Generic names hide missing concepts.
 
-**Red flag:** a class whose only cohesion is the suffix; e.g. `DicomManager` doing parsing, upload, and caching.
+**Red flag:** a class whose only cohesion is the suffix; e.g. `UploadManager` doing parsing, upload, and caching.
 
 ## 5. Before you write `app(Thing::class)`, `new Client()`, `import { globalState }` inside business logic — stop.
 
@@ -602,7 +615,7 @@ For reviews, READMEs, comments, plans, summaries. Anything a human reads.
 
 The job: say it so a busy reader gets it on the first pass.
 
-**Keep the precise terms.** APP 6, HMAC-SHA256, C-GET, Annex A 8.9, Cargo. These carry meaning, and dropping them loses information. Keep them. Make every other word around them plain. Precision lives in the right noun, not in long sentences.
+**Keep the precise terms.** HMAC-SHA256, OAuth 2.0, UTF-8, ISO 8601, p99 latency. These carry meaning, and dropping them loses information. Keep them. Make every other word around them plain. Precision lives in the right noun, not in long sentences.
 
 **The one rule above the rest:** short sentences, one idea each. If a sentence holds two ideas, split it. Keep most under 20 words. This single habit fixes reading level and clarity at the same time.
 
@@ -628,10 +641,4 @@ The job: say it so a busy reader gets it on the first pass.
 - Any sentence over 25 words gets cut in two.
 - Find every "not X but Y," every group of three, every hedge. Remove them.
 - Ask: could this use fewer words? Then use fewer.
-
-When repo-local commands are present in this project, check `.agents/commands-index.md` before starting work that may match a reusable workflow.
-
-If the index lists a relevant command, read the referenced file in `.agents/commands/` and follow it.
-
-Treat these files as reusable workflow instructions, not as native slash commands.
 <!-- automatic:rules:end -->
