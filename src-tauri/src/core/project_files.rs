@@ -147,7 +147,12 @@ pub fn save_project_file_for_project(
             // index section into the main file instead of inlining rule content.
             // Claude is excluded here — it uses .claude/rules/ via the branch below.
             save_project_file(&project.directory, f, user_content)?;
-            sync_rules_to_automatic_instructions(&project.directory, &rules, &custom_rule_structs)?;
+            sync_rules_to_automatic_instructions(
+                &project.directory,
+                &rules,
+                &custom_rule_structs,
+                &std::collections::HashSet::new(),
+            )?;
             inject_index_into_project_file(&project.directory, f, &rules, &custom_rule_structs)?;
         } else if project_uses_dot_claude_rules(project, f) {
             // Save with custom rules inline — global rules go to .claude/rules/.

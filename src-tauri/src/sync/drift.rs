@@ -8,8 +8,8 @@ use crate::agent;
 use crate::core::{Project, ProjectMode};
 
 use super::helpers::{
-    build_selected_servers, build_skill_contents, extract_agent_machine_name,
-    load_mcp_server_configs,
+    build_selected_servers, build_skill_contents, collect_custom_asset_conflicts,
+    extract_agent_machine_name, load_mcp_server_configs, CustomAssetConflict, CustomAssetKind,
 };
 
 // ── Problems types ────────────────────────────────────────────────────────────
@@ -188,7 +188,7 @@ pub struct InstructionFileConflict {
 /// Full drift report for a project.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DriftReport {
-    /// `true` if any agent has MCP/skill drift, or instruction files have conflicts.
+    /// `true` if any agent has MCP/skill drift, or instruction/custom assets have conflicts.
     pub drifted: bool,
     /// One entry per agent that has at least one drifted file.
     pub agents: Vec<AgentDrift>,
@@ -196,6 +196,11 @@ pub struct DriftReport {
     /// These require user action: keep existing or overwrite.
     #[serde(default)]
     pub instruction_conflicts: Vec<InstructionFileConflict>,
+    /// Project-scoped custom skills/rules/agents/commands whose on-disk files
+    /// differ from the stored project config. Require user action: adopt disk
+    /// (favoured) or overwrite with Automatic's stored content.
+    #[serde(default)]
+    pub custom_conflicts: Vec<CustomAssetConflict>,
 }
 
 /// Check whether the on-disk agent configs match what Automatic would generate.
@@ -208,6 +213,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
             drifted: false,
             agents: vec![],
             instruction_conflicts: vec![],
+            custom_conflicts: vec![],
         });
     }
 
@@ -217,6 +223,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
             drifted: false,
             agents: vec![],
             instruction_conflicts: vec![],
+            custom_conflicts: vec![],
         });
     }
 
@@ -262,6 +269,18 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         .as_deref()
         .unwrap_or(&empty_custom_commands);
 
+    let custom_conflicts = collect_custom_asset_conflicts(project, &effective_dir);
+    let conflicting_agents: HashSet<String> = custom_conflicts
+        .iter()
+        .filter(|c| c.kind == CustomAssetKind::Agent)
+        .map(|c| c.name.clone())
+        .collect();
+    let conflicting_commands: HashSet<String> = custom_conflicts
+        .iter()
+        .filter(|c| c.kind == CustomAssetKind::Command)
+        .map(|c| c.name.clone())
+        .collect();
+
     let mut agent_drifts: Vec<AgentDrift> = Vec::new();
 
     for agent_id in &project.agents {
@@ -274,12 +293,15 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
                 &selected_servers,
                 &mut files,
             );
+            // Pass custom skill names as local so modified custom skills are
+            // not reported as ordinary agent drift. They surface instead as
+            // `custom_conflicts` with an adopt/overwrite prompt.
             collect_skills_drift(
                 agent_instance,
                 &effective_dir,
                 &skill_contents,
                 &all_selected_skill_names,
-                &[],
+                &custom_skill_names,
                 &mut files,
             );
             collect_agents_drift(
@@ -287,6 +309,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
                 &effective_dir,
                 project.custom_agents.as_deref().unwrap_or(&[]),
                 &project.user_agents,
+                &conflicting_agents,
                 &mut files,
             );
             collect_commands_drift(
@@ -294,6 +317,7 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
                 &effective_dir,
                 &workspace_command_contents,
                 custom_commands,
+                &conflicting_commands,
                 &mut files,
             );
 
@@ -309,11 +333,14 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
 
     let instruction_conflicts = collect_instruction_file_conflicts(project, &effective_dir);
 
-    let drifted = !agent_drifts.is_empty() || !instruction_conflicts.is_empty();
+    let drifted = !agent_drifts.is_empty()
+        || !instruction_conflicts.is_empty()
+        || !custom_conflicts.is_empty();
     Ok(DriftReport {
         drifted,
         agents: agent_drifts,
         instruction_conflicts,
+        custom_conflicts,
     })
 }
 
@@ -734,6 +761,7 @@ fn collect_commands_drift(
     dir: &PathBuf,
     workspace_command_contents: &[(String, String)],
     custom_commands: &[crate::core::CustomCommand],
+    skip_custom_names: &HashSet<String>,
     out: &mut Vec<DriftedFile>,
 ) {
     let agent_commands_dir = match agent_instance.commands_dir(dir) {
@@ -756,8 +784,13 @@ fn collect_commands_drift(
     // symlinks back to the hub for `.md` agents, or copies the converted
     // content for non-`.md` agents).
     let tmp_hub = tmp.path().join(".agents").join("commands");
-    if agent::copy_commands_to_project(&tmp_hub, workspace_command_contents, custom_commands)
-        .is_err()
+    if agent::copy_commands_to_project(
+        &tmp_hub,
+        workspace_command_contents,
+        custom_commands,
+        &std::collections::HashSet::new(),
+    )
+    .is_err()
     {
         return;
     }
@@ -777,6 +810,7 @@ fn collect_commands_drift(
             workspace_command_contents,
             custom_commands,
             agent_instance,
+            &std::collections::HashSet::new(),
         )
     };
     if sync_result.is_err() {
@@ -816,6 +850,15 @@ fn collect_commands_drift(
             match fs::read_to_string(&disk_path) {
                 Ok(actual) => {
                     if actual != expected {
+                        // Conflicting custom commands surface via custom_conflicts.
+                        let stem = file_name
+                            .strip_suffix(".prompt.md")
+                            .or_else(|| file_name.strip_suffix(".md"))
+                            .or_else(|| file_name.strip_suffix(".toml"))
+                            .unwrap_or(file_name.as_str());
+                        if skip_custom_names.contains(stem) {
+                            continue;
+                        }
                         out.push(DriftedFile {
                             path: rel_path,
                             reason: "modified".into(),
@@ -871,6 +914,7 @@ fn collect_agents_drift(
     dir: &PathBuf,
     custom_agents: &[crate::core::CustomAgent],
     user_agent_names: &[String],
+    skip_custom_names: &HashSet<String>,
     out: &mut Vec<DriftedFile>,
 ) {
     let agents_dir = match agent_instance.agents_dir(dir) {
@@ -905,8 +949,12 @@ fn collect_agents_drift(
         }
     }
 
-    // Check for missing/modified custom agent files
+    // Check for missing/modified custom agent files (skip conflicting — those
+    // surface as custom_conflicts instead).
     for agent in custom_agents {
+        if skip_custom_names.contains(&agent.name) {
+            continue;
+        }
         let machine_name = extract_agent_machine_name(&agent.content)
             .unwrap_or_else(|| agent.name.to_lowercase().replace(' ', "-"));
         let converted_content = agent_instance.convert_agent_content(&agent.content, &machine_name);
@@ -1293,6 +1341,138 @@ mod tests {
         });
     }
 
+    /// When a project-scoped custom skill's on-disk SKILL.md differs from the
+    /// stored snapshot, drift must report a `custom_conflicts` entry (not
+    /// ordinary agent skill drift), and sync must leave the on-disk file alone.
+    #[test]
+    fn custom_skill_conflict_reported_and_sync_preserves_disk() {
+        use crate::core::{with_test_home, CustomSkill, Project};
+        use crate::sync::engine::sync_project_without_autodetect;
+        use crate::sync::helpers::collect_custom_skill_conflicts;
+
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+
+        with_test_home(home.path().to_path_buf(), || {
+            let hub = project_dir
+                .path()
+                .join(".agents")
+                .join("skills")
+                .join("local-rule");
+            fs::create_dir_all(&hub).unwrap();
+            let disk_content = "# On disk custom skill\nEdited outside Automatic.\n";
+            let stored_content = "# Stored custom skill\nOriginal from Automatic.\n";
+            fs::write(hub.join("SKILL.md"), disk_content).unwrap();
+
+            let mut project = Project {
+                name: "skill-conflict".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["claude".to_string()],
+                custom_skills: Some(vec![CustomSkill {
+                    name: "local-rule".to_string(),
+                    content: stored_content.to_string(),
+                }]),
+                ..Default::default()
+            };
+
+            let conflicts = collect_custom_skill_conflicts(&project, project_dir.path());
+            assert_eq!(conflicts.len(), 1);
+            assert_eq!(conflicts[0].name, "local-rule");
+            assert_eq!(conflicts[0].disk_content, disk_content);
+            assert_eq!(conflicts[0].automatic_content, stored_content);
+
+            let report = check_project_drift(&project).expect("drift");
+            assert!(report.drifted);
+            assert_eq!(report.custom_conflicts.len(), 1);
+            assert!(
+                report.agents.iter().all(|a| {
+                    !a.files.iter().any(|f| f.path.contains("local-rule"))
+                }),
+                "custom skill conflicts must not also appear as agent drift"
+            );
+
+            sync_project_without_autodetect(&mut project).expect("sync");
+
+            let after = fs::read_to_string(hub.join("SKILL.md")).expect("read after sync");
+            assert_eq!(
+                after, disk_content,
+                "sync must favour on-disk custom skill content"
+            );
+            assert_ne!(after, stored_content);
+        });
+    }
+
+    /// Custom commands and rules follow the same favour-disk conflict contract.
+    #[test]
+    fn custom_command_and_rule_conflicts_reported_and_sync_preserves_disk() {
+        use crate::core::{with_test_home, CustomCommand, CustomRule, Project};
+        use crate::sync::engine::sync_project_without_autodetect;
+        use crate::sync::helpers::{
+            collect_custom_command_conflicts, collect_custom_rule_conflicts, CustomAssetKind,
+        };
+
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+
+        with_test_home(home.path().to_path_buf(), || {
+            let cmd_dir = project_dir.path().join(".agents").join("commands");
+            fs::create_dir_all(&cmd_dir).unwrap();
+            let disk_cmd = "---\nautomatic-managed: true\n---\n# Disk command\n";
+            let stored_cmd = "# Stored command\n";
+            fs::write(cmd_dir.join("my-cmd.md"), disk_cmd).unwrap();
+
+            let instructions = project_dir
+                .path()
+                .join(".automatic")
+                .join("instructions");
+            fs::create_dir_all(&instructions).unwrap();
+            let disk_rule =
+                "<!-- managed by Automatic — do not edit by hand -->\n\n# Disk rule\n";
+            let stored_rule = "# Stored rule";
+            fs::write(instructions.join("custom-my-rule.md"), disk_rule).unwrap();
+
+            let mut project = Project {
+                name: "asset-conflict".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["claude".to_string()],
+                custom_commands: Some(vec![CustomCommand {
+                    name: "my-cmd".to_string(),
+                    content: stored_cmd.to_string(),
+                }]),
+                custom_rules: vec![CustomRule {
+                    name: "My Rule".to_string(),
+                    content: stored_rule.to_string(),
+                }],
+                instructions_index_mode: true,
+                ..Default::default()
+            };
+
+            let cmd_conflicts = collect_custom_command_conflicts(&project, project_dir.path());
+            assert_eq!(cmd_conflicts.len(), 1);
+            assert_eq!(cmd_conflicts[0].kind, CustomAssetKind::Command);
+
+            let rule_conflicts = collect_custom_rule_conflicts(&project, project_dir.path());
+            assert_eq!(rule_conflicts.len(), 1);
+            assert_eq!(rule_conflicts[0].kind, CustomAssetKind::Rule);
+            assert_eq!(rule_conflicts[0].disk_content, "# Disk rule");
+
+            let report = check_project_drift(&project).expect("drift");
+            assert!(report.custom_conflicts.len() >= 2);
+
+            sync_project_without_autodetect(&mut project).expect("sync");
+
+            let after_cmd = fs::read_to_string(cmd_dir.join("my-cmd.md")).unwrap();
+            assert_eq!(after_cmd, disk_cmd, "sync must favour on-disk command");
+
+            let after_rule = fs::read_to_string(instructions.join("custom-my-rule.md")).unwrap();
+            assert!(
+                after_rule.contains("# Disk rule"),
+                "sync must favour on-disk rule"
+            );
+            assert!(!after_rule.contains("# Stored rule"));
+        });
+    }
+
     /// A custom skill that is not synced to disk should appear as "missing"
     /// in drift detection.
     #[test]
@@ -1345,6 +1525,7 @@ mod tests {
             &project_commands_dir,
             &workspace_commands,
             &custom_commands,
+            &HashSet::new(),
         )
         .expect("write hub");
         let claude_commands_dir = ClaudeCode.commands_dir(&dir).expect("claude commands dir");
@@ -1363,6 +1544,7 @@ mod tests {
             &dir,
             &workspace_commands,
             &custom_commands,
+            &HashSet::new(),
             &mut files,
         );
 
@@ -1390,7 +1572,7 @@ mod tests {
         )];
         let custom: Vec<crate::core::CustomCommand> = Vec::new();
         let project_commands_dir = dir.join(".agents").join("commands");
-        crate::agent::copy_commands_to_project(&project_commands_dir, &old_workspace, &custom)
+        crate::agent::copy_commands_to_project(&project_commands_dir, &old_workspace, &custom, &HashSet::new())
             .expect("write hub old");
         let claude_commands_dir = ClaudeCode.commands_dir(&dir).expect("claude commands dir");
         crate::agent::symlink_commands_from_project(
@@ -1410,7 +1592,7 @@ mod tests {
         )];
 
         let mut files: Vec<DriftedFile> = Vec::new();
-        collect_commands_drift(&ClaudeCode, &dir, &new_workspace, &custom, &mut files);
+        collect_commands_drift(&ClaudeCode, &dir, &new_workspace, &custom, &HashSet::new(), &mut files);
 
         assert!(
             files.iter().any(|f| f.reason == "modified"),

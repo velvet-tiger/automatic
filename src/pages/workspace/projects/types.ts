@@ -140,6 +140,27 @@ export interface InstructionFileConflict {
   automatic_content: string;
 }
 
+export interface CustomSkillConflict {
+  /** Machine-name of the custom skill. */
+  skill_name: string;
+  /** Relative path of the on-disk SKILL.md. */
+  path: string;
+  /** Content currently on disk. */
+  disk_content: string;
+  /** Content stored in the project's custom_skills entry. */
+  automatic_content: string;
+}
+
+export type CustomAssetKind = "skill" | "rule" | "agent" | "command";
+
+export interface CustomAssetConflict {
+  kind: CustomAssetKind;
+  name: string;
+  path: string;
+  disk_content: string;
+  automatic_content: string;
+}
+
 export interface UnifiedCandidate {
   filename: string;
   agent_labels: string[];
@@ -173,6 +194,8 @@ export interface DriftReport {
   agents: AgentDrift[];
   /** Instruction files that have external content Automatic does not recognise. */
   instruction_conflicts?: InstructionFileConflict[];
+  /** Project-scoped custom assets whose on-disk files differ from stored content. */
+  custom_conflicts?: CustomAssetConflict[];
 }
 
 export type ProjectProblemKind = "mcp_user_scope_conflict";

@@ -7,8 +7,9 @@ use crate::core::{self, Project, ProjectMode};
 
 use super::autodetect::autodetect_inner;
 use super::helpers::{
-    build_selected_servers, build_skill_contents, clean_project_file, extract_agent_machine_name,
-    load_mcp_server_configs, sync_custom_agents, sync_user_agents,
+    build_selected_servers, build_skill_contents, clean_project_file,
+    collect_custom_asset_conflicts, conflicting_names, extract_agent_machine_name,
+    load_mcp_server_configs, sync_custom_agents, sync_user_agents, CustomAssetKind,
 };
 
 struct InstructionTarget {
@@ -217,16 +218,46 @@ fn sync_to_directory_inner(
         .cloned()
         .collect();
 
+    // Custom assets whose on-disk files differ from the stored snapshot are
+    // excluded from writes: sync favours on-disk and the conflict UI asks the
+    // user to adopt or overwrite explicitly.
+    let custom_conflicts = collect_custom_asset_conflicts(project, &effective_dir);
+    let conflicting_skills = conflicting_names(&custom_conflicts, CustomAssetKind::Skill);
+    let conflicting_commands = conflicting_names(&custom_conflicts, CustomAssetKind::Command);
+    let conflicting_agents = conflicting_names(&custom_conflicts, CustomAssetKind::Agent);
+    let conflicting_rules = conflicting_names(&custom_conflicts, CustomAssetKind::Rule);
+
+    let skills_to_write: Vec<(String, String)> = skill_contents
+        .iter()
+        .filter(|(name, _)| !conflicting_skills.contains(name))
+        .cloned()
+        .collect();
+    let skills_for_agents: Vec<(String, String)> = skill_contents
+        .iter()
+        .map(|(name, stored)| {
+            if let Some(conflict) = custom_conflicts
+                .iter()
+                .find(|c| c.kind == CustomAssetKind::Skill && &c.name == name)
+            {
+                (name.clone(), conflict.disk_content.clone())
+            } else {
+                (name.clone(), stored.clone())
+            }
+        })
+        .collect();
+
     let project_skills_dir = sync_project_skills_step(
         &effective_dir,
-        &skill_contents,
+        &skills_to_write,
         &all_selected_skill_names,
+        &custom_skill_names,
         &mut written_files,
     )?;
     let project_commands_dir = sync_project_commands_step(
         &effective_dir,
         project,
         &workspace_command_contents,
+        &conflicting_commands,
         &mut written_files,
     )?;
     sync_project_hooks_step(&effective_dir, project, &mut written_files)?;
@@ -235,9 +266,12 @@ fn sync_to_directory_inner(
         project,
         &project_skills_dir,
         &project_commands_dir,
-        &skill_contents,
+        &skills_for_agents,
         &all_selected_skill_names,
+        &custom_skill_names,
         &workspace_command_contents,
+        &conflicting_agents,
+        &conflicting_commands,
         &selected_servers,
         &mut written_files,
     )?;
@@ -250,6 +284,7 @@ fn sync_to_directory_inner(
         project,
         &instruction_targets,
         &effective_dir_str,
+        &conflicting_rules,
         &mut written_files,
     )?;
     if persist_hashes {
@@ -385,19 +420,21 @@ fn sync_gitignore_step(dir: &std::path::Path, project: &Project) -> Result<(), S
 
 fn sync_project_skills_step(
     dir: &PathBuf,
-    skill_contents: &[(String, String)],
+    skills_to_write: &[(String, String)],
     all_selected_skill_names: &[String],
+    custom_skill_names: &[String],
     written_files: &mut Vec<String>,
 ) -> Result<PathBuf, String> {
     // Step 1: copy skills into the project's canonical .agents/skills/.
     // `all_selected_skill_names` already includes both library-backed skills
     // and project-scoped custom skills, so cleanup never deletes them.
+    // Conflicting custom skills are omitted from `skills_to_write` by the caller.
     let project_skills_dir = dir.join(".agents").join("skills");
     agent::copy_skills_to_project(
         &project_skills_dir,
-        skill_contents,
+        skills_to_write,
         all_selected_skill_names,
-        &[],
+        custom_skill_names,
         written_files,
     )?;
 
@@ -408,6 +445,7 @@ fn sync_project_commands_step(
     dir: &PathBuf,
     project: &Project,
     workspace_command_contents: &[(String, String)],
+    skip_custom_commands: &HashSet<String>,
     written_files: &mut Vec<String>,
 ) -> Result<PathBuf, String> {
     let project_commands_dir = dir.join(".agents").join("commands");
@@ -416,6 +454,7 @@ fn sync_project_commands_step(
         &project_commands_dir,
         workspace_command_contents,
         custom_commands,
+        skip_custom_commands,
     )?);
 
     Ok(project_commands_dir)
@@ -489,7 +528,10 @@ fn sync_agent_configs_step(
     project_commands_dir: &PathBuf,
     skill_contents: &[(String, String)],
     all_selected_skill_names: &[String],
+    custom_skill_names: &[String],
     workspace_command_contents: &[(String, String)],
+    skip_custom_agents: &HashSet<String>,
+    skip_custom_commands: &HashSet<String>,
     selected_servers: &serde_json::Map<String, serde_json::Value>,
     written_files: &mut Vec<String>,
 ) -> Result<Vec<InstructionTarget>, String> {
@@ -509,7 +551,7 @@ fn sync_agent_configs_step(
                         project_skills_dir,
                         skill_contents,
                         all_selected_skill_names,
-                        &[],
+                        custom_skill_names,
                         written_files,
                     )?;
                 }
@@ -522,8 +564,12 @@ fn sync_agent_configs_step(
 
                 if let Some(agents_dir) = agent_instance.agents_dir(dir) {
                     let custom_agents = project.custom_agents.as_deref().unwrap_or(&[]);
-                    let agent_files =
-                        sync_custom_agents(&agents_dir, custom_agents, agent_instance)?;
+                    let agent_files = sync_custom_agents(
+                        &agents_dir,
+                        custom_agents,
+                        agent_instance,
+                        skip_custom_agents,
+                    )?;
                     written_files.extend(agent_files);
 
                     let custom_agent_names: Vec<String> = custom_agents
@@ -589,6 +635,7 @@ fn sync_agent_configs_step(
                             workspace_command_contents,
                             custom_commands,
                             agent_instance,
+                            skip_custom_commands,
                         )?
                     };
                     written_files.extend(command_files);
@@ -635,11 +682,19 @@ fn sync_instruction_files_step(
     project: &Project,
     instruction_targets: &[InstructionTarget],
     write_dir: &str,
+    skip_custom_rules: &HashSet<String>,
     written_files: &mut Vec<String>,
 ) -> Result<Vec<String>, String> {
-    if !project.instructions_index_mode {
-        let _ = crate::core::sync_rules_to_automatic_instructions(&project.directory, &[], &[]);
-    }
+    // Keep custom rule files under .automatic/instructions/ as the
+    // project-local store (parallel to .agents/skills for custom skills),
+    // even when index mode is off. Library rule files are only written when
+    // index mode is on (inside sync_instruction_target_file).
+    let _ = crate::core::sync_rules_to_automatic_instructions(
+        &project.directory,
+        &[],
+        &project.custom_rules,
+        skip_custom_rules,
+    );
 
     let mut written_instruction_files = Vec::new();
 
@@ -656,6 +711,7 @@ fn sync_instruction_files_step(
                     &shared_user_content,
                     true,
                     write_dir,
+                    skip_custom_rules,
                     written_files,
                 )?;
                 written_instruction_files.push(target.filename.clone());
@@ -673,6 +729,7 @@ fn sync_instruction_files_step(
                 &user_content,
                 false,
                 write_dir,
+                skip_custom_rules,
                 written_files,
             )?;
             written_instruction_files.push(target.filename.clone());
@@ -784,6 +841,7 @@ fn sync_instruction_target_file(
     user_content: &str,
     use_unified_rules: bool,
     write_dir: &str,
+    skip_custom_rules: &HashSet<String>,
     written_files: &mut Vec<String>,
 ) -> Result<(), String> {
     let Some(agent_instance) = agent::from_id(agent_id) else {
@@ -791,11 +849,38 @@ fn sync_instruction_target_file(
     };
 
     let rules = resolve_rules_for_target(project, filename, use_unified_rules);
+    // Favour on-disk custom rule content when a conflict is open.
     let custom_contents: Vec<String> = project
         .custom_rules
         .iter()
         .filter(|r| !r.content.trim().is_empty())
-        .map(|r| r.content.clone())
+        .map(|r| {
+            if skip_custom_rules.contains(&r.name) {
+                let slug = r.name.to_lowercase()
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                    .collect::<String>()
+                    .split('-')
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("-");
+                let path = std::path::Path::new(&project.directory)
+                    .join(".automatic")
+                    .join("instructions")
+                    .join(format!("custom-{}.md", slug));
+                if let Ok(raw) = fs::read_to_string(&path) {
+                    let body = raw
+                        .strip_prefix("<!-- managed by Automatic — do not edit by hand -->\n\n")
+                        .unwrap_or(&raw)
+                        .trim_end()
+                        .to_string();
+                    if !body.is_empty() {
+                        return body;
+                    }
+                }
+            }
+            r.content.clone()
+        })
         .collect();
     let custom_rule_structs = project.custom_rules.clone();
     let file_path = dir.join(filename).display().to_string();
@@ -852,6 +937,7 @@ fn sync_instruction_target_file(
             &project.directory,
             &rules,
             &custom_rule_structs,
+            skip_custom_rules,
         ) {
             Ok(touched) => written_files.extend(touched),
             Err(e) => eprintln!("Failed to sync rules to .automatic/instructions/: {}", e),

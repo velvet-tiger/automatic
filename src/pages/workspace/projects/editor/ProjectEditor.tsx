@@ -21,6 +21,7 @@ import {
 } from "../../../../lib/analytics";
 import type {
   CustomSkill,
+  CustomAssetConflict,
   SubagentEntry,
   UserCommandEntry,
   Project,
@@ -48,6 +49,7 @@ import {
 import { EditorIcon } from "../EditorIcon";
 import { DriftDiffModal } from "../modals/DriftDiffModal";
 import { InstructionConflictModal } from "../modals/InstructionConflictModal";
+import { CustomAssetConflictModal } from "../modals/CustomAssetConflictModal";
 import { SwitchToUnifiedModal } from "./SwitchToUnifiedModal";
 import { RebuildConfirmationModal } from "./RebuildConfirmationModal";
 import { ApplyProjectTemplateModal } from "./ApplyProjectTemplateModal";
@@ -191,6 +193,7 @@ export function ProjectEditor({
 
   // Instruction file conflict modal state — null when closed, conflict when open
   const [instructionConflict, setInstructionConflict] = useState<InstructionFileConflict | null>(null);
+  const [customAssetConflict, setCustomAssetConflict] = useState<CustomAssetConflict | null>(null);
   const [rebuildPreview, setRebuildPreview] = useState<RebuildPreview | null>(null);
   const [rebuildBusy, setRebuildBusy] = useState(false);
 
@@ -748,6 +751,17 @@ export function ProjectEditor({
             // Don't replace an already-open conflict dialog.
             if (prev !== null) return prev;
             return conflicts[0]!;
+          });
+        }
+
+        // Same for project-scoped custom asset conflicts. Prefer leaving an
+        // open instruction conflict alone; custom conflicts wait their turn.
+        const customConflicts = report.custom_conflicts ?? [];
+        if (customConflicts.length > 0) {
+          setCustomAssetConflict((prev) => {
+            if (prev !== null) return prev;
+            if (conflicts.length > 0) return prev;
+            return customConflicts[0]!;
           });
         }
 
@@ -2264,6 +2278,48 @@ export function ProjectEditor({
     }
   };
 
+  /** User chose "Use on-disk …" — adopt disk content into the project config. */
+  const handleAdoptCustomAsset = async (kind: string, assetName: string) => {
+    const name = selectedName;
+    if (!name) return;
+    try {
+      await invoke("adopt_custom_asset", { name, kind, assetName });
+      const projRaw: string = await invoke("read_project", { name });
+      setProject(JSON.parse(projRaw));
+      const raw: string = await invoke("check_project_drift", { name });
+      const report = JSON.parse(raw) as DriftReport;
+      setDriftReport(report);
+      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
+      notifyProjectUpdated();
+      const remaining = report.custom_conflicts ?? [];
+      setCustomAssetConflict(remaining[0] ?? null);
+    } catch (err: unknown) {
+      setError(`Failed to adopt custom ${kind}: ${err}`);
+      setCustomAssetConflict(null);
+    }
+  };
+
+  /** User chose "Overwrite with Automatic content" for a custom asset. */
+  const handleOverwriteCustomAsset = async (kind: string, assetName: string) => {
+    const name = selectedName;
+    if (!name) return;
+    try {
+      await invoke("overwrite_custom_asset", { name, kind, assetName });
+      const projRaw: string = await invoke("read_project", { name });
+      setProject(JSON.parse(projRaw));
+      const raw: string = await invoke("check_project_drift", { name });
+      const report = JSON.parse(raw) as DriftReport;
+      setDriftReport(report);
+      setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
+      notifyProjectUpdated();
+      const remaining = report.custom_conflicts ?? [];
+      setCustomAssetConflict(remaining[0] ?? null);
+    } catch (err: unknown) {
+      setError(`Failed to overwrite custom ${kind}: ${err}`);
+      setCustomAssetConflict(null);
+    }
+  };
+
   /** Re-check drift after a stale skill was adopted, removed, or overwritten. */
   const handleDriftResolved = async () => {
     const name = selectedName;
@@ -2819,6 +2875,25 @@ export function ProjectEditor({
                           >
                             {c.filename}
                             <span className="text-warning/50 font-sans ml-0.5">(conflict)</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Project-scoped custom asset conflicts */}
+                  {(driftReport.custom_conflicts ?? []).length > 0 && (
+                    <div>
+                      <div className="text-[11px] font-semibold text-warning/80 mb-0.5">Project custom assets</div>
+                      <div className="flex flex-wrap gap-x-2 gap-y-1">
+                        {(driftReport.custom_conflicts ?? []).map((c) => (
+                          <button
+                            key={`${c.kind}:${c.name}`}
+                            onClick={() => setCustomAssetConflict(c)}
+                            className="flex items-center gap-1 text-[11px] font-mono text-warning/70 hover:text-warning bg-warning/5 hover:bg-warning/15 border border-warning/20 hover:border-warning/40 rounded px-1.5 py-0.5 transition-colors"
+                            title="Resolve conflict"
+                          >
+                            {c.name}
+                            <span className="text-warning/50 font-sans ml-0.5">({c.kind})</span>
                           </button>
                         ))}
                       </div>
@@ -3737,6 +3812,16 @@ export function ProjectEditor({
         onAdopt={(adopted) => handleAdoptInstructionFile(instructionConflict.filename, adopted)}
         onOverwrite={() => handleOverwriteInstructionFile(instructionConflict.filename)}
         onClose={() => setInstructionConflict(null)}
+      />
+    )}
+
+    {/* ── Project custom asset conflict modal ──────────────────────────── */}
+    {customAssetConflict && selectedName && (
+      <CustomAssetConflictModal
+        conflict={customAssetConflict}
+        onAdopt={() => handleAdoptCustomAsset(customAssetConflict.kind, customAssetConflict.name)}
+        onOverwrite={() => handleOverwriteCustomAsset(customAssetConflict.kind, customAssetConflict.name)}
+        onClose={() => setCustomAssetConflict(null)}
       />
     )}
 

@@ -469,11 +469,15 @@ const AUTOMATIC_INSTRUCTIONS_MANAGED_HEADER: &str =
 ///
 /// Global rules are written as `<machine_name>.md`; custom rules are written
 /// as `custom-<slug>.md` where `slug` is the lowercased, hyphenated rule name.
+/// Custom rules whose names appear in `skip_custom_names` are left on disk
+/// (conflict: favour on-disk until the user resolves it) but remain in the
+/// intended set so cleanup does not delete them.
 /// Returns the list of files written or removed.
 pub fn sync_rules_to_automatic_instructions(
     project_dir: &str,
     rule_names: &[String],
     custom_rules: &[crate::core::CustomRule],
+    skip_custom_names: &std::collections::HashSet<String>,
 ) -> Result<Vec<String>, String> {
     let instructions_dir = PathBuf::from(project_dir).join(AUTOMATIC_INSTRUCTIONS_DIR);
     fs::create_dir_all(&instructions_dir)
@@ -533,9 +537,12 @@ pub fn sync_rules_to_automatic_instructions(
         }
     }
 
-    // Write custom rule files.
+    // Write custom rule files (skip conflicting — favour on-disk).
     for cr in custom_rules {
         if cr.content.trim().is_empty() {
+            continue;
+        }
+        if skip_custom_names.contains(&cr.name) {
             continue;
         }
         let slug = slugify(&cr.name);
@@ -1482,7 +1489,7 @@ mod tests {
     #[test]
     fn sync_creates_automatic_instructions_directory() {
         let dir = tmp();
-        sync_rules_to_automatic_instructions(dir.path().to_str().unwrap(), &no_rules(), &[])
+        sync_rules_to_automatic_instructions(dir.path().to_str().unwrap(), &no_rules(), &[], &HashSet::new())
             .expect("sync");
         assert!(dir.path().join(".automatic").join("instructions").exists());
     }
@@ -1498,7 +1505,7 @@ mod tests {
             "<!-- managed by Automatic — do not edit by hand -->\n\nOld content.\n";
         fs::write(instructions_dir.join("old-rule.md"), managed_content).expect("write");
 
-        sync_rules_to_automatic_instructions(dir.path().to_str().unwrap(), &no_rules(), &[])
+        sync_rules_to_automatic_instructions(dir.path().to_str().unwrap(), &no_rules(), &[], &HashSet::new())
             .expect("sync");
 
         assert!(!instructions_dir.join("old-rule.md").exists());
@@ -1513,7 +1520,7 @@ mod tests {
         // Write a file WITHOUT the managed header.
         fs::write(instructions_dir.join("user-file.md"), "# User wrote this").expect("write");
 
-        sync_rules_to_automatic_instructions(dir.path().to_str().unwrap(), &no_rules(), &[])
+        sync_rules_to_automatic_instructions(dir.path().to_str().unwrap(), &no_rules(), &[], &HashSet::new())
             .expect("sync");
 
         assert!(instructions_dir.join("user-file.md").exists());

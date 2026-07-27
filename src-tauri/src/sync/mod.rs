@@ -13,6 +13,24 @@ pub use drift::{
     DriftReport, DriftedFile, InstructionFileConflict, ProjectProblem, ProjectProblemKind,
     ProjectProblemsReport,
 };
+pub use helpers::{
+    extract_agent_machine_name as extract_agent_machine_name_pub, CustomAssetConflict,
+    CustomAssetKind,
+};
+
+/// Force-write custom agents (empty skip set). Used by overwrite resolution.
+pub fn sync_custom_agents_force(
+    agents_dir: &std::path::Path,
+    custom_agents: &[crate::core::CustomAgent],
+    agent: &dyn crate::agent::Agent,
+) -> Result<Vec<String>, String> {
+    helpers::sync_custom_agents(
+        agents_dir,
+        custom_agents,
+        agent,
+        &std::collections::HashSet::new(),
+    )
+}
 pub use engine::{
     discover_new_agent_mcp_configs, sync_project, sync_project_without_autodetect,
     sync_to_directory,

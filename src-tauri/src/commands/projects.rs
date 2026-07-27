@@ -1019,6 +1019,287 @@ pub fn remove_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolve the effective project directory used for skill/command sync (Silent
+/// mode writes under `.automatic/silent/`).
+fn effective_project_dir(project: &core::Project) -> std::path::PathBuf {
+    let dir = std::path::PathBuf::from(&project.directory);
+    match project.mode {
+        core::ProjectMode::Silent => dir.join(".automatic").join("silent"),
+        core::ProjectMode::Normal => dir,
+    }
+}
+
+fn custom_rule_slug(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn strip_instructions_header(content: &str) -> String {
+    content
+        .strip_prefix("<!-- managed by Automatic — do not edit by hand -->\n\n")
+        .unwrap_or(content)
+        .trim_end()
+        .to_string()
+}
+
+/// Adopt on-disk custom asset content into the project's stored snapshot.
+///
+/// `kind` is one of `"skill"`, `"rule"`, `"agent"`, `"command"`.
+/// Favours the on-disk file over Automatic's stored copy.
+#[tauri::command]
+pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
+    let raw = core::read_project(name)?;
+    let mut project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    let effective = effective_project_dir(&project);
+
+    match kind {
+        "skill" => {
+            let skill_md = effective
+                .join(".agents")
+                .join("skills")
+                .join(asset_name)
+                .join("SKILL.md");
+            let disk_content = std::fs::read_to_string(&skill_md).map_err(|e| {
+                format!("Failed to read {}: {}", skill_md.display(), e)
+            })?;
+            let custom = project.custom_skills.get_or_insert_with(Vec::new);
+            let Some(entry) = custom.iter_mut().find(|cs| cs.name == asset_name) else {
+                return Err(format!(
+                    "Skill '{}' is not a project-scoped custom skill",
+                    asset_name
+                ));
+            };
+            entry.content = disk_content;
+        }
+        "rule" => {
+            let path = std::path::Path::new(&project.directory)
+                .join(".automatic")
+                .join("instructions")
+                .join(format!("custom-{}.md", custom_rule_slug(asset_name)));
+            let raw_disk = std::fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+            let disk_body = strip_instructions_header(&raw_disk);
+            let Some(entry) = project
+                .custom_rules
+                .iter_mut()
+                .find(|r| r.name == asset_name)
+            else {
+                return Err(format!(
+                    "Rule '{}' is not a project-scoped custom rule",
+                    asset_name
+                ));
+            };
+            entry.content = disk_body;
+        }
+        "agent" => {
+            // Prefer the first matching on-disk file under any agent dir.
+            let mut found: Option<String> = None;
+            if let Some(agents) = project.custom_agents.as_ref() {
+                if let Some(ca) = agents.iter().find(|a| a.name == asset_name) {
+                    let machine_name = sync::extract_agent_machine_name_pub(&ca.content)
+                        .unwrap_or_else(|| ca.name.to_lowercase().replace(' ', "-"));
+                    for agent_id in &project.agents {
+                        let Some(agent_instance) = crate::agent::from_id(agent_id) else {
+                            continue;
+                        };
+                        let Some(agents_dir) = agent_instance.agents_dir(&effective) else {
+                            continue;
+                        };
+                        let ext = agent_instance.agents_file_ext();
+                        let path = agents_dir.join(format!("{}.{}", machine_name, ext));
+                        if path.exists() {
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                found = Some(content);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            let disk_content = found.ok_or_else(|| {
+                format!(
+                    "On-disk agent '{}' was not found in any agent directory",
+                    asset_name
+                )
+            })?;
+            let custom = project.custom_agents.get_or_insert_with(Vec::new);
+            let Some(entry) = custom.iter_mut().find(|a| a.name == asset_name) else {
+                return Err(format!(
+                    "Agent '{}' is not a project-scoped custom agent",
+                    asset_name
+                ));
+            };
+            entry.content = disk_content;
+        }
+        "command" => {
+            let path = effective
+                .join(".agents")
+                .join("commands")
+                .join(format!("{}.md", asset_name));
+            let disk_content = std::fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+            let custom = project.custom_commands.get_or_insert_with(Vec::new);
+            let Some(entry) = custom.iter_mut().find(|c| c.name == asset_name) else {
+                return Err(format!(
+                    "Command '{}' is not a project-scoped custom command",
+                    asset_name
+                ));
+            };
+            entry.content = disk_content;
+        }
+        other => return Err(format!("Unknown custom asset kind '{}'", other)),
+    }
+
+    project.updated_at = chrono::Utc::now().to_rfc3339();
+    let data = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
+    core::save_project(name, &data)?;
+
+    activity::log(
+        name,
+        ActivityEvent::ProjectUpdated,
+        &format!("Custom {} adopted from disk", kind),
+        asset_name,
+    );
+
+    Ok(())
+}
+
+/// Overwrite the on-disk custom asset with Automatic's stored snapshot, then
+/// re-sync so agent copies/symlinks match.
+#[tauri::command]
+pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
+    let raw = core::read_project(name)?;
+    let mut project: core::Project =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    if project.directory.is_empty() {
+        return Err("Project has no directory configured".into());
+    }
+
+    let effective = effective_project_dir(&project);
+
+    match kind {
+        "skill" => {
+            let stored = project
+                .custom_skills
+                .as_ref()
+                .and_then(|list| list.iter().find(|cs| cs.name == asset_name))
+                .ok_or_else(|| {
+                    format!(
+                        "Skill '{}' is not a project-scoped custom skill",
+                        asset_name
+                    )
+                })?
+                .content
+                .clone();
+            let hub_dir = effective
+                .join(".agents")
+                .join("skills")
+                .join(asset_name);
+            std::fs::create_dir_all(&hub_dir)
+                .map_err(|e| format!("Failed to create {}: {}", hub_dir.display(), e))?;
+            std::fs::write(hub_dir.join("SKILL.md"), &stored)
+                .map_err(|e| format!("Failed to write skill: {}", e))?;
+        }
+        "rule" => {
+            let stored = project
+                .custom_rules
+                .iter()
+                .find(|r| r.name == asset_name)
+                .ok_or_else(|| {
+                    format!(
+                        "Rule '{}' is not a project-scoped custom rule",
+                        asset_name
+                    )
+                })?
+                .content
+                .clone();
+            let instructions_dir = std::path::Path::new(&project.directory)
+                .join(".automatic")
+                .join("instructions");
+            std::fs::create_dir_all(&instructions_dir)
+                .map_err(|e| format!("Failed to create {}: {}", instructions_dir.display(), e))?;
+            let path = instructions_dir.join(format!("custom-{}.md", custom_rule_slug(asset_name)));
+            let file_content = format!(
+                "<!-- managed by Automatic — do not edit by hand -->\n\n{}\n",
+                stored.trim_end()
+            );
+            std::fs::write(&path, file_content)
+                .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+        }
+        "agent" => {
+            let custom = project.custom_agents.clone().unwrap_or_default();
+            let Some(ca) = custom.iter().find(|a| a.name == asset_name) else {
+                return Err(format!(
+                    "Agent '{}' is not a project-scoped custom agent",
+                    asset_name
+                ));
+            };
+            for agent_id in &project.agents {
+                let Some(agent_instance) = crate::agent::from_id(agent_id) else {
+                    continue;
+                };
+                let Some(agents_dir) = agent_instance.agents_dir(&effective) else {
+                    continue;
+                };
+                let _ = sync::sync_custom_agents_force(
+                    &agents_dir,
+                    std::slice::from_ref(ca),
+                    agent_instance,
+                )?;
+            }
+        }
+        "command" => {
+            let stored = project
+                .custom_commands
+                .as_ref()
+                .and_then(|list| list.iter().find(|c| c.name == asset_name))
+                .ok_or_else(|| {
+                    format!(
+                        "Command '{}' is not a project-scoped custom command",
+                        asset_name
+                    )
+                })?
+                .content
+                .clone();
+            let hub_dir = effective.join(".agents").join("commands");
+            std::fs::create_dir_all(&hub_dir)
+                .map_err(|e| format!("Failed to create {}: {}", hub_dir.display(), e))?;
+            let rendered = crate::agent::render_markdown_command(&stored);
+            std::fs::write(hub_dir.join(format!("{}.md", asset_name)), rendered)
+                .map_err(|e| format!("Failed to write command: {}", e))?;
+        }
+        other => return Err(format!("Unknown custom asset kind '{}'", other)),
+    }
+
+    // Re-sync so agent locations pick up the restored content. Disk now matches
+    // stored for this asset, so the conflict filter will not skip it.
+    if !project.agents.is_empty() {
+        sync::sync_project_without_autodetect(&mut project)?;
+    }
+
+    activity::log(
+        name,
+        ActivityEvent::ProjectUpdated,
+        &format!("Custom {} overwritten from Automatic", kind),
+        asset_name,
+    );
+
+    Ok(())
+}
+
 // ── Cross-cutting helpers ────────────────────────────────────────────────────
 //
 // These are used by skills, rules, mcp_servers, and skill_store modules when

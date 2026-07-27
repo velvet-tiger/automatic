@@ -742,7 +742,7 @@ pub(crate) fn parse_frontmatter(content: &str) -> (HashMap<String, String>, &str
     (frontmatter, body)
 }
 
-fn render_markdown_command(content: &str) -> String {
+pub(crate) fn render_markdown_command(content: &str) -> String {
     if content.starts_with("---\n") || content.starts_with("---\r\n") {
         let after_first = &content[4..];
         if let Some(end_marker_pos) = after_first
@@ -806,6 +806,7 @@ pub(crate) fn copy_commands_to_project(
     project_commands_dir: &Path,
     workspace_commands: &[(String, String)],
     custom_commands: &[crate::core::CustomCommand],
+    skip_custom_names: &std::collections::HashSet<String>,
 ) -> Result<Vec<String>, String> {
     let mut written = Vec::new();
     let mut expected: HashSet<String> = HashSet::new();
@@ -839,6 +840,16 @@ pub(crate) fn copy_commands_to_project(
     for command in custom_commands {
         let file_name = format!("{}.md", command.name);
         expected.insert(file_name.clone());
+        // Keep conflicting custom commands in `expected` so cleanup does not
+        // delete them, but do not overwrite on-disk content.
+        if skip_custom_names.contains(&command.name) {
+            let (frontmatter, _) = parse_frontmatter(&command.content);
+            index_entries.push(CommandIndexEntry {
+                name: command.name.clone(),
+                description: frontmatter.get("description").cloned().unwrap_or_default(),
+            });
+            continue;
+        }
         let path = project_commands_dir.join(&file_name);
         fs::write(&path, render_markdown_command(&command.content))
             .map_err(|e| format!("Failed to write command '{}': {}", command.name, e))?;
@@ -913,6 +924,7 @@ pub(crate) fn sync_commands_to_dir(
     workspace_commands: &[(String, String)],
     custom_commands: &[crate::core::CustomCommand],
     agent_instance: &dyn Agent,
+    skip_custom_names: &std::collections::HashSet<String>,
 ) -> Result<Vec<String>, String> {
     let mut written = Vec::new();
     let mut expected: HashSet<String> = HashSet::new();
@@ -941,6 +953,9 @@ pub(crate) fn sync_commands_to_dir(
     for command in custom_commands {
         let file_name = agent_instance.command_file_name(&command.name);
         expected.insert(file_name.clone());
+        if skip_custom_names.contains(&command.name) {
+            continue;
+        }
         let path = commands_dir.join(&file_name);
         let rendered = agent_instance.convert_command_content(&command.content, &command.name);
         fs::write(&path, rendered)
@@ -1733,6 +1748,7 @@ mod tests {
                 content: "Run custom.\n".to_string(),
             }],
             &ClaudeCode,
+            &HashSet::new(),
         )
         .expect("sync commands");
 
@@ -1776,6 +1792,7 @@ mod tests {
                 name: "custom-cmd".to_string(),
                 content: "Run custom.\n".to_string(),
             }],
+            &HashSet::new(),
         )
         .expect("copy commands");
 
@@ -1814,12 +1831,13 @@ mod tests {
                 "---\ndescription: workspace\n---\nRun workspace.\n".to_string(),
             )],
             &[],
+            &HashSet::new(),
         )
         .expect("seed commands");
 
         assert!(dir.path().join("commands-index.md").exists());
 
-        let written = copy_commands_to_project(&commands_dir, &[], &[]).expect("clear commands");
+        let written = copy_commands_to_project(&commands_dir, &[], &[], &HashSet::new()).expect("clear commands");
 
         assert!(written.iter().any(|p| p.ends_with("commands-index.md")));
         assert!(!dir.path().join("commands-index.md").exists());
@@ -1842,6 +1860,7 @@ mod tests {
                 name: "custom-cmd".to_string(),
                 content: "Run custom.\n".to_string(),
             }],
+            &HashSet::new(),
         )
         .expect("copy commands");
 

@@ -206,6 +206,8 @@ pub fn run() {
             check_project_problems,
             adopt_stale_skill,
             remove_stale_skill,
+            adopt_custom_asset,
+            overwrite_custom_asset,
             get_project_context,
             get_project_docs,
             read_project_context_raw,

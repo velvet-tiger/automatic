@@ -83,6 +83,258 @@ pub(crate) fn prune_shadowed_custom_skills(project: &mut Project) -> bool {
     changed
 }
 
+/// Which project-scoped custom asset kind diverged from disk.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomAssetKind {
+    Skill,
+    Rule,
+    Agent,
+    Command,
+}
+
+/// Conflict when a project-scoped custom asset's on-disk file differs from the
+/// content stored in the project config.
+///
+/// Unlike library assets (Automatic is source of truth and overwrites on sync),
+/// custom skills/rules/agents/commands are authored per-project. When disk and
+/// stored content diverge, the user must choose: adopt the on-disk version into
+/// Automatic, or overwrite disk with the stored version. Sync favours on-disk
+/// and will not silently clobber it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CustomAssetConflict {
+    pub kind: CustomAssetKind,
+    /// Display / machine name of the asset (skill dir, rule name, agent name, command name).
+    pub name: String,
+    /// Relative path of the on-disk file from the project (or silent) root.
+    pub path: String,
+    pub disk_content: String,
+    pub automatic_content: String,
+}
+
+/// Managed header written at the top of `.automatic/instructions/*.md` files.
+const INSTRUCTIONS_MANAGED_HEADER: &str =
+    "<!-- managed by Automatic — do not edit by hand -->\n\n";
+
+fn strip_instructions_managed_header(content: &str) -> String {
+    content
+        .strip_prefix(INSTRUCTIONS_MANAGED_HEADER)
+        .unwrap_or(content)
+        .trim_end()
+        .to_string()
+}
+
+fn custom_rule_slug(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Collect conflicts for all project-scoped custom assets (skills, rules,
+/// agents, commands). Missing on-disk files are not conflicts — sync creates
+/// them from the stored snapshot.
+pub(crate) fn collect_custom_asset_conflicts(
+    project: &Project,
+    dir: &std::path::Path,
+) -> Vec<CustomAssetConflict> {
+    let mut conflicts = Vec::new();
+    conflicts.extend(collect_custom_skill_conflicts(project, dir));
+    conflicts.extend(collect_custom_rule_conflicts(project, dir));
+    conflicts.extend(collect_custom_agent_conflicts(project, dir));
+    conflicts.extend(collect_custom_command_conflicts(project, dir));
+    conflicts
+}
+
+/// Compare each non-library `custom_skills` entry against
+/// `.agents/skills/<name>/SKILL.md` under `dir`.
+pub(crate) fn collect_custom_skill_conflicts(
+    project: &Project,
+    dir: &std::path::Path,
+) -> Vec<CustomAssetConflict> {
+    let library_names: HashSet<&str> = project.skills.iter().map(|s| s.as_str()).collect();
+    let custom = project.custom_skills.as_deref().unwrap_or(&[]);
+    let mut conflicts = Vec::new();
+
+    for cs in custom {
+        if library_names.contains(cs.name.as_str()) {
+            continue;
+        }
+        let skill_md = dir
+            .join(".agents")
+            .join("skills")
+            .join(&cs.name)
+            .join("SKILL.md");
+        if !skill_md.exists() {
+            continue;
+        }
+        let disk_content = match fs::read_to_string(&skill_md) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if disk_content == cs.content {
+            continue;
+        }
+        conflicts.push(CustomAssetConflict {
+            kind: CustomAssetKind::Skill,
+            name: cs.name.clone(),
+            path: format!(".agents/skills/{}/SKILL.md", cs.name),
+            disk_content,
+            automatic_content: cs.content.clone(),
+        });
+    }
+
+    conflicts
+}
+
+/// Compare each `custom_rules` entry against
+/// `.automatic/instructions/custom-<slug>.md` under the real project directory
+/// (instructions always live at the project root, even in Silent mode).
+pub(crate) fn collect_custom_rule_conflicts(
+    project: &Project,
+    _dir: &std::path::Path,
+) -> Vec<CustomAssetConflict> {
+    // Custom rule files always live under the real project directory.
+    let root = std::path::Path::new(&project.directory);
+    let mut conflicts = Vec::new();
+
+    for cr in &project.custom_rules {
+        if cr.content.trim().is_empty() {
+            continue;
+        }
+        let slug = custom_rule_slug(&cr.name);
+        let path = root
+            .join(".automatic")
+            .join("instructions")
+            .join(format!("custom-{}.md", slug));
+        if !path.exists() {
+            continue;
+        }
+        let raw = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let disk_body = strip_instructions_managed_header(&raw);
+        let stored_body = cr.content.trim_end().to_string();
+        if disk_body == stored_body {
+            continue;
+        }
+        conflicts.push(CustomAssetConflict {
+            kind: CustomAssetKind::Rule,
+            name: cr.name.clone(),
+            path: format!(".automatic/instructions/custom-{}.md", slug),
+            disk_content: disk_body,
+            automatic_content: stored_body,
+        });
+    }
+
+    conflicts
+}
+
+/// Compare each `custom_agents` entry against the first on-disk agent file
+/// found under any configured agent's `agents_dir`.
+pub(crate) fn collect_custom_agent_conflicts(
+    project: &Project,
+    dir: &std::path::Path,
+) -> Vec<CustomAssetConflict> {
+    let custom = project.custom_agents.as_deref().unwrap_or(&[]);
+    let mut conflicts = Vec::new();
+
+    for ca in custom {
+        let machine_name = extract_agent_machine_name(&ca.content)
+            .unwrap_or_else(|| ca.name.to_lowercase().replace(' ', "-"));
+
+        for agent_id in &project.agents {
+            let Some(agent_instance) = crate::agent::from_id(agent_id) else {
+                continue;
+            };
+            let Some(agents_dir) = agent_instance.agents_dir(dir) else {
+                continue;
+            };
+            let ext = agent_instance.agents_file_ext();
+            let file_path = agents_dir.join(format!("{}.{}", machine_name, ext));
+            if !file_path.exists() {
+                continue;
+            }
+            let disk_content = match fs::read_to_string(&file_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let expected =
+                agent_instance.convert_agent_content(&ca.content, &machine_name);
+            if disk_content == expected {
+                break; // matches this agent dir — no conflict
+            }
+            let relative = file_path
+                .strip_prefix(dir)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| file_path.display().to_string());
+            conflicts.push(CustomAssetConflict {
+                kind: CustomAssetKind::Agent,
+                name: ca.name.clone(),
+                path: relative,
+                disk_content,
+                automatic_content: expected,
+            });
+            break; // one conflict entry per custom agent
+        }
+    }
+
+    conflicts
+}
+
+/// Compare each `custom_commands` entry against `.agents/commands/<name>.md`.
+pub(crate) fn collect_custom_command_conflicts(
+    project: &Project,
+    dir: &std::path::Path,
+) -> Vec<CustomAssetConflict> {
+    let custom = project.custom_commands.as_deref().unwrap_or(&[]);
+    let mut conflicts = Vec::new();
+
+    for cc in custom {
+        let cmd_path = dir
+            .join(".agents")
+            .join("commands")
+            .join(format!("{}.md", cc.name));
+        if !cmd_path.exists() {
+            continue;
+        }
+        let disk_content = match fs::read_to_string(&cmd_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let expected = crate::agent::render_markdown_command(&cc.content);
+        if disk_content == expected {
+            continue;
+        }
+        conflicts.push(CustomAssetConflict {
+            kind: CustomAssetKind::Command,
+            name: cc.name.clone(),
+            path: format!(".agents/commands/{}.md", cc.name),
+            disk_content,
+            automatic_content: expected,
+        });
+    }
+
+    conflicts
+}
+
+/// Names of conflicting assets of a given kind.
+pub(crate) fn conflicting_names(
+    conflicts: &[CustomAssetConflict],
+    kind: CustomAssetKind,
+) -> HashSet<String> {
+    conflicts
+        .iter()
+        .filter(|c| c.kind == kind)
+        .map(|c| c.name.clone())
+        .collect()
+}
+
 /// Find the Automatic binary path.
 ///
 /// Delegates to the canonical resolver so the sync engine, drift check, and
@@ -217,7 +469,7 @@ pub(crate) fn strip_internal_fields(mut value: Value) -> Value {
 
 /// Extract the machine name (slug) from agent frontmatter content.
 /// Returns the `name` field converted to lowercase with spaces replaced by hyphens.
-pub(crate) fn extract_agent_machine_name(content: &str) -> Option<String> {
+pub fn extract_agent_machine_name(content: &str) -> Option<String> {
     if !content.starts_with("---\n") {
         return None;
     }
@@ -241,11 +493,15 @@ pub(crate) fn extract_agent_machine_name(content: &str) -> Option<String> {
 /// 1. Extract the machine name from the agent's frontmatter
 /// 2. Write to `agents_dir/{machine_name}.md`
 ///
+/// Agents whose names appear in `skip_names` are left untouched on disk
+/// (conflict: favour on-disk content until the user resolves it).
+///
 /// Returns the list of files written.
 pub(crate) fn sync_custom_agents(
     agents_dir: &std::path::Path,
     custom_agents: &[crate::core::CustomAgent],
     agent: &dyn crate::agent::Agent,
+    skip_names: &HashSet<String>,
 ) -> Result<Vec<String>, String> {
     if custom_agents.is_empty() {
         return Ok(Vec::new());
@@ -259,6 +515,9 @@ pub(crate) fn sync_custom_agents(
     let ext = agent.agents_file_ext();
 
     for custom_agent in custom_agents {
+        if skip_names.contains(&custom_agent.name) {
+            continue;
+        }
         let machine_name = extract_agent_machine_name(&custom_agent.content)
             .unwrap_or_else(|| custom_agent.name.to_lowercase().replace(' ', "-"));
         let converted_content = agent.convert_agent_content(&custom_agent.content, &machine_name);
@@ -421,7 +680,8 @@ mod tests {
             },
         ];
 
-        let written = sync_custom_agents(&agents_dir, &custom_agents, &ClaudeCode).expect("sync");
+        let written = sync_custom_agents(&agents_dir, &custom_agents, &ClaudeCode, &HashSet::new())
+            .expect("sync");
 
         assert_eq!(written.len(), 2);
         assert!(agents_dir.join("planner-agent.md").exists());
