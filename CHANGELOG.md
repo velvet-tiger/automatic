@@ -4,6 +4,17 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.15.2] - 2026-07-28
+
+### Fixed
+
+- Library skills still overwrite on sync, but project-scoped custom skills, rules, agents, and commands now favour on-disk content when they diverge from the stored snapshot. Sync surfaces an adopt/overwrite comparison instead of silently replacing the user's edits. ([0bdb84f](https://github.com/velvet-tiger/automatic/commit/0bdb84f))
+- Updating or reinstalling built-in skills no longer leaves project copies stale. Projects are resynced after bundled skill reinstalls (including the upgrade-time path), so drift does not fire immediately after an update. ([d1d6d71](https://github.com/velvet-tiger/automatic/commit/d1d6d71))
+- Add Project now refuses to create a project when the name or directory already exists. The wizard stub save was overwriting existing project configs; duplicate creates surface an error instead of wiping data. ([0462561](https://github.com/velvet-tiger/automatic/commit/0462561))
+- Creating a feature from the Build UI now lands in the selected column. The UI already sent state on create, but the backend always inserted backlog; an optional state is accepted through the command and MCP paths. ([0a239a6](https://github.com/velvet-tiger/automatic/commit/0a239a6))
+- Uninstalling or dropping a bundled plugin now removes its orphaned tool file and `project.tools` references (for example Spec Kitty leftovers). Cleanup runs during plugin tool sync on startup and on plugin toggle. ([23b2f7b](https://github.com/velvet-tiger/automatic/commit/23b2f7b))
+- Clearing assignee or effort in the Build list now persists. Serde treated JSON null as "leave unchanged" on nested Option fields, so those clears were a no-op. ([64d151f](https://github.com/velvet-tiger/automatic/commit/64d151f))
+
 ## [1.15.1] - 2026-07-26
 
 ### Fixed
