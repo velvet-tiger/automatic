@@ -1132,7 +1132,15 @@ mod tests {
         }
     }
 
-    fn assert_instruction_state(project: &Project, instructions_set: bool, rules_set: bool) {
+    /// `synced` is true when the action ran through sync (which maintains the
+    /// `.automatic/instructions/custom-*.md` project-local store even when
+    /// index mode is off). Save-only paths do not create that store.
+    fn assert_instruction_state(
+        project: &Project,
+        instructions_set: bool,
+        rules_set: bool,
+        synced: bool,
+    ) {
         let file_path = PathBuf::from(&project.directory).join(INSTRUCTION_FILE);
         let on_disk = fs::read_to_string(&file_path).expect("read instruction file");
         let read_back =
@@ -1173,10 +1181,17 @@ mod tests {
                     "custom rule content should stay inline when split mode is off: {:?}",
                     on_disk
                 );
+                if synced {
+                    let custom_rule = fs::read_to_string(&custom_rule_path)
+                        .expect("custom rule store should exist after sync");
+                    assert!(custom_rule.contains(CUSTOM_RULE_CONTENT));
+                } else {
+                    assert!(!custom_rule_path.exists());
+                }
             } else {
                 assert!(!on_disk.contains(CUSTOM_RULE_CONTENT));
+                assert!(!custom_rule_path.exists());
             }
-            assert!(!custom_rule_path.exists());
         }
     }
 
@@ -1190,7 +1205,7 @@ mod tests {
                         make_project(dir.path().to_str().unwrap(), split_rules, rules_set);
 
                     apply_action(Action::Save, &mut project, instructions_set).expect("save");
-                    assert_instruction_state(&project, instructions_set, rules_set);
+                    assert_instruction_state(&project, instructions_set, rules_set, false);
                 }
             }
         }
@@ -1206,7 +1221,7 @@ mod tests {
                         make_project(dir.path().to_str().unwrap(), split_rules, rules_set);
 
                     apply_action(Action::Sync, &mut project, instructions_set).expect("sync");
-                    assert_instruction_state(&project, instructions_set, rules_set);
+                    assert_instruction_state(&project, instructions_set, rules_set, true);
                 }
             }
         }
@@ -1221,7 +1236,7 @@ mod tests {
 
                 apply_action(Action::ToggleSplitOn, &mut project, instructions_set)
                     .expect("toggle split on");
-                assert_instruction_state(&project, instructions_set, rules_set);
+                assert_instruction_state(&project, instructions_set, rules_set, true);
             }
         }
     }
@@ -1235,7 +1250,7 @@ mod tests {
 
                 apply_action(Action::ToggleSplitOff, &mut project, instructions_set)
                     .expect("toggle split off");
-                assert_instruction_state(&project, instructions_set, rules_set);
+                assert_instruction_state(&project, instructions_set, rules_set, true);
             }
         }
     }
