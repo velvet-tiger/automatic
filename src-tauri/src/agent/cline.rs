@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
-use super::{discover_mcp_servers_from_json, sync_individual_skills, Agent};
+use super::{discover_mcp_servers_from_json, Agent};
 
 /// Cline agent — stores project skills under
 /// `<project>/.cline/skills/<name>/SKILL.md`.
@@ -75,25 +75,6 @@ impl Agent for Cline {
         // Cline stores MCP settings in global CLI state, not per-project.
         // Skip silently — the user is informed via `mcp_note()` in the UI.
         Ok(String::new())
-    }
-
-    fn sync_skills(
-        &self,
-        dir: &Path,
-        skill_contents: &[(String, String)],
-        selected_names: &[String],
-        local_skill_names: &[String],
-    ) -> Result<Vec<String>, String> {
-        let mut written = Vec::new();
-        let skills_dir = dir.join(".cline").join("skills");
-        sync_individual_skills(
-            &skills_dir,
-            skill_contents,
-            selected_names,
-            local_skill_names,
-            &mut written,
-        )?;
-        Ok(written)
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

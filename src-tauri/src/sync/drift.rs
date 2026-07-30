@@ -1049,6 +1049,7 @@ mod tests {
     use serde_json::Map;
     use std::fs;
     use tempfile::tempdir;
+    use std::path::Path;
 
     /// After `sync_skills` writes skills into a temp project dir, `collect_skills_drift`
     /// must report no drift for the same agent and the same skill list.
@@ -1089,6 +1090,132 @@ mod tests {
         assert!(
             files.is_empty(),
             "Expected no drift after sync, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Lay out a project the way the sync engine leaves one: the canonical
+    /// `.agents/skills/` hub holds real directories, and each agent skill
+    /// directory holds either a symlink back to the hub (`sync_mode`
+    /// `"symlink"`) or its own copy (`sync_mode` `"copy"`).
+    ///
+    /// The shape is built here rather than by calling
+    /// `symlink_skills_from_project` because that helper reads the real
+    /// `~/.automatic*/settings.json` to choose a mode, which would make the
+    /// outcome depend on the machine the test runs on.
+    fn lay_out_synced_skill(
+        root: &Path,
+        agent_skills_dir: &Path,
+        name: &str,
+        content: &str,
+        symlink: bool,
+    ) {
+        let hub = root.join(".agents").join("skills").join(name);
+        fs::create_dir_all(&hub).unwrap();
+        fs::write(hub.join("SKILL.md"), content).unwrap();
+
+        if agent_skills_dir == root.join(".agents").join("skills") {
+            return;
+        }
+
+        fs::create_dir_all(agent_skills_dir).unwrap();
+        let link = agent_skills_dir.join(name);
+        if symlink {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&hub, &link).unwrap();
+            #[cfg(windows)]
+            std::os::windows::fs::symlink_dir(&hub, &link).unwrap();
+        } else {
+            fs::create_dir_all(&link).unwrap();
+            fs::write(link.join("SKILL.md"), content).unwrap();
+        }
+    }
+
+    fn assert_junie_drift_is_quiet(symlink: bool) {
+        use crate::agent::Junie;
+
+        let project_dir = tempdir().unwrap();
+        let root = project_dir.path();
+        let name = "drift-fixture-skill";
+        let content = "# Fixture skill\n";
+
+        for skills_dir in Junie.skill_dirs(root) {
+            lay_out_synced_skill(root, &skills_dir, name, content, symlink);
+        }
+
+        let skill_contents = vec![(name.to_string(), content.to_string())];
+        let selected = vec![name.to_string()];
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_skills_drift(
+            &Junie,
+            &root.to_path_buf(),
+            &skill_contents,
+            &selected,
+            &[],
+            &mut files,
+        );
+
+        assert!(
+            files.is_empty(),
+            "Junie drift must be quiet in {} mode, got: {:?}",
+            if symlink { "symlink" } else { "copy" },
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// `.junie/skills` entered drift detection when `sync_skills` started
+    /// deriving its targets from `skill_dirs()`.  Both sync modes must stay
+    /// quiet, because a false positive here lights up every Junie project on
+    /// the first run after release.
+    #[test]
+    fn junie_skill_dirs_are_quiet_after_a_symlink_mode_sync() {
+        assert_junie_drift_is_quiet(true);
+    }
+
+    #[test]
+    fn junie_skill_dirs_are_quiet_after_a_copy_mode_sync() {
+        assert_junie_drift_is_quiet(false);
+    }
+
+    /// A skill missing from `.junie/skills` must now be reported.  Before
+    /// `sync_skills` looped every `skill_dirs()` entry, the tempdir never
+    /// contained `.junie/skills` and this drift was invisible.
+    #[test]
+    fn a_skill_missing_from_the_junie_directory_is_reported() {
+        use crate::agent::Junie;
+
+        let project_dir = tempdir().unwrap();
+        let root = project_dir.path();
+        let name = "drift-fixture-skill";
+        let content = "# Fixture skill\n";
+
+        let hub = root.join(".agents").join("skills").join(name);
+        fs::create_dir_all(&hub).unwrap();
+        fs::write(hub.join("SKILL.md"), content).unwrap();
+        fs::create_dir_all(root.join(".junie").join("skills")).unwrap();
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_skills_drift(
+            &Junie,
+            &root.to_path_buf(),
+            &[(name.to_string(), content.to_string())],
+            &[name.to_string()],
+            &[],
+            &mut files,
+        );
+
+        assert!(
+            files
+                .iter()
+                .any(|f| f.reason == "missing" && f.path.starts_with(".junie/skills/")),
+            "expected a missing entry under .junie/skills, got: {:?}",
             files
                 .iter()
                 .map(|f| format!("{} ({})", f.path, f.reason))

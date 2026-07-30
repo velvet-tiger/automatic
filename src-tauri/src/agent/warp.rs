@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
-use super::{sync_individual_skills, Agent, AgentCapabilities};
+use super::{Agent, AgentCapabilities};
 
 /// Warp agent — uses `AGENTS.md` as the project rules file and stores
 /// skills under `<project>/.agents/skills/<name>/SKILL.md`.
@@ -105,25 +105,6 @@ impl Agent for Warp {
         _servers: &Map<String, Value>,
     ) -> Result<String, String> {
         Ok(String::new())
-    }
-
-    fn sync_skills(
-        &self,
-        dir: &Path,
-        skill_contents: &[(String, String)],
-        selected_names: &[String],
-        local_skill_names: &[String],
-    ) -> Result<Vec<String>, String> {
-        let mut written = Vec::new();
-        let skills_dir = dir.join(".agents").join("skills");
-        sync_individual_skills(
-            &skills_dir,
-            skill_contents,
-            selected_names,
-            local_skill_names,
-            &mut written,
-        )?;
-        Ok(written)
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

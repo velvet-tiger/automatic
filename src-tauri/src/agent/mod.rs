@@ -172,13 +172,32 @@ pub trait Agent: Send + Sync {
     /// `local_skill_names` lists skills that exist only in this project
     /// directory (not in the global registry).  These must be preserved
     /// during the cleanup phase rather than deleted.
+    ///
+    /// The default writes every directory [`skill_dirs`] declares.  The sync
+    /// engine does not call this — it populates the canonical
+    /// `.agents/skills/` hub and then links each agent directory to it.  The
+    /// only caller is drift detection, which writes the expected state into a
+    /// tempdir and then compares every entry of `skill_dirs` against disk, so
+    /// a directory this method skips is a directory drift can never check.
     fn sync_skills(
         &self,
         dir: &Path,
         skill_contents: &[(String, String)],
         selected_names: &[String],
         local_skill_names: &[String],
-    ) -> Result<Vec<String>, String>;
+    ) -> Result<Vec<String>, String> {
+        let mut written = Vec::new();
+        for skills_dir in self.skill_dirs(dir) {
+            sync_individual_skills(
+                &skills_dir,
+                skill_contents,
+                selected_names,
+                local_skill_names,
+                &mut written,
+            )?;
+        }
+        Ok(written)
+    }
 
     /// Apply provider-specific instruction-file rule syncing.
     ///
@@ -1837,7 +1856,8 @@ mod tests {
 
         assert!(dir.path().join("commands-index.md").exists());
 
-        let written = copy_commands_to_project(&commands_dir, &[], &[], &HashSet::new()).expect("clear commands");
+        let written = copy_commands_to_project(&commands_dir, &[], &[], &HashSet::new())
+            .expect("clear commands");
 
         assert!(written.iter().any(|p| p.ends_with("commands-index.md")));
         assert!(!dir.path().join("commands-index.md").exists());
