@@ -24,6 +24,8 @@ Reference and design documentation for the Automatic desktop app. Source-of-trut
 
 ## Agent Reference
 
+- [Upstream Audit — 2026-07-30](./agents/upstream-audit-2026-07-30.md) — every supported agent checked against its vendor's current documentation, with the resulting gap list.
+- [Agent Gap Remediation Plan](./agents/agent-gap-remediation-plan.md) — phased checklist closing the audit findings, with dependencies so the work can be split up.
 - [Agent Reference Index](./agents/README.md) — supported agents, instructions files, MCP config paths, skills and sub-agents directories.
   - [Claude Code](./agents/claude-code.md)
   - [Codex CLI](./agents/codex-cli.md)
