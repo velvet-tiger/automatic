@@ -69,6 +69,10 @@ impl Agent for OpenCode {
 
     // ── Config writing ──────────────────────────────────────────────────
 
+    fn mcp_merge_inputs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join("opencode.json")]
+    }
+
     /// Merge into `opencode.json` rather than rebuilding it.  The file is the
     /// user's own project config — `model`, `permission`, `instructions` and
     /// `agent` all live alongside `mcp` — so only `$schema` and `mcp` are ours

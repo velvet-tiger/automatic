@@ -540,6 +540,27 @@ fn collect_mcp_drift(
         Err(_) => return,
     };
 
+    // Seed the files this agent merges into.  A merge writer handed an empty
+    // tempdir drops every key the real file carries, which would surface as
+    // drift the user can never clear by syncing.
+    for input in agent_instance.mcp_merge_inputs(dir) {
+        let Ok(relative) = input.strip_prefix(dir) else {
+            continue;
+        };
+        if !input.is_file() {
+            continue;
+        }
+        let seeded = tmp.path().join(relative);
+        if let Some(parent) = seeded.parent() {
+            if fs::create_dir_all(parent).is_err() {
+                return;
+            }
+        }
+        if fs::copy(&input, &seeded).is_err() {
+            return;
+        }
+    }
+
     let prepared = agent::prepare_mcp_servers(agent_instance, servers);
     if agent_instance
         .write_mcp_config(tmp.path(), &prepared)
@@ -1048,8 +1069,8 @@ mod tests {
     use crate::agent::{Agent, ClaudeCode};
     use serde_json::Map;
     use std::fs;
-    use tempfile::tempdir;
     use std::path::Path;
+    use tempfile::tempdir;
 
     /// After `sync_skills` writes skills into a temp project dir, `collect_skills_drift`
     /// must report no drift for the same agent and the same skill list.
@@ -1216,6 +1237,101 @@ mod tests {
                 .iter()
                 .any(|f| f.reason == "missing" && f.path.starts_with(".junie/skills/")),
             "expected a missing entry under .junie/skills, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// `opencode.json` is the user's own project config — `model`,
+    /// `permission`, `instructions` and `agent` sit alongside `mcp`.  Since
+    /// `write_mcp_config` merges rather than rebuilds, drift must seed the
+    /// tempdir from the real file first.  Without that seeding the expected
+    /// config would be missing every user key, and every OpenCode project would
+    /// show drift that no amount of syncing could clear.
+    #[test]
+    fn opencode_drift_is_quiet_when_the_user_has_their_own_keys() {
+        use crate::agent::OpenCode;
+
+        let project_dir = tempdir().unwrap();
+        let config = project_dir.path().join("opencode.json");
+        fs::write(
+            &config,
+            "{\n  \"model\": \"anthropic/claude-opus-4\",\n  \"permission\": {}\n}\n",
+        )
+        .unwrap();
+
+        let mut servers = Map::new();
+        servers.insert(
+            "linear".to_string(),
+            serde_json::json!({ "type": "http", "url": "https://mcp.linear.app/mcp" }),
+        );
+
+        // Sync, exactly as `sync_agent_configs_step` does.
+        let prepared = agent::prepare_mcp_servers(&OpenCode, &servers);
+        OpenCode
+            .write_mcp_config(project_dir.path(), &prepared)
+            .expect("write_mcp_config should succeed");
+
+        let on_disk = fs::read_to_string(&config).unwrap();
+        assert!(
+            on_disk.contains("anthropic/claude-opus-4"),
+            "the user's model choice must survive a sync:\n{on_disk}"
+        );
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_mcp_drift(
+            &OpenCode,
+            &project_dir.path().to_path_buf(),
+            &servers,
+            &mut files,
+        );
+
+        assert!(
+            files.is_empty(),
+            "Expected no MCP drift after sync, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Seeding must not hide real drift: a hand-edit inside the `mcp` key that
+    /// Automatic owns still has to be reported.
+    #[test]
+    fn opencode_drift_still_reports_a_hand_edited_mcp_block() {
+        use crate::agent::OpenCode;
+
+        let project_dir = tempdir().unwrap();
+        let config = project_dir.path().join("opencode.json");
+        fs::write(
+            &config,
+            "{\n  \"model\": \"anthropic/claude-opus-4\",\n  \
+             \"mcp\": { \"linear\": { \"type\": \"remote\", \"url\": \"https://wrong.example\" } }\n}\n",
+        )
+        .unwrap();
+
+        let mut servers = Map::new();
+        servers.insert(
+            "linear".to_string(),
+            serde_json::json!({ "type": "http", "url": "https://mcp.linear.app/mcp" }),
+        );
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_mcp_drift(
+            &OpenCode,
+            &project_dir.path().to_path_buf(),
+            &servers,
+            &mut files,
+        );
+
+        assert!(
+            files
+                .iter()
+                .any(|f| f.path == "opencode.json" && f.reason == "modified"),
+            "a hand-edited mcp block must still drift, got: {:?}",
             files
                 .iter()
                 .map(|f| format!("{} ({})", f.path, f.reason))
@@ -1512,9 +1628,10 @@ mod tests {
             assert!(report.drifted);
             assert_eq!(report.custom_conflicts.len(), 1);
             assert!(
-                report.agents.iter().all(|a| {
-                    !a.files.iter().any(|f| f.path.contains("local-rule"))
-                }),
+                report
+                    .agents
+                    .iter()
+                    .all(|a| { !a.files.iter().any(|f| f.path.contains("local-rule")) }),
                 "custom skill conflicts must not also appear as agent drift"
             );
 
@@ -1548,13 +1665,9 @@ mod tests {
             let stored_cmd = "# Stored command\n";
             fs::write(cmd_dir.join("my-cmd.md"), disk_cmd).unwrap();
 
-            let instructions = project_dir
-                .path()
-                .join(".automatic")
-                .join("instructions");
+            let instructions = project_dir.path().join(".automatic").join("instructions");
             fs::create_dir_all(&instructions).unwrap();
-            let disk_rule =
-                "<!-- managed by Automatic — do not edit by hand -->\n\n# Disk rule\n";
+            let disk_rule = "<!-- managed by Automatic — do not edit by hand -->\n\n# Disk rule\n";
             let stored_rule = "# Stored rule";
             fs::write(instructions.join("custom-my-rule.md"), disk_rule).unwrap();
 
@@ -1699,8 +1812,13 @@ mod tests {
         )];
         let custom: Vec<crate::core::CustomCommand> = Vec::new();
         let project_commands_dir = dir.join(".agents").join("commands");
-        crate::agent::copy_commands_to_project(&project_commands_dir, &old_workspace, &custom, &HashSet::new())
-            .expect("write hub old");
+        crate::agent::copy_commands_to_project(
+            &project_commands_dir,
+            &old_workspace,
+            &custom,
+            &HashSet::new(),
+        )
+        .expect("write hub old");
         let claude_commands_dir = ClaudeCode.commands_dir(&dir).expect("claude commands dir");
         crate::agent::symlink_commands_from_project(
             &claude_commands_dir,
@@ -1719,7 +1837,14 @@ mod tests {
         )];
 
         let mut files: Vec<DriftedFile> = Vec::new();
-        collect_commands_drift(&ClaudeCode, &dir, &new_workspace, &custom, &HashSet::new(), &mut files);
+        collect_commands_drift(
+            &ClaudeCode,
+            &dir,
+            &new_workspace,
+            &custom,
+            &HashSet::new(),
+            &mut files,
+        );
 
         assert!(
             files.iter().any(|f| f.reason == "modified"),

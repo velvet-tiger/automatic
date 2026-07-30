@@ -86,6 +86,10 @@ impl Agent for GitHubCopilot {
 
     // ── Config writing ──────────────────────────────────────────────────
 
+    fn mcp_merge_inputs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".vscode").join("mcp.json")]
+    }
+
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         // VS Code / GitHub Copilot uses .vscode/mcp.json with a "servers"
         // key.  We must merge with any existing file to avoid clobbering

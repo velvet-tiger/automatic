@@ -62,6 +62,10 @@ impl Agent for GeminiCli {
 
     // ── Config writing ──────────────────────────────────────────────────
 
+    fn mcp_merge_inputs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".gemini").join("settings.json")]
+    }
+
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         // Gemini CLI stores MCP servers in .gemini/settings.json under the
         // "mcpServers" key.  We must merge with existing settings to avoid

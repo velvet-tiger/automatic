@@ -43,6 +43,10 @@ impl Agent for Zed {
 
     // ── Config writing ──────────────────────────────────────────────────
 
+    fn mcp_merge_inputs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".zed").join("settings.json")]
+    }
+
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         let zed_dir = dir.join(".zed");
         if !zed_dir.exists() {

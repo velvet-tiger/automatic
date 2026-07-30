@@ -67,6 +67,10 @@ impl Agent for CodexCli {
         server.insert("env_vars".to_string(), Value::Array(forwarded));
     }
 
+    fn mcp_merge_inputs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".codex").join("config.toml")]
+    }
+
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         let codex_dir = dir.join(".codex");
         if !codex_dir.exists() {

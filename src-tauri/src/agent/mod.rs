@@ -151,6 +151,22 @@ pub trait Agent: Send + Sync {
     /// native format.  Returns the path of the file written.
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String>;
 
+    /// Files under `dir` that [`write_mcp_config`] reads before it writes, i.e.
+    /// the config files this agent merges into rather than owns outright.
+    ///
+    /// Drift detection asks each agent to write its expected config into an
+    /// empty tempdir and then compares the result against the project.  A merge
+    /// writer given an empty tempdir produces output missing every user key the
+    /// real file carries, which reads as permanent, unresolvable drift.  Listing
+    /// the inputs here lets `collect_mcp_drift` seed the tempdir first, so the
+    /// comparison is against what a real sync would produce.
+    ///
+    /// Default: empty vec — the agent owns its config file outright, or writes
+    /// none at all.
+    fn mcp_merge_inputs(&self, _dir: &Path) -> Vec<PathBuf> {
+        vec![]
+    }
+
     /// Rewrite the "inherit from the environment" markers of one server entry.
     ///
     /// Automatic stores an empty string in `env` to mean "read this from the
