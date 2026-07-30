@@ -1041,78 +1041,91 @@ pub fn format_feature_detail_markdown(fw: &FeatureWithUpdates) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::with_test_home;
+    use tempfile::TempDir;
 
-    const TEST_PROJECT: &str = "_test_feature_create_state";
+    const TEST_PROJECT: &str = "_test_feature";
 
-    fn cleanup_test_features() {
-        if let Ok(features) = list_features(TEST_PROJECT, None, true) {
-            for f in features {
-                let _ = delete_feature(TEST_PROJECT, &f.id);
-            }
-        }
-        if let Ok(features) = list_features(TEST_PROJECT, None, false) {
-            for f in features {
-                let _ = delete_feature(TEST_PROJECT, &f.id);
-            }
-        }
+    /// Run `test` against a throwaway Automatic data directory.
+    ///
+    /// `features.db` and the activity log both resolve their paths through
+    /// `get_automatic_dir()`, so overriding the home directory keeps test rows
+    /// out of the developer's own `~/.automatic-dev`. The override is
+    /// thread-local and the harness gives each test its own thread, so every
+    /// test also gets a private database. Without that, tests sharing a project
+    /// name race: one test's cleanup deletes rows another is still using.
+    ///
+    /// `TempDir` removes the directory when it drops, so nothing survives the
+    /// test even if the body panics.
+    fn with_temp_automatic_dir<T>(test: impl FnOnce() -> T) -> T {
+        let home = TempDir::new().expect("create temp home");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = crate::core::get_automatic_dir().expect("resolve automatic dir");
+            std::fs::create_dir_all(&dir).expect("create automatic dir");
+            test()
+        })
     }
 
     #[test]
     fn create_feature_defaults_to_backlog() {
-        cleanup_test_features();
-        let feature = create_feature(
-            TEST_PROJECT,
-            "default state feature",
-            "",
-            "medium",
-            None,
-            &[],
-            &[],
-            None,
-            Some("test"),
-            None,
-        )
-        .expect("create should succeed");
-        assert_eq!(feature.state, "backlog");
-        delete_feature(TEST_PROJECT, &feature.id).expect("cleanup");
+        with_temp_automatic_dir(|| {
+            let feature = create_feature(
+                TEST_PROJECT,
+                "default state feature",
+                "",
+                "medium",
+                None,
+                &[],
+                &[],
+                None,
+                Some("test"),
+                None,
+            )
+            .expect("create should succeed");
+            assert_eq!(feature.state, "backlog");
+            delete_feature(TEST_PROJECT, &feature.id).expect("delete should succeed");
+        });
     }
 
     #[test]
     fn create_feature_respects_requested_state() {
-        cleanup_test_features();
-        let feature = create_feature(
-            TEST_PROJECT,
-            "todo state feature",
-            "",
-            "medium",
-            None,
-            &[],
-            &[],
-            None,
-            Some("test"),
-            Some("todo"),
-        )
-        .expect("create should succeed");
-        assert_eq!(feature.state, "todo");
-        delete_feature(TEST_PROJECT, &feature.id).expect("cleanup");
+        with_temp_automatic_dir(|| {
+            let feature = create_feature(
+                TEST_PROJECT,
+                "todo state feature",
+                "",
+                "medium",
+                None,
+                &[],
+                &[],
+                None,
+                Some("test"),
+                Some("todo"),
+            )
+            .expect("create should succeed");
+            assert_eq!(feature.state, "todo");
+            delete_feature(TEST_PROJECT, &feature.id).expect("delete should succeed");
+        });
     }
 
     #[test]
     fn create_feature_rejects_invalid_state() {
-        let err = create_feature(
-            TEST_PROJECT,
-            "bad state feature",
-            "",
-            "medium",
-            None,
-            &[],
-            &[],
-            None,
-            Some("test"),
-            Some("not-a-state"),
-        )
-        .expect_err("invalid state should fail");
-        assert!(err.contains("Invalid feature state"));
+        with_temp_automatic_dir(|| {
+            let err = create_feature(
+                TEST_PROJECT,
+                "bad state feature",
+                "",
+                "medium",
+                None,
+                &[],
+                &[],
+                None,
+                Some("test"),
+                Some("not-a-state"),
+            )
+            .expect_err("invalid state should fail");
+            assert!(err.contains("Invalid feature state"));
+        });
     }
 
     #[test]
@@ -1141,27 +1154,28 @@ mod tests {
 
     #[test]
     fn update_feature_clears_assignee_when_patch_sends_null() {
-        cleanup_test_features();
-        let feature = create_feature(
-            TEST_PROJECT,
-            "clear assignee feature",
-            "",
-            "medium",
-            Some("cursor"),
-            &[],
-            &[],
-            None,
-            Some("test"),
-            Some("todo"),
-        )
-        .expect("create should succeed");
-        assert_eq!(feature.assignee.as_deref(), Some("cursor"));
+        with_temp_automatic_dir(|| {
+            let feature = create_feature(
+                TEST_PROJECT,
+                "clear assignee feature",
+                "",
+                "medium",
+                Some("cursor"),
+                &[],
+                &[],
+                None,
+                Some("test"),
+                Some("todo"),
+            )
+            .expect("create should succeed");
+            assert_eq!(feature.assignee.as_deref(), Some("cursor"));
 
-        let patch: FeaturePatch =
-            serde_json::from_str(r#"{"assignee":null}"#).expect("deserialize clear patch");
-        let updated = update_feature(TEST_PROJECT, &feature.id, patch).expect("update");
-        assert_eq!(updated.assignee, None);
+            let patch: FeaturePatch =
+                serde_json::from_str(r#"{"assignee":null}"#).expect("deserialize clear patch");
+            let updated = update_feature(TEST_PROJECT, &feature.id, patch).expect("update");
+            assert_eq!(updated.assignee, None);
 
-        delete_feature(TEST_PROJECT, &feature.id).expect("cleanup");
+            delete_feature(TEST_PROJECT, &feature.id).expect("delete should succeed");
+        });
     }
 }
