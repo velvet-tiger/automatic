@@ -1471,6 +1471,35 @@ pub(crate) fn discover_mcp_servers_from_json(
     result
 }
 
+/// Read a JSON config file that Automatic merges into rather than owns.
+///
+/// An absent or empty file yields an empty object.  A file that exists, has
+/// content, and does not parse is an error: the caller is about to write the
+/// file back out, and falling through to an empty map would discard every
+/// setting the user has in there.
+pub(crate) fn read_mergeable_json_object(path: &Path) -> Result<Map<String, Value>, String> {
+    if !path.exists() {
+        return Ok(Map::new());
+    }
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    if raw.trim().is_empty() {
+        return Ok(Map::new());
+    }
+    match serde_json::from_str::<Value>(&raw) {
+        Ok(Value::Object(m)) => Ok(m),
+        Ok(_) => Err(format!(
+            "{} must contain a JSON object — fix it or remove the file",
+            path.display()
+        )),
+        Err(e) => Err(format!(
+            "Failed to parse {} — fix the syntax or remove the file: {}",
+            path.display(),
+            e
+        )),
+    }
+}
+
 /// Return `true` if `config` is an Automatic-generated MCP proxy stub, i.e. a
 /// local stdio entry that invokes the Automatic binary with the `mcp-proxy`
 /// subcommand.  Such stubs are emitted for remote OAuth servers and must never

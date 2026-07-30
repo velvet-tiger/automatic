@@ -98,17 +98,10 @@ impl Agent for GitHubCopilot {
 
         let path = vscode_dir.join("mcp.json");
 
-        // Read existing config (if any)
-        let mut root: Map<String, Value> = if path.exists() {
-            let raw = fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read .vscode/mcp.json: {}", e))?;
-            match serde_json::from_str::<Value>(&raw) {
-                Ok(Value::Object(m)) => m,
-                _ => Map::new(),
-            }
-        } else {
-            Map::new()
-        };
+        // Read existing config.  A file we cannot parse is an error rather than
+        // an empty starting point: `.vscode/mcp.json` is shared with the user's
+        // editor config, and writing over it would destroy the lot.
+        let mut root = super::read_mergeable_json_object(&path)?;
 
         // Build the servers object — VS Code format uses "servers" key,
         // stdio entries omit "type", http entries keep "type": "http".

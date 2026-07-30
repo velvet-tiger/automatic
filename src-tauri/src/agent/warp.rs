@@ -86,12 +86,13 @@ impl Agent for Warp {
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
-    /// Return both the current canonical file (`AGENTS.md`) and the legacy
-    /// file (`WARP.md`) so that either variant is cleaned up when Warp is
-    /// removed from a project.  Only paths that actually exist on disk are
-    /// acted on by the default `cleanup_mcp_config` implementation.
+    /// Only `WARP.md` is Warp's alone.  `AGENTS.md` is deliberately absent:
+    /// it is shared with Codex, Cursor, OpenCode and four others, and the
+    /// default `cleanup_mcp_config` deletes every path listed here — so
+    /// removing Warp from a project used to delete the instruction file every
+    /// other agent still reads.
     fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
-        vec![dir.join("AGENTS.md"), dir.join("WARP.md")]
+        vec![dir.join("WARP.md")]
     }
 
     // ── Config writing ──────────────────────────────────────────────────
@@ -166,27 +167,34 @@ mod tests {
     }
 
     #[test]
-    fn test_owned_config_paths_includes_both_files() {
+    fn test_owned_config_paths_covers_only_the_warp_specific_file() {
         let dir = tempdir().unwrap();
         let paths = Warp.owned_config_paths(dir.path());
-        // Both the canonical AGENTS.md and legacy WARP.md are included.
-        assert!(paths.contains(&dir.path().join("AGENTS.md")));
         assert!(paths.contains(&dir.path().join("WARP.md")));
+        assert!(
+            !paths.contains(&dir.path().join("AGENTS.md")),
+            "AGENTS.md is shared with seven other agents and is not Warp's to own"
+        );
     }
 
     #[test]
-    fn test_cleanup_removes_agents_md() {
+    fn test_cleanup_leaves_shared_agents_md_alone() {
         let dir = tempdir().unwrap();
         let agents_md = dir.path().join("AGENTS.md");
-        fs::write(&agents_md, "# Warp context\n").unwrap();
-        assert!(agents_md.exists());
+        fs::write(&agents_md, "# Shared instructions\n").unwrap();
 
-        // cleanup_mcp_config uses the default impl which deletes owned_config_paths
-        // that exist on disk.  Only AGENTS.md exists here.
         use super::super::Agent as _;
         let removed = Warp.cleanup_mcp_config(dir.path());
-        assert_eq!(removed, vec![agents_md.display().to_string()]);
-        assert!(!agents_md.exists(), "AGENTS.md should have been deleted");
+
+        assert!(
+            removed.is_empty(),
+            "removing Warp must not report deleting a file it does not own: {removed:?}"
+        );
+        assert!(
+            agents_md.exists(),
+            "AGENTS.md is read by Codex, Cursor, OpenCode and others — removing \
+             Warp from a project must not delete it"
+        );
     }
 
     #[test]

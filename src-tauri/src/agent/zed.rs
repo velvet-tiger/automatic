@@ -51,17 +51,10 @@ impl Agent for Zed {
 
         let path = zed_dir.join("settings.json");
 
-        // Read existing settings to preserve non-MCP config
-        let mut root: Map<String, Value> = if path.exists() {
-            let raw = fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read .zed/settings.json: {}", e))?;
-            match serde_json::from_str::<Value>(&raw) {
-                Ok(Value::Object(m)) => m,
-                _ => Map::new(),
-            }
-        } else {
-            Map::new()
-        };
+        // Read existing settings to preserve non-MCP config.  A file we cannot
+        // parse is an error rather than an empty starting point: the user's
+        // theme, font and agent settings live here too.
+        let mut root = super::read_mergeable_json_object(&path)?;
 
         // Build the context_servers object — Zed uses command/args/env directly
         let mut zed_servers = Map::new();
