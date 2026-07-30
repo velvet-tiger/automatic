@@ -4,8 +4,14 @@ use std::path::{Path, PathBuf};
 
 use super::{discover_mcp_servers_from_json, sync_individual_skills, Agent};
 
-/// JetBrains Junie agent — writes `.junie/mcp.json` and stores skills under
-/// `<project>/.agents/skills/<name>/SKILL.md`.
+/// JetBrains Junie agent — writes `.junie/mcp/mcp.json` and stores skills
+/// under `<project>/.agents/skills/<name>/SKILL.md`.
+///
+/// Junie's canonical project instructions file is now `.junie/AGENTS.md`
+/// (Junie falls back to root `AGENTS.md`, then to the legacy
+/// `.junie/guidelines.md` / `.junie/guidelines/`, which are still read but
+/// deprecated). MCP config moved from a flat `.junie/mcp.json` into a
+/// `.junie/mcp/` subdirectory for both project and global scope.
 pub struct Junie;
 
 impl Agent for Junie {
@@ -20,17 +26,18 @@ impl Agent for Junie {
     }
 
     fn config_description(&self) -> &'static str {
-        ".junie/mcp.json"
+        ".junie/mcp/mcp.json"
     }
 
     fn project_file_name(&self) -> &'static str {
-        ".junie/guidelines.md"
+        ".junie/AGENTS.md"
     }
 
     // ── Detection ───────────────────────────────────────────────────────
 
     fn detect_in(&self, dir: &Path) -> bool {
-        dir.join(".junie").join("mcp.json").exists()
+        dir.join(".junie").join("mcp").join("mcp.json").exists()
+            || dir.join(".junie").join("AGENTS.md").exists()
             || dir.join(".junie").join("guidelines.md").exists()
     }
 
@@ -97,16 +104,17 @@ impl Agent for Junie {
 
         let output = json!({ "mcpServers": Value::Object(junie_servers) });
 
-        let junie_dir = dir.join(".junie");
-        if !junie_dir.exists() {
-            fs::create_dir_all(&junie_dir)
-                .map_err(|e| format!("Failed to create .junie/: {}", e))?;
+        let mcp_dir = dir.join(".junie").join("mcp");
+        if !mcp_dir.exists() {
+            fs::create_dir_all(&mcp_dir)
+                .map_err(|e| format!("Failed to create .junie/mcp/: {}", e))?;
         }
 
-        let path = junie_dir.join("mcp.json");
+        let path = mcp_dir.join("mcp.json");
         let content =
             serde_json::to_string_pretty(&output).map_err(|e| format!("JSON error: {}", e))?;
-        fs::write(&path, content).map_err(|e| format!("Failed to write .junie/mcp.json: {}", e))?;
+        fs::write(&path, content)
+            .map_err(|e| format!("Failed to write .junie/mcp/mcp.json: {}", e))?;
 
         Ok(path.display().to_string())
     }
@@ -133,7 +141,7 @@ impl Agent for Junie {
     // ── Discovery ───────────────────────────────────────────────────────
 
     fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value> {
-        let path = dir.join(".junie").join("mcp.json");
+        let path = dir.join(".junie").join("mcp").join("mcp.json");
         if !path.exists() {
             return Map::new();
         }
@@ -159,8 +167,9 @@ impl Agent for Junie {
         let Some(home) = super::home_dir() else {
             return Map::new();
         };
-        // ~/.junie/mcp.json — speculative global config path (not yet documented)
-        let path = home.join(".junie").join("mcp.json");
+        // ~/.junie/mcp/mcp.json — documented global config path, same
+        // mcpServers schema as the project-level file.
+        let path = home.join(".junie").join("mcp").join("mcp.json");
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
 }
@@ -205,8 +214,16 @@ mod tests {
         let dir = tempdir().unwrap();
         assert!(!Junie.detect_in(dir.path()));
 
+        fs::create_dir_all(dir.path().join(".junie/mcp")).unwrap();
+        fs::write(dir.path().join(".junie/mcp/mcp.json"), "{}").unwrap();
+        assert!(Junie.detect_in(dir.path()));
+    }
+
+    #[test]
+    fn test_detect_agents_md() {
+        let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join(".junie")).unwrap();
-        fs::write(dir.path().join(".junie/mcp.json"), "{}").unwrap();
+        fs::write(dir.path().join(".junie/AGENTS.md"), "").unwrap();
         assert!(Junie.detect_in(dir.path()));
     }
 
@@ -214,9 +231,9 @@ mod tests {
     fn test_cleanup_removes_junie_dir() {
         let dir = tempdir().unwrap();
         let junie_dir = dir.path().join(".junie");
-        fs::create_dir_all(&junie_dir).unwrap();
-        fs::write(junie_dir.join("mcp.json"), "{}").unwrap();
-        fs::write(junie_dir.join("guidelines.md"), "# Guidelines").unwrap();
+        fs::create_dir_all(junie_dir.join("mcp")).unwrap();
+        fs::write(junie_dir.join("mcp/mcp.json"), "{}").unwrap();
+        fs::write(junie_dir.join("AGENTS.md"), "# Guidelines").unwrap();
 
         let removed = Junie.cleanup_mcp_config(dir.path());
 
@@ -252,7 +269,7 @@ mod tests {
             .write_mcp_config(dir.path(), &stdio_servers())
             .unwrap();
 
-        let content = fs::read_to_string(dir.path().join(".junie/mcp.json")).unwrap();
+        let content = fs::read_to_string(dir.path().join(".junie/mcp/mcp.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
         // stdio entries should have "type" stripped
@@ -272,7 +289,7 @@ mod tests {
         let dir = tempdir().unwrap();
         Junie.write_mcp_config(dir.path(), &http_servers()).unwrap();
 
-        let content = fs::read_to_string(dir.path().join(".junie/mcp.json")).unwrap();
+        let content = fs::read_to_string(dir.path().join(".junie/mcp/mcp.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
         assert_eq!(
