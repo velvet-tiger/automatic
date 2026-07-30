@@ -31,7 +31,7 @@ mod warp;
 mod zed;
 
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1498,6 +1498,135 @@ pub(crate) fn read_mergeable_json_object(path: &Path) -> Result<Map<String, Valu
             e
         )),
     }
+}
+
+/// Write MCP servers in the OpenCode config dialect, merging into `path`.
+///
+/// The dialect: a top-level `mcp` object where stdio servers become
+/// `type: "local"` with `command` as a `[command, ...args]` array and
+/// `environment` in place of `env`, and HTTP/SSE servers become
+/// `type: "remote"`.  OpenCode and Kilo both read it.
+///
+/// The file is shared with the user — it also carries their `model`,
+/// `permission`, `instructions` and `agent` keys — so every key other than
+/// `$schema` and `mcp` is preserved, and a malformed target is an error rather
+/// than a clobber.
+pub(crate) fn write_opencode_dialect_mcp_config(
+    path: &Path,
+    schema_url: &str,
+    servers: &Map<String, Value>,
+) -> Result<String, String> {
+    let mut root = read_mergeable_json_object(path)?;
+
+    let mut dialect_servers = Map::new();
+    for (name, config) in servers {
+        let transport = config
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("stdio");
+
+        let mut server = Map::new();
+
+        match transport {
+            "http" | "sse" => {
+                server.insert("type".to_string(), json!("remote"));
+
+                if let Some(url) = config.get("url") {
+                    server.insert("url".to_string(), url.clone());
+                }
+                if let Some(headers) = config.get("headers") {
+                    server.insert("headers".to_string(), headers.clone());
+                }
+                if let Some(oauth) = config.get("oauth") {
+                    server.insert("oauth".to_string(), oauth.clone());
+                }
+            }
+            _ => {
+                server.insert("type".to_string(), json!("local"));
+
+                // command as array: [command, ...args]
+                let mut cmd_array: Vec<Value> = Vec::new();
+                if let Some(command) = config.get("command").and_then(|v| v.as_str()) {
+                    cmd_array.push(json!(command));
+                }
+                if let Some(args) = config.get("args").and_then(|v| v.as_array()) {
+                    for arg in args {
+                        cmd_array.push(arg.clone());
+                    }
+                }
+                if !cmd_array.is_empty() {
+                    server.insert("command".to_string(), Value::Array(cmd_array));
+                }
+
+                // "environment" instead of "env"
+                if let Some(env) = config.get("env").and_then(|v| v.as_object()) {
+                    if !env.is_empty() {
+                        server.insert("environment".to_string(), Value::Object(env.clone()));
+                    }
+                }
+            }
+        }
+
+        if let Some(enabled) = config.get("enabled") {
+            if enabled.as_bool() == Some(false) {
+                server.insert("enabled".to_string(), json!(false));
+            }
+        }
+        if let Some(timeout) = config.get("timeout") {
+            server.insert("timeout".to_string(), timeout.clone());
+        }
+
+        dialect_servers.insert(name.clone(), Value::Object(server));
+    }
+
+    root.insert("$schema".to_string(), json!(schema_url));
+    root.insert("mcp".to_string(), Value::Object(dialect_servers));
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+        }
+    }
+
+    let content = serde_json::to_string_pretty(&Value::Object(root))
+        .map_err(|e| format!("JSON error: {}", e))?;
+    fs::write(path, content).map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+
+    Ok(path.display().to_string())
+}
+
+/// Convert one OpenCode-dialect MCP server entry back to Automatic's canonical
+/// format — the inverse of [`write_opencode_dialect_mcp_config`].
+///
+/// - `type: "local"` → `type: "stdio"`, command array → command + args
+/// - `type: "remote"` → `type: "http"`
+/// - `environment` → `env`
+///
+/// Kept a plain `fn` so it can be passed to [`discover_mcp_servers_from_json`]
+/// as a function pointer.
+pub(crate) fn normalise_opencode_dialect_server(mut config: Value) -> Value {
+    if let Some(obj) = config.as_object_mut() {
+        if let Some(Value::String(t)) = obj.get("type") {
+            if t == "local" {
+                obj.insert("type".to_string(), json!("stdio"));
+                if let Some(Value::Array(cmd_arr)) = obj.remove("command") {
+                    if !cmd_arr.is_empty() {
+                        obj.insert("command".to_string(), cmd_arr[0].clone());
+                        if cmd_arr.len() > 1 {
+                            obj.insert("args".to_string(), Value::Array(cmd_arr[1..].to_vec()));
+                        }
+                    }
+                }
+                if let Some(env) = obj.remove("environment") {
+                    obj.insert("env".to_string(), env);
+                }
+            } else if t == "remote" {
+                obj.insert("type".to_string(), json!("http"));
+            }
+        }
+    }
+    config
 }
 
 /// Return `true` if `config` is an Automatic-generated MCP proxy stub, i.e. a

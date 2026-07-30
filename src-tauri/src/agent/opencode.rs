@@ -1,9 +1,16 @@
 use rusqlite::Connection;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{discover_mcp_servers_from_json, Agent};
+use super::{
+    discover_mcp_servers_from_json, normalise_opencode_dialect_server,
+    write_opencode_dialect_mcp_config, Agent,
+};
+
+/// OpenCode's published config schema, written as `$schema` so editors can
+/// validate the file the user shares with Automatic.
+const OPENCODE_SCHEMA_URL: &str = "https://opencode.ai/config.json";
 
 /// OpenCode agent — writes `opencode.json` and stores skills under
 /// `<project>/.agents/skills/<name>/SKILL.md`.
@@ -62,78 +69,12 @@ impl Agent for OpenCode {
 
     // ── Config writing ──────────────────────────────────────────────────
 
+    /// Merge into `opencode.json` rather than rebuilding it.  The file is the
+    /// user's own project config — `model`, `permission`, `instructions` and
+    /// `agent` all live alongside `mcp` — so only `$schema` and `mcp` are ours
+    /// to set.
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
-        let mut oc_servers = Map::new();
-
-        for (name, config) in servers {
-            let config = config.clone();
-            let transport = config
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("stdio");
-
-            let mut server = Map::new();
-
-            match transport {
-                "http" | "sse" => {
-                    server.insert("type".to_string(), json!("remote"));
-
-                    if let Some(url) = config.get("url") {
-                        server.insert("url".to_string(), url.clone());
-                    }
-                    if let Some(headers) = config.get("headers") {
-                        server.insert("headers".to_string(), headers.clone());
-                    }
-                    if let Some(oauth) = config.get("oauth") {
-                        server.insert("oauth".to_string(), oauth.clone());
-                    }
-                }
-                _ => {
-                    // stdio → OpenCode "local"
-                    server.insert("type".to_string(), json!("local"));
-
-                    // command as array: [command, ...args]
-                    let mut cmd_array: Vec<Value> = Vec::new();
-                    if let Some(command) = config.get("command").and_then(|v| v.as_str()) {
-                        cmd_array.push(json!(command));
-                    }
-                    if let Some(args) = config.get("args").and_then(|v| v.as_array()) {
-                        for arg in args {
-                            cmd_array.push(arg.clone());
-                        }
-                    }
-                    if !cmd_array.is_empty() {
-                        server.insert("command".to_string(), Value::Array(cmd_array));
-                    }
-
-                    // "environment" instead of "env"
-                    if let Some(env) = config.get("env").and_then(|v| v.as_object()) {
-                        if !env.is_empty() {
-                            server.insert("environment".to_string(), Value::Object(env.clone()));
-                        }
-                    }
-                }
-            }
-
-            if let Some(enabled) = config.get("enabled") {
-                if enabled.as_bool() == Some(false) {
-                    server.insert("enabled".to_string(), json!(false));
-                }
-            }
-            if let Some(timeout) = config.get("timeout") {
-                server.insert("timeout".to_string(), timeout.clone());
-            }
-
-            oc_servers.insert(name.clone(), Value::Object(server));
-        }
-
-        let output = json!({ "$schema": "https://opencode.ai/config.json", "mcp": Value::Object(oc_servers) });
-        let path = dir.join("opencode.json");
-        let content =
-            serde_json::to_string_pretty(&output).map_err(|e| format!("JSON error: {}", e))?;
-        fs::write(&path, content).map_err(|e| format!("Failed to write opencode.json: {}", e))?;
-
-        Ok(path.display().to_string())
+        write_opencode_dialect_mcp_config(&dir.join("opencode.json"), OPENCODE_SCHEMA_URL, servers)
     }
 
     // ── MCP capability ──────────────────────────────────────────────────
@@ -150,7 +91,8 @@ impl Agent for OpenCode {
         for filename in &["opencode.json", ".opencode.json"] {
             let path = dir.join(filename);
             if path.exists() {
-                let found = discover_mcp_servers_from_json(&path, "mcp", normalise_import);
+                let found =
+                    discover_mcp_servers_from_json(&path, "mcp", normalise_opencode_dialect_server);
                 result.extend(found);
             }
         }
@@ -178,7 +120,7 @@ impl Agent for OpenCode {
                 result.extend(discover_mcp_servers_from_json(
                     &path,
                     "mcp",
-                    normalise_import,
+                    normalise_opencode_dialect_server,
                 ));
             }
         }
@@ -189,7 +131,7 @@ impl Agent for OpenCode {
             result.extend(discover_mcp_servers_from_json(
                 &xdg_path,
                 "mcp",
-                normalise_import,
+                normalise_opencode_dialect_server,
             ));
         }
 
@@ -199,35 +141,6 @@ impl Agent for OpenCode {
     fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
         Some(dir.join(".opencode").join("agents"))
     }
-}
-
-/// Convert an OpenCode MCP server config to Automatic's canonical format.
-///
-/// - `type: "local"` → `type: "stdio"`, command array → command + args
-/// - `type: "remote"` → `type: "http"`
-/// - `environment` → `env`
-fn normalise_import(mut config: Value) -> Value {
-    if let Some(obj) = config.as_object_mut() {
-        if let Some(Value::String(t)) = obj.get("type") {
-            if t == "local" {
-                obj.insert("type".to_string(), json!("stdio"));
-                if let Some(Value::Array(cmd_arr)) = obj.remove("command") {
-                    if !cmd_arr.is_empty() {
-                        obj.insert("command".to_string(), cmd_arr[0].clone());
-                        if cmd_arr.len() > 1 {
-                            obj.insert("args".to_string(), Value::Array(cmd_arr[1..].to_vec()));
-                        }
-                    }
-                }
-                if let Some(env) = obj.remove("environment") {
-                    obj.insert("env".to_string(), env);
-                }
-            } else if t == "remote" {
-                obj.insert("type".to_string(), json!("http"));
-            }
-        }
-    }
-    config
 }
 
 // ── Cache management ────────────────────────────────────────────────────────
