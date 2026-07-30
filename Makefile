@@ -1,4 +1,4 @@
-.PHONY: help dev build check clean install test tauri-dev tauri-build frontend-dev frontend-build rust-check cli
+.PHONY: help dev build check clean install test tauri-dev tauri-build frontend-dev frontend-build rust-check cli dev-signing-setup
 
 # Default target
 .DEFAULT_GOAL := help
@@ -15,6 +15,9 @@ install: ## Install dependencies (npm + cargo)
 
 dev: ## Run Tauri app in development mode with hot reload
 	npm run tauri dev
+
+dev-signing-setup: ## macOS: install the dev signing cert that stops repeat keychain prompts
+	./.cargo/setup-dev-signing.sh
 
 frontend-dev: ## Run frontend only in development mode
 	npm run dev

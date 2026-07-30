@@ -427,15 +427,17 @@ pub(crate) fn build_selected_servers(
         if let Some(server_config) = mcp_config.get(server_name) {
             let cleaned = strip_internal_fields(server_config.clone());
 
-            // Check if this is an HTTP server with a stored OAuth token.
+            // Check if this is an HTTP server with a stored OAuth token. Only
+            // HTTP and SSE servers can have one, and reading the keychain is
+            // expensive enough that stdio servers should not pay for a lookup
+            // whose result is discarded.
             let is_http = cleaned
                 .get("type")
                 .and_then(|v| v.as_str())
                 .map(|t| t == "http" || t == "sse")
                 .unwrap_or(false);
-            let has_token = crate::proxy::has_oauth_token(server_name);
 
-            if is_http && has_token {
+            if is_http && crate::proxy::has_oauth_token(server_name) {
                 // Emit a local proxy config instead of the remote URL.
                 selected_servers.insert(
                     server_name.clone(),
