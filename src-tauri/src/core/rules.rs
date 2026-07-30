@@ -392,23 +392,15 @@ pub fn install_default_rules_inner(force: bool) -> Result<(), String> {
             };
             let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
             fs::write(&path, pretty).map_err(|e| e.to_string())?;
-        } else if *machine_name == "automatic-service" {
-            // Migration: converge legacy service-rule display names on the
-            // current canonical name ("Automatic MCP Service" and the later
-            // "Automatic" both become "Automatic: Service").
-            if let Ok(raw) = fs::read_to_string(&path) {
-                if let Ok(mut rule) = serde_json::from_str::<Rule>(&raw) {
-                    if rule.name == "Automatic MCP Service" || rule.name == "Automatic" {
-                        rule.name = "Automatic: Service".to_string();
-                        if let Ok(pretty) = serde_json::to_string_pretty(&rule) {
-                            let _ = fs::write(&path, pretty);
-                        }
-                    }
-                }
-            }
-        } else if *machine_name == "automatic-process" {
-            // Migration: always overwrite with the latest content so the new
-            // process rule replaces the old checklist rule's content on disk.
+        } else if *machine_name == "automatic-process" || *machine_name == "automatic-service" {
+            // Migration: always overwrite with the latest bundled content.
+            // `automatic-process` replaces the old checklist rule's content;
+            // `automatic-service` documents the live MCP tool surface, so a
+            // stale copy is actively misleading rather than a stylistic
+            // preference worth preserving across upgrades. This also
+            // subsumes the older display-name convergence ("Automatic MCP
+            // Service" / "Automatic" -> "Automatic: Service"), since the
+            // name is rewritten unconditionally here.
             let rule = Rule {
                 name: display_name.to_string(),
                 content: content.to_string(),
