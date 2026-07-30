@@ -41,6 +41,19 @@ impl Agent for Zed {
         vec![dir.join(".agents").join("skills")]
     }
 
+    // ── Capabilities ────────────────────────────────────────────────────
+
+    /// `agents: false` — Zed has no sub-agent discovery directory.  Automatic
+    /// used to write `.zed/agents/`, which Zed never reads.  The flag and the
+    /// missing `agents_dir` must move together: the method drives sync, the
+    /// flag drives the UI badge.
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            agents: false,
+            ..Default::default()
+        }
+    }
+
     // ── Config writing ──────────────────────────────────────────────────
 
     fn mcp_merge_inputs(&self, dir: &Path) -> Vec<PathBuf> {
@@ -167,10 +180,6 @@ impl Agent for Zed {
         };
         let path = config_dir.join("settings.json");
         discover_mcp_servers_from_json(&path, "context_servers", normalise_zed_server)
-    }
-
-    fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
-        Some(dir.join(".zed").join("agents"))
     }
 }
 
