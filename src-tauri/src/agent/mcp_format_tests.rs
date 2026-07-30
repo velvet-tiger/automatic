@@ -477,6 +477,126 @@ fn opencode_uses_the_mcp_key_and_declares_its_schema() {
     assert_eq!(parsed["$schema"], "https://opencode.ai/config.json");
 }
 
+// ── Merge writers ───────────────────────────────────────────────────────────
+//
+// Five agents read their config file before writing it: Codex CLI
+// (`.codex/config.toml`), Gemini CLI (`.gemini/settings.json`), GitHub Copilot
+// (`.vscode/mcp.json`), OpenCode (`opencode.json`) and Zed
+// (`.zed/settings.json`).  Each of those files is the user's, not Automatic's —
+// it also carries their model choice, theme, permissions and editor settings.
+// `mcp_merge_inputs()` is the registry of those files, so these two tests reach
+// every merge writer that exists now and every one added later.
+
+/// Seed content for a merge input, in the file's own syntax, carrying one
+/// unrelated top-level key that a correct writer must leave alone.
+fn seed_for(path: &Path) -> Option<&'static str> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("json") => Some("{\n  \"_userKey\": \"keep\"\n}\n"),
+        Some("toml") => Some("_user_key = \"keep\"\n"),
+        _ => None,
+    }
+}
+
+fn write_seed(path: &Path, content: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, content).unwrap();
+}
+
+#[test]
+fn merge_preserves_unrelated_top_level_keys() {
+    let mut checked = 0;
+
+    for agent in all() {
+        let dir = tempdir().unwrap();
+        for input in agent.mcp_merge_inputs(dir.path()) {
+            let Some(seed) = seed_for(&input) else {
+                panic!(
+                    "{}: no seed defined for merge input `{}` — add its syntax to `seed_for`",
+                    agent.id(),
+                    input.display()
+                );
+            };
+            write_seed(&input, seed);
+            checked += 1;
+        }
+
+        let Some(content) = write_canonical(agent, dir.path()) else {
+            continue;
+        };
+
+        for input in agent.mcp_merge_inputs(dir.path()) {
+            let after = fs::read_to_string(&input).expect("merge input still readable");
+            assert!(
+                after.contains("keep"),
+                "{}: writing MCP config destroyed an unrelated key in `{}`. \
+                 That file is shared with the user:\n{after}",
+                agent.id(),
+                input.display()
+            );
+        }
+
+        // The config the writer reported must still carry the servers.
+        assert!(
+            content.contains("linear"),
+            "{}: merging must not drop the servers it was asked to write:\n{content}",
+            agent.id()
+        );
+    }
+
+    assert!(
+        checked > 0,
+        "no agent declared an mcp_merge_inputs() path — the test would pass vacuously"
+    );
+}
+
+#[test]
+fn a_malformed_target_config_is_an_error_not_a_clobber() {
+    // JSON only: Codex's TOML merge is line-based and has no parse step to
+    // fail, so it has no clobber to guard against here.
+    let mut checked = 0;
+
+    for agent in all() {
+        let dir = tempdir().unwrap();
+        let json_inputs: Vec<PathBuf> = agent
+            .mcp_merge_inputs(dir.path())
+            .into_iter()
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+            .collect();
+        if json_inputs.is_empty() {
+            continue;
+        }
+
+        let corrupt = "{ not json";
+        for input in &json_inputs {
+            write_seed(input, corrupt);
+        }
+
+        let prepared = prepare_mcp_servers(agent, &canonical_servers());
+        let result = agent.write_mcp_config(dir.path(), &prepared);
+
+        assert!(
+            result.is_err(),
+            "{}: a merge target that does not parse must be an error — \
+             falling back to an empty document silently destroys the file",
+            agent.id()
+        );
+        for input in &json_inputs {
+            assert_eq!(
+                fs::read_to_string(input).unwrap(),
+                corrupt,
+                "{}: the unparseable file must be left exactly as the user left it",
+                agent.id()
+            );
+        }
+        checked += 1;
+    }
+
+    assert!(
+        checked > 0,
+        "no agent declared a JSON mcp_merge_inputs() path — the test would pass vacuously"
+    );
+}
+
 #[test]
 fn agents_without_project_level_mcp_config_write_nothing() {
     // These agents keep MCP config in global CLI state or app settings; a sync

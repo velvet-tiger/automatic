@@ -15,6 +15,8 @@ mod antigravity;
 mod claude_code;
 mod cline;
 mod codex_cli;
+#[cfg(test)]
+mod contract_tests;
 mod cursor;
 mod droid;
 mod gemini_cli;
