@@ -8,8 +8,9 @@
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -37,11 +38,31 @@ fn oauth_creds_user(server_name: &str) -> String {
     format!("mcp_oauth_creds_{}", server_name)
 }
 
+/// Remembers, per server, whether an OAuth token is present in the keychain.
+///
+/// Presence can only be established by reading the token, and sync walks every
+/// server of every project on each run. On macOS each read is a separate access
+/// check that can raise its own password dialog, so the answer is kept for the
+/// life of the process and invalidated whenever this process stores or deletes
+/// a token.
+fn token_presence_cache() -> &'static Mutex<HashMap<String, bool>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn set_cached_token_presence(server_name: &str, present: bool) {
+    if let Ok(mut cache) = token_presence_cache().lock() {
+        cache.insert(server_name.to_string(), present);
+    }
+}
+
 /// Store an OAuth bearer token in the system keychain.
 pub fn store_oauth_token(server_name: &str, token: &str) -> Result<(), String> {
     let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &oauth_token_user(server_name))
         .map_err(|e| e.to_string())?;
-    entry.set_password(token).map_err(|e| e.to_string())
+    entry.set_password(token).map_err(|e| e.to_string())?;
+    set_cached_token_presence(server_name, true);
+    Ok(())
 }
 
 /// Load an OAuth bearer token from the system keychain.
@@ -55,12 +76,25 @@ pub fn load_oauth_token(server_name: &str) -> Result<String, String> {
 pub fn delete_oauth_token(server_name: &str) -> Result<(), String> {
     let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &oauth_token_user(server_name))
         .map_err(|e| e.to_string())?;
-    entry.delete_credential().map_err(|e| e.to_string())
+    entry.delete_credential().map_err(|e| e.to_string())?;
+    set_cached_token_presence(server_name, false);
+    Ok(())
 }
 
 /// Check whether an OAuth token exists for a server.
+///
+/// The result is cached for the life of the process. A token added or removed
+/// by another process is therefore not observed until restart.
 pub fn has_oauth_token(server_name: &str) -> bool {
-    load_oauth_token(server_name).is_ok()
+    if let Ok(cache) = token_presence_cache().lock() {
+        if let Some(present) = cache.get(server_name) {
+            return *present;
+        }
+    }
+
+    let present = load_oauth_token(server_name).is_ok();
+    set_cached_token_presence(server_name, present);
+    present
 }
 
 /// Store OAuth credentials (client_id + token JSON) for refresh support.

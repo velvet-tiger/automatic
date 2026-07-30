@@ -39,20 +39,38 @@ const SENTINEL: &str = "enc:v1:";
 #[cfg(test)]
 static TEST_KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
 
+#[cfg(not(test))]
+static CACHED_KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+
 // ── Key management ────────────────────────────────────────────────────────────
+
+/// Retrieve the encryption key, creating and storing a new random key if one
+/// does not yet exist.
+#[cfg(test)]
+fn get_or_create_key() -> Result<[u8; 32], String> {
+    Ok(*TEST_KEY.get_or_init(|| Aes256Gcm::generate_key(OsRng).into()))
+}
 
 /// Retrieve the encryption key from the keychain, creating and storing a new
 /// random key if one does not yet exist.
+///
+/// The key is read from the keychain at most once per process. Callers encrypt
+/// and decrypt one value at a time, so without this the keychain is hit once
+/// per environment variable, and on macOS each of those reads is a separate
+/// access check that can raise its own password dialog.
+#[cfg(not(test))]
 fn get_or_create_key() -> Result<[u8; 32], String> {
-    #[cfg(test)]
-    {
-        Ok(*TEST_KEY.get_or_init(|| Aes256Gcm::generate_key(OsRng).into()))
+    if let Some(key) = CACHED_KEY.get() {
+        return Ok(*key);
     }
+    let key = read_or_create_keychain_key()?;
+    Ok(*CACHED_KEY.get_or_init(|| key))
+}
 
-    #[cfg(not(test))]
+#[cfg(not(test))]
+fn read_or_create_keychain_key() -> Result<[u8; 32], String> {
     let entry = Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(|e| e.to_string())?;
 
-    #[cfg(not(test))]
     match entry.get_password() {
         Ok(hex) => {
             // Key already exists — decode it.
