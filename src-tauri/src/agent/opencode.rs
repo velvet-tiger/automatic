@@ -78,7 +78,11 @@ impl Agent for OpenCode {
     /// `agent` all live alongside `mcp` — so only `$schema` and `mcp` are ours
     /// to set.
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
-        write_opencode_dialect_mcp_config(&dir.join("opencode.json"), OPENCODE_SCHEMA_URL, servers)
+        write_opencode_dialect_mcp_config(
+            &dir.join("opencode.json"),
+            Some(OPENCODE_SCHEMA_URL),
+            servers,
+        )
     }
 
     // ── MCP capability ──────────────────────────────────────────────────

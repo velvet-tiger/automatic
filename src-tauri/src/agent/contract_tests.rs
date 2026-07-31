@@ -201,7 +201,7 @@ gemini | Gemini CLI (Beta) | GEMINI.md | skills,instructions,mcp_servers,agents,
 copilot | GitHub Copilot (Beta) | .github/copilot-instructions.md | skills,instructions,mcp_servers,commands | - | .github/prompts | .agents/skills
 goose | Goose (Beta) | AGENTS.md | skills,instructions | - | - | .agents/skills
 junie | Junie (Beta) | .junie/AGENTS.md | skills,instructions,mcp_servers | - | - | .junie/skills,.agents/skills
-kilo | Kilo Code (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .agents/skills
+kilo | Kilo (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .agents/skills
 kiro | Kiro (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .kiro/skills
 opencode | OpenCode | AGENTS.md | skills,instructions,mcp_servers,agents,commands | .opencode/agents | .opencode/commands | .agents/skills
 pi | Pi (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents | .pi/agents | - | .pi/skills

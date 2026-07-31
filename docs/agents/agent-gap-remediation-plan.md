@@ -180,26 +180,26 @@ under a top-level `mcp` key in the OpenCode dialect (`type: "local"|"remote"`,
 `command` as an array, `environment` rather than `env`). `./.kilocode/` is no
 longer read.
 
-- [ ] Keep `id() == "kilo"`. It is persisted in `Project.agents` and changing it
+- [x] Keep `id() == "kilo"`. It is persisted in `Project.agents` and changing it
       orphans every project
-- [ ] Update `label()` to drop "Code", update `config_description()`
-- [ ] Write via `write_opencode_dialect_mcp_config`, targeting `.kilo/kilo.json`
-- [ ] If a root `kilo.json` or `kilo.jsonc` already exists, write into that
+- [x] Update `label()` to drop "Code", update `config_description()`
+- [x] Write via `write_opencode_dialect_mcp_config`, targeting `.kilo/kilo.json`
+- [x] If a root `kilo.json` or `kilo.jsonc` already exists, write into that
       instead, following the same logic as `opencode.rs:170`
-- [ ] Treat an unparseable `.jsonc` as `Err`, never a clobber
-- [ ] `detect_in` — add `kilo.json`, `kilo.jsonc`, `.kilo/`, and keep `.kilocode/`
+- [x] Treat an unparseable `.jsonc` as `Err`, never a clobber
+- [x] `detect_in` — add `kilo.json`, `kilo.jsonc`, `.kilo/`, and keep `.kilocode/`
       as a legacy marker so existing projects stay recognised
-- [ ] `discover_global_mcp_servers` — add `~/.config/kilo/kilo.json[c]` under the
+- [x] `discover_global_mcp_servers` — add `~/.config/kilo/kilo.json[c]` under the
       `mcp` key
-- [ ] New `migrate_legacy_kilocode` in `sync/engine.rs`, called beside
+- [x] New `migrate_legacy_kilocode` in `sync/engine.rs`, called beside
       `migrate_legacy_cursorrules` ([engine.rs:189](../../src-tauri/src/sync/engine.rs)),
       gated on `project.agents` containing `"kilo"`
-- [ ] Migration: read `.kilocode/mcp.json` with the existing
+- [x] Migration: read `.kilocode/mcp.json` with the existing
       `discover_mcp_servers_from_json(path, "mcpServers", identity)`. Delete the
       file if every server it names is already selected. Otherwise leave it and
       log a warning naming those servers
-- [ ] Migration: `fs::remove_dir` on `.kilocode/`, not `remove_dir_all`
-- [ ] Tests: writes `.kilo/kilo.json`; merge preserves `model`; prefers an
+- [x] Migration: `fs::remove_dir` on `.kilocode/`, not `remove_dir_all`
+- [x] Tests: writes `.kilo/kilo.json`; merge preserves `model`; prefers an
       existing root `kilo.json`; migration deletes when servers are known and
       preserves when they are not
 
@@ -208,6 +208,42 @@ Never silently discard a server the user added by hand.
 
 Deferred: `.kilo/agents` and `.kilo/rules`. The directories are documented, the
 file formats are not, and `AGENTS.md` already works.
+
+### Phase 2 status
+
+Landed. 787 tests pass (up from 779 at the end of Phase 1), `cargo clippy
+--all-targets -- -D warnings` is clean, `make check` is clean.
+
+Two decisions made beyond the checklist, both confirmed with the user before
+implementation:
+
+- **No `$schema` field.** Kilo's own docs (`kilo.ai/docs/automate/mcp/using-in-kilo-code`)
+  show no `$schema` example, unlike OpenCode's published schema. Rather than
+  guess a URL or reuse OpenCode's, `write_opencode_dialect_mcp_config`'s
+  `schema_url` parameter became `Option<&str>`; Kilo passes `None`, OpenCode
+  keeps passing `Some(OPENCODE_SCHEMA_URL)`.
+- **`detect_global_install` fixed too**, though it wasn't in the original
+  checklist. It still checked for the VS Code app / `code` CLI, a leftover
+  from before the CLI-first rebrand. Now checks `cli_available("kilo")` or
+  the presence of `~/.config/kilo/kilo.json[c]`.
+
+Also worth recording: `opencode.rs:170`, cited above as the model for the
+root-file-preference logic, turned out not to contain that logic — it's
+inside unrelated cache-cleanup code. No such logic existed anywhere in the
+codebase before this phase; it was designed fresh for `kilo_code.rs`'s
+`resolve_config_path`, modelled on the existing `detect_in` multi-candidate
+pattern instead.
+
+One unresolved discrepancy, not acted on: `kilo.ai/docs/code-with-ai/platforms/cli`
+mentions a "legacy `./opencode.json[c]`" fallback that the earlier audit
+document says Kilo no longer reads. This phase does not read `opencode.json`
+for Kilo either way, consistent with the checklist as written.
+
+Manual end-to-end verification (seed `.kilocode/mcp.json`, sync, confirm
+`.kilo/kilo.json` appears and `.kilocode/` migrates or is preserved with a
+warning; then add a root `kilo.json` and confirm the next sync targets it)
+was not run — it needs a registered project and a real sync, the same
+constraint noted at the end of Phase 1.
 
 ---
 

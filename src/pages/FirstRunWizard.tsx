@@ -105,7 +105,7 @@ const AGENT_OPTIONS = [
   { id: "copilot", label: "GitHub Copilot" },
   { id: "goose", label: "Goose" },
   { id: "junie", label: "Junie" },
-  { id: "kilo", label: "Kilo Code" },
+  { id: "kilo", label: "Kilo" },
   { id: "kiro", label: "Kiro" },
   { id: "opencode", label: "OpenCode" },
   { id: "warp", label: "Warp" },

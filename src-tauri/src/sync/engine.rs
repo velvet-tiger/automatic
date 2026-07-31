@@ -188,6 +188,11 @@ fn sync_to_directory_inner(
     // new location before the instruction pipeline runs.
     migrate_legacy_cursorrules(&effective_dir, project);
 
+    // One-time migration: Kilo Code rebranded to Kilo and stopped reading
+    // `.kilocode/mcp.json`.  Clear the legacy file once its servers are
+    // already selected for this project, before the MCP write below.
+    migrate_legacy_kilocode(&effective_dir, project);
+
     // Read MCP server configs from the Automatic registry and build the
     // selected server map (includes stripping internal fields and OAuth proxy
     // substitution).  Uses the shared helper so drift detection produces
@@ -385,6 +390,59 @@ fn migrate_legacy_cursorrules(effective_dir: &std::path::Path, project: &mut Pro
             let _ = fs::remove_file(&legacy_snap);
         }
     }
+}
+
+/// One-time migration: fold a legacy `.kilocode/mcp.json` into the new
+/// `.kilo/kilo.json` (or an existing root `kilo.json`/`kilo.jsonc`).
+///
+/// Kilo Code rebranded to Kilo and stopped reading `.kilocode/`.  If every
+/// server named in the legacy file is already selected for this project, the
+/// legacy file is redundant with what this sync is about to write under the
+/// new path, so it — and the `.kilocode/` directory, if now empty — can go.
+/// A server the legacy file names but the project has not selected is
+/// user-added configuration Automatic has never seen; that file is left in
+/// place with a warning rather than discarded.
+///
+/// Never fatal: failures are logged and the sync continues.
+fn migrate_legacy_kilocode(effective_dir: &std::path::Path, project: &Project) {
+    if !project.agents.iter().any(|a| a == "kilo") {
+        return;
+    }
+    let legacy_path = effective_dir.join(".kilocode").join("mcp.json");
+    if !legacy_path.is_file() {
+        return;
+    }
+
+    let legacy_servers =
+        crate::agent::discover_mcp_servers_from_json(&legacy_path, "mcpServers", |v| v);
+    let unmigrated: Vec<&String> = legacy_servers
+        .keys()
+        .filter(|name| !project.mcp_servers.iter().any(|s| s == *name))
+        .collect();
+
+    if !unmigrated.is_empty() {
+        eprintln!(
+            "[automatic] .kilocode migration: keeping .kilocode/mcp.json — not yet \
+             selected for this project: {}",
+            unmigrated
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        return;
+    }
+
+    if let Err(e) = fs::remove_file(&legacy_path) {
+        eprintln!(
+            "[automatic] .kilocode migration: failed to remove legacy file: {}",
+            e
+        );
+        return;
+    }
+    // Only removes the directory if now empty — never destroys other content
+    // a user may have placed under `.kilocode/`.
+    let _ = fs::remove_dir(effective_dir.join(".kilocode"));
 }
 
 /// Maintain the Automatic-managed `.gitignore` block at the project root.
@@ -1352,6 +1410,63 @@ mod tests {
         let agents_user =
             read_project_file(dir.path().to_str().unwrap(), "AGENTS.md").expect("read AGENTS.md");
         assert_eq!(agents_user.trim(), agents_content.trim());
+    }
+
+    fn make_kilo_project(dir: &str) -> Project {
+        Project {
+            name: "test-project".to_string(),
+            directory: dir.to_string(),
+            agents: vec!["kilo".to_string()],
+            instruction_mode: "per-agent".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn sync_migrates_legacy_kilocode_when_its_servers_are_already_selected() {
+        let dir = tmp();
+        fs::create_dir_all(dir.path().join(".kilocode")).expect("mkdir .kilocode");
+        fs::write(
+            dir.path().join(".kilocode/mcp.json"),
+            r#"{"mcpServers":{"github":{"command":"npx","args":["-y","server-github"]}}}"#,
+        )
+        .expect("write legacy file");
+        let mut project = make_kilo_project(dir.path().to_str().unwrap());
+        project.mcp_servers = vec!["github".to_string()];
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        assert!(
+            !dir.path().join(".kilocode").exists(),
+            "legacy .kilocode/ should be removed once every server it names is already selected"
+        );
+
+        // Re-sync is a no-op: there is nothing left to migrate.
+        sync_project_without_autodetect(&mut project).expect("re-sync");
+        assert!(!dir.path().join(".kilocode").exists());
+    }
+
+    #[test]
+    fn sync_keeps_legacy_kilocode_with_an_unselected_server() {
+        let dir = tmp();
+        fs::create_dir_all(dir.path().join(".kilocode")).expect("mkdir .kilocode");
+        fs::write(
+            dir.path().join(".kilocode/mcp.json"),
+            r#"{"mcpServers":{"custom-tool":{"command":"my-tool"}}}"#,
+        )
+        .expect("write legacy file");
+        let mut project = make_kilo_project(dir.path().to_str().unwrap());
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        assert!(
+            dir.path().join(".kilocode/mcp.json").is_file(),
+            "legacy file naming a server the project has not selected must be preserved"
+        );
+
+        // Re-sync does not loop or destroy the preserved file.
+        sync_project_without_autodetect(&mut project).expect("re-sync");
+        assert!(dir.path().join(".kilocode/mcp.json").is_file());
     }
 
     #[test]

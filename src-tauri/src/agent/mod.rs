@@ -1529,9 +1529,13 @@ pub(crate) fn read_mergeable_json_object(path: &Path) -> Result<Map<String, Valu
 /// `permission`, `instructions` and `agent` keys — so every key other than
 /// `$schema` and `mcp` is preserved, and a malformed target is an error rather
 /// than a clobber.
+///
+/// `schema_url` is `None` for dialects with no published schema — writing a
+/// `$schema` key that points at the wrong vendor's schema would be worse than
+/// omitting it.
 pub(crate) fn write_opencode_dialect_mcp_config(
     path: &Path,
-    schema_url: &str,
+    schema_url: Option<&str>,
     servers: &Map<String, Value>,
 ) -> Result<String, String> {
     let mut root = read_mergeable_json_object(path)?;
@@ -1597,7 +1601,9 @@ pub(crate) fn write_opencode_dialect_mcp_config(
         dialect_servers.insert(name.clone(), Value::Object(server));
     }
 
-    root.insert("$schema".to_string(), json!(schema_url));
+    if let Some(schema_url) = schema_url {
+        root.insert("$schema".to_string(), json!(schema_url));
+    }
     root.insert("mcp".to_string(), Value::Object(dialect_servers));
 
     if let Some(parent) = path.parent() {
