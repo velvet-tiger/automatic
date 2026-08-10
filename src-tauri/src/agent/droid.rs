@@ -61,8 +61,21 @@ impl Agent for Droid {
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
             agents: false,
+            hooks: true,
             ..Default::default()
         }
+    }
+
+    fn hook_events(&self) -> &'static [&'static str] {
+        DROID_EVENTS
+    }
+
+    fn sync_hooks(
+        &self,
+        project_dir: &Path,
+        hooks: &[crate::core::Hook],
+    ) -> Result<Vec<String>, String> {
+        sync_droid_hooks(project_dir, hooks)
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────
@@ -147,6 +160,59 @@ fn normalise_import(config: Value) -> Value {
     config
 }
 
+// ── Hooks ────────────────────────────────────────────────────────────────────
+//
+// Droid owns `.factory/hooks.json` outright; script bodies go in
+// `.factory/hooks/`. Droid's optional per-group `commandRegex` has no
+// equivalent field in `core::Hook`, so it is never emitted — extending the
+// core model for one vendor is out of scope here.
+
+const DROID_EVENTS: &[&str] = &[
+    "PreToolUse",
+    "PostToolUse",
+    "UserPromptSubmit",
+    "Notification",
+    "Stop",
+    "SubagentStop",
+    "PreCompact",
+    "SessionStart",
+    "SessionEnd",
+];
+
+fn sync_droid_hooks(
+    project_dir: &Path,
+    hooks: &[crate::core::Hook],
+) -> Result<Vec<String>, String> {
+    let factory_dir = project_dir.join(".factory");
+    let hooks_file = factory_dir.join("hooks.json");
+    let scripts_dir = factory_dir.join("hooks");
+
+    // Factory deprecated `.factory/hooks/hooks.json` in favour of
+    // `.factory/hooks.json`. The legacy path now sits inside our own scripts
+    // directory, where cleanup_managed_hook_scripts would never touch it —
+    // it isn't a script and carries no managed-by-automatic marker. Remove
+    // it explicitly so a stale legacy file doesn't shadow the current one.
+    let legacy_hooks_file = scripts_dir.join("hooks.json");
+    if legacy_hooks_file.exists() {
+        if let Err(e) = fs::remove_file(&legacy_hooks_file) {
+            eprintln!(
+                "[automatic] Failed to remove legacy '{}': {}",
+                legacy_hooks_file.display(),
+                e
+            );
+        }
+    }
+
+    let spec = super::HookWriteSpec {
+        supported_events: DROID_EVENTS,
+        scripts_dir,
+        script_command: |file_name| format!("./.factory/hooks/{}", file_name),
+        handler: super::standard_command_handler,
+        group_extras: super::no_group_extras,
+    };
+    super::write_owned_hooks_file(&hooks_file, hooks, &spec)
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -215,5 +281,56 @@ mod tests {
             parsed["mcpServers"]["linear"]["type"].as_str().unwrap(),
             "http"
         );
+    }
+
+    // ── Hook sync ───────────────────────────────────────────────────────────
+
+    fn cmd_hook(name: &str, event: &str, command: &str) -> crate::core::Hook {
+        crate::core::Hook {
+            name: name.to_string(),
+            agent: "droid".to_string(),
+            event: event.to_string(),
+            matcher: None,
+            handler: crate::core::HookHandler::Command {
+                command: command.to_string(),
+            },
+            timeout_sec: None,
+            plugin_id: None,
+            _author: None,
+        }
+    }
+
+    #[test]
+    fn hook_events_declares_nine_events() {
+        assert_eq!(Droid.hook_events().len(), 9);
+    }
+
+    #[test]
+    fn hook_sync_writes_dedicated_file() {
+        let dir = tempdir().unwrap();
+        let hooks = vec![cmd_hook("hi", "SessionStart", "echo hi")];
+        let written = Droid.sync_hooks(dir.path(), &hooks).unwrap();
+
+        let path = dir.path().join(".factory/hooks.json");
+        assert!(path.exists());
+        assert!(written.iter().any(|w| w.ends_with("hooks.json")));
+
+        let raw = fs::read_to_string(&path).unwrap();
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        let handler = &v["hooks"]["SessionStart"][0]["hooks"][0];
+        assert_eq!(handler["type"], "command");
+        assert_eq!(handler["command"], "echo hi");
+    }
+
+    #[test]
+    fn hook_sync_removes_legacy_hooks_subdirectory_file() {
+        let dir = tempdir().unwrap();
+        let legacy_dir = dir.path().join(".factory/hooks");
+        fs::create_dir_all(&legacy_dir).unwrap();
+        fs::write(legacy_dir.join("hooks.json"), "{}").unwrap();
+
+        Droid.sync_hooks(dir.path(), &[]).unwrap();
+
+        assert!(!legacy_dir.join("hooks.json").exists());
     }
 }

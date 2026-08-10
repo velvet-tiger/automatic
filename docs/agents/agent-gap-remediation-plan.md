@@ -431,15 +431,15 @@ exists. Cheapest first.
 
 ### 5a. Gemini CLI
 
-- [ ] Merge a `hooks` key into `.gemini/settings.json`
-- [ ] 11 events: `BeforeTool`, `AfterTool`, `BeforeAgent`, `AfterAgent`,
+- [x] Merge a `hooks` key into `.gemini/settings.json`
+- [x] 11 events: `BeforeTool`, `AfterTool`, `BeforeAgent`, `AfterAgent`,
       `BeforeModel`, `BeforeToolSelection`, `AfterModel`, `SessionStart`,
       `SessionEnd`, `Notification`, `PreCompress`
-- [ ] Convert `timeout_sec * 1000`. Gemini's `timeout` is milliseconds while
+- [x] Convert `timeout_sec * 1000`. Gemini's `timeout` is milliseconds while
       `core::Hook::timeout_sec` is seconds. Leave the core model alone
-- [ ] Omit `sequential` when optional, so drift has fewer bytes to disagree about
-- [ ] Set `hooks: true`
-- [ ] Test: idempotent across repeats; `mcpServers` survives; millisecond
+- [x] Omit `sequential` when optional, so drift has fewer bytes to disagree about
+- [x] Set `hooks: true`
+- [x] Test: idempotent across repeats; `mcpServers` survives; millisecond
       conversion; malformed settings returns `Err`
 
 `.gemini/settings.json` is the same file `write_mcp_config` merges into. Ordering
@@ -448,15 +448,15 @@ read-modify-write.
 
 ### 5b. GitHub Copilot
 
-- [ ] Write one Automatic-owned file, `.github/hooks/automatic.json`, rather than
+- [x] Write one Automatic-owned file, `.github/hooks/automatic.json`, rather than
       one file per hook
-- [ ] 8 events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+- [x] 8 events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
       `PreCompact`, `SubagentStart`, `SubagentStop`, `Stop`. All are a strict
       subset of Claude's names
-- [ ] Add `.github/hooks` to the existing `managed_gitignore_paths` override
+- [x] Add `.github/hooks` to the existing `managed_gitignore_paths` override
       (`github_copilot.rs:70`)
-- [ ] Set `hooks: true`
-- [ ] Test: owned file is removed when the hook set is empty
+- [x] Set `hooks: true`
+- [x] Test: owned file is removed when the hook set is empty
 
 Document the known overlap. VS Code also reads `.claude/settings.json`, so in a
 project with both `claude` and `copilot` selected a Claude-targeted hook also
@@ -465,16 +465,76 @@ work around.
 
 ### 5c. Droid
 
-- [ ] `.factory/hooks.json` for config, `.factory/hooks/` for scripts
-- [ ] 9 events: `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`,
+- [x] `.factory/hooks.json` for config, `.factory/hooks/` for scripts
+- [x] 9 events: `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`,
       `Stop`, `SubagentStop`, `PreCompact`, `SessionStart`, `SessionEnd`
-- [ ] Explicitly delete a legacy `.factory/hooks/hooks.json` if present.
+- [x] Explicitly delete a legacy `.factory/hooks/hooks.json` if present.
       `cleanup_managed_hook_scripts` will not touch it, as it lacks the
       `managed-by-automatic` marker
-- [ ] Emit `matcher` only. Droid's optional `commandRegex` has no field in
+- [x] Emit `matcher` only. Droid's optional `commandRegex` has no field in
       `core::Hook`, and extending the core model is out of scope
-- [ ] Set `hooks: true`
-- [ ] Test: legacy `hooks/hooks.json` is removed
+- [x] Set `hooks: true`
+- [x] Test: legacy `hooks/hooks.json` is removed
+
+### Phase 5 status
+
+Landed, all three sub-phases. 805 tests pass (up from 793 at the end of Phase
+4 — 5 new for Gemini, 4 for Copilot, 3 for Droid). `cargo clippy
+--all-targets -- -D warnings` is clean, `make check` is clean, `cargo fmt
+--check` is clean on every touched file. The capability-matrix snapshot in
+`contract_tests.rs` was updated deliberately — `droid`, `gemini` and
+`copilot` now carry `hooks` in their capability list — which is the single
+reviewable diff the snapshot exists to produce.
+
+No frontend changes were needed. This is the payoff of Phase 3: `Hooks.tsx`
+already builds its event picker from each fetched agent's `hook_events`, so
+the three new agents' event lists appeared in the UI the moment their
+`capabilities().hooks` and `hook_events()` were wired up server-side.
+
+Implementation notes and judgment calls, in order of how much they depart
+from the checklist:
+
+- **Gemini's script path convention is an assumption, stated as one.** No
+  vendor documentation was available on how Gemini CLI resolves a hook
+  command's working directory or whether it expands an env var placeholder
+  the way Claude Code does. `script_command` uses
+  `./.gemini/hooks/<file>`, mirroring Codex CLI's relative-from-project-root
+  convention for a comparable sibling CLI tool, rather than inventing an env
+  var Gemini may not support. If this turns out wrong, only the one closure
+  in `gemini_cli.rs` needs to change.
+- **Gemini needs its own handler builder, not `standard_command_handler`**,
+  because of the seconds-to-milliseconds timeout conversion — this is
+  exactly the customisation point `HookWriteSpec::handler` was built for in
+  Phase 4. `group_extras` stays `no_group_extras`: per the checklist,
+  `sequential` is omitted rather than guessed at, so nothing needs adding at
+  the group level after all.
+- **Copilot's handler shape is also an assumption.** The audit found the
+  event list and the one-owned-file structure, but not a documented handler
+  JSON shape. `standard_command_handler` (`type`, `command`, optional
+  `timeout`) was used on the reasoning that every other JSON-based vendor in
+  this set — Claude, Codex, now Gemini — converged on that shape, and no
+  contrary documentation exists. Flagged here as a call that should be
+  checked against Copilot's actual hook loader before relying on it in
+  production.
+- **Droid's legacy-file deletion is unconditional, not warn-and-preserve
+  like Phase 2's `.kilocode/` migration.** The checklist says "delete if
+  present" with no fallback, unlike Kilo's migration which only deletes when
+  every server it names is already known and otherwise warns and leaves it.
+  The difference is deliberate here, not an oversight: the audit states
+  Factory's *current* product no longer reads `.factory/hooks/hooks.json` at
+  all, having superseded it with `.factory/hooks.json` — unlike the Kilo
+  case, where `.kilocode/mcp.json` might still be live config Kilo itself
+  was reading right up until the rebrand. A file the current vendor tooling
+  never consults is inert regardless of what Automatic does to it, so
+  deleting it on sight tidies up dead weight rather than destroying live
+  config. An `eprintln` records the removal for traceability, matching the
+  pattern used elsewhere for non-fatal cleanup failures.
+- **`owned_config_paths` was deliberately left untouched** for all three
+  agents' new hooks files. Codex CLI, the existing owned-file hook writer,
+  never registered `.codex/hooks.json` there either — that field is
+  MCP-config-cleanup-on-agent-removal only, and hook-file cleanup on agent
+  removal isn't handled by any agent today. Real gap, but pre-existing and
+  out of this phase's scope; not introduced or worsened here.
 
 ---
 

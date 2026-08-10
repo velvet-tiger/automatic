@@ -44,6 +44,7 @@ impl Agent for GeminiCli {
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
             commands: true,
+            hooks: true,
             ..Default::default()
         }
     }
@@ -58,6 +59,18 @@ impl Agent for GeminiCli {
 
     fn convert_command_content(&self, content: &str, _name: &str) -> String {
         convert_md_command_to_gemini_toml(content)
+    }
+
+    fn hook_events(&self) -> &'static [&'static str] {
+        GEMINI_CLI_EVENTS
+    }
+
+    fn sync_hooks(
+        &self,
+        project_dir: &Path,
+        hooks: &[crate::core::Hook],
+    ) -> Result<Vec<String>, String> {
+        sync_gemini_hooks(project_dir, hooks)
     }
 
     // ── Config writing ──────────────────────────────────────────────────
@@ -218,6 +231,68 @@ fn identity(v: Value) -> Value {
     v
 }
 
+// ── Hooks ────────────────────────────────────────────────────────────────────
+//
+// Gemini CLI merges hooks into the `hooks` key of the same
+// `.gemini/settings.json` that `write_mcp_config` already merges `mcpServers`
+// into — both read-modify-write the same file independently, which is safe
+// since each only ever touches its own top-level key.
+//
+// Gemini's handler `timeout` is milliseconds; `core::Hook::timeout_sec` is
+// seconds. That's the one thing standard_command_handler can't do, so this
+// vendor needs its own handler builder.
+//
+// The documented group shape also carries an optional `sequential` flag.
+// Automatic has no hook-ordering concept in `core::Hook` to derive it from,
+// and the docs treat it as optional, so it is omitted rather than guessed —
+// `no_group_extras` leaves it out entirely.
+
+const GEMINI_CLI_EVENTS: &[&str] = &[
+    "BeforeTool",
+    "AfterTool",
+    "BeforeAgent",
+    "AfterAgent",
+    "BeforeModel",
+    "BeforeToolSelection",
+    "AfterModel",
+    "SessionStart",
+    "SessionEnd",
+    "Notification",
+    "PreCompress",
+];
+
+fn gemini_handler(hook: &crate::core::Hook, command: &str) -> Value {
+    let mut handler = Map::new();
+    handler.insert("type".to_string(), Value::String("command".to_string()));
+    handler.insert("command".to_string(), Value::String(command.to_string()));
+    if let Some(timeout_sec) = hook.timeout_sec {
+        handler.insert(
+            "timeout".to_string(),
+            Value::Number(serde_json::Number::from(u64::from(timeout_sec) * 1000)),
+        );
+    }
+    Value::Object(handler)
+}
+
+fn sync_gemini_hooks(
+    project_dir: &Path,
+    hooks: &[crate::core::Hook],
+) -> Result<Vec<String>, String> {
+    let settings_path = project_dir.join(".gemini").join("settings.json");
+    let spec = super::HookWriteSpec {
+        supported_events: GEMINI_CLI_EVENTS,
+        scripts_dir: project_dir.join(".gemini").join("hooks"),
+        // No vendor documentation on absolute-vs-relative script paths for
+        // Gemini; mirrors Codex CLI's relative-from-project-root convention
+        // for a sibling CLI tool rather than guessing at an env var Gemini
+        // may not expand.
+        script_command: |file_name| format!("./.gemini/hooks/{}", file_name),
+        handler: gemini_handler,
+        group_extras: super::no_group_extras,
+    };
+    super::merge_hooks_into_json_settings(&settings_path, "hooks", hooks, &spec)
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -288,5 +363,82 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("automatic"));
+    }
+
+    // ── Hook sync ───────────────────────────────────────────────────────────
+
+    fn cmd_hook(name: &str, event: &str, command: &str) -> crate::core::Hook {
+        crate::core::Hook {
+            name: name.to_string(),
+            agent: "gemini".to_string(),
+            event: event.to_string(),
+            matcher: None,
+            handler: crate::core::HookHandler::Command {
+                command: command.to_string(),
+            },
+            timeout_sec: None,
+            plugin_id: None,
+            _author: None,
+        }
+    }
+
+    #[test]
+    fn hook_events_declares_eleven_events() {
+        assert_eq!(GeminiCli.hook_events().len(), 11);
+    }
+
+    #[test]
+    fn hook_sync_converts_timeout_to_milliseconds() {
+        let dir = tempdir().unwrap();
+        let mut hook = cmd_hook("ping", "SessionStart", "echo hi");
+        hook.timeout_sec = Some(5);
+
+        GeminiCli.sync_hooks(dir.path(), &[hook]).unwrap();
+
+        let raw = fs::read_to_string(dir.path().join(".gemini/settings.json")).unwrap();
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        let handler = &v["hooks"]["SessionStart"][0]["hooks"][0];
+        assert_eq!(handler["timeout"], 5000);
+    }
+
+    #[test]
+    fn hook_sync_preserves_mcp_servers() {
+        let dir = tempdir().unwrap();
+        GeminiCli
+            .write_mcp_config(dir.path(), &stdio_servers())
+            .unwrap();
+
+        let hooks = vec![cmd_hook("notify", "Notification", "echo hi")];
+        GeminiCli.sync_hooks(dir.path(), &hooks).unwrap();
+
+        let raw = fs::read_to_string(dir.path().join(".gemini/settings.json")).unwrap();
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert!(v["mcpServers"]["automatic"]["command"].is_string());
+        assert!(v["hooks"]["Notification"].is_array());
+    }
+
+    #[test]
+    fn hook_sync_is_idempotent_across_repeats() {
+        let dir = tempdir().unwrap();
+        let hooks = vec![cmd_hook("compress", "PreCompress", "echo a")];
+        GeminiCli.sync_hooks(dir.path(), &hooks).unwrap();
+        GeminiCli.sync_hooks(dir.path(), &hooks).unwrap();
+
+        let raw = fs::read_to_string(dir.path().join(".gemini/settings.json")).unwrap();
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        let groups = v["hooks"]["PreCompress"].as_array().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0]["hooks"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn hook_sync_malformed_settings_is_an_error_not_a_clobber() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".gemini")).unwrap();
+        fs::write(dir.path().join(".gemini/settings.json"), "{ not json").unwrap();
+
+        let hooks = vec![cmd_hook("a", "SessionStart", "echo a")];
+        let result = GeminiCli.sync_hooks(dir.path(), &hooks);
+        assert!(result.is_err());
     }
 }

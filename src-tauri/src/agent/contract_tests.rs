@@ -277,9 +277,9 @@ claude | Claude Code | CLAUDE.md | skills,instructions,mcp_servers,agents,comman
 cline | Cline (Beta) | .clinerules/automatic.md | skills,instructions | - | - | .cline/skills
 codex | Codex CLI | AGENTS.md | skills,instructions,mcp_servers,agents,hooks | .codex/agents | - | .agents/skills
 cursor | Cursor | AGENTS.md | skills,instructions,mcp_servers,agents,commands,hooks | .cursor/agents | .cursor/commands | .agents/skills
-droid | Droid (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .agents/skills
-gemini | Gemini CLI (Beta) | GEMINI.md | skills,instructions,mcp_servers,agents,commands | .gemini/agents | .gemini/commands | .agents/skills
-copilot | GitHub Copilot (Beta) | .github/copilot-instructions.md | skills,instructions,mcp_servers,commands | - | .github/prompts | .agents/skills
+droid | Droid (Beta) | AGENTS.md | skills,instructions,mcp_servers,hooks | - | - | .agents/skills
+gemini | Gemini CLI (Beta) | GEMINI.md | skills,instructions,mcp_servers,agents,commands,hooks | .gemini/agents | .gemini/commands | .agents/skills
+copilot | GitHub Copilot (Beta) | .github/copilot-instructions.md | skills,instructions,mcp_servers,commands,hooks | - | .github/prompts | .agents/skills
 goose | Goose (Beta) | AGENTS.md | skills,instructions | - | - | .agents/skills
 junie | Junie (Beta) | .junie/AGENTS.md | skills,instructions,mcp_servers | - | - | .junie/skills,.agents/skills
 kilo | Kilo (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .agents/skills

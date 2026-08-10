@@ -49,6 +49,7 @@ impl Agent for GitHubCopilot {
         super::AgentCapabilities {
             agents: false,
             commands: true,
+            hooks: true,
             ..Default::default()
         }
     }
@@ -59,6 +60,18 @@ impl Agent for GitHubCopilot {
 
     fn command_file_name(&self, machine_name: &str) -> String {
         format!("{machine_name}.prompt.md")
+    }
+
+    fn hook_events(&self) -> &'static [&'static str] {
+        GITHUB_COPILOT_EVENTS
+    }
+
+    fn sync_hooks(
+        &self,
+        project_dir: &Path,
+        hooks: &[crate::core::Hook],
+    ) -> Result<Vec<String>, String> {
+        sync_github_copilot_hooks(project_dir, hooks)
     }
 
     /// Copilot has no directory of its own — it writes into `.github/` and
@@ -75,6 +88,10 @@ impl Agent for GitHubCopilot {
             },
             ManagedPath {
                 path: dir.join(".github").join("prompts"),
+                is_dir: true,
+            },
+            ManagedPath {
+                path: dir.join(".github").join("hooks"),
                 is_dir: true,
             },
             ManagedPath {
@@ -220,6 +237,43 @@ fn identity(v: Value) -> Value {
     v
 }
 
+// ── Hooks ────────────────────────────────────────────────────────────────────
+//
+// GitHub Copilot reads hook config from any `*.json` file under
+// `.github/hooks/`. Automatic writes one file it owns outright,
+// `.github/hooks/automatic.json`, rather than one file per hook. All 8
+// documented events are a strict subset of Claude Code's names, and the
+// handler shape follows the same `{type, command, timeout?}` convention
+// every other JSON-based vendor in this set uses — Copilot's own docs don't
+// spell out a different one.
+
+const GITHUB_COPILOT_EVENTS: &[&str] = &[
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PreCompact",
+    "SubagentStart",
+    "SubagentStop",
+    "Stop",
+];
+
+fn sync_github_copilot_hooks(
+    project_dir: &Path,
+    hooks: &[crate::core::Hook],
+) -> Result<Vec<String>, String> {
+    let hooks_dir = project_dir.join(".github").join("hooks");
+    let hooks_file = hooks_dir.join("automatic.json");
+    let spec = super::HookWriteSpec {
+        supported_events: GITHUB_COPILOT_EVENTS,
+        scripts_dir: hooks_dir,
+        script_command: |file_name| format!("./.github/hooks/{}", file_name),
+        handler: super::standard_command_handler,
+        group_extras: super::no_group_extras,
+    };
+    super::write_owned_hooks_file(&hooks_file, hooks, &spec)
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -331,5 +385,66 @@ mod tests {
         // Servers replaced
         assert!(parsed["servers"]["automatic"]["command"].is_string());
         assert!(parsed["servers"]["old"].is_null());
+    }
+
+    // ── Hook sync ───────────────────────────────────────────────────────────
+
+    fn cmd_hook(name: &str, event: &str, command: &str) -> crate::core::Hook {
+        crate::core::Hook {
+            name: name.to_string(),
+            agent: "copilot".to_string(),
+            event: event.to_string(),
+            matcher: None,
+            handler: crate::core::HookHandler::Command {
+                command: command.to_string(),
+            },
+            timeout_sec: Some(30),
+            plugin_id: None,
+            _author: None,
+        }
+    }
+
+    #[test]
+    fn hook_events_declares_eight_events() {
+        assert_eq!(GitHubCopilot.hook_events().len(), 8);
+    }
+
+    #[test]
+    fn hook_sync_writes_one_owned_file() {
+        let dir = tempdir().unwrap();
+        let hooks = vec![cmd_hook("hi", "SessionStart", "echo hi")];
+        let written = GitHubCopilot.sync_hooks(dir.path(), &hooks).unwrap();
+
+        let path = dir.path().join(".github/hooks/automatic.json");
+        assert!(path.exists());
+        assert!(written.iter().any(|w| w.ends_with("automatic.json")));
+
+        let raw = fs::read_to_string(&path).unwrap();
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        let handler = &v["hooks"]["SessionStart"][0]["hooks"][0];
+        assert_eq!(handler["type"], "command");
+        assert_eq!(handler["command"], "echo hi");
+        assert_eq!(handler["timeout"], 30);
+    }
+
+    #[test]
+    fn hook_sync_skips_unsupported_events() {
+        let dir = tempdir().unwrap();
+        // Claude-only event — Copilot must skip it without failing the sync.
+        let hooks = vec![cmd_hook("setup", "Setup", "echo nope")];
+        let written = GitHubCopilot.sync_hooks(dir.path(), &hooks).unwrap();
+        assert!(written.is_empty());
+        assert!(!dir.path().join(".github/hooks/automatic.json").exists());
+    }
+
+    #[test]
+    fn hook_sync_removes_owned_file_when_hook_set_is_empty() {
+        let dir = tempdir().unwrap();
+        let hooks = vec![cmd_hook("temp", "Stop", "echo bye")];
+        GitHubCopilot.sync_hooks(dir.path(), &hooks).unwrap();
+        assert!(dir.path().join(".github/hooks/automatic.json").exists());
+
+        GitHubCopilot.sync_hooks(dir.path(), &[]).unwrap();
+        assert!(!dir.path().join(".github/hooks/automatic.json").exists());
     }
 }
