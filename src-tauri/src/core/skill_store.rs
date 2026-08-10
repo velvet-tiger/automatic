@@ -110,6 +110,99 @@ pub fn extract_frontmatter_license(content: &str) -> Option<String> {
     extract_frontmatter_field(content, "license")
 }
 
+/// Blobless shallow clone of `source` (owner/repo) followed by a local tree
+/// walk to find every `SKILL.md` path in the repository. Used as a
+/// last-resort discovery mechanism when a skill isn't found at any of the
+/// known static layouts and there's no `skill.json` manifest to consult —
+/// e.g. "collection" repos that just have `skills/<name>/SKILL.md`
+/// directories with no manifest at all. Returns the list of `SKILL.md`
+/// paths (relative to the repo root) and the branch that was checked out.
+fn clone_and_list_skill_md_paths(source: &str) -> Result<(Vec<String>, String), String> {
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "automatic-skill-scan-{}-{}",
+        source.replace('/', "-"),
+        std::process::id()
+    ));
+    // Clean up any leftover from a previous failed attempt.
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+
+    let clone_url = format!("https://github.com/{}.git", source);
+    let clone_result = std::process::Command::new("git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--filter=blob:none",
+            "--no-checkout",
+            "--quiet",
+            &clone_url,
+            tmp_dir.to_str().unwrap_or(""),
+        ])
+        .output();
+
+    let clone_ok = match &clone_result {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
+    };
+
+    if !clone_ok {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        return Err(format!(
+            "Could not clone '{}': git clone failed (is git installed?)",
+            source
+        ));
+    }
+
+    // Get the flat file list from the local clone.
+    let ls_result = std::process::Command::new("git")
+        .args([
+            "-C",
+            tmp_dir.to_str().unwrap_or(""),
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "HEAD",
+        ])
+        .output();
+
+    // Get the actual branch name so we can build a raw.githubusercontent.com URL.
+    let branch_result = std::process::Command::new("git")
+        .args([
+            "-C",
+            tmp_dir.to_str().unwrap_or(""),
+            "rev-parse",
+            "--abbrev-ref",
+            "HEAD",
+        ])
+        .output();
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+
+    let ls_output = match ls_result {
+        Ok(out) if out.status.success() => out.stdout,
+        _ => {
+            return Err(format!(
+                "Could not list files in cloned repo for '{}'",
+                source
+            ))
+        }
+    };
+
+    let branch = match branch_result {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        _ => "main".to_string(),
+    };
+
+    let file_list = String::from_utf8_lossy(&ls_output);
+    let paths: Vec<String> = file_list
+        .lines()
+        .filter(|p| p.ends_with("/SKILL.md") || *p == "SKILL.md")
+        .map(|p| p.to_string())
+        .collect();
+
+    Ok((paths, branch))
+}
+
 /// Fetch the SKILL.md content for a remote skill by constructing the GitHub
 /// raw content URL from the skill's `source` ("owner/repo") and `name`.
 ///
@@ -261,82 +354,7 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
     // ── Step 2: blobless shallow clone + local tree walk ─────────────────────
     // Clone only the git metadata (no file blobs). This is ~100-200 KB and
     // takes under a second. No GitHub API involved — no rate limit.
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "automatic-skill-{}-{}",
-        source.replace('/', "-"),
-        name
-    ));
-    // Clean up any leftover from a previous failed attempt.
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-
-    let clone_url = format!("https://github.com/{}.git", source);
-    let clone_result = std::process::Command::new("git")
-        .args([
-            "clone",
-            "--depth",
-            "1",
-            "--filter=blob:none",
-            "--no-checkout",
-            "--quiet",
-            &clone_url,
-            tmp_dir.to_str().unwrap_or(""),
-        ])
-        .output();
-
-    let clone_ok = match &clone_result {
-        Ok(out) => out.status.success(),
-        Err(_) => false,
-    };
-
-    if !clone_ok {
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-        return Err(format!(
-            "Could not fetch SKILL.md for '{}': git clone failed (is git installed?)",
-            name
-        ));
-    }
-
-    // Get the flat file list from the local clone.
-    let ls_result = std::process::Command::new("git")
-        .args([
-            "-C",
-            tmp_dir.to_str().unwrap_or(""),
-            "ls-tree",
-            "-r",
-            "--name-only",
-            "HEAD",
-        ])
-        .output();
-
-    // Get the actual branch name so we can build a raw.githubusercontent.com URL.
-    let branch_result = std::process::Command::new("git")
-        .args([
-            "-C",
-            tmp_dir.to_str().unwrap_or(""),
-            "rev-parse",
-            "--abbrev-ref",
-            "HEAD",
-        ])
-        .output();
-
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-
-    let ls_output = match ls_result {
-        Ok(out) if out.status.success() => out.stdout,
-        _ => {
-            return Err(format!(
-                "Could not list files in cloned repo for '{}'",
-                name
-            ))
-        }
-    };
-
-    let branch = match branch_result {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).trim().to_string(),
-        _ => "main".to_string(),
-    };
-
-    let file_list = String::from_utf8_lossy(&ls_output);
+    let (all_paths, branch) = clone_and_list_skill_md_paths(source)?;
     let raw_base = format!("https://raw.githubusercontent.com/{}/{}", source, branch);
 
     // Find ALL SKILL.md files in the tree.  The directory name may differ
@@ -344,10 +362,7 @@ pub async fn fetch_remote_skill_content(source: &str, name: &str) -> Result<Stri
     // frontmatter `name: vercel-react-best-practices`), so we collect every
     // SKILL.md and rely on the frontmatter check below to identify the
     // correct one.
-    let mut candidate_paths: Vec<&str> = file_list
-        .lines()
-        .filter(|p| p.ends_with("/SKILL.md") || *p == "SKILL.md")
-        .collect();
+    let mut candidate_paths: Vec<&str> = all_paths.iter().map(|s| s.as_str()).collect();
 
     // Try exact directory-name matches first (fast path), then everything
     // else.  Within each tier the original tree order is preserved.
@@ -949,6 +964,73 @@ pub async fn import_skill_from_repository(
 
         if !imported.is_empty() {
             return Ok(imported);
+        }
+    }
+
+    // ── Fallback: no name match, no skill.json — walk the full repo tree ────
+    // Handles "collection" repos that just have `skills/<name>/SKILL.md`
+    // directories with no manifest at all (e.g. repos built around Claude
+    // Code's plugin-marketplace convention, which ships a
+    // `.claude-plugin/marketplace.json` instead of a `skill.json`). Every
+    // SKILL.md found is imported; each still goes through the same
+    // asset-security scan as any other import, via `save_skill`.
+    if let Ok((paths, branch)) = clone_and_list_skill_md_paths(&source) {
+        if !paths.is_empty() {
+            let raw_base = format!("https://raw.githubusercontent.com/{}/{}", source, branch);
+            let mut imported = Vec::new();
+
+            for path in &paths {
+                let url = format!("{}/{}", raw_base, path);
+                let content = match client
+                    .get(&url)
+                    .header("User-Agent", "automatic-desktop/1.0")
+                    .send()
+                    .await
+                {
+                    Ok(resp) if resp.status().is_success() => match resp.text().await {
+                        Ok(t) => t,
+                        Err(_) => continue,
+                    },
+                    _ => continue,
+                };
+
+                let dir_name = std::path::Path::new(path)
+                    .parent()
+                    .and_then(|d| d.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("skill");
+                let actual_name =
+                    extract_frontmatter_name(&content).unwrap_or_else(|| dir_name.to_string());
+
+                let was_updated = super::skill_exists(&actual_name);
+                if let Err(e) = super::save_skill(&actual_name, &content) {
+                    eprintln!("[automatic] Failed to save skill '{}': {}", actual_name, e);
+                    continue;
+                }
+
+                let id = format!("{}/{}", source, actual_name);
+                let _ = record_skill_source_with_meta(
+                    &actual_name,
+                    &source,
+                    &id,
+                    "github",
+                    Some(sha256_hex(&content)),
+                    None,
+                    Some(now_iso8601()),
+                );
+                let _ = super::set_skill_collection(&actual_name, &source);
+
+                imported.push(ImportedSkillFromRepo {
+                    name: actual_name,
+                    source: source.clone(),
+                    id,
+                    was_updated,
+                });
+            }
+
+            if !imported.is_empty() {
+                return Ok(imported);
+            }
         }
     }
 
