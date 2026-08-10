@@ -13,88 +13,12 @@ import {
 import type { AgentInfo } from "../../components/AgentSelector";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 
-// ── Vendor event catalogues ────────────────────────────────────────────────
-//
-// These constants mirror the events accepted by each vendor's hook loader.
-// They are static within a build — vendor doc updates require a recompile.
-// Source: https://code.claude.com/docs/en/hooks,
-// https://developers.openai.com/codex/hooks and
-// https://cursor.com/docs/hooks.
-
-const CLAUDE_CODE_EVENTS = [
-  "SessionStart",
-  "Setup",
-  "SessionEnd",
-  "UserPromptSubmit",
-  "UserPromptExpansion",
-  "Stop",
-  "StopFailure",
-  "PreToolUse",
-  "PermissionRequest",
-  "PermissionDenied",
-  "PostToolUse",
-  "PostToolUseFailure",
-  "PostToolBatch",
-  "SubagentStart",
-  "SubagentStop",
-  "TeammateIdle",
-  "TaskCreated",
-  "TaskCompleted",
-  "FileChanged",
-  "CwdChanged",
-  "ConfigChange",
-  "InstructionsLoaded",
-  "PreCompact",
-  "PostCompact",
-  "Elicitation",
-  "ElicitationResult",
-  "Notification",
-  "WorktreeCreate",
-  "WorktreeRemove",
-] as const;
-
-const CODEX_CLI_EVENTS = [
-  "SessionStart",
-  "PreToolUse",
-  "PermissionRequest",
-  "PostToolUse",
-  "UserPromptSubmit",
-  "Stop",
-] as const;
-
-// KEEP IN LOCKSTEP with CURSOR_SUPPORTED_EVENTS in
-// src-tauri/src/agent/cursor.rs — events listed here but missing there are
-// silently skipped at sync time.  Cursor uses camelCase event names.
-// Tab-completion hooks are deliberately excluded.
-const CURSOR_EVENTS = [
-  "sessionStart",
-  "sessionEnd",
-  "beforeSubmitPrompt",
-  "preToolUse",
-  "postToolUse",
-  "postToolUseFailure",
-  "beforeShellExecution",
-  "afterShellExecution",
-  "beforeMCPExecution",
-  "afterMCPExecution",
-  "beforeReadFile",
-  "afterFileEdit",
-  "stop",
-  "subagentStart",
-  "subagentStop",
-  "preCompact",
-  "afterAgentResponse",
-  "afterAgentThought",
-  "workspaceOpen",
-] as const;
-
-const EVENTS_BY_AGENT: Record<string, readonly string[]> = {
-  claude: CLAUDE_CODE_EVENTS,
-  codex: CODEX_CLI_EVENTS,
-  cursor: CURSOR_EVENTS,
-};
-
 // ── Types ──────────────────────────────────────────────────────────────────
+//
+// Per-agent hook event catalogues are no longer hardcoded here. Each
+// `AgentInfo` fetched from the backend carries its own `hook_events`, sourced
+// from `Agent::hook_events()` in src-tauri/src/agent/*.rs — see
+// `eventsByAgent` below.
 
 interface HookEntry {
   id: string;
@@ -135,7 +59,11 @@ interface EditorState {
 const DEFAULT_EDITOR: EditorState = {
   name: "",
   agent: "claude",
-  event: "SessionStart",
+  // Left blank rather than hardcoded to a Claude-specific event name: the
+  // valid event set now comes from the backend (`eventsByAgent`) and is not
+  // known at module load time. `startCreate()` and the agent picker's
+  // onChange fill in a real default once the agent list has loaded.
+  event: "",
   matcher: "",
   handlerKind: "command",
   command: "",
@@ -256,9 +184,17 @@ export default function Hooks() {
     [agents],
   );
 
+  const eventsByAgent = useMemo(
+    () =>
+      Object.fromEntries(
+        agents.map((a) => [a.id, a.hook_events ?? []]),
+      ) as Record<string, readonly string[]>,
+    [agents],
+  );
+
   const allowedEvents = useMemo(
-    () => EVENTS_BY_AGENT[editor.agent] ?? [],
-    [editor.agent],
+    () => eventsByAgent[editor.agent] ?? [],
+    [eventsByAgent, editor.agent],
   );
 
   async function loadHooks() {
@@ -301,8 +237,7 @@ export default function Hooks() {
   function startCreate() {
     const defaultAgentId =
       hookCapableAgents[0]?.id ?? "claude";
-    const defaultEvent =
-      EVENTS_BY_AGENT[defaultAgentId]?.[0] ?? "SessionStart";
+    const defaultEvent = eventsByAgent[defaultAgentId]?.[0] ?? "";
     setSelectedId(null);
     setEditor({
       ...DEFAULT_EDITOR,
@@ -567,7 +502,7 @@ export default function Hooks() {
                   value={editor.agent}
                   disabled={!isEditing}
                   onChange={(value) => {
-                    const events = EVENTS_BY_AGENT[value] ?? [];
+                    const events = eventsByAgent[value] ?? [];
                     setEditor((prev) => ({
                       ...prev,
                       agent: value,

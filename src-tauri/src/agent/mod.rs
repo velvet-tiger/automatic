@@ -354,6 +354,29 @@ pub trait Agent: Send + Sync {
 
     // ── Hooks ──────────────────────────────────────────────────────────────
 
+    /// Lifecycle event names this agent's hook system accepts (e.g.
+    /// `"SessionStart"`, `"PreToolUse"`), in the vendor's own casing.
+    ///
+    /// This is the single source of truth for the event picker in the Hooks
+    /// UI. Agents whose [`sync_hooks`] filters by event (Codex CLI, Cursor)
+    /// must build that filter from this same list rather than a second
+    /// hand-written array, so the two can never drift apart the way
+    /// `CODEX_CLI_EVENTS` in the frontend once did from
+    /// `CODEX_SUPPORTED_EVENTS` in Rust.
+    ///
+    /// Not every agent that filters is required to: Claude Code intentionally
+    /// leaves `sync_hooks` unfiltered even though it declares a full event
+    /// list here, so that a user who learns of a new Claude event before this
+    /// list is updated does not silently lose their hook. `hook_events()` is
+    /// advisory for the UI in that case, not an enforcement mechanism.
+    ///
+    /// Default: empty — agents that don't support hooks don't have to
+    /// override it. Agents that do must also set [`AgentCapabilities::hooks`]
+    /// to `true`; a contract test enforces the two stay in sync.
+    fn hook_events(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// Sync lifecycle hooks for this agent into the project directory.
     ///
     /// `hooks` is the set of hooks attached to the project whose `agent`
@@ -485,6 +508,10 @@ pub struct AgentInfo {
     /// Human-readable note about MCP limitations, if any.
     /// `None` means Automatic manages MCP config for this agent normally.
     pub mcp_note: Option<String>,
+    /// Lifecycle event names this agent's hook system accepts. Empty when
+    /// `capabilities.hooks` is `false`. Drives the event picker on the Hooks
+    /// page instead of a hand-maintained frontend list per agent.
+    pub hook_events: Vec<String>,
 }
 
 impl AgentInfo {
@@ -495,6 +522,7 @@ impl AgentInfo {
             description: agent.config_description().to_string(),
             capabilities: agent.capabilities(),
             mcp_note: agent.mcp_note().map(|s| s.to_string()),
+            hook_events: agent.hook_events().iter().map(|s| s.to_string()).collect(),
         }
     }
 }
@@ -1853,6 +1881,32 @@ mod tests {
         let ids: Vec<&str> = all().iter().map(|a| a.id()).collect();
         let unique: HashSet<&str> = ids.iter().copied().collect();
         assert_eq!(ids.len(), unique.len());
+    }
+
+    /// `list_agents` (the Tauri command Hooks.tsx calls) serialises
+    /// `AgentInfo` straight to JSON. Pin the exact shape the frontend reads
+    /// `hook_events` from, so a rename here shows up as a Rust test failure
+    /// instead of a silently empty event picker in the UI.
+    #[test]
+    fn agent_info_serialises_hook_events_as_a_plain_string_array() {
+        let codex = AgentInfo::from_agent(from_id("codex").unwrap());
+        let value = serde_json::to_value(&codex).unwrap();
+        let events = value["hook_events"]
+            .as_array()
+            .expect("hook_events must serialise as a JSON array");
+        assert_eq!(events.len(), 11);
+        assert!(events.iter().any(|v| v == "SubagentStop"));
+
+        let claude = AgentInfo::from_agent(from_id("claude").unwrap());
+        let value = serde_json::to_value(&claude).unwrap();
+        let events = value["hook_events"].as_array().unwrap();
+        assert!(events.iter().any(|v| v == "MessageDisplay"));
+
+        // An agent with no hooks capability reports an empty list, not a
+        // missing key — the frontend indexes it unconditionally.
+        let goose = AgentInfo::from_agent(from_id("goose").unwrap());
+        let value = serde_json::to_value(&goose).unwrap();
+        assert_eq!(value["hook_events"].as_array().unwrap().len(), 0);
     }
 
     #[test]

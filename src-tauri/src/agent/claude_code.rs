@@ -124,6 +124,10 @@ impl Agent for ClaudeCode {
         }
     }
 
+    fn hook_events(&self) -> &'static [&'static str] {
+        CLAUDE_CODE_EVENTS
+    }
+
     fn sync_hooks(
         &self,
         project_dir: &Path,
@@ -220,6 +224,46 @@ fn identity(v: Value) -> Value {
 const HOOK_MANAGED_KEY: &str = "_managedBy";
 const HOOK_MANAGED_VALUE: &str = "automatic";
 const HOOK_ID_KEY: &str = "_hookId";
+
+/// Every hook event Claude Code documents. Source:
+/// <https://code.claude.com/docs/en/hooks>.
+///
+/// This drives the event picker in the Hooks UI via [`Agent::hook_events`].
+/// `sync_claude_code_hooks` deliberately does not filter by this list — see
+/// the note on that trait method. A user who knows about a new Claude event
+/// before this list is updated must not silently lose their hook.
+const CLAUDE_CODE_EVENTS: &[&str] = &[
+    "SessionStart",
+    "Setup",
+    "SessionEnd",
+    "UserPromptSubmit",
+    "UserPromptExpansion",
+    "Stop",
+    "StopFailure",
+    "PreToolUse",
+    "PermissionRequest",
+    "PermissionDenied",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PostToolBatch",
+    "SubagentStart",
+    "SubagentStop",
+    "TeammateIdle",
+    "TaskCreated",
+    "TaskCompleted",
+    "FileChanged",
+    "CwdChanged",
+    "ConfigChange",
+    "InstructionsLoaded",
+    "PreCompact",
+    "PostCompact",
+    "Elicitation",
+    "ElicitationResult",
+    "Notification",
+    "MessageDisplay",
+    "WorktreeCreate",
+    "WorktreeRemove",
+];
 
 fn sync_claude_code_hooks(
     project_dir: &Path,
@@ -533,6 +577,21 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::tempdir;
+
+    #[test]
+    fn hook_events_declares_all_thirty_events_including_message_display() {
+        let events = ClaudeCode.hook_events();
+        assert_eq!(
+            events.len(),
+            30,
+            "expected 30 documented Claude Code hook events, found {}",
+            events.len()
+        );
+        assert!(
+            events.contains(&"MessageDisplay"),
+            "MessageDisplay is documented but missing from CLAUDE_CODE_EVENTS"
+        );
+    }
 
     fn stdio_servers() -> Map<String, Value> {
         let mut s = Map::new();

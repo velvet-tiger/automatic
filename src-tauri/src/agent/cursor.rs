@@ -96,6 +96,10 @@ impl Agent for Cursor {
         }
     }
 
+    fn hook_events(&self) -> &'static [&'static str] {
+        CURSOR_SUPPORTED_EVENTS
+    }
+
     fn sync_hooks(
         &self,
         project_dir: &Path,
@@ -276,9 +280,9 @@ fn cursor_auth_block(oauth: Option<Value>) -> Option<Value> {
 
 /// Events supported by Cursor's hook system (Tab-completion hooks excluded).
 ///
-/// KEEP IN LOCKSTEP with the `cursor` entry of `EVENTS_BY_AGENT` in
-/// `src/pages/workspace/Hooks.tsx` — hooks whose event is not listed here are
-/// skipped at sync time with a warning.
+/// Exposed to the frontend and to `sync_cursor_hooks`'s own filter through
+/// [`Agent::hook_events`] — hooks whose event is not listed here are skipped
+/// at sync time with a warning.
 const CURSOR_SUPPORTED_EVENTS: &[&str] = &[
     "sessionStart",
     "sessionEnd",

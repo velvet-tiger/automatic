@@ -264,6 +264,10 @@ impl Agent for CodexCli {
         }
     }
 
+    fn hook_events(&self) -> &'static [&'static str] {
+        CODEX_SUPPORTED_EVENTS
+    }
+
     fn sync_hooks(
         &self,
         project_dir: &Path,
@@ -473,10 +477,15 @@ fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
 
 const CODEX_SUPPORTED_EVENTS: &[&str] = &[
     "SessionStart",
+    "SessionEnd",
     "PreToolUse",
     "PermissionRequest",
     "PostToolUse",
+    "PreCompact",
+    "PostCompact",
     "UserPromptSubmit",
+    "SubagentStart",
+    "SubagentStop",
     "Stop",
 ];
 
@@ -625,6 +634,29 @@ mod tests {
     use serde_json::json;
     use tempfile::tempdir;
 
+    #[test]
+    fn hook_events_declares_eleven_events() {
+        let events = CodexCli.hook_events();
+        assert_eq!(
+            events.len(),
+            11,
+            "expected 11 documented Codex CLI hook events, found {}",
+            events.len()
+        );
+        for event in [
+            "SessionEnd",
+            "PreCompact",
+            "PostCompact",
+            "SubagentStart",
+            "SubagentStop",
+        ] {
+            assert!(
+                events.contains(&event),
+                "'{event}' is documented upstream but missing from CODEX_SUPPORTED_EVENTS"
+            );
+        }
+    }
+
     fn stdio_servers() -> Map<String, Value> {
         let mut s = Map::new();
         s.insert(
@@ -725,10 +757,38 @@ mod tests {
     fn codex_hook_sync_skips_unsupported_events() {
         let dir = tempdir().unwrap();
         // Claude-only event — Codex must skip it without failing the sync.
-        let hooks = vec![codex_cmd_hook("compact", "PreCompact", "echo nope")];
+        let hooks = vec![codex_cmd_hook("setup", "Setup", "echo nope")];
         let written = CodexCli.sync_hooks(dir.path(), &hooks).unwrap();
         assert!(written.is_empty());
         assert!(!dir.path().join(".codex/hooks.json").exists());
+    }
+
+    #[test]
+    fn codex_hook_sync_accepts_the_five_newly_added_events() {
+        let dir = tempdir().unwrap();
+        let hooks = vec![
+            codex_cmd_hook("a", "SessionEnd", "echo a"),
+            codex_cmd_hook("b", "PreCompact", "echo b"),
+            codex_cmd_hook("c", "PostCompact", "echo c"),
+            codex_cmd_hook("d", "SubagentStart", "echo d"),
+            codex_cmd_hook("e", "SubagentStop", "echo e"),
+        ];
+        let written = CodexCli.sync_hooks(dir.path(), &hooks).unwrap();
+        assert!(!written.is_empty());
+        let raw = fs::read_to_string(dir.path().join(".codex/hooks.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        for event in [
+            "SessionEnd",
+            "PreCompact",
+            "PostCompact",
+            "SubagentStart",
+            "SubagentStop",
+        ] {
+            assert!(
+                v["hooks"].get(event).is_some(),
+                "expected '{event}' to be written to hooks.json"
+            );
+        }
     }
 
     #[test]

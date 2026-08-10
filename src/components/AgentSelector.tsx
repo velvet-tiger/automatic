@@ -16,6 +16,10 @@ export interface AgentInfo {
   label: string;
   description: string;
   capabilities?: AgentCapabilities;
+  /** Lifecycle event names this agent's hook system accepts. Empty when
+   * `capabilities.hooks` is false. Source of truth is the backend's
+   * `Agent::hook_events()` — do not hardcode a per-agent list here. */
+  hook_events?: string[];
 }
 
 /** Per-agent configuration options (mirrors the Rust AgentOptions struct). */

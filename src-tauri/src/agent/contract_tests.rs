@@ -90,6 +90,87 @@ fn commands_dir_and_the_commands_capability_agree() {
     }
 }
 
+// ── Hooks ────────────────────────────────────────────────────────────────────
+
+/// A minimal command-handler hook, matcher-free so it fits every event this
+/// registry declares.
+fn cmd_hook(agent_id: &str, name: &str, event: &str) -> crate::core::Hook {
+    crate::core::Hook {
+        name: name.to_string(),
+        agent: agent_id.to_string(),
+        event: event.to_string(),
+        matcher: None,
+        handler: crate::core::HookHandler::Command {
+            command: "echo hi".to_string(),
+        },
+        timeout_sec: None,
+        plugin_id: None,
+        _author: None,
+    }
+}
+
+#[test]
+fn hook_events_and_the_hooks_capability_agree() {
+    for agent in all() {
+        let has_events = !agent.hook_events().is_empty();
+        let flag = agent.capabilities().hooks;
+        assert_eq!(
+            has_events,
+            flag,
+            "{}: capabilities().hooks is {flag} but hook_events() returns {} events. \
+             hook_events() drives the UI picker and the flag drives the badge — they must move together.",
+            agent.id(),
+            agent.hook_events().len(),
+        );
+    }
+}
+
+/// For every agent that declares hook events, build one hook per declared
+/// event and confirm a sync actually writes it somewhere. This is what would
+/// have caught `CODEX_SUPPORTED_EVENTS` sitting at 6 events while the vendor
+/// documented 11 — the array itself was internally consistent, it was just
+/// stale against upstream.
+#[test]
+fn every_declared_hook_event_survives_a_sync() {
+    for agent in all() {
+        let events = agent.hook_events();
+        if events.is_empty() {
+            continue;
+        }
+
+        let dir = tempdir().unwrap();
+        let hooks: Vec<crate::core::Hook> = events
+            .iter()
+            .enumerate()
+            .map(|(i, event)| cmd_hook(agent.id(), &format!("fixture-{i}"), event))
+            .collect();
+
+        let written = agent
+            .sync_hooks(dir.path(), &hooks)
+            .unwrap_or_else(|e| panic!("{}: sync_hooks failed: {e}", agent.id()));
+        assert!(
+            !written.is_empty(),
+            "{}: sync_hooks wrote no files for {} declared events",
+            agent.id(),
+            events.len()
+        );
+
+        let mut content = String::new();
+        for path in &written {
+            content.push_str(&std::fs::read_to_string(path).unwrap_or_else(|e| {
+                panic!("{}: could not read written file '{path}': {e}", agent.id())
+            }));
+        }
+        for event in events {
+            assert!(
+                content.contains(event),
+                "{}: declared event '{event}' does not appear in the synced config",
+                agent.id(),
+            );
+        }
+    }
+}
+
 // ── Skill directories ───────────────────────────────────────────────────────
 
 #[test]

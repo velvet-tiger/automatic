@@ -252,31 +252,73 @@ constraint noted at the end of Phase 1.
 **Blocks:** Phase 5, so no fifth hand-maintained event array is ever written.
 **Effort:** moderate. Touches the frontend.
 
-- [ ] Add `fn hook_events(&self) -> &'static [&'static str] { &[] }` to the trait
-- [ ] Move `CURSOR_SUPPORTED_EVENTS` (`cursor.rs:301`) behind it
-- [ ] Move `CODEX_SUPPORTED_EVENTS` (`codex_cli.rs:489`) behind it
-- [ ] Extend Codex to 11 events: add `SessionEnd`, `PreCompact`, `PostCompact`,
+- [x] Add `fn hook_events(&self) -> &'static [&'static str] { &[] }` to the trait
+- [x] Move `CURSOR_SUPPORTED_EVENTS` (`cursor.rs:301`) behind it
+- [x] Move `CODEX_SUPPORTED_EVENTS` (`codex_cli.rs:489`) behind it
+- [x] Extend Codex to 11 events: add `SessionEnd`, `PreCompact`, `PostCompact`,
       `SubagentStart`, `SubagentStop`
-- [ ] Add Claude's 30 events, including the missing `MessageDisplay`
-- [ ] Add `hook_events` to the JSON in
-      [commands/agents.rs:45-53](../../src-tauri/src/commands/agents.rs). It is a
+- [x] Add Claude's 30 events, including the missing `MessageDisplay`
+- [x] Add `hook_events` to the JSON. It is a
       string list, so it does not belong in `AgentCapabilities`, which is a bool
       struct
-- [ ] Delete `CLAUDE_CODE_EVENTS`, `CODEX_CLI_EVENTS`, `CURSOR_EVENTS` and
+- [x] Delete `CLAUDE_CODE_EVENTS`, `CODEX_CLI_EVENTS`, `CURSOR_EVENTS` and
       `EVENTS_BY_AGENT` from
-      [Hooks.tsx:24-95](../../src/pages/workspace/Hooks.tsx)
-- [ ] Build the event map from the agent list the page already fetches
-      (`Hooks.tsx:276`). Consumers to update: `:260`, `:305`, `:570`
-- [ ] Fix `DEFAULT_EDITOR.event = "SessionStart"` (`Hooks.tsx:138`), which is not
+      [Hooks.tsx](../../src/pages/workspace/Hooks.tsx)
+- [x] Build the event map from the agent list the page already fetches
+- [x] Fix `DEFAULT_EDITOR.event = "SessionStart"` (`Hooks.tsx:138`), which is not
       a valid event for Cursor or Gemini
-- [ ] Test: `hook_events_and_the_hooks_capability_agree`
-- [ ] Test: `every_declared_hook_event_survives_a_sync` — build one hook per
+- [x] Test: `hook_events_and_the_hooks_capability_agree`
+- [x] Test: `every_declared_hook_event_survives_a_sync` — build one hook per
       declared event, sync, assert the written config mentions it
 
 Leave Claude Code unfiltered. `sync_claude_code_hooks` does no event filtering
 today and should keep not doing it. `hook_events()` is advisory for the picker.
 Only agents that already filter should filter. Otherwise a user who knows about a
 new Claude event before we do loses their hook silently.
+
+### Phase 3 status
+
+Landed. 793 tests pass (up from 787 at the end of Phase 2), `cargo clippy
+--all-targets -- -D warnings` is clean, `make check` is clean.
+
+Implementation notes, and one deviation from the checklist:
+
+- `hook_events` was added to the `AgentInfo` struct in `agent/mod.rs` (the
+  DTO returned by the `list_agents` Tauri command, which is what
+  `Hooks.tsx` actually calls) rather than to the `list_agents_with_projects`
+  json!() macro the checklist cited at `commands/agents.rs:45-53`. That
+  command feeds the Providers/Library/Dashboard pages, not the Hooks page,
+  and by the time this phase landed the cited line numbers had drifted from
+  Phase 1/2 edits. `AgentInfo::from_agent` now populates `hook_events` from
+  `agent.hook_events()`, and the frontend `AgentInfo` interface in
+  `AgentSelector.tsx` carries a matching optional field.
+- Two extra tests beyond the checklist, added because a checklist test that
+  only asserts non-emptiness would not have caught the actual audit findings
+  (Codex stuck at 6 events, Claude missing `MessageDisplay`): `claude_code.rs`
+  asserts `hook_events().len() == 30` and contains `"MessageDisplay"`;
+  `codex_cli.rs` asserts `hook_events().len() == 11` and contains all five
+  newly-added events. A further `agent_info_serialises_hook_events_as_a_plain_string_array`
+  in `agent/mod.rs`'s own test module pins the exact JSON shape
+  (`hook_events` as a plain string array, present and empty rather than
+  absent for non-hook agents) that the frontend indexes unconditionally.
+- `codex_hook_sync_skips_unsupported_events`, an existing test, used
+  `PreCompact` as its example of a Codex-unsupported event. Since `PreCompact`
+  is now one of the 11 supported events, the test was repointed at `Setup`
+  (Claude-only, still unsupported by Codex) and a new
+  `codex_hook_sync_accepts_the_five_newly_added_events` test was added
+  confirming the five previously-dropped events now reach `.codex/hooks.json`.
+
+Not run: live verification that the Hooks page's Event dropdown actually
+repopulates when switching the Target agent selector, because this is a
+Tauri desktop app and no tool in this environment can drive or screenshot its
+native window (the Browser tools drive a plain browser tab, which has no
+Tauri IPC bridge for `invoke("list_agents")` to work against). In its place:
+`tsc --noEmit` passes on the rewritten `Hooks.tsx`, and the Rust-side tests
+above pin the exact data (11 Codex events, 30 Claude events including
+`MessageDisplay`, correct JSON key and shape) that the page's `eventsByAgent`
+memo consumes. The manual check from the Verification section below —
+opening the Hooks page and confirming the picker behaviour visually — is
+still worth doing before release.
 
 ---
 
