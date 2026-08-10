@@ -1856,6 +1856,395 @@ pub(crate) fn cleanup_managed_hook_scripts(
     Ok(())
 }
 
+// ── Shared hooks writers ────────────────────────────────────────────────────
+//
+// Claude Code, Codex CLI and (from Phase 5) Gemini CLI, GitHub Copilot and
+// Droid all group hooks by event then matcher into a stable order, append
+// into an existing matcher group rather than duplicating it, write script
+// bodies before the config that references them, prune empty groups and
+// events, and clean up managed scripts against a keep-list. Only two things
+// actually differ between vendors: whether the config file is merged into
+// (shared with user settings) or owned outright, and the shape of one
+// handler object. `HookWriteSpec` captures the second; the two entry points
+// below capture the first.
+//
+// Cursor stays out of this — camelCase events and a sidecar
+// deep-equal manifest at `.automatic/state/cursor-hooks.json` (see
+// `cursor.rs`) don't fit either shape.
+
+/// Key tagging a handler object as Automatic-managed, and the sibling key
+/// carrying its stable identity. Only meaningful for the merge flavour
+/// ([`merge_hooks_into_json_settings`]) — a shared file needs to tell managed
+/// handlers apart from user-authored ones on every re-sync; an owned file
+/// (`write_owned_hooks_file`) is fully regenerated each time, so nothing
+/// needs tagging.
+const HOOK_MANAGED_KEY: &str = "_managedBy";
+const HOOK_MANAGED_VALUE: &str = "automatic";
+const HOOK_ID_KEY: &str = "_hookId";
+
+/// Per-vendor configuration for the two hooks-writer entry points below.
+pub(crate) struct HookWriteSpec {
+    /// Events this agent's hook system accepts. Consulted only by
+    /// [`write_owned_hooks_file`], which filters and warns on skip.
+    /// [`merge_hooks_into_json_settings`] ignores it — Claude Code, the only
+    /// merge-flavour writer today, is deliberately left unfiltered so a hook
+    /// using an event not yet catalogued in [`Agent::hook_events`] still
+    /// syncs. Vendors normally pass their own `hook_events()` here regardless
+    /// of which entry point they call, since it is true information about
+    /// the vendor even when this particular writer doesn't act on it.
+    pub supported_events: &'static [&'static str],
+    /// Directory script-handler bodies are written into (e.g.
+    /// `<project>/.codex/hooks`).
+    pub scripts_dir: PathBuf,
+    /// Render the command string a Script handler resolves to, given the
+    /// filename (not full path) [`write_managed_hook_script`] wrote it to.
+    /// Each vendor keeps its own portable prefix, e.g.
+    /// `${CLAUDE_PROJECT_DIR}/.claude/hooks/<file>` vs `./.codex/hooks/<file>`.
+    pub script_command: fn(&str) -> String,
+    /// Build one handler object for `hook`, given its already-resolved
+    /// command string. Most vendors emit `{type: "command", command,
+    /// timeout?}`; see [`standard_command_handler`].
+    pub handler: fn(&crate::core::Hook, &str) -> Value,
+    /// Extra keys merged onto every matcher-group object, e.g. Gemini's
+    /// optional `sequential` flag. Empty for vendors with no group-level
+    /// config.
+    pub group_extras: fn() -> Map<String, Value>,
+}
+
+/// The handler shape shared by every vendor implemented so far:
+/// `{"type": "command", "command": ..., "timeout"?: n}`.
+pub(crate) fn standard_command_handler(hook: &crate::core::Hook, command: &str) -> Value {
+    let mut handler = Map::new();
+    handler.insert("type".to_string(), Value::String("command".to_string()));
+    handler.insert("command".to_string(), Value::String(command.to_string()));
+    if let Some(timeout) = hook.timeout_sec {
+        handler.insert(
+            "timeout".to_string(),
+            Value::Number(serde_json::Number::from(timeout)),
+        );
+    }
+    Value::Object(handler)
+}
+
+/// No group-level extras — the default for vendors without one.
+pub(crate) fn no_group_extras() -> Map<String, Value> {
+    Map::new()
+}
+
+/// Resolve the command string for `hook`'s handler: verbatim for
+/// `Command`/`Path`, or vendor-rendered via [`HookWriteSpec::script_command`]
+/// for `Script` (the file itself is written separately by
+/// [`write_script_handler_bodies`]).
+fn resolve_hook_command_string(hook: &crate::core::Hook, spec: &HookWriteSpec) -> String {
+    match &hook.handler {
+        crate::core::HookHandler::Command { command } => command.clone(),
+        crate::core::HookHandler::Script { interpreter, .. } => {
+            let ext = hook_script_extension(interpreter);
+            let file_name = format!("{}.{}", hook_slug(hook), ext);
+            (spec.script_command)(&file_name)
+        }
+        crate::core::HookHandler::Path { path, .. } => path.clone(),
+    }
+}
+
+fn build_plain_handler(hook: &crate::core::Hook, spec: &HookWriteSpec) -> Value {
+    let command = resolve_hook_command_string(hook, spec);
+    (spec.handler)(hook, &command)
+}
+
+/// [`build_plain_handler`] plus the managed-by-automatic tags, for the merge
+/// flavour's idempotent strip-then-merge cycle.
+fn build_tagged_handler(hook: &crate::core::Hook, spec: &HookWriteSpec) -> Value {
+    let mut handler = build_plain_handler(hook, spec);
+    if let Some(obj) = handler.as_object_mut() {
+        obj.insert(
+            HOOK_MANAGED_KEY.to_string(),
+            Value::String(HOOK_MANAGED_VALUE.to_string()),
+        );
+        obj.insert(HOOK_ID_KEY.to_string(), Value::String(hook_slug(hook)));
+    }
+    handler
+}
+
+/// Write every `Script`-handler body in `hooks` to `scripts_dir`, creating
+/// the directory only if at least one is present. Returns the written paths
+/// (also appended to `written`) so the caller can pass them as the keep-list
+/// to a later [`cleanup_managed_hook_scripts`] call.
+fn write_script_handler_bodies(
+    scripts_dir: &Path,
+    hooks: &[&crate::core::Hook],
+    written: &mut Vec<String>,
+) -> Result<Vec<PathBuf>, String> {
+    let mut managed_script_paths = Vec::new();
+    let needs_scripts_dir = hooks
+        .iter()
+        .any(|h| matches!(h.handler, crate::core::HookHandler::Script { .. }));
+    if needs_scripts_dir {
+        fs::create_dir_all(scripts_dir)
+            .map_err(|e| format!("Failed to create {}: {}", scripts_dir.display(), e))?;
+    }
+    for hook in hooks {
+        if let crate::core::HookHandler::Script {
+            interpreter,
+            script,
+        } = &hook.handler
+        {
+            let path = write_managed_hook_script(scripts_dir, hook, interpreter, script)?;
+            managed_script_paths.push(path.clone());
+            written.push(path.display().to_string());
+        }
+    }
+    Ok(managed_script_paths)
+}
+
+/// Handler values grouped by event, then by matcher within that event.
+/// `BTreeMap` at both levels keeps output order stable so repeated syncs
+/// produce byte-identical documents.
+type HandlersByEventAndMatcher =
+    std::collections::BTreeMap<String, std::collections::BTreeMap<Option<String>, Vec<Value>>>;
+
+/// Group `hooks` by event then matcher, building each handler value with
+/// `build_handler`.
+fn group_hooks_by_event_and_matcher<'a>(
+    hooks: impl Iterator<Item = &'a crate::core::Hook>,
+    build_handler: impl Fn(&crate::core::Hook) -> Value,
+) -> HandlersByEventAndMatcher {
+    let mut grouped = HandlersByEventAndMatcher::new();
+    for hook in hooks {
+        grouped
+            .entry(hook.event.clone())
+            .or_default()
+            .entry(hook.matcher.clone())
+            .or_default()
+            .push(build_handler(hook));
+    }
+    grouped
+}
+
+/// Insert grouped handlers into `hooks_obj`. For each `(event, matcher)`,
+/// append into an existing matcher group with the same matcher value (so
+/// user-authored and managed handlers coexist in one group) rather than
+/// duplicating it; otherwise append a new group seeded with `group_extras`.
+///
+/// Starting from an empty `hooks_obj` (the owned-file flavour, which
+/// regenerates its document from scratch every sync) degenerates to "append
+/// a fresh group for every matcher" — the same shape Codex CLI's hand-rolled
+/// writer used to build directly.
+fn insert_grouped_handlers(
+    hooks_obj: &mut Map<String, Value>,
+    grouped: HandlersByEventAndMatcher,
+    group_extras: fn() -> Map<String, Value>,
+) {
+    for (event, matchers) in grouped {
+        let event_entry = hooks_obj
+            .entry(event.clone())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        let Some(event_arr) = event_entry.as_array_mut() else {
+            continue;
+        };
+
+        for (matcher, handlers) in matchers {
+            let existing_idx = event_arr.iter().position(|group| {
+                let group_matcher = group.get("matcher").and_then(|v| v.as_str());
+                match (&matcher, group_matcher) {
+                    (Some(m), Some(g)) => m == g,
+                    (None, None) => true,
+                    _ => false,
+                }
+            });
+
+            if let Some(idx) = existing_idx {
+                if let Some(group_obj) = event_arr[idx].as_object_mut() {
+                    let group_hooks = group_obj
+                        .entry("hooks".to_string())
+                        .or_insert_with(|| Value::Array(Vec::new()));
+                    if let Some(arr) = group_hooks.as_array_mut() {
+                        arr.extend(handlers);
+                    }
+                }
+            } else {
+                let mut group = group_extras();
+                if let Some(m) = matcher {
+                    group.insert("matcher".to_string(), Value::String(m));
+                }
+                group.insert("hooks".to_string(), Value::Array(handlers));
+                event_arr.push(Value::Object(group));
+            }
+        }
+    }
+}
+
+/// Remove every handler in `hooks_obj` carrying the managed-by-automatic tag,
+/// leaving user-authored handlers untouched. Merge-flavour only: an owned
+/// file has nothing to preserve across syncs.
+fn drop_managed_hook_handlers(hooks_obj: &mut Map<String, Value>) {
+    for event_value in hooks_obj.values_mut() {
+        let Some(groups) = event_value.as_array_mut() else {
+            continue;
+        };
+        for group in groups.iter_mut() {
+            let Some(group_obj) = group.as_object_mut() else {
+                continue;
+            };
+            let Some(handlers) = group_obj.get_mut("hooks").and_then(|h| h.as_array_mut()) else {
+                continue;
+            };
+            handlers.retain(|handler| {
+                !handler
+                    .get(HOOK_MANAGED_KEY)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s == HOOK_MANAGED_VALUE)
+                    .unwrap_or(false)
+            });
+        }
+    }
+}
+
+/// Remove matcher groups left empty by [`drop_managed_hook_handlers`], and
+/// events left with no groups at all.
+fn prune_empty_hook_entries(hooks_obj: &mut Map<String, Value>) {
+    let mut empty_events = Vec::new();
+    for (event, value) in hooks_obj.iter_mut() {
+        let Some(groups) = value.as_array_mut() else {
+            continue;
+        };
+        groups.retain(|group| {
+            group
+                .get("hooks")
+                .and_then(|h| h.as_array())
+                .map(|arr| !arr.is_empty())
+                .unwrap_or(false)
+        });
+        if groups.is_empty() {
+            empty_events.push(event.clone());
+        }
+    }
+    for event in empty_events {
+        hooks_obj.remove(&event);
+    }
+}
+
+/// Write hooks into a config file this agent owns outright (Codex CLI today;
+/// Copilot and Droid from Phase 5). The whole document is regenerated from
+/// `hooks` on every call — nothing is merged in from what's already there —
+/// so when every hook is filtered out or the input is empty, the file is
+/// deleted rather than left behind as a stale empty shell.
+pub(crate) fn write_owned_hooks_file(
+    hooks_file: &Path,
+    hooks: &[crate::core::Hook],
+    spec: &HookWriteSpec,
+) -> Result<Vec<String>, String> {
+    let mut written = Vec::new();
+
+    let usable_hooks: Vec<&crate::core::Hook> = hooks
+        .iter()
+        .filter(|h| {
+            if spec.supported_events.contains(&h.event.as_str()) {
+                true
+            } else {
+                eprintln!(
+                    "[automatic] hook event '{}' is not supported by this agent — skipping hook '{}'",
+                    h.event, h.name
+                );
+                false
+            }
+        })
+        .collect();
+
+    if usable_hooks.is_empty() {
+        if hooks_file.exists() {
+            let _ = fs::remove_file(hooks_file);
+        }
+        cleanup_managed_hook_scripts(&spec.scripts_dir, &[])?;
+        return Ok(written);
+    }
+
+    if let Some(parent) = hooks_file.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+    }
+
+    let managed_script_paths =
+        write_script_handler_bodies(&spec.scripts_dir, &usable_hooks, &mut written)?;
+
+    let grouped = group_hooks_by_event_and_matcher(usable_hooks.into_iter(), |h| {
+        build_plain_handler(h, spec)
+    });
+    let mut hooks_root = Map::new();
+    insert_grouped_handlers(&mut hooks_root, grouped, spec.group_extras);
+
+    let document = json!({ "hooks": hooks_root });
+    let pretty =
+        serde_json::to_string_pretty(&document).map_err(|e| format!("JSON error: {}", e))?;
+    fs::write(hooks_file, format!("{}\n", pretty))
+        .map_err(|e| format!("Failed to write {}: {}", hooks_file.display(), e))?;
+    written.push(hooks_file.display().to_string());
+
+    cleanup_managed_hook_scripts(&spec.scripts_dir, &managed_script_paths)?;
+
+    Ok(written)
+}
+
+/// Merge hooks into a JSON settings file this agent shares with other
+/// settings (Claude Code today; Gemini CLI from Phase 5), under
+/// `settings_key` (e.g. `"hooks"`). Every previously-managed handler is
+/// stripped and the current hook set re-merged on top, so the on-disk state
+/// depends only on the current hook set, not on prior sync history — but
+/// user-authored handlers, and every other top-level key, survive untouched.
+///
+/// Unlike [`write_owned_hooks_file`], this always writes: the file may carry
+/// settings this agent doesn't own, so an empty hook set still needs the
+/// managed section cleared out, not the file left alone or deleted.
+pub(crate) fn merge_hooks_into_json_settings(
+    settings_path: &Path,
+    settings_key: &str,
+    hooks: &[crate::core::Hook],
+    spec: &HookWriteSpec,
+) -> Result<Vec<String>, String> {
+    let mut written = Vec::new();
+
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+    }
+
+    let hook_refs: Vec<&crate::core::Hook> = hooks.iter().collect();
+    let managed_script_paths =
+        write_script_handler_bodies(&spec.scripts_dir, &hook_refs, &mut written)?;
+
+    let mut root = read_mergeable_json_object(settings_path)?;
+
+    let key_value = root
+        .entry(settings_key.to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let key_obj = key_value.as_object_mut().ok_or_else(|| {
+        format!(
+            "`{}` in {} must be an object",
+            settings_key,
+            settings_path.display()
+        )
+    })?;
+
+    drop_managed_hook_handlers(key_obj);
+    let grouped = group_hooks_by_event_and_matcher(hooks.iter(), |h| build_tagged_handler(h, spec));
+    insert_grouped_handlers(key_obj, grouped, spec.group_extras);
+
+    prune_empty_hook_entries(key_obj);
+    if key_obj.is_empty() {
+        root.remove(settings_key);
+    }
+
+    let pretty = serde_json::to_string_pretty(&Value::Object(root))
+        .map_err(|e| format!("JSON error: {}", e))?;
+    fs::write(settings_path, format!("{}\n", pretty))
+        .map_err(|e| format!("Failed to write {}: {}", settings_path.display(), e))?;
+    written.push(settings_path.display().to_string());
+
+    cleanup_managed_hook_scripts(&spec.scripts_dir, &managed_script_paths)?;
+
+    Ok(written)
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

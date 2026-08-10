@@ -493,137 +493,15 @@ fn sync_codex_hooks(
     project_dir: &Path,
     hooks: &[crate::core::Hook],
 ) -> Result<Vec<String>, String> {
-    let codex_dir = project_dir.join(".codex");
-    let hooks_file = codex_dir.join("hooks.json");
-    let scripts_dir = codex_dir.join("hooks");
-    let mut written = Vec::new();
-
-    // If there are no hooks, remove the file so Codex doesn't see a stale
-    // config. The scripts directory cleanup runs the same way as Claude Code.
-    let usable_hooks: Vec<&crate::core::Hook> = hooks
-        .iter()
-        .filter(|h| {
-            if CODEX_SUPPORTED_EVENTS.contains(&h.event.as_str()) {
-                true
-            } else {
-                eprintln!(
-                    "[automatic] Codex CLI does not support hook event '{}' — skipping hook '{}'",
-                    h.event, h.name
-                );
-                false
-            }
-        })
-        .collect();
-
-    if usable_hooks.is_empty() {
-        if hooks_file.exists() {
-            let _ = fs::remove_file(&hooks_file);
-        }
-        cleanup_codex_scripts(&scripts_dir, &[])?;
-        return Ok(written);
-    }
-
-    fs::create_dir_all(&codex_dir).map_err(|e| format!("Failed to create .codex/: {}", e))?;
-
-    let mut managed_script_paths: Vec<PathBuf> = Vec::new();
-    let mut needs_scripts_dir = false;
-    for hook in &usable_hooks {
-        if matches!(hook.handler, crate::core::HookHandler::Script { .. }) {
-            needs_scripts_dir = true;
-            break;
-        }
-    }
-    if needs_scripts_dir {
-        fs::create_dir_all(&scripts_dir)
-            .map_err(|e| format!("Failed to create .codex/hooks/: {}", e))?;
-    }
-
-    for hook in &usable_hooks {
-        if let crate::core::HookHandler::Script {
-            interpreter,
-            script,
-        } = &hook.handler
-        {
-            let path = super::write_managed_hook_script(&scripts_dir, hook, interpreter, script)?;
-            managed_script_paths.push(path.clone());
-            written.push(path.display().to_string());
-        }
-    }
-
-    // Build the hooks.json document. Codex's schema is similar to Claude
-    // Code's: { event: [ { matcher?, hooks: [ { type, command, timeout? } ] } ] }.
-    use std::collections::BTreeMap;
-    type HandlersByMatcher = BTreeMap<Option<String>, Vec<Value>>;
-    let mut grouped: BTreeMap<String, HandlersByMatcher> = BTreeMap::new();
-    for hook in &usable_hooks {
-        let handler = codex_handler_value(hook);
-        grouped
-            .entry(hook.event.clone())
-            .or_default()
-            .entry(hook.matcher.clone())
-            .or_default()
-            .push(handler);
-    }
-
-    let mut hooks_root = Map::new();
-    for (event, matchers) in grouped {
-        let mut groups = Vec::new();
-        for (matcher, handlers) in matchers {
-            let mut group = Map::new();
-            if let Some(m) = matcher {
-                group.insert("matcher".to_string(), Value::String(m));
-            }
-            group.insert("hooks".to_string(), Value::Array(handlers));
-            groups.push(Value::Object(group));
-        }
-        hooks_root.insert(event, Value::Array(groups));
-    }
-
-    let document = serde_json::json!({ "hooks": hooks_root });
-    let pretty =
-        serde_json::to_string_pretty(&document).map_err(|e| format!("JSON error: {}", e))?;
-    fs::write(&hooks_file, format!("{}\n", pretty))
-        .map_err(|e| format!("Failed to write .codex/hooks.json: {}", e))?;
-    written.push(hooks_file.display().to_string());
-
-    cleanup_codex_scripts(&scripts_dir, &managed_script_paths)?;
-
-    Ok(written)
-}
-
-fn codex_handler_value(hook: &crate::core::Hook) -> Value {
-    let mut handler = Map::new();
-    handler.insert("type".to_string(), Value::String("command".to_string()));
-    let command_str = match &hook.handler {
-        crate::core::HookHandler::Command { command } => command.clone(),
-        crate::core::HookHandler::Script { interpreter, .. } => {
-            let ext = codex_script_extension(interpreter);
-            let slug = codex_hook_slug(hook);
-            format!("./.codex/hooks/{}.{}", slug, ext)
-        }
-        // The user owns the file — pass the path through verbatim.
-        crate::core::HookHandler::Path { path, .. } => path.clone(),
+    let hooks_file = project_dir.join(".codex").join("hooks.json");
+    let spec = super::HookWriteSpec {
+        supported_events: CODEX_SUPPORTED_EVENTS,
+        scripts_dir: project_dir.join(".codex").join("hooks"),
+        script_command: |file_name| format!("./.codex/hooks/{}", file_name),
+        handler: super::standard_command_handler,
+        group_extras: super::no_group_extras,
     };
-    handler.insert("command".to_string(), Value::String(command_str));
-    if let Some(t) = hook.timeout_sec {
-        handler.insert(
-            "timeout".to_string(),
-            Value::Number(serde_json::Number::from(t)),
-        );
-    }
-    Value::Object(handler)
-}
-
-fn codex_hook_slug(hook: &crate::core::Hook) -> String {
-    super::hook_slug(hook)
-}
-
-fn codex_script_extension(interpreter: &str) -> &'static str {
-    super::hook_script_extension(interpreter)
-}
-
-fn cleanup_codex_scripts(scripts_dir: &Path, keep_paths: &[PathBuf]) -> Result<(), String> {
-    super::cleanup_managed_hook_scripts(scripts_dir, keep_paths)
+    super::write_owned_hooks_file(&hooks_file, hooks, &spec)
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

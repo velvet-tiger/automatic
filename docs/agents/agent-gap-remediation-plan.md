@@ -338,23 +338,23 @@ Copying that five times is roughly 1,400 lines of near-duplicate code. There are
 two flavours, not five. Claude and Gemini merge into a shared settings file and
 must preserve user handlers. Codex, Copilot and Droid own their file outright.
 
-- [ ] Add `HookWriteSpec` to `agent/mod.rs` with fields `supported_events`,
+- [x] Add `HookWriteSpec` to `agent/mod.rs` with fields `supported_events`,
       `scripts_dir`, `script_command` (renders the command string for a Script
       handler from its filename, so each vendor keeps its own portable prefix),
       `handler` (builds one handler object, where vendors add or rename fields),
       and `group_extras` (extra keys on every matcher group)
-- [ ] Add `write_owned_hooks_file(hooks_file, hooks, spec)` for Codex, Copilot and
+- [x] Add `write_owned_hooks_file(hooks_file, hooks, spec)` for Codex, Copilot and
       Droid
-- [ ] Add `merge_hooks_into_json_settings(settings_path, settings_key, hooks, spec)`
+- [x] Add `merge_hooks_into_json_settings(settings_path, settings_key, hooks, spec)`
       for Claude Code and Gemini
-- [ ] Migrate `sync_claude_code_hooks` ([claude_code.rs:243](../../src-tauri/src/agent/claude_code.rs))
+- [x] Migrate `sync_claude_code_hooks` ([claude_code.rs](../../src-tauri/src/agent/claude_code.rs))
       onto it
-- [ ] Migrate `sync_codex_hooks` ([codex_cli.rs:498](../../src-tauri/src/agent/codex_cli.rs))
+- [x] Migrate `sync_codex_hooks` ([codex_cli.rs](../../src-tauri/src/agent/codex_cli.rs))
       onto it
-- [ ] Confirm the existing hook tests pass unchanged
+- [x] Confirm the existing hook tests pass unchanged
 
-Reuse `write_managed_hook_script` ([agent/mod.rs:1563](../../src-tauri/src/agent/mod.rs))
-and `cleanup_managed_hook_scripts` (`:1589`) as they are. Note the former does not
+Reuse `write_managed_hook_script` ([agent/mod.rs](../../src-tauri/src/agent/mod.rs))
+and `cleanup_managed_hook_scripts` as they are. Note the former does not
 create its directory, so the caller must.
 
 Cursor stays out. It has a sidecar manifest at
@@ -364,6 +364,63 @@ helper serves 5 of 6.
 **Abandon gate:** if expressing the Claude and Codex writers through these two
 entry points needs any `if agent_id == …` branch inside `mod.rs`, stop and copy
 per agent instead.
+
+### Phase 4 status
+
+Landed. 793 tests pass — the same count as at the end of Phase 3, which is the
+point: this phase added no new tests and removed none, per the checklist's own
+acceptance criterion. Every one of Claude Code's 9 hook tests and Codex CLI's
+9 hook tests (including the two counting tests added in Phase 3) passes
+unchanged. `cargo clippy --all-targets -- -D warnings` is clean, `make check`
+is clean, and `cargo fmt --check` is clean on the three touched files (the
+repo carries pre-existing formatting drift elsewhere that this phase left
+alone, consistent with not touching unrelated code).
+
+The abandon gate was not triggered — no `if agent_id == …` branch was needed
+in `mod.rs`. Implementation notes:
+
+- **The managed-handler tags moved, not just the writer.** `HOOK_MANAGED_KEY`
+  / `HOOK_MANAGED_VALUE` / `HOOK_ID_KEY` lived in `claude_code.rs`; they are
+  now `agent/mod.rs` internals, applied automatically by
+  `merge_hooks_into_json_settings` (via a `build_tagged_handler` wrapper
+  around whatever `spec.handler` returns) rather than something each
+  vendor's `handler` closure has to remember to do itself. Codex's
+  `write_owned_hooks_file` path never tags — an owned file is fully
+  regenerated every sync, so there's nothing to distinguish from
+  user-authored content on the next pass.
+- **`supported_events` is asymmetric by design.** `write_owned_hooks_file`
+  filters against it and warns on skip (generically — no vendor name in the
+  message, since no test checks the wording and Copilot/Droid will share it
+  in Phase 5). `merge_hooks_into_json_settings` ignores it entirely, so
+  Claude Code stays unfiltered per Phase 3's instruction even though its spec
+  populates the field with its real `hook_events()` list — that list is true
+  information about the vendor, just not enforced on this path.
+  Codex's `codex_hook_sync_skips_unsupported_events` test was already
+  repointed at `Setup` in Phase 3 (`PreCompact` became supported); it still
+  passes here unchanged, confirming the filter survived the move intact.
+- **One behavioural asymmetry preserved deliberately, not by accident.**
+  `write_owned_hooks_file` only creates its containing directory once it
+  knows there's at least one usable hook, and deletes the file outright when
+  there are none — matching Codex's existing "Automatic owns this file, an
+  empty one is pointless" behaviour. `merge_hooks_into_json_settings` always
+  creates its directory and always writes, even for zero hooks, because the
+  settings file may carry keys this agent doesn't own (Claude's `model`,
+  `permissions`, …) and empties the `hooks` key rather than assuming it's
+  safe to leave the file alone. This is exactly the "remove the file or the
+  `hooks` key" split the checklist called for, not a bug in either writer.
+- **`group_extras` and the `handler`/`script_command` split are unused by
+  both migrated vendors today.** Both Claude and Codex currently need the
+  same handler shape (`standard_command_handler`: `type`, `command`,
+  optional `timeout`) and no group-level extras (`no_group_extras`). They're
+  in the spec now because Phase 5a's Gemini writer needs `group_extras` for
+  the optional `sequential` key the audit found in Gemini's hook shape — this
+  is the one piece of Phase 4 that has no user yet, included because the very
+  next phase depends on it existing, not speculatively.
+- **`read_mergeable_json_object`** (the shared helper from Phase 1c/1e)
+  replaced Claude's own hand-rolled settings-file read. Behaviourally
+  identical — same empty-file and empty-string handling, same
+  must-be-an-object requirement — only the error wording changed slightly,
+  which no test asserts on.
 
 ---
 

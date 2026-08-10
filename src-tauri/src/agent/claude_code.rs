@@ -211,19 +211,14 @@ fn identity(v: Value) -> Value {
 //
 // Claude Code reads hooks from `.claude/settings.json` under the top-level
 // `hooks` key. Each event maps to an array of matcher groups, and each
-// matcher group has an array of handlers. We need to merge our entries into
-// any pre-existing settings without disturbing keys the user owns (model,
-// permissions, env, …) or hook entries the user wrote by hand.
-//
-// Ownership tagging: every handler we emit carries `_managedBy: "automatic"`
-// and `_hookId: "<machine-name>"`. On every sync we drop existing handlers
-// whose `_managedBy == "automatic"` before merging our fresh set in, so
-// detach actually removes entries and resync never accumulates duplicates.
-// Claude Code ignores unknown JSON fields, so the tags are inert at runtime.
-
-const HOOK_MANAGED_KEY: &str = "_managedBy";
-const HOOK_MANAGED_VALUE: &str = "automatic";
-const HOOK_ID_KEY: &str = "_hookId";
+// matcher group has an array of handlers.
+// `super::merge_hooks_into_json_settings` merges our entries into any
+// pre-existing settings without disturbing keys the user owns (model,
+// permissions, env, …) or hook entries the user wrote by hand, tagging every
+// handler it emits with `_managedBy: "automatic"` and `_hookId: "<machine-
+// name>"` so the next sync can tell managed and user-authored handlers
+// apart. Claude Code ignores unknown JSON fields, so the tags are inert at
+// runtime.
 
 /// Every hook event Claude Code documents. Source:
 /// <https://code.claude.com/docs/en/hooks>.
@@ -269,278 +264,17 @@ fn sync_claude_code_hooks(
     project_dir: &Path,
     hooks: &[crate::core::Hook],
 ) -> Result<Vec<String>, String> {
-    let claude_dir = project_dir.join(".claude");
-    let settings_path = claude_dir.join("settings.json");
-    let hooks_scripts_dir = claude_dir.join("hooks");
-
-    // Always ensure .claude/ exists so we can write the settings file even on
-    // a project that has never been touched by Claude Code.
-    fs::create_dir_all(&claude_dir).map_err(|e| format!("Failed to create .claude/: {}", e))?;
-
-    let mut written = Vec::new();
-
-    // Write any script-handler bodies first so the settings file can reference
-    // them by path. The script directory is owned by Automatic in the sense
-    // that we manage the files we put in it — but we don't blow it away here,
-    // so a user-authored script next to ours stays intact.
-    let mut hooks_dir_created = false;
-    let mut managed_script_paths: Vec<PathBuf> = Vec::new();
-    for hook in hooks {
-        if let crate::core::HookHandler::Script {
-            interpreter,
-            script,
-        } = &hook.handler
-        {
-            if !hooks_dir_created {
-                fs::create_dir_all(&hooks_scripts_dir)
-                    .map_err(|e| format!("Failed to create .claude/hooks/: {}", e))?;
-                hooks_dir_created = true;
-            }
-            let script_path =
-                super::write_managed_hook_script(&hooks_scripts_dir, hook, interpreter, script)?;
-            managed_script_paths.push(script_path.clone());
-            written.push(script_path.display().to_string());
-        }
-    }
-
-    // Load or initialise the settings document.
-    let mut settings: Value = if settings_path.exists() {
-        let raw = fs::read_to_string(&settings_path)
-            .map_err(|e| format!("Failed to read .claude/settings.json: {}", e))?;
-        if raw.trim().is_empty() {
-            Value::Object(Map::new())
-        } else {
-            serde_json::from_str(&raw).map_err(|e| {
-                format!(
-                    "Failed to parse .claude/settings.json — fix the syntax or remove the file: {}",
-                    e
-                )
-            })?
-        }
-    } else {
-        Value::Object(Map::new())
+    let settings_path = project_dir.join(".claude").join("settings.json");
+    let spec = super::HookWriteSpec {
+        supported_events: CLAUDE_CODE_EVENTS,
+        scripts_dir: project_dir.join(".claude").join("hooks"),
+        // Reference the script via ${CLAUDE_PROJECT_DIR} so the settings
+        // file is portable across machines / containers.
+        script_command: |file_name| format!("${{CLAUDE_PROJECT_DIR}}/.claude/hooks/{}", file_name),
+        handler: super::standard_command_handler,
+        group_extras: super::no_group_extras,
     };
-
-    // Strip every previously-managed handler from the hooks tree, then merge
-    // our fresh set on top. Merging into a freshly stripped tree guarantees
-    // re-sync is idempotent: the on-disk state after sync only depends on
-    // the current hook set, not on prior sync history.
-    let settings_obj = settings
-        .as_object_mut()
-        .ok_or_else(|| ".claude/settings.json must be a JSON object".to_string())?;
-
-    let hooks_value = settings_obj
-        .entry("hooks".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-    let hooks_obj = hooks_value
-        .as_object_mut()
-        .ok_or_else(|| "`hooks` in .claude/settings.json must be an object".to_string())?;
-
-    drop_managed_handlers(hooks_obj);
-    merge_managed_hooks(hooks_obj, hooks, &hooks_scripts_dir);
-
-    // Drop any now-empty matcher groups / events so we don't leave skeletal
-    // objects behind after detach.
-    prune_empty_hook_entries(hooks_obj);
-    if hooks_obj.is_empty() {
-        settings_obj.remove("hooks");
-    }
-
-    let pretty =
-        serde_json::to_string_pretty(&settings).map_err(|e| format!("JSON error: {}", e))?;
-    fs::write(&settings_path, format!("{}\n", pretty))
-        .map_err(|e| format!("Failed to write .claude/settings.json: {}", e))?;
-    written.push(settings_path.display().to_string());
-
-    // Remove any leftover managed script files from earlier syncs that no
-    // longer correspond to a current hook. We identify ours by the
-    // ".managed-by-automatic" marker file we drop alongside them; without it
-    // we'd risk deleting a user-authored script in .claude/hooks/.
-    cleanup_orphaned_managed_scripts(&hooks_scripts_dir, &managed_script_paths)?;
-
-    Ok(written)
-}
-
-/// Stable identifier used both as the script filename stem and as the
-/// `_hookId` tag.  Just the hook's display-machine-name (derived from the
-/// `Hook` record's identity in the library). We don't have direct access to
-/// the on-disk filename from the `Hook` value, so use a normalised version of
-/// the display name as a fallback.
-fn hook_machine_id(hook: &crate::core::Hook) -> String {
-    super::hook_slug(hook)
-}
-
-fn script_extension_for_interpreter(interpreter: &str) -> &'static str {
-    super::hook_script_extension(interpreter)
-}
-
-/// Remove every handler in `hooks_obj` that carries the managed-by-automatic
-/// tag, leaving user-authored handlers untouched.
-fn drop_managed_handlers(hooks_obj: &mut Map<String, Value>) {
-    for event_value in hooks_obj.values_mut() {
-        let Some(groups) = event_value.as_array_mut() else {
-            continue;
-        };
-        for group in groups.iter_mut() {
-            let Some(group_obj) = group.as_object_mut() else {
-                continue;
-            };
-            let Some(handlers) = group_obj.get_mut("hooks").and_then(|h| h.as_array_mut()) else {
-                continue;
-            };
-            handlers.retain(|handler| {
-                !handler
-                    .get(HOOK_MANAGED_KEY)
-                    .and_then(|v| v.as_str())
-                    .map(|s| s == HOOK_MANAGED_VALUE)
-                    .unwrap_or(false)
-            });
-        }
-    }
-}
-
-/// Insert managed handlers grouped by `(event, matcher)` so each unique
-/// matcher under a given event becomes a single group entry, matching the
-/// shape Claude Code expects.
-fn merge_managed_hooks(
-    hooks_obj: &mut Map<String, Value>,
-    hooks: &[crate::core::Hook],
-    scripts_dir: &Path,
-) {
-    use std::collections::BTreeMap;
-
-    // Group by event → matcher → handlers, sorted so the output is stable.
-    type HandlersByMatcher = BTreeMap<Option<String>, Vec<(String, Value)>>;
-    let mut grouped: BTreeMap<String, HandlersByMatcher> = BTreeMap::new();
-
-    for hook in hooks {
-        let handler = build_handler_value(hook, scripts_dir);
-        grouped
-            .entry(hook.event.clone())
-            .or_default()
-            .entry(hook.matcher.clone())
-            .or_default()
-            .push((hook_machine_id(hook), handler));
-    }
-
-    for (event, matchers) in grouped {
-        let event_entry = hooks_obj
-            .entry(event.clone())
-            .or_insert_with(|| Value::Array(Vec::new()));
-        let Some(event_arr) = event_entry.as_array_mut() else {
-            continue;
-        };
-
-        for (matcher, handlers) in matchers {
-            // Try to find an existing matcher group with the same matcher
-            // value so user-authored handlers and ours can coexist in one
-            // group.  Otherwise append a new group.
-            let existing_idx = event_arr.iter().position(|group| {
-                let group_matcher = group.get("matcher").and_then(|v| v.as_str());
-                match (&matcher, group_matcher) {
-                    (Some(m), Some(g)) => m == g,
-                    (None, None) => true,
-                    _ => false,
-                }
-            });
-
-            if let Some(idx) = existing_idx {
-                if let Some(group_obj) = event_arr[idx].as_object_mut() {
-                    let group_hooks = group_obj
-                        .entry("hooks".to_string())
-                        .or_insert_with(|| Value::Array(Vec::new()));
-                    if let Some(arr) = group_hooks.as_array_mut() {
-                        for (_, handler) in handlers {
-                            arr.push(handler);
-                        }
-                    }
-                }
-            } else {
-                let mut group = Map::new();
-                if let Some(m) = matcher {
-                    group.insert("matcher".to_string(), Value::String(m));
-                }
-                let handler_arr: Vec<Value> = handlers.into_iter().map(|(_, v)| v).collect();
-                group.insert("hooks".to_string(), Value::Array(handler_arr));
-                event_arr.push(Value::Object(group));
-            }
-        }
-    }
-}
-
-fn build_handler_value(hook: &crate::core::Hook, scripts_dir: &Path) -> Value {
-    let mut handler = Map::new();
-    handler.insert("type".to_string(), Value::String("command".to_string()));
-
-    let command_str = match &hook.handler {
-        crate::core::HookHandler::Command { command } => command.clone(),
-        crate::core::HookHandler::Script { interpreter, .. } => {
-            // Reference the script via ${CLAUDE_PROJECT_DIR} so the
-            // settings file is portable across machines / containers.
-            let ext = script_extension_for_interpreter(interpreter);
-            let file_name = format!("{}.{}", hook_machine_id(hook), ext);
-            let _ = scripts_dir; // silence unused-warning; kept for clarity
-            format!("${{CLAUDE_PROJECT_DIR}}/.claude/hooks/{}", file_name)
-        }
-        crate::core::HookHandler::Path { path, .. } => {
-            // The user owns the file. Pass the path straight through —
-            // it may already contain ${CLAUDE_PROJECT_DIR} or similar
-            // placeholders that Claude Code expands at run time.
-            path.clone()
-        }
-    };
-    handler.insert("command".to_string(), Value::String(command_str));
-
-    if let Some(timeout) = hook.timeout_sec {
-        handler.insert(
-            "timeout".to_string(),
-            Value::Number(serde_json::Number::from(timeout)),
-        );
-    }
-
-    handler.insert(
-        HOOK_MANAGED_KEY.to_string(),
-        Value::String(HOOK_MANAGED_VALUE.to_string()),
-    );
-    handler.insert(
-        HOOK_ID_KEY.to_string(),
-        Value::String(hook_machine_id(hook)),
-    );
-
-    Value::Object(handler)
-}
-
-/// Remove empty groups and events left behind after `drop_managed_handlers`
-/// emptied them out.
-fn prune_empty_hook_entries(hooks_obj: &mut Map<String, Value>) {
-    let mut empty_events = Vec::new();
-    for (event, value) in hooks_obj.iter_mut() {
-        let Some(groups) = value.as_array_mut() else {
-            continue;
-        };
-        groups.retain(|group| {
-            group
-                .get("hooks")
-                .and_then(|h| h.as_array())
-                .map(|arr| !arr.is_empty())
-                .unwrap_or(false)
-        });
-        if groups.is_empty() {
-            empty_events.push(event.clone());
-        }
-    }
-    for event in empty_events {
-        hooks_obj.remove(&event);
-    }
-}
-
-/// Delete leftover managed script files in `.claude/hooks/` — see
-/// [`super::cleanup_managed_hook_scripts`].
-fn cleanup_orphaned_managed_scripts(
-    scripts_dir: &Path,
-    keep_paths: &[PathBuf],
-) -> Result<(), String> {
-    super::cleanup_managed_hook_scripts(scripts_dir, keep_paths)
+    super::merge_hooks_into_json_settings(&settings_path, "hooks", hooks, &spec)
 }
 
 /// Writes `content` to `final_path` via a temp file + rename, so a crash or
