@@ -25,13 +25,26 @@ impl Agent for Zed {
         ".zed/settings.json"
     }
 
+    /// Zed's documented instruction-file precedence is `.rules`,
+    /// `.cursorrules`, `.windsurfrules`, `.clinerules`,
+    /// `.github/copilot-instructions.md`, `AGENT.md`, `AGENTS.md`,
+    /// `CLAUDE.md`, `GEMINI.md` (first match wins). `.rules` predates Zed's
+    /// move from Rules to Skills and Instructions in v1.4.0 and is now
+    /// described as a compatibility file, not the recommended one —
+    /// `AGENTS.md` is. A leftover `.rules` from an older Automatic sync is
+    /// folded into `AGENTS.md` by `sync::engine::LEGACY_INSTRUCTION_MIGRATIONS`.
     fn project_file_name(&self) -> &'static str {
-        ".rules"
+        "AGENTS.md"
     }
 
     // ── Detection ───────────────────────────────────────────────────────
 
     fn detect_in(&self, dir: &Path) -> bool {
+        // `.rules` is kept here as a legacy marker even though it is no
+        // longer the instruction file Automatic writes — an unmigrated
+        // project (or one where migration left it in place because
+        // AGENTS.md already had different content) must still be
+        // recognised as a Zed project.
         dir.join(".zed").join("settings.json").exists()
             || dir.join(".rules").exists()
             || dir.join(".zed").exists()

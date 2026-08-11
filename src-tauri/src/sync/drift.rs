@@ -353,7 +353,11 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         }
     }
 
-    let instruction_conflicts = collect_instruction_file_conflicts(project, &effective_dir);
+    let mut instruction_conflicts = collect_instruction_file_conflicts(project, &effective_dir);
+    instruction_conflicts.extend(collect_shadowing_legacy_instruction_conflicts(
+        project,
+        &effective_dir,
+    ));
 
     let drifted = !agent_drifts.is_empty()
         || !instruction_conflicts.is_empty()
@@ -366,7 +370,9 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
     })
 }
 
-/// Public wrapper for use by the `commands` layer.
+/// Public wrapper for use by the `commands` layer (backs the
+/// `get_instruction_file_conflicts` Tauri command, a standalone check
+/// independent of the full drift report).
 /// Automatically resolves the effective directory based on project mode.
 pub fn collect_instruction_conflicts_pub(
     project: &Project,
@@ -376,7 +382,12 @@ pub fn collect_instruction_conflicts_pub(
         ProjectMode::Silent => dir.join(".automatic").join("silent"),
         ProjectMode::Normal => dir.clone(),
     };
-    collect_instruction_file_conflicts(project, &effective_dir)
+    let mut conflicts = collect_instruction_file_conflicts(project, &effective_dir);
+    conflicts.extend(collect_shadowing_legacy_instruction_conflicts(
+        project,
+        &effective_dir,
+    ));
+    conflicts
 }
 
 /// Detect instruction files that were modified outside Automatic.
@@ -542,6 +553,78 @@ fn collect_instruction_file_conflicts(
             agent_labels,
             disk_content: disk_user_content.clone(),
             automatic_content,
+        });
+    }
+
+    conflicts
+}
+
+/// Detect an unresolved legacy instruction file that still shadows the
+/// current one in the vendor's own precedence order.
+///
+/// `sync::engine::migrate_legacy_instruction_file` runs at sync time and
+/// auto-resolves most cases, but when both files carry different
+/// non-empty user content it can't choose for the user — it leaves the
+/// legacy file in place with only an stderr line. For a vendor where
+/// `legacy_shadows_current` is true (Zed's `.rules`, Warp's `WARP.md`),
+/// that stderr line is not enough: the vendor's own tool keeps reading the
+/// legacy file, so whatever Automatic writes to `AGENTS.md` is invisible to
+/// it until the user acts. This surfaces that as an instruction conflict
+/// through the same channel [`collect_instruction_file_conflicts`] feeds,
+/// so it reaches the UI on the very next drift check — including on every
+/// check after that, for as long as the legacy file remains, which is
+/// exactly the "still shadowing" signal this function looks for.
+fn collect_shadowing_legacy_instruction_conflicts(
+    project: &Project,
+    dir: &PathBuf,
+) -> Vec<InstructionFileConflict> {
+    let mut conflicts = Vec::new();
+
+    for spec in super::engine::LEGACY_INSTRUCTION_MIGRATIONS {
+        if !spec.legacy_shadows_current {
+            continue;
+        }
+        if !project.agents.iter().any(|a| a == spec.agent_id) {
+            continue;
+        }
+
+        let legacy_path = dir.join(spec.legacy);
+        if !legacy_path.is_file() {
+            continue;
+        }
+
+        let Some(dir_str) = dir.to_str() else {
+            continue;
+        };
+        let legacy_content =
+            crate::core::read_project_file(dir_str, spec.legacy).unwrap_or_default();
+        if legacy_content.trim().is_empty() {
+            continue;
+        }
+        let current_content =
+            crate::core::read_project_file(dir_str, spec.current).unwrap_or_default();
+        if legacy_content.trim() == current_content.trim() {
+            // Nothing actually diverges — the legacy file just hasn't been
+            // deleted yet (e.g. its removal failed and was logged), not a
+            // content conflict the user needs to resolve.
+            continue;
+        }
+
+        let agent_labels: Vec<String> = agent::from_id(spec.agent_id)
+            .map(|a| vec![a.label().to_string()])
+            .unwrap_or_default();
+
+        conflicts.push(InstructionFileConflict {
+            filename: spec.legacy.to_string(),
+            agent_labels,
+            // Reframed from every other conflict this struct represents:
+            // `disk_content` is what the vendor's tool is actually reading
+            // right now, and `automatic_content` is what Automatic is
+            // managing in `spec.current` instead — the comparison a user
+            // needs to understand why recent changes aren't taking effect,
+            // not a "did I edit this myself" diff against a stored snapshot.
+            disk_content: legacy_content,
+            automatic_content: current_content,
         });
     }
 

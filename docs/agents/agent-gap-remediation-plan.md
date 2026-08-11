@@ -742,14 +742,14 @@ Generalise `migrate_legacy_cursorrules`
 ([engine.rs:299-388](../../src-tauri/src/sync/engine.rs)). Its three-branch logic
 and its bookkeeping are right. Only the filenames are Cursor-specific.
 
-- [ ] Add a `LegacyInstructionMigration` spec with `agent_id`, `legacy`, `current`
+- [x] Add a `LegacyInstructionMigration` spec with `agent_id`, `legacy`, `current`
       and `legacy_shadows_current`
-- [ ] Add `migrate_legacy_instruction_file(effective_dir, project, spec)` returning
+- [x] Add `migrate_legacy_instruction_file(effective_dir, project, spec)` returning
       an optional conflict
-- [ ] Route the conflict through the channel
-      `collect_instruction_file_conflicts` ([drift.rs:334](../../src-tauri/src/sync/drift.rs))
+- [x] Route the conflict through the channel
+      `collect_instruction_file_conflicts` ([drift.rs](../../src-tauri/src/sync/drift.rs))
       already feeds
-- [ ] Re-express the Cursor migration through the generalised helper
+- [x] Re-express the Cursor migration through the generalised helper
 
 `legacy_shadows_current` is the one thing Cursor did not need. For Cursor,
 `AGENTS.md` outranks `.cursorrules`, so the "both differ" branch could safely log
@@ -759,12 +759,12 @@ it must reach the UI.
 
 ### 8a. Zed
 
-- [ ] `project_file_name()` from `.rules` (`zed.rs:29`) to `AGENTS.md`
-- [ ] Keep `.rules` in `detect_in` (`zed.rs:36`) as a legacy marker
-- [ ] Confirm the `.rules` entry is removed from
+- [x] `project_file_name()` from `.rules` (`zed.rs:29`) to `AGENTS.md`
+- [x] Keep `.rules` in `detect_in` (`zed.rs:36`) as a legacy marker
+- [x] Confirm the `.rules` entry is removed from
       `project.instruction_file_hashes`
-- [ ] Confirm the `.rules` snapshot under `.automatic/snapshots/` is renamed
-- [ ] Test all three branches: legacy empty, target empty, both non-empty and
+- [x] Confirm the `.rules` snapshot under `.automatic/snapshots/` is renamed
+- [x] Test all three branches: legacy empty, target empty, both non-empty and
       different
 
 Because `instruction_targets` dedups by filename (`engine.rs:645`), this collapses
@@ -772,8 +772,8 @@ the double-write with Codex and Cursor automatically.
 
 ### 8b. Warp
 
-- [ ] Migrate `WARP.md` to `AGENTS.md` through the generalised helper
-- [ ] Test all three branches
+- [x] Migrate `WARP.md` to `AGENTS.md` through the generalised helper
+- [x] Test all three branches
 
 `WARP.md` was never Automatic-written, so `read_project_file` returns the whole
 file as user content. There is no hash entry and no snapshot, and the helper
@@ -781,6 +781,64 @@ handles all three as no-ops. One consequence to log: a project detected only via
 `WARP.md` (`warp.rs:58`) stops autodetecting as Warp once the file is gone. That
 is acceptable, since the agent is already in `project.agents`, but it belongs in
 the migration log line.
+
+### Phase 8 status
+
+Landed. 826 tests pass (up from 820 at the end of Phase 7 — 7 new: three
+branches each for Zed and Warp, plus a "no lingering conflict after a clean
+migration" assertion folded into the Zed move-branch test rather than kept
+as a separate one). `cargo clippy --all-targets -- -D warnings` is clean,
+`make check` is clean, `cargo fmt --check` is clean on every file this phase
+touched. The capability-matrix snapshot was updated for Zed's
+`project_file_name` column.
+
+Cursor's own two pre-existing migration tests
+(`sync_migrates_legacy_cursorrules_to_agents_md`,
+`sync_keeps_conflicting_cursorrules_stripped_but_intact`) pass unchanged
+against the generalised helper — the re-expression the top-level checklist
+asked for did not change Cursor's observable behaviour, only where the logic
+lives.
+
+**Where the "route through the channel" instruction actually landed**, since
+`migrate_legacy_instruction_file` runs at sync time and has no return channel
+back to the UI, while drift detection is a wholly separate, later,
+repeatable check: a new `collect_shadowing_legacy_instruction_conflicts` in
+`drift.rs` does not consume anything the migration function returns. Instead
+it independently re-derives the same fact — "does `spec.legacy` still exist,
+for an agent where `legacy_shadows_current` is true, with content that
+differs from `spec.current`" — every time drift is checked. This means the
+conflict surfaces on the very next drift check after an unresolved
+migration, and keeps surfacing on every check after that for as long as the
+file remains, which is exactly the persistent "your tool is still reading
+stale content" signal the checklist wanted. `InstructionFileConflict`'s
+fields are reused with one deliberate reinterpretation: `disk_content` is
+what the vendor's tool is actually reading right now (the legacy file), and
+`automatic_content` is what Automatic is managing instead (the current
+file's real on-disk content, not a stored snapshot) — the comparison a user
+needs to understand why recent changes aren't taking effect, not the
+usual "did I edit this myself" diff against what Automatic last wrote to
+the *same* filename.
+
+One gap found while wiring this in: `collect_instruction_conflicts_pub`, the
+public wrapper backing the `get_instruction_file_conflicts` Tauri command,
+did not originally call the new shadowing check — only `check_project_drift`
+did. Left as found, this would have meant the standalone instruction-conflict
+UI (independent of a full drift check) silently missed shadow conflicts that
+the full drift report did surface, an inconsistency between two paths meant
+to answer the same question. Fixed by extending
+`collect_instruction_conflicts_pub` too; the test suite caught this directly
+— the two Zed/Warp "surfaces a UI conflict" tests failed against the wrapper
+before the fix and passed after.
+
+`success_note` is one field beyond the checklist's stated four
+(`agent_id`, `legacy`, `current`, `legacy_shadows_current`). Zed's
+`detect_in` already checks other signals (`.zed/settings.json`, `.zed/`),
+so migrating `.rules` away doesn't affect its autodetection — but Warp's
+does rely on `WARP.md` alone when no `.warp/` directory exists, per the
+checklist's own "one consequence to log" note. A blanket log line for every
+vendor would have been actively wrong for Cursor and Zed, so the note is an
+optional per-spec field rather than a generic message, kept `None` for the
+two migrations it doesn't apply to.
 
 ---
 

@@ -183,10 +183,12 @@ fn sync_to_directory_inner(
         ProjectMode::Normal => dir.clone(),
     };
 
-    // One-time migration: Cursor's instruction file moved from the legacy
-    // `.cursorrules` to `AGENTS.md`.  Fold any leftover legacy file into the
-    // new location before the instruction pipeline runs.
-    migrate_legacy_cursorrules(&effective_dir, project);
+    // One-time migrations: each vendor below moved its instruction file to
+    // AGENTS.md at some point.  Fold any leftover legacy file into the new
+    // location before the instruction pipeline runs.
+    for spec in LEGACY_INSTRUCTION_MIGRATIONS {
+        migrate_legacy_instruction_file(&effective_dir, project, spec);
+    }
 
     // One-time migration: Kilo Code rebranded to Kilo and stopped reading
     // `.kilocode/mcp.json`.  Clear the legacy file once its servers are
@@ -301,30 +303,94 @@ fn sync_to_directory_inner(
     Ok(written_files)
 }
 
-/// One-time migration: fold a legacy `.cursorrules` file into `AGENTS.md`.
+/// One vendor's move from a legacy instruction filename to the one it has
+/// since standardised on. See [`migrate_legacy_instruction_file`] and
+/// [`LEGACY_INSTRUCTION_MIGRATIONS`].
+pub(crate) struct LegacyInstructionMigration {
+    /// Only applies when this agent id is attached to the project.
+    pub agent_id: &'static str,
+    /// The vendor's old instruction filename (e.g. `.cursorrules`).
+    pub legacy: &'static str,
+    /// The vendor's current instruction filename (`AGENTS.md` for every
+    /// migration below, but the helper does not assume that).
+    pub current: &'static str,
+    /// `true` when the vendor's own precedence rules still read `legacy`
+    /// ahead of `current` when both exist. When a migration can't
+    /// auto-resolve (both files carry different user content), this is the
+    /// difference between "an orphaned unmanaged file sits next to the one
+    /// that matters" (false — Cursor reads `AGENTS.md` regardless) and "the
+    /// vendor's tool silently keeps reading stale content forever, and the
+    /// user has no way to know from inside the vendor's own UI" (true — Zed
+    /// reads `.rules` first, Warp reads `WARP.md` first). The `true` case is
+    /// surfaced as an instruction conflict by
+    /// `drift::collect_shadowing_legacy_instruction_conflicts` so it reaches
+    /// the UI instead of only an stderr line nobody sees.
+    pub legacy_shadows_current: bool,
+    /// An extra line logged once migration succeeds, for a consequence that
+    /// isn't true of every vendor here. Warp's `detect_in` falls back to
+    /// `WARP.md` alone when no `.warp/` directory exists; once that file is
+    /// migrated away, a *future* autodetect scan (not this project, which is
+    /// already configured) would no longer recognise the project as Warp.
+    pub success_note: Option<&'static str>,
+}
+
+pub(crate) const LEGACY_INSTRUCTION_MIGRATIONS: &[LegacyInstructionMigration] = &[
+    LegacyInstructionMigration {
+        agent_id: "cursor",
+        legacy: ".cursorrules",
+        current: "AGENTS.md",
+        legacy_shadows_current: false,
+        success_note: None,
+    },
+    LegacyInstructionMigration {
+        agent_id: "zed",
+        legacy: ".rules",
+        current: "AGENTS.md",
+        legacy_shadows_current: true,
+        success_note: None,
+    },
+    LegacyInstructionMigration {
+        agent_id: "warp",
+        legacy: "WARP.md",
+        current: "AGENTS.md",
+        legacy_shadows_current: true,
+        success_note: Some(
+            "a project detected only via WARP.md (no .warp/ directory) will no longer \
+             autodetect as Warp on a future scan — it stays configured because it is \
+             already in this project's agent list",
+        ),
+    },
+];
+
+/// One-time migration: fold a vendor's legacy instruction file into the one
+/// named `spec.current`.
 ///
-/// Cursor's `project_file_name()` changed from `.cursorrules` (legacy) to
-/// `AGENTS.md`.  Existing projects synced by an older Automatic still carry a
-/// `.cursorrules` with our managed sections; on the first sync after upgrade:
+/// On the first sync after a vendor's `project_file_name()` changes:
 ///
-/// - If `AGENTS.md` is absent or has no user content, the user content of
-///   `.cursorrules` is moved there and the legacy file is deleted.
-/// - If both files carry identical user content (or `.cursorrules` has none),
+/// - If `spec.current` is absent or has no user content, the user content of
+///   `spec.legacy` is moved there and the legacy file is deleted.
+/// - If both files carry identical user content (or `spec.legacy` has none),
 ///   the legacy file is simply deleted.
-/// - If both carry different non-empty user content, `.cursorrules` is kept
-///   but our managed sections are stripped from it — the user resolves the
-///   remainder manually.
+/// - If both carry different non-empty user content, `spec.legacy` is kept
+///   but Automatic's managed sections are stripped from it — the user
+///   resolves the remainder manually. When `spec.legacy_shadows_current` is
+///   true this is not a benign no-op: see the field's own doc comment.
 ///
-/// Bookkeeping mirrors the move: the stale `.cursorrules` instruction hash is
-/// dropped and its drift snapshot is renamed to `AGENTS.md` (when no AGENTS.md
-/// snapshot exists yet) so the first post-upgrade drift check stays quiet.
+/// Bookkeeping mirrors the move: the stale hash entry for `spec.legacy` is
+/// dropped and its drift snapshot is renamed to `spec.current` (when no
+/// snapshot exists there yet) so the first post-upgrade drift check stays
+/// quiet.
 ///
 /// Never fatal: failures are logged and the sync continues.
-fn migrate_legacy_cursorrules(effective_dir: &std::path::Path, project: &mut Project) {
-    if !project.agents.iter().any(|a| a == "cursor") {
+fn migrate_legacy_instruction_file(
+    effective_dir: &std::path::Path,
+    project: &mut Project,
+    spec: &LegacyInstructionMigration,
+) {
+    if !project.agents.iter().any(|a| a == spec.agent_id) {
         return;
     }
-    let legacy_path = effective_dir.join(".cursorrules");
+    let legacy_path = effective_dir.join(spec.legacy);
     if !legacy_path.is_file() {
         return;
     }
@@ -334,31 +400,42 @@ fn migrate_legacy_cursorrules(effective_dir: &std::path::Path, project: &mut Pro
         None => return,
     };
 
-    let legacy_user = crate::core::read_project_file(dir_str, ".cursorrules").unwrap_or_default();
-    let agents_md_user = crate::core::read_project_file(dir_str, "AGENTS.md").unwrap_or_default();
+    let legacy_user = crate::core::read_project_file(dir_str, spec.legacy).unwrap_or_default();
+    let current_user = crate::core::read_project_file(dir_str, spec.current).unwrap_or_default();
 
-    let migrated = if legacy_user.trim().is_empty() || legacy_user.trim() == agents_md_user.trim() {
+    let migrated = if legacy_user.trim().is_empty() || legacy_user.trim() == current_user.trim() {
         // Nothing user-authored to preserve (or already present) — drop the file.
         true
-    } else if agents_md_user.trim().is_empty() {
+    } else if current_user.trim().is_empty() {
         // Move user content across.
-        match crate::core::save_project_file(dir_str, "AGENTS.md", &legacy_user) {
+        match crate::core::save_project_file(dir_str, spec.current, &legacy_user) {
             Ok(()) => true,
             Err(e) => {
                 eprintln!(
-                    "[automatic] .cursorrules migration: failed to write AGENTS.md: {}",
-                    e
+                    "[automatic] {} migration: failed to write {}: {}",
+                    spec.legacy, spec.current, e
                 );
                 false
             }
         }
     } else {
         // Conflict: both files have different user content.  Keep the legacy
-        // file but strip our managed sections out of it, then leave it alone.
-        eprintln!(
-            "[automatic] .cursorrules migration: AGENTS.md already has different content; \
-             keeping .cursorrules (managed sections stripped) for manual review"
-        );
+        // file but strip Automatic's managed sections out of it, then leave
+        // it alone.
+        if spec.legacy_shadows_current {
+            eprintln!(
+                "[automatic] {} migration: {} already has different content, and {} takes \
+                 precedence over {} for {} — {} will keep reading stale content until this \
+                 is resolved manually. Surfaced as an instruction conflict.",
+                spec.legacy, spec.current, spec.legacy, spec.current, spec.agent_id, spec.agent_id
+            );
+        } else {
+            eprintln!(
+                "[automatic] {} migration: {} already has different content; keeping {} \
+                 (managed sections stripped) for manual review",
+                spec.legacy, spec.current, spec.legacy
+            );
+        }
         if legacy_user.trim() != fs::read_to_string(&legacy_path).unwrap_or_default().trim() {
             let _ = fs::write(&legacy_path, &legacy_user);
         }
@@ -368,24 +445,26 @@ fn migrate_legacy_cursorrules(effective_dir: &std::path::Path, project: &mut Pro
     if migrated {
         if let Err(e) = fs::remove_file(&legacy_path) {
             eprintln!(
-                "[automatic] .cursorrules migration: failed to remove legacy file: {}",
-                e
+                "[automatic] {} migration: failed to remove legacy file: {}",
+                spec.legacy, e
             );
+        } else if let Some(note) = spec.success_note {
+            eprintln!("[automatic] {} migration: {}", spec.legacy, note);
         }
     }
 
-    // Bookkeeping (both branches): the `.cursorrules` hash entry is stale
-    // either way — when migrated the file is gone, when conflicted the file is
-    // no longer Automatic-managed.
-    project.instruction_file_hashes.remove(".cursorrules");
+    // Bookkeeping (both branches): the legacy hash entry is stale either way
+    // — when migrated the file is gone, when conflicted the file is no
+    // longer Automatic-managed.
+    project.instruction_file_hashes.remove(spec.legacy);
     let snap_dir = std::path::PathBuf::from(&project.directory)
         .join(".automatic")
         .join("snapshots");
-    let legacy_snap = snap_dir.join(".cursorrules");
+    let legacy_snap = snap_dir.join(spec.legacy);
     if legacy_snap.is_file() {
-        let agents_snap = snap_dir.join("AGENTS.md");
-        if migrated && !agents_snap.exists() {
-            let _ = fs::rename(&legacy_snap, &agents_snap);
+        let current_snap = snap_dir.join(spec.current);
+        if migrated && !current_snap.exists() {
+            let _ = fs::rename(&legacy_snap, &current_snap);
         } else {
             let _ = fs::remove_file(&legacy_snap);
         }
@@ -1410,6 +1489,205 @@ mod tests {
         let agents_user =
             read_project_file(dir.path().to_str().unwrap(), "AGENTS.md").expect("read AGENTS.md");
         assert_eq!(agents_user.trim(), agents_content.trim());
+    }
+
+    // ── Zed and Warp legacy instruction migrations ─────────────────────────
+    //
+    // Both vendors go through `migrate_legacy_instruction_file`, the same
+    // generalised helper Cursor's own migration above now runs through too.
+    // The three branches below (legacy empty, target empty, both differ) are
+    // the ones the plan calls out explicitly; Cursor's existing coverage
+    // above already exercises the "target empty" and "both differ" shapes,
+    // so these fill in "legacy empty" for the generalised helper and confirm
+    // Zed and Warp specifically — including, for the "both differ" case,
+    // that it surfaces as a UI-visible conflict rather than only a log line,
+    // which is the entire reason `legacy_shadows_current` exists.
+
+    fn make_zed_project(dir: &str) -> Project {
+        Project {
+            name: "test-project".to_string(),
+            directory: dir.to_string(),
+            agents: vec!["zed".to_string()],
+            instruction_mode: "per-agent".to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn make_warp_project(dir: &str) -> Project {
+        Project {
+            name: "test-project".to_string(),
+            directory: dir.to_string(),
+            agents: vec!["warp".to_string()],
+            instruction_mode: "per-agent".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn sync_drops_empty_legacy_rules_file_for_zed() {
+        let dir = tmp();
+        fs::write(dir.path().join(".rules"), "   \n\t\n").expect("write empty legacy file");
+        let mut project = make_zed_project(dir.path().to_str().unwrap());
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        assert!(
+            !dir.path().join(".rules").exists(),
+            "an empty legacy .rules file has nothing to preserve and should be dropped"
+        );
+        assert!(
+            !project.instruction_file_hashes.contains_key(".rules"),
+            "stale .rules hash entry should be dropped"
+        );
+    }
+
+    #[test]
+    fn sync_migrates_legacy_zed_rules_to_agents_md() {
+        let dir = tmp();
+        let legacy_content = "# Legacy Zed Instructions\n\nKeep this during upgrade.";
+        fs::write(dir.path().join(".rules"), legacy_content).expect("write legacy file");
+        let mut project = make_zed_project(dir.path().to_str().unwrap());
+        project
+            .instruction_file_hashes
+            .insert(".rules".to_string(), "stale-hash".to_string());
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        assert!(
+            !dir.path().join(".rules").exists(),
+            "legacy .rules should be removed after migration"
+        );
+        let user_content =
+            read_project_file(dir.path().to_str().unwrap(), "AGENTS.md").expect("read AGENTS.md");
+        assert_eq!(user_content.trim(), legacy_content.trim());
+        assert!(!project.instruction_file_hashes.contains_key(".rules"));
+
+        // A cleanly migrated project must not linger as a shadow conflict —
+        // the legacy file is gone, so there is nothing left to shadow.
+        let conflicts = crate::sync::drift::collect_instruction_conflicts_pub(
+            &project,
+            &dir.path().to_path_buf(),
+        );
+        assert!(
+            conflicts.iter().all(|c| c.filename != ".rules"),
+            "no .rules conflict should remain once migration succeeded: {conflicts:?}"
+        );
+
+        // Re-sync is a no-op for the migration.
+        sync_project_without_autodetect(&mut project).expect("re-sync");
+        assert!(!dir.path().join(".rules").exists());
+    }
+
+    #[test]
+    fn sync_keeps_conflicting_zed_rules_and_surfaces_a_ui_conflict() {
+        let dir = tmp();
+        let agents_content = "# Agents\n\nAGENTS.md-specific content.";
+        let legacy_user = "# Legacy Zed Instructions\n\nDifferent content.";
+        fs::write(dir.path().join("AGENTS.md"), agents_content).expect("write AGENTS.md");
+        fs::write(dir.path().join(".rules"), legacy_user).expect("write legacy file");
+        let mut project = make_zed_project(dir.path().to_str().unwrap());
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        assert!(
+            dir.path().join(".rules").exists(),
+            "conflicting .rules must not be silently deleted"
+        );
+        let legacy_on_disk =
+            fs::read_to_string(dir.path().join(".rules")).expect("legacy file kept");
+        assert!(legacy_on_disk.contains(legacy_user));
+        let agents_user =
+            read_project_file(dir.path().to_str().unwrap(), "AGENTS.md").expect("read AGENTS.md");
+        assert_eq!(agents_user.trim(), agents_content.trim());
+
+        // Zed reads `.rules` ahead of `AGENTS.md` in its own precedence, so
+        // this unresolved case is not benign the way Cursor's is — it must
+        // reach the UI as an instruction conflict.
+        let conflicts = crate::sync::drift::collect_instruction_conflicts_pub(
+            &project,
+            &dir.path().to_path_buf(),
+        );
+        let rules_conflict = conflicts
+            .iter()
+            .find(|c| c.filename == ".rules")
+            .expect(".rules must appear as an instruction conflict while it shadows AGENTS.md");
+        assert_eq!(rules_conflict.disk_content.trim(), legacy_user.trim());
+        assert_eq!(
+            rules_conflict.automatic_content.trim(),
+            agents_content.trim()
+        );
+        assert!(rules_conflict
+            .agent_labels
+            .iter()
+            .any(|l| l.contains("Zed")));
+    }
+
+    #[test]
+    fn sync_drops_empty_legacy_warp_md_file() {
+        let dir = tmp();
+        fs::write(dir.path().join("WARP.md"), "   \n\t\n").expect("write empty legacy file");
+        let mut project = make_warp_project(dir.path().to_str().unwrap());
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        assert!(
+            !dir.path().join("WARP.md").exists(),
+            "an empty legacy WARP.md file has nothing to preserve and should be dropped"
+        );
+    }
+
+    #[test]
+    fn sync_migrates_legacy_warp_md_to_agents_md() {
+        let dir = tmp();
+        let legacy_content = "# Legacy Warp Instructions\n\nKeep this during upgrade.";
+        fs::write(dir.path().join("WARP.md"), legacy_content).expect("write legacy file");
+        let mut project = make_warp_project(dir.path().to_str().unwrap());
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        assert!(
+            !dir.path().join("WARP.md").exists(),
+            "legacy WARP.md should be removed after migration"
+        );
+        let user_content =
+            read_project_file(dir.path().to_str().unwrap(), "AGENTS.md").expect("read AGENTS.md");
+        assert_eq!(user_content.trim(), legacy_content.trim());
+    }
+
+    #[test]
+    fn sync_keeps_conflicting_warp_md_and_surfaces_a_ui_conflict() {
+        let dir = tmp();
+        let agents_content = "# Agents\n\nAGENTS.md-specific content.";
+        let legacy_user = "# Legacy Warp Instructions\n\nDifferent content.";
+        fs::write(dir.path().join("AGENTS.md"), agents_content).expect("write AGENTS.md");
+        fs::write(dir.path().join("WARP.md"), legacy_user).expect("write legacy file");
+        let mut project = make_warp_project(dir.path().to_str().unwrap());
+
+        sync_project_without_autodetect(&mut project).expect("sync");
+
+        assert!(
+            dir.path().join("WARP.md").exists(),
+            "conflicting WARP.md must not be silently deleted"
+        );
+        let agents_user =
+            read_project_file(dir.path().to_str().unwrap(), "AGENTS.md").expect("read AGENTS.md");
+        assert_eq!(agents_user.trim(), agents_content.trim());
+
+        // Warp reads `WARP.md` ahead of `AGENTS.md` in its own precedence,
+        // so this must also reach the UI as an instruction conflict.
+        let conflicts = crate::sync::drift::collect_instruction_conflicts_pub(
+            &project,
+            &dir.path().to_path_buf(),
+        );
+        let warp_conflict = conflicts
+            .iter()
+            .find(|c| c.filename == "WARP.md")
+            .expect("WARP.md must appear as an instruction conflict while it shadows AGENTS.md");
+        assert_eq!(warp_conflict.disk_content.trim(), legacy_user.trim());
+        assert_eq!(
+            warp_conflict.automatic_content.trim(),
+            agents_content.trim()
+        );
     }
 
     fn make_kilo_project(dir: &str) -> Project {
