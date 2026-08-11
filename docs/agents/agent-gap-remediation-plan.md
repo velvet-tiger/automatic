@@ -634,17 +634,17 @@ documented combination, not a bug to catch.
 
 Two latent defects block Copilot.
 
-- [ ] Add an `agent_file_name` trait method, mirroring the existing
+- [x] Add an `agent_file_name` trait method, mirroring the existing
       `command_file_name`
-- [ ] Route the three inline `format!("{}.{}", machine_name, ext)` call sites
-      through it: [helpers.rs:524](../../src-tauri/src/sync/helpers.rs),
-      `helpers.rs:589`, and [drift.rs:961](../../src-tauri/src/sync/drift.rs)
-- [ ] Replace the stale sweep at `helpers.rs:600-612` with a full-filename
+- [x] Route the three inline `format!("{}.{}", machine_name, ext)` call sites
+      through it: [helpers.rs](../../src-tauri/src/sync/helpers.rs),
+      and [drift.rs](../../src-tauri/src/sync/drift.rs)
+- [x] Replace the stale sweep at `helpers.rs` with a full-filename
       expected set plus a content marker, following
-      `is_managed_command_file` ([agent/mod.rs:781](../../src-tauri/src/agent/mod.rs))
-      and `cleanup_stale_managed_command_files` (`:1025`)
-- [ ] Marker-gate `cleanup_custom_agents` (`helpers.rs:535`)
-- [ ] Test: `sub_agent_filenames_round_trip` — `agent_file_name(n)` starts with
+      `is_managed_command_file` ([agent/mod.rs](../../src-tauri/src/agent/mod.rs))
+      and `cleanup_stale_managed_command_files`
+- [x] Marker-gate `cleanup_custom_agents` (`helpers.rs`)
+- [x] Test: `sub_agent_filenames_round_trip` — `agent_file_name(n)` starts with
       `n` and ends with `.{agents_file_ext()}`
 
 The stale sweep keys off `path.file_stem()`, which for `foo.agent.md` yields
@@ -655,16 +655,16 @@ directory, which is tolerable for `.claude/agents/` and destructive for
 
 ### 7b. GitHub Copilot sub-agents
 
-- [ ] `agents_dir` → `.github/agents`
-- [ ] `agent_file_name` → `{name}.agent.md`
-- [ ] `agents: true`
-- [ ] Test: a hand-written `.github/agents/mine.agent.md` survives the stale sweep
-- [ ] Test: it also survives removing Copilot from the project
+- [x] `agents_dir` → `.github/agents`
+- [x] `agent_file_name` → `{name}.agent.md`
+- [x] `agents: true`
+- [x] Test: a hand-written `.github/agents/mine.agent.md` survives the stale sweep
+- [x] Test: it also survives removing Copilot from the project
 
 ### 7c. Droid sub-agents
 
-- [ ] `agents_dir` → `.factory/droids`
-- [ ] `agents: true`
+- [x] `agents_dir` → `.factory/droids`
+- [x] `agents: true`
 
 Markdown with YAML frontmatter (`name`, `description`, `model`, `tools`,
 `reasoningEffort`, `mcpServers`). The body is the system prompt and must not be
@@ -673,15 +673,63 @@ empty. Close enough to the canonical format that the default pass-through
 
 ### 7d. Kiro sub-agents
 
-- [ ] `agents_dir` → `.kiro/agents`
-- [ ] `agents_file_ext` → `"json"`
-- [ ] `convert_agent_content` turning canonical Markdown and frontmatter into
+- [x] `agents_dir` → `.kiro/agents`
+- [x] `agents_file_ext` → `"json"`
+- [x] `convert_agent_content` turning canonical Markdown and frontmatter into
       Kiro's JSON (`name`, `description`, `prompt` from the body, `mcpServers`,
       `tools`, `model`)
-- [ ] `agents: true`
-- [ ] Test: conversion produces the right JSON and the filename stem is the id
+- [x] `agents: true`
+- [x] Test: conversion produces the right JSON and the filename stem is the id
 
 `codex_cli.rs:271` is the model for a non-Markdown converter.
+
+### Phase 7 status
+
+Landed, all four sub-phases. 820 tests pass (up from 813 at the end of Phase
+6). `cargo clippy --all-targets -- -D warnings` is clean, `make check` is
+clean, `cargo fmt --check` is clean on every file this phase touched. The
+capability-matrix snapshot was updated deliberately for `droid`, `copilot`
+and `kiro` gaining `agents` and their `agents_dir` column.
+
+**The one judgement call 7a's own framing warned about, made explicit here:**
+`is_managed_command_file`'s content-marker model only works if every managed
+file actually carries the marker. Sub-agents had no marker at all before this
+phase — not just for Copilot, for *any* vendor, including the five that
+already had working sub-agent sync (Claude Code, Cursor, Gemini CLI, OpenCode,
+Pi). Marker-gating the stale sweep without first ensuring every vendor's
+output carries the marker would have been a regression, not a fix: it would
+have made the *existing* sweep stop recognising anything as stale, for
+everyone, since nothing on disk would carry the marker to match against.
+
+So the fix reaches wider than "add a marker for Copilot": the trait's default
+`convert_agent_content` now injects `automatic-managed: true` into every
+Markdown sub-agent's frontmatter via the same `render_markdown_command` that
+already did this for commands (renamed nothing, reused as-is — the transform
+is generic frontmatter tagging despite the command-shaped name), and Codex's
+TOML converter gained its own `automatic_managed = true` line to match. This
+means every vendor's sub-agent files pick up one new frontmatter/TOML key on
+their next sync after this change ships — a real, visible content diff for
+existing users, not a hidden side effect. Flagging it here rather than
+letting it surface as a surprise. Kiro's JSON converter carries the same
+concept as `"automaticManaged": true`, camelCase to match the rest of its
+own key casing, exactly as Gemini's TOML command marker already uses
+snake_case to match TOML's convention and the Markdown marker uses
+kebab-case to match YAML's.
+
+Two more decisions, smaller:
+
+- **`cleanup_custom_agents` lost its `ext` parameter.** Once cleanup is
+  gated on `is_managed_agent_file` (which reads the file's own extension to
+  decide how to check the marker), the caller no longer needs to supply one
+  — keeping it would have been a dead parameter immediately after this
+  fix landed. Its one call site in `sync/cleanup.rs` was updated to match.
+- **`collect_agents_drift`'s stale-file branch got the identical treatment**
+  as `sync_user_agents`'s, not just the two `missing`/`modified` call sites
+  the checklist named explicitly. The same `file_stem()` bug lived in both
+  places; fixing only the sync-time sweep and leaving drift detection on the
+  old logic would have meant a Copilot project could sync cleanly while
+  drift detection still reported (or silently missed) stale sub-agent files
+  depending on the exact filename.
 
 ---
 

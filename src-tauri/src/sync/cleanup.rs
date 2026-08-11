@@ -53,10 +53,7 @@ pub fn remove_agent_from_project(
     // Clean up custom agents directory for this agent
     if let Some(agent_instance) = agent::from_id(agent_id) {
         if let Some(agents_dir) = agent_instance.agents_dir(&dir) {
-            removed.extend(cleanup_custom_agents(
-                &agents_dir,
-                agent_instance.agents_file_ext(),
-            ));
+            removed.extend(cleanup_custom_agents(&agents_dir));
         }
     }
 

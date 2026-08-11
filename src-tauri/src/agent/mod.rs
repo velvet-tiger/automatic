@@ -324,11 +324,36 @@ pub trait Agent: Send + Sync {
         "md"
     }
 
+    /// Return the filename to use for a specific sub-agent. Mirrors
+    /// [`command_file_name`](Agent::command_file_name).
+    ///
+    /// The default `{machine_name}.{agents_file_ext()}` is wrong for a
+    /// vendor whose convention is a compound extension (GitHub Copilot's
+    /// `{name}.agent.md`): [`Path::extension`] only ever returns the last
+    /// dot-segment, so building `{name}.agent.md` by hand and later
+    /// recovering `name` via `file_stem()` yields `{name}.agent`, not
+    /// `{name}` — the bug that left Copilot's stale sub-agent files
+    /// unrecoverable. Override this rather than trying to express a
+    /// compound extension through `agents_file_ext()` alone.
+    fn agent_file_name(&self, machine_name: &str) -> String {
+        format!("{machine_name}.{}", self.agents_file_ext())
+    }
+
     /// Convert agent content from the canonical format (Markdown + YAML frontmatter)
-    /// to this agent's native format. Default: pass through unchanged.
-    /// Codex overrides this to convert to TOML format.
+    /// to this agent's native format.
+    ///
+    /// The default injects the same `automatic-managed: true` frontmatter
+    /// marker [`convert_command_content`](Agent::convert_command_content)'s
+    /// default does, via the same [`render_markdown_command`] — the name is
+    /// a holdover from commands being marked first, but the transformation
+    /// (ensure managed Markdown frontmatter) is identical and agent sync
+    /// needs it too, so cleanup can tell an Automatic-written sub-agent file
+    /// apart from one the user authored by hand. Codex overrides this to
+    /// convert to TOML format (and injects its own `automatic_managed =
+    /// true` marker for the same reason); Kiro overrides it to convert to
+    /// JSON.
     fn convert_agent_content(&self, content: &str, _name: &str) -> String {
-        content.to_string()
+        render_markdown_command(content)
     }
 
     /// Return the directory where this agent looks for custom command files.
@@ -822,6 +847,15 @@ pub(crate) fn parse_frontmatter(content: &str) -> (HashMap<String, String>, &str
     (frontmatter, body)
 }
 
+/// Ensure `content`'s YAML frontmatter carries `automatic-managed: true`,
+/// adding a frontmatter block if there was none. Despite the name, this is
+/// generic Markdown-with-frontmatter tagging with no command-specific
+/// behaviour — [`Agent::convert_agent_content`]'s default reuses it verbatim
+/// for the same reason [`Agent::convert_command_content`]'s default does:
+/// cleanup needs a content-level way to tell an Automatic-written file apart
+/// from one the user authored by hand, and a filename convention alone
+/// (especially a compound one like `{name}.agent.md`) isn't reliable for
+/// that — see [`is_managed_command_file`] and [`is_managed_agent_file`].
 pub(crate) fn render_markdown_command(content: &str) -> String {
     if content.starts_with("---\n") || content.starts_with("---\r\n") {
         let after_first = &content[4..];
@@ -878,6 +912,40 @@ pub(crate) fn is_managed_command_file(path: &Path) -> bool {
         "toml" => content
             .lines()
             .any(|line| line.trim() == "automatic_managed = true"),
+        _ => false,
+    }
+}
+
+/// Sub-agent counterpart to [`is_managed_command_file`], with one extra
+/// branch: Kiro's format is JSON, which no command vendor uses. Each
+/// branch's marker matches the casing convention its own converter already
+/// uses for every other key in that format — kebab-case YAML frontmatter,
+/// snake_case TOML, camelCase JSON — rather than a single spelling forced
+/// across three different serialisations.
+pub(crate) fn is_managed_agent_file(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+        return false;
+    };
+
+    let Ok(content) = fs::read_to_string(path) else {
+        return false;
+    };
+
+    match ext {
+        "md" => {
+            let (frontmatter, _) = parse_frontmatter(&content);
+            frontmatter
+                .get("automatic-managed")
+                .map(|value| value == "true")
+                .unwrap_or(false)
+        }
+        "toml" => content
+            .lines()
+            .any(|line| line.trim() == "automatic_managed = true"),
+        "json" => serde_json::from_str::<Value>(&content)
+            .ok()
+            .and_then(|v| v.get("automaticManaged").and_then(|m| m.as_bool()))
+            .unwrap_or(false),
         _ => false,
     }
 }
@@ -2362,6 +2430,40 @@ mod tests {
         let goose = AgentInfo::from_agent(from_id("goose").unwrap());
         let value = serde_json::to_value(&goose).unwrap();
         assert_eq!(value["hook_events"].as_array().unwrap().len(), 0);
+    }
+
+    /// One case per format `convert_agent_content` can produce, matching
+    /// each vendor's own marker convention: kebab-case YAML frontmatter for
+    /// the default Markdown path, snake_case for Codex's TOML, camelCase for
+    /// Kiro's JSON. A file lacking the marker — hand-authored, or simply the
+    /// wrong shape — must never read as managed regardless of extension.
+    #[test]
+    fn is_managed_agent_file_recognises_every_format() {
+        let dir = tempdir().unwrap();
+
+        let managed_md = dir.path().join("managed.md");
+        fs::write(&managed_md, "---\nautomatic-managed: true\n---\nBody.\n").unwrap();
+        assert!(is_managed_agent_file(&managed_md));
+
+        let hand_written_md = dir.path().join("hand-written.md");
+        fs::write(&hand_written_md, "---\nname: Mine\n---\nBody.\n").unwrap();
+        assert!(!is_managed_agent_file(&hand_written_md));
+
+        let managed_toml = dir.path().join("managed.toml");
+        fs::write(&managed_toml, "automatic_managed = true\nname = \"x\"\n").unwrap();
+        assert!(is_managed_agent_file(&managed_toml));
+
+        let hand_written_toml = dir.path().join("hand-written.toml");
+        fs::write(&hand_written_toml, "name = \"x\"\n").unwrap();
+        assert!(!is_managed_agent_file(&hand_written_toml));
+
+        let managed_json = dir.path().join("managed.json");
+        fs::write(&managed_json, r#"{"automaticManaged": true, "name": "x"}"#).unwrap();
+        assert!(is_managed_agent_file(&managed_json));
+
+        let hand_written_json = dir.path().join("hand-written.json");
+        fs::write(&hand_written_json, r#"{"name": "x"}"#).unwrap();
+        assert!(!is_managed_agent_file(&hand_written_json));
     }
 
     #[test]

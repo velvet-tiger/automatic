@@ -514,7 +514,6 @@ pub(crate) fn sync_custom_agents(
     }
 
     let mut written = Vec::new();
-    let ext = agent.agents_file_ext();
 
     for custom_agent in custom_agents {
         if skip_names.contains(&custom_agent.name) {
@@ -523,7 +522,7 @@ pub(crate) fn sync_custom_agents(
         let machine_name = extract_agent_machine_name(&custom_agent.content)
             .unwrap_or_else(|| custom_agent.name.to_lowercase().replace(' ', "-"));
         let converted_content = agent.convert_agent_content(&custom_agent.content, &machine_name);
-        let path = agents_dir.join(format!("{}.{}", machine_name, ext));
+        let path = agents_dir.join(agent.agent_file_name(&machine_name));
 
         fs::write(&path, &converted_content).map_err(|e| e.to_string())?;
         written.push(path.display().to_string());
@@ -532,17 +531,26 @@ pub(crate) fn sync_custom_agents(
     Ok(written)
 }
 
-/// Clean up all custom agent files from an agents directory.
+/// Clean up Automatic-managed custom agent files from an agents directory.
 /// Used when removing an agent from a project.
+///
+/// Gated on [`crate::agent::is_managed_agent_file`] rather than file
+/// extension alone: an extension-only check would delete every file sharing
+/// that extension, managed or not, which is destructive for a directory a
+/// user might place hand-authored agents into directly (`.github/agents/`)
+/// rather than one that is effectively Automatic's own (`.claude/agents/`
+/// has always worked this way, but that was never actually safe — just
+/// unexercised, since nobody hand-authors into `.claude/agents/`).
+///
 /// Returns the list of files removed.
-pub(crate) fn cleanup_custom_agents(agents_dir: &std::path::Path, ext: &str) -> Vec<String> {
+pub(crate) fn cleanup_custom_agents(agents_dir: &std::path::Path) -> Vec<String> {
     let mut removed = Vec::new();
 
     if agents_dir.exists() {
         if let Ok(entries) = fs::read_dir(agents_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().is_some_and(|e| e == ext) {
+                if path.is_file() && crate::agent::is_managed_agent_file(&path) {
                     if fs::remove_file(&path).is_ok() {
                         removed.push(path.display().to_string());
                     }
@@ -562,8 +570,9 @@ pub(crate) fn cleanup_custom_agents(agents_dir: &std::path::Path, ext: &str) -> 
 /// For each selected agent:
 /// 1. Read the agent content from the global registry
 /// 2. Convert to the target format if needed (e.g., TOML for Codex)
-/// 3. Write to `agents_dir/{machine_name}.{ext}`
-/// 4. Remove stale agent files not in the selected list (but NOT custom agents)
+/// 3. Write to `agents_dir/{agent_file_name(machine_name)}`
+/// 4. Remove stale *managed* agent files not in the selected list (but NOT
+///    custom agents, and NOT anything the user placed there by hand)
 pub(crate) fn sync_user_agents(
     agents_dir: &std::path::Path,
     user_agent_names: &[String],
@@ -575,9 +584,13 @@ pub(crate) fn sync_user_agents(
     }
 
     let mut written = Vec::new();
-    let mut expected_names: std::collections::HashSet<String> =
-        user_agent_names.iter().cloned().collect();
-    let ext = agent.agents_file_ext();
+    // Full filenames, not bare machine names: `agent_file_name` may add a
+    // compound extension (Copilot's `{name}.agent.md`), and `Path::extension`
+    // only ever sees the last dot-segment, so comparing by filename is the
+    // only way to recover the same name that went in — see
+    // `Agent::agent_file_name`'s doc comment.
+    let mut expected_file_names: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
     // Write each selected agent
     for name in user_agent_names {
@@ -587,35 +600,43 @@ pub(crate) fn sync_user_agents(
             let machine_name = extract_agent_machine_name(&user_agent.content)
                 .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
             let converted_content = agent.convert_agent_content(&user_agent.content, &machine_name);
-            let path = agents_dir.join(format!("{}.{}", machine_name, ext));
+            let file_name = agent.agent_file_name(&machine_name);
+            let path = agents_dir.join(&file_name);
 
             fs::write(&path, &converted_content).map_err(|e| e.to_string())?;
             written.push(path.display().to_string());
-            expected_names.insert(machine_name);
+            expected_file_names.insert(file_name);
         }
     }
 
-    // Also add custom agent names to expected set so they're not removed as stale
+    // Also add custom agent filenames to the expected set so they're not
+    // removed as stale.
     for name in custom_agent_names {
-        expected_names.insert(name.clone());
+        expected_file_names.insert(agent.agent_file_name(name));
     }
 
-    // Remove stale agent files (agents not in user_agents OR custom_agents)
+    // Remove stale *managed* agent files: not in the expected set, and
+    // carrying the automatic-managed marker. A file that fails the marker
+    // check is left alone unconditionally — it might be stale, or it might
+    // be something the user wrote directly in this directory; without the
+    // marker there is no way to tell, so the safe default is to preserve it.
     if agents_dir.exists() {
         if let Ok(entries) = fs::read_dir(agents_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().is_some_and(|e| e == ext) {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        // Only remove if it's a valid machine name and not expected
-                        if crate::core::is_valid_agent_machine_name(stem)
-                            && !expected_names.contains(stem)
-                        {
-                            if fs::remove_file(&path).is_ok() {
-                                written.push(path.display().to_string());
-                            }
-                        }
-                    }
+                if !path.is_file() {
+                    continue;
+                }
+                let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if expected_file_names.contains(file_name)
+                    || !crate::agent::is_managed_agent_file(&path)
+                {
+                    continue;
+                }
+                if fs::remove_file(&path).is_ok() {
+                    written.push(path.display().to_string());
                 }
             }
         }
@@ -627,7 +648,7 @@ pub(crate) fn sync_user_agents(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::ClaudeCode;
+    use crate::agent::{Agent, ClaudeCode, GitHubCopilot};
     use crate::core::{save_subagent, CustomAgent};
     use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
@@ -709,9 +730,27 @@ mod tests {
         )
         .expect("save reviewer subagent");
 
-        let stale_path = agents_dir.join("stale-agent.md");
-        fs::write(&stale_path, "---\nname: Stale Agent\n---\n\nOld content.\n")
-            .expect("write stale agent");
+        // Simulates a file Automatic itself wrote in an earlier sync for a
+        // user agent that has since been removed from the project: carries
+        // the managed marker, so the stale sweep must remove it.
+        let stale_managed_path = agents_dir.join("stale-agent.md");
+        fs::write(
+            &stale_managed_path,
+            "---\nname: Stale Agent\nautomatic-managed: true\n---\n\nOld content.\n",
+        )
+        .expect("write stale managed agent");
+
+        // A file the user placed in this directory directly — no marker.
+        // Regardless of whether its name happens to collide with anything
+        // expected, the stale sweep must never touch it: there is no way to
+        // tell it apart from Automatic's own output without the marker, so
+        // the safe default is to leave it alone.
+        let hand_authored_path = agents_dir.join("hand-authored.md");
+        fs::write(
+            &hand_authored_path,
+            "---\nname: Hand Authored\n---\n\nI wrote this myself.\n",
+        )
+        .expect("write hand-authored agent");
 
         let custom_path = agents_dir.join("custom-agent.md");
         fs::write(&custom_path, "---\nname: Custom Agent\n---\n\nKeep me.\n")
@@ -728,10 +767,79 @@ mod tests {
         assert!(written.iter().any(|p| p.ends_with("reviewer-agent.md")));
         assert!(written.iter().any(|p| p.ends_with("stale-agent.md")));
         assert!(agents_dir.join("reviewer-agent.md").exists());
-        assert!(!stale_path.exists());
+        assert!(!stale_managed_path.exists());
+        assert!(hand_authored_path.exists());
         assert!(custom_path.exists());
         assert!(fs::read_to_string(agents_dir.join("reviewer-agent.md"))
             .expect("read synced user agent")
             .contains("Review thoroughly."));
+    }
+
+    /// GitHub Copilot's `{name}.agent.md` compound extension is exactly the
+    /// case that broke the old `file_stem()`-based stale sweep: `mine.agent.md`
+    /// stems to `mine.agent`, which fails `is_valid_agent_machine_name` and
+    /// so was neither recognised as expected nor swept as stale. The marker
+    /// gate now makes that moot — the file simply carries no
+    /// `automatic-managed: true` marker, so it survives on that basis alone,
+    /// regardless of whether its name happens to collide with Automatic's
+    /// own convention.
+    #[test]
+    fn copilot_hand_written_agent_file_survives_the_stale_sweep() {
+        let _lock = env_lock().lock().expect("env lock");
+        let home = tmp();
+        let _home_guard = HomeGuard::set(home.path());
+        let project = tmp();
+        let agents_dir = project.path().join("agents");
+        fs::create_dir_all(&agents_dir).expect("create agents dir");
+
+        let hand_written_path = agents_dir.join("mine.agent.md");
+        fs::write(
+            &hand_written_path,
+            "---\nname: Mine\n---\n\nI wrote this myself.\n",
+        )
+        .expect("write hand-written copilot agent");
+
+        sync_user_agents(&agents_dir, &[], &[], &GitHubCopilot).expect("sync user agents");
+
+        assert!(
+            hand_written_path.exists(),
+            "hand-written .github/agents/mine.agent.md must survive the stale sweep"
+        );
+    }
+
+    /// The same file must also survive `cleanup_custom_agents`, called when
+    /// Copilot is removed from the project entirely — not just the
+    /// in-place stale sweep `sync_user_agents` runs on every sync.
+    #[test]
+    fn copilot_hand_written_agent_file_survives_agent_removal() {
+        let project = tmp();
+        let agents_dir = project.path().join("agents");
+        fs::create_dir_all(&agents_dir).expect("create agents dir");
+
+        let hand_written_path = agents_dir.join("mine.agent.md");
+        fs::write(
+            &hand_written_path,
+            "---\nname: Mine\n---\n\nI wrote this myself.\n",
+        )
+        .expect("write hand-written copilot agent");
+
+        let managed_path = agents_dir.join("reviewer-agent.agent.md");
+        fs::write(
+            &managed_path,
+            GitHubCopilot
+                .convert_agent_content("---\nname: Reviewer\n---\n\nReview.\n", "reviewer-agent"),
+        )
+        .expect("write managed copilot agent");
+
+        let removed = cleanup_custom_agents(&agents_dir);
+
+        assert!(
+            hand_written_path.exists(),
+            "hand-written .github/agents/mine.agent.md must survive removing Copilot from the project"
+        );
+        assert!(!managed_path.exists());
+        assert!(removed
+            .iter()
+            .any(|p| p.ends_with("reviewer-agent.agent.md")));
     }
 }

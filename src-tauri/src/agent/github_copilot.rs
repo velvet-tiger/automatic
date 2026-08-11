@@ -47,11 +47,18 @@ impl Agent for GitHubCopilot {
 
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
-            agents: false,
             commands: true,
             hooks: true,
             ..Default::default()
         }
+    }
+
+    fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".github").join("agents"))
+    }
+
+    fn agent_file_name(&self, machine_name: &str) -> String {
+        format!("{machine_name}.agent.md")
     }
 
     fn commands_dir(&self, dir: &Path) -> Option<PathBuf> {
@@ -94,6 +101,10 @@ impl Agent for GitHubCopilot {
             },
             ManagedPath {
                 path: dir.join(".github").join("prompts"),
+                is_dir: true,
+            },
+            ManagedPath {
+                path: dir.join(".github").join("agents"),
                 is_dir: true,
             },
             ManagedPath {

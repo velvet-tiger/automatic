@@ -60,10 +60,19 @@ impl Agent for Droid {
 
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
-            agents: false,
             hooks: true,
             ..Default::default()
         }
+    }
+
+    /// Custom droids are Markdown with YAML frontmatter (`name`,
+    /// `description`, `model`, `tools`, `reasoningEffort`, `mcpServers`) —
+    /// close enough to the canonical sub-agent format that the default
+    /// `convert_agent_content` and `agent_file_name` need no override here;
+    /// only the directory name differs from Automatic's other Markdown-based
+    /// vendors.
+    fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".factory").join("droids"))
     }
 
     fn hook_events(&self) -> &'static [&'static str] {

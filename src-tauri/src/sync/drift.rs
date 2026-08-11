@@ -965,29 +965,29 @@ fn collect_agents_drift(
         None => return,
     };
 
-    let ext = agent_instance.agents_file_ext();
+    // Full filenames, not bare machine names — see the matching fix in
+    // `sync::helpers::sync_user_agents` and `Agent::agent_file_name`'s doc
+    // comment. `Path::extension` only ever returns the last dot-segment, so
+    // a compound extension (Copilot's `{name}.agent.md`) makes machine-name
+    // recovery via `file_stem()` lossy; comparing whole filenames sidesteps
+    // the problem instead of trying to invert a lossy transform.
+    let mut expected_file_names: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
-    // Build combined set of expected agent machine names
-    let mut expected_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    // Add custom agent names
+    // Add custom agent filenames
     for agent in custom_agents {
-        if let Some(machine_name) = extract_agent_machine_name(&agent.content) {
-            expected_names.insert(machine_name);
-        } else {
-            expected_names.insert(agent.name.to_lowercase().replace(' ', "-"));
-        }
+        let machine_name = extract_agent_machine_name(&agent.content)
+            .unwrap_or_else(|| agent.name.to_lowercase().replace(' ', "-"));
+        expected_file_names.insert(agent_instance.agent_file_name(&machine_name));
     }
 
-    // Add user agent names (from workspace registry)
+    // Add user agent filenames (from workspace registry)
     for name in user_agent_names {
         if let Ok(content) = crate::core::read_subagent(name) {
             if let Ok(agent) = serde_json::from_str::<crate::core::Subagent>(&content) {
-                if let Some(machine_name) = extract_agent_machine_name(&agent.content) {
-                    expected_names.insert(machine_name);
-                } else {
-                    expected_names.insert(name.to_lowercase().replace(' ', "-"));
-                }
+                let machine_name = extract_agent_machine_name(&agent.content)
+                    .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
+                expected_file_names.insert(agent_instance.agent_file_name(&machine_name));
             }
         }
     }
@@ -1001,7 +1001,7 @@ fn collect_agents_drift(
         let machine_name = extract_agent_machine_name(&agent.content)
             .unwrap_or_else(|| agent.name.to_lowercase().replace(' ', "-"));
         let converted_content = agent_instance.convert_agent_content(&agent.content, &machine_name);
-        let agent_path = agents_dir.join(format!("{}.{}", machine_name, ext));
+        let agent_path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
 
         if !agent_path.exists() {
             let relative = agent_path.strip_prefix(dir).unwrap_or(&agent_path);
@@ -1032,7 +1032,7 @@ fn collect_agents_drift(
                     .unwrap_or_else(|| name.to_lowercase().replace(' ', "-"));
                 let converted_content =
                     agent_instance.convert_agent_content(&agent.content, &machine_name);
-                let agent_path = agents_dir.join(format!("{}.{}", machine_name, ext));
+                let agent_path = agents_dir.join(agent_instance.agent_file_name(&machine_name));
 
                 if !agent_path.exists() {
                     let relative = agent_path.strip_prefix(dir).unwrap_or(&agent_path);
@@ -1057,27 +1057,32 @@ fn collect_agents_drift(
         }
     }
 
-    // Check for stale agent files (in agents_dir but not in expected set)
+    // Check for stale *managed* agent files: not in the expected set, and
+    // carrying the automatic-managed marker. A file without the marker is
+    // left alone unconditionally — it may be something the user placed in
+    // this directory by hand, and without the marker there is no way to
+    // tell it apart from a stale Automatic file.
     if agents_dir.exists() {
         if let Ok(entries) = fs::read_dir(&agents_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().is_some_and(|e| e == ext) {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        if crate::core::is_valid_agent_machine_name(stem)
-                            && !expected_names.contains(stem)
-                        {
-                            let relative = path.strip_prefix(dir).unwrap_or(&path);
-                            let actual = fs::read_to_string(&path).ok();
-                            out.push(DriftedFile {
-                                path: relative.display().to_string(),
-                                reason: "stale".into(),
-                                expected: None,
-                                actual,
-                            });
-                        }
-                    }
+                if !path.is_file() {
+                    continue;
                 }
+                let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if expected_file_names.contains(file_name) || !agent::is_managed_agent_file(&path) {
+                    continue;
+                }
+                let relative = path.strip_prefix(dir).unwrap_or(&path);
+                let actual = fs::read_to_string(&path).ok();
+                out.push(DriftedFile {
+                    path: relative.display().to_string(),
+                    reason: "stale".into(),
+                    expected: None,
+                    actual,
+                });
             }
         }
     }

@@ -90,6 +90,39 @@ fn commands_dir_and_the_commands_capability_agree() {
     }
 }
 
+// ── Sub-agents ───────────────────────────────────────────────────────────────
+
+/// `agent_file_name` must produce a filename `Path::extension` can round-trip
+/// back to `agents_file_ext()`, and that starts with the machine name given —
+/// otherwise a compound-extension vendor (Copilot's `{name}.agent.md`) would
+/// reintroduce the `file_stem()` bug this method exists to fix: `file_stem()`
+/// only strips the *last* dot-segment, so recovering `name` from a filename
+/// that doesn't literally start with it would already be lossy before a stale
+/// sweep ever runs.
+#[test]
+fn sub_agent_filenames_round_trip() {
+    for agent in all() {
+        let file_name = agent.agent_file_name("my-agent");
+        let ext = agent.agents_file_ext();
+        assert!(
+            file_name.starts_with("my-agent"),
+            "{}: agent_file_name(\"my-agent\") = \"{file_name}\" does not start with the machine name",
+            agent.id(),
+        );
+        assert!(
+            file_name.ends_with(&format!(".{ext}")),
+            "{}: agent_file_name(\"my-agent\") = \"{file_name}\" does not end with .{ext}",
+            agent.id(),
+        );
+        assert_eq!(
+            Path::new(&file_name).extension().and_then(|e| e.to_str()),
+            Some(ext),
+            "{}: Path::extension() of \"{file_name}\" does not recover agents_file_ext() \"{ext}\"",
+            agent.id(),
+        );
+    }
+}
+
 // ── Hooks ────────────────────────────────────────────────────────────────────
 
 /// A minimal command-handler hook, matcher-free so it fits every event this
@@ -298,13 +331,13 @@ claude | Claude Code | CLAUDE.md | skills,instructions,mcp_servers,agents,comman
 cline | Cline (Beta) | .clinerules/automatic.md | skills,instructions | - | - | .cline/skills
 codex | Codex CLI | AGENTS.md | skills,instructions,mcp_servers,agents,hooks | .codex/agents | - | .agents/skills
 cursor | Cursor | AGENTS.md | skills,instructions,mcp_servers,agents,commands,hooks | .cursor/agents | .cursor/commands | .agents/skills
-droid | Droid (Beta) | AGENTS.md | skills,instructions,mcp_servers,hooks | - | - | .agents/skills
+droid | Droid (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents,hooks | .factory/droids | - | .agents/skills
 gemini | Gemini CLI (Beta) | GEMINI.md | skills,instructions,mcp_servers,agents,commands,hooks | .gemini/agents | .gemini/commands | .agents/skills
-copilot | GitHub Copilot (Beta) | .github/copilot-instructions.md | skills,instructions,mcp_servers,commands,hooks | - | .github/prompts | .agents/skills
+copilot | GitHub Copilot (Beta) | .github/copilot-instructions.md | skills,instructions,mcp_servers,agents,commands,hooks | .github/agents | .github/prompts | .agents/skills
 goose | Goose (Beta) | AGENTS.md | skills,instructions | - | - | .agents/skills
 junie | Junie (Beta) | .junie/AGENTS.md | skills,instructions,mcp_servers | - | - | .junie/skills,.agents/skills
 kilo | Kilo (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .agents/skills
-kiro | Kiro (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .kiro/skills
+kiro | Kiro (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents | .kiro/agents | - | .kiro/skills
 opencode | OpenCode | AGENTS.md | skills,instructions,mcp_servers,agents,commands | .opencode/agents | .opencode/commands | .agents/skills
 pi | Pi (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents | .pi/agents | - | .pi/skills
 warp | Warp (Beta) | AGENTS.md | skills,instructions | - | - | .agents/skills

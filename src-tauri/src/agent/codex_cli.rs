@@ -428,7 +428,10 @@ pub fn merge_toml_mcp_section(existing: &str, mcp_section: &str) -> String {
 fn convert_md_to_codex_toml(content: &str, fallback_name: &str) -> String {
     let (frontmatter, body) = super::parse_frontmatter(content);
 
-    let mut toml = String::new();
+    // Marks this file as Automatic-written so cleanup can tell it apart from
+    // a TOML agent the user placed in .codex/agents/ by hand — the sub-agent
+    // counterpart to Gemini CLI's identical convention for command TOML.
+    let mut toml = String::from("automatic_managed = true\n");
 
     let name = frontmatter
         .get("name")

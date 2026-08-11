@@ -41,9 +41,24 @@ impl Agent for Kiro {
 
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
-            agents: false,
             ..Default::default()
         }
+    }
+
+    /// Kiro CLI custom agents are JSON files in `.kiro/agents/`; the
+    /// filename stem (without `.json`) is the agent id in Kiro's own
+    /// convention, so `agent_file_name`'s default (`{name}.json`) needs no
+    /// override — only the content format does.
+    fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
+        Some(dir.join(".kiro").join("agents"))
+    }
+
+    fn agents_file_ext(&self) -> &'static str {
+        "json"
+    }
+
+    fn convert_agent_content(&self, content: &str, name: &str) -> String {
+        convert_md_to_kiro_json(content, name)
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────
@@ -140,6 +155,53 @@ impl Agent for Kiro {
 /// Pass-through normaliser: Kiro's format is already canonical.
 fn identity(v: Value) -> Value {
     v
+}
+
+// ── Sub-agents ───────────────────────────────────────────────────────────────
+//
+// Kiro CLI custom agents are JSON, not Markdown+frontmatter — the same
+// non-canonical shape Codex's `convert_md_to_codex_toml` handles for TOML.
+// `parse_frontmatter` only ever returns flat string values (no nested YAML,
+// no array parsing), so `tools` and `mcpServers` are carried through
+// verbatim as whatever string the frontmatter held, exactly as Codex's own
+// converter treats fields it doesn't otherwise interpret — inventing
+// richer parsing than the rest of the codebase does for the same
+// frontmatter would be a new capability, not a straight port.
+
+/// Convert canonical Markdown + frontmatter into Kiro's custom-agent JSON.
+///
+/// The filename stem (without `.json`) is the agent id in Kiro's own
+/// convention, so — unlike Codex's TOML, which has no external identifier
+/// and must carry `name` as its own — there is no separate id field to
+/// populate here; `name` is purely a display label.
+fn convert_md_to_kiro_json(content: &str, fallback_name: &str) -> String {
+    let (frontmatter, body) = super::parse_frontmatter(content);
+
+    let name = frontmatter
+        .get("name")
+        .map(|s| s.as_str())
+        .unwrap_or(fallback_name);
+
+    let mut obj = Map::new();
+    // Marks this file as Automatic-written so cleanup can tell it apart
+    // from a JSON agent the user placed in .kiro/agents/ by hand.
+    obj.insert("automaticManaged".to_string(), json!(true));
+    obj.insert("name".to_string(), json!(name));
+    if let Some(desc) = frontmatter.get("description") {
+        obj.insert("description".to_string(), json!(desc));
+    }
+    obj.insert("prompt".to_string(), json!(body.trim()));
+    if let Some(model) = frontmatter.get("model") {
+        obj.insert("model".to_string(), json!(model));
+    }
+    if let Some(tools) = frontmatter.get("tools") {
+        obj.insert("tools".to_string(), json!(tools));
+    }
+    if let Some(mcp_servers) = frontmatter.get("mcpServers") {
+        obj.insert("mcpServers".to_string(), json!(mcp_servers));
+    }
+
+    serde_json::to_string_pretty(&Value::Object(obj)).unwrap_or_default()
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -266,6 +328,48 @@ mod tests {
                 .join(".kiro/skills/my-skill")
                 .display()
                 .to_string()]
+        );
+    }
+
+    // ── Sub-agents ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn convert_agent_content_produces_kiro_json() {
+        let content = "---\nname: Code Reviewer\ndescription: Reviews pull requests\nmodel: sonnet\ntools: Read, Grep\n---\n\nReview the diff carefully.\n";
+        let rendered = Kiro.convert_agent_content(content, "code-reviewer");
+        let parsed: Value = serde_json::from_str(&rendered).expect("valid JSON");
+
+        assert_eq!(parsed["automaticManaged"], true);
+        assert_eq!(parsed["name"], "Code Reviewer");
+        assert_eq!(parsed["description"], "Reviews pull requests");
+        assert_eq!(parsed["model"], "sonnet");
+        assert_eq!(parsed["tools"], "Read, Grep");
+        assert_eq!(parsed["prompt"], "Review the diff carefully.");
+    }
+
+    #[test]
+    fn convert_agent_content_falls_back_to_the_given_name_and_omits_absent_fields() {
+        let content = "No frontmatter here.\n";
+        let rendered = Kiro.convert_agent_content(content, "fallback-agent");
+        let parsed: Value = serde_json::from_str(&rendered).expect("valid JSON");
+
+        assert_eq!(parsed["name"], "fallback-agent");
+        assert_eq!(parsed["prompt"], "No frontmatter here.");
+        assert!(parsed.get("description").is_none());
+        assert!(parsed.get("model").is_none());
+        assert!(parsed.get("tools").is_none());
+        assert!(parsed.get("mcpServers").is_none());
+    }
+
+    /// The plan's stated acceptance for 7d: the written file's stem, not
+    /// any field inside the JSON, is the agent id in Kiro's convention.
+    #[test]
+    fn agent_file_name_stem_is_the_id() {
+        let file_name = Kiro.agent_file_name("code-reviewer");
+        assert_eq!(file_name, "code-reviewer.json");
+        assert_eq!(
+            Path::new(&file_name).file_stem().and_then(|s| s.to_str()),
+            Some("code-reviewer")
         );
     }
 }
