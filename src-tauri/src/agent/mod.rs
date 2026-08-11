@@ -397,6 +397,21 @@ pub trait Agent: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Where this agent's hook configuration lives on disk, for drift
+    /// detection. `None` for agents without the `hooks` capability, and for
+    /// Cursor, which uses its own sidecar-manifest mechanism rather than
+    /// either [`HookConfigTarget`] flavour.
+    ///
+    /// `collect_mcp_drift`'s trick — write into a tempdir, then scan its
+    /// top-level entries — doesn't reach here: every hook config file lives
+    /// nested under a per-agent directory, never at the project root, so a
+    /// top-level scan would silently check nothing. This method names the
+    /// exact path (and, for merge writers, the key) instead of requiring
+    /// drift detection to rediscover it.
+    fn hook_config_target(&self, _dir: &Path) -> Option<HookConfigTarget> {
+        None
+    }
+
     // ── Cleanup ─────────────────────────────────────────────────────────
 
     /// Paths of MCP config files that are exclusively owned by Automatic for
@@ -1882,6 +1897,24 @@ const HOOK_MANAGED_KEY: &str = "_managedBy";
 const HOOK_MANAGED_VALUE: &str = "automatic";
 const HOOK_ID_KEY: &str = "_hookId";
 
+/// Describes where and how one agent's hook configuration is written.
+/// Returned by [`Agent::hook_config_target`] for drift detection — the two
+/// variants mirror the two writer entry points below.
+pub enum HookConfigTarget {
+    /// This agent owns `path` outright ([`write_owned_hooks_file`]). The
+    /// whole file is regenerated every sync, so a whole-file byte compare is
+    /// sufficient — and the file is expected to be *absent* entirely when
+    /// there are no hooks for this agent, not merely empty.
+    Owned { path: PathBuf },
+    /// This agent merges hooks into `path` under the top-level `key`
+    /// ([`merge_hooks_into_json_settings`]). The file may carry unrelated
+    /// settings this agent doesn't own, so a whole-file compare would report
+    /// drift for e.g. a model or permissions edit that has nothing to do
+    /// with hooks. Only the tagged-managed subset under `key` is compared —
+    /// see [`extract_managed_hook_handlers`].
+    Merged { path: PathBuf, key: &'static str },
+}
+
 /// Per-vendor configuration for the two hooks-writer entry points below.
 pub(crate) struct HookWriteSpec {
     /// Events this agent's hook system accepts. Consulted only by
@@ -2122,6 +2155,39 @@ fn prune_empty_hook_entries(hooks_obj: &mut Map<String, Value>) {
     for event in empty_events {
         hooks_obj.remove(&event);
     }
+}
+
+/// Extract only the tagged-managed handlers from a merge-flavour hooks
+/// object, in the same `{event: [{matcher?, hooks: [...]}]}` shape, pruned
+/// of any group or event left with nothing in it. The inverse of
+/// [`drop_managed_hook_handlers`] — used by drift detection
+/// (`sync::drift::collect_hooks_drift`) to compare only the subset of a
+/// shared settings file Automatic actually owns, ignoring both
+/// user-authored hooks and any unrelated settings in the same file.
+pub(crate) fn extract_managed_hook_handlers(hooks_obj: &Map<String, Value>) -> Map<String, Value> {
+    let mut extracted = hooks_obj.clone();
+    for event_value in extracted.values_mut() {
+        let Some(groups) = event_value.as_array_mut() else {
+            continue;
+        };
+        for group in groups.iter_mut() {
+            let Some(group_obj) = group.as_object_mut() else {
+                continue;
+            };
+            let Some(handlers) = group_obj.get_mut("hooks").and_then(|h| h.as_array_mut()) else {
+                continue;
+            };
+            handlers.retain(|handler| {
+                handler
+                    .get(HOOK_MANAGED_KEY)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s == HOOK_MANAGED_VALUE)
+                    .unwrap_or(false)
+            });
+        }
+    }
+    prune_empty_hook_entries(&mut extracted);
+    extracted
 }
 
 /// Write hooks into a config file this agent owns outright (Codex CLI today;

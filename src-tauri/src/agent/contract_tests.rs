@@ -125,6 +125,27 @@ fn hook_events_and_the_hooks_capability_agree() {
     }
 }
 
+/// One-directional, unlike the test above: a `hook_config_target()` with no
+/// `hooks` capability would mean drift detection watches a file the UI never
+/// admits exists. The reverse is not required — Cursor declares `hooks:
+/// true` but returns `None` here, because its sidecar-manifest mechanism
+/// fits neither `HookConfigTarget` flavour and drift detection for it is
+/// deliberately out of scope (see `cursor.rs` and Phase 6 of the agent gap
+/// remediation plan).
+#[test]
+fn hook_config_target_implies_the_hooks_capability() {
+    let root = Path::new(ROOT);
+    for agent in all() {
+        if agent.hook_config_target(root).is_some() {
+            assert!(
+                agent.capabilities().hooks,
+                "{}: hook_config_target() returns Some but capabilities().hooks is false",
+                agent.id(),
+            );
+        }
+    }
+}
+
 /// For every agent that declares hook events, build one hook per declared
 /// event and confirm a sync actually writes it somewhere. This is what would
 /// have caught `CODEX_SUPPORTED_EVENTS` sitting at 6 events while the vendor

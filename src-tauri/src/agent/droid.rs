@@ -78,6 +78,12 @@ impl Agent for Droid {
         sync_droid_hooks(project_dir, hooks)
     }
 
+    fn hook_config_target(&self, dir: &Path) -> Option<super::HookConfigTarget> {
+        Some(super::HookConfigTarget::Owned {
+            path: dir.join(".factory").join("hooks.json"),
+        })
+    }
+
     // ── Cleanup ─────────────────────────────────────────────────────────
 
     fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {

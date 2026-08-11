@@ -74,6 +74,12 @@ impl Agent for GitHubCopilot {
         sync_github_copilot_hooks(project_dir, hooks)
     }
 
+    fn hook_config_target(&self, dir: &Path) -> Option<super::HookConfigTarget> {
+        Some(super::HookConfigTarget::Owned {
+            path: dir.join(".github").join("hooks").join("automatic.json"),
+        })
+    }
+
     /// Copilot has no directory of its own — it writes into `.github/` and
     /// `.vscode/`, which belong to GitHub and the editor.  The default would
     /// miss `.vscode/mcp.json` because that file is merged (not in

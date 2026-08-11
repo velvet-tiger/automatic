@@ -281,6 +281,22 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         .map(|c| c.name.clone())
         .collect();
 
+    // Group attached hooks by target agent, mirroring
+    // `sync::engine::sync_project_hooks_step`. A hook that fails to read from
+    // the library is skipped rather than failing the whole drift check —
+    // drift detection is read-only and best-effort throughout this file.
+    let mut hooks_by_agent: std::collections::HashMap<String, Vec<crate::core::Hook>> =
+        std::collections::HashMap::new();
+    for hook_name in &project.hooks {
+        if let Ok(hook) = crate::core::read_hook_parsed(hook_name) {
+            hooks_by_agent
+                .entry(hook.agent.clone())
+                .or_default()
+                .push(hook);
+        }
+    }
+    let no_hooks: Vec<crate::core::Hook> = Vec::new();
+
     let mut agent_drifts: Vec<AgentDrift> = Vec::new();
 
     for agent_id in &project.agents {
@@ -318,6 +334,12 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
                 &workspace_command_contents,
                 custom_commands,
                 &conflicting_commands,
+                &mut files,
+            );
+            collect_hooks_drift(
+                agent_instance,
+                &effective_dir,
+                hooks_by_agent.get(agent_id).unwrap_or(&no_hooks),
                 &mut files,
             );
 
@@ -1061,12 +1083,192 @@ fn collect_agents_drift(
     }
 }
 
+/// Collect hook drift entries for one agent into `out`. Two flavours, driven
+/// by [`agent::Agent::hook_config_target`]:
+///
+/// - **Owned files** (Codex, Copilot, Droid): [`collect_owned_hooks_drift`]
+///   does a whole-file byte compare, the same trick [`collect_mcp_drift`]
+///   uses — but against the exact known path rather than a top-level
+///   directory scan, since every hook config file lives nested and that scan
+///   would see nothing.
+/// - **Merge files** (Claude Code, Gemini CLI): [`collect_merged_hooks_drift`]
+///   compares only the tagged-managed subset, so an unrelated edit elsewhere
+///   in the shared settings file (model, permissions, …) never reads as hook
+///   drift.
+///
+/// `None` from `hook_config_target` — no hooks capability, or Cursor's
+/// sidecar-manifest mechanism, which neither flavour fits — means no
+/// entries are collected here.
+fn collect_hooks_drift(
+    agent_instance: &dyn agent::Agent,
+    dir: &PathBuf,
+    hooks_for_agent: &[crate::core::Hook],
+    out: &mut Vec<DriftedFile>,
+) {
+    match agent_instance.hook_config_target(dir) {
+        Some(agent::HookConfigTarget::Owned { path }) => {
+            collect_owned_hooks_drift(agent_instance, dir, &path, hooks_for_agent, out);
+        }
+        Some(agent::HookConfigTarget::Merged { path, key }) => {
+            collect_merged_hooks_drift(agent_instance, dir, &path, key, hooks_for_agent, out);
+        }
+        None => {}
+    }
+}
+
+fn relative_path_string(dir: &PathBuf, path: &PathBuf) -> String {
+    path.strip_prefix(dir).unwrap_or(path).display().to_string()
+}
+
+/// Whole-file compare for an owned hooks file. Unlike every other collector
+/// in this module, the expected state when there are no hooks is that the
+/// file does not exist at all — `write_owned_hooks_file` deletes it rather
+/// than leaving an empty shell — so an on-disk file with zero configured
+/// hooks is itself drift ("stale"), not silently ignored.
+fn collect_owned_hooks_drift(
+    agent_instance: &dyn agent::Agent,
+    dir: &PathBuf,
+    expected_path: &PathBuf,
+    hooks_for_agent: &[crate::core::Hook],
+    out: &mut Vec<DriftedFile>,
+) {
+    let filename = relative_path_string(dir, expected_path);
+
+    if hooks_for_agent.is_empty() {
+        if expected_path.exists() {
+            let actual = fs::read_to_string(expected_path).ok();
+            out.push(DriftedFile {
+                path: filename,
+                reason: "stale".into(),
+                expected: None,
+                actual,
+            });
+        }
+        return;
+    }
+
+    let tmp = match tempfile::tempdir() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    if agent_instance
+        .sync_hooks(tmp.path(), hooks_for_agent)
+        .is_err()
+    {
+        return;
+    }
+
+    if !expected_path.exists() {
+        out.push(DriftedFile {
+            path: filename,
+            reason: "missing".into(),
+            expected: None,
+            actual: None,
+        });
+        return;
+    }
+
+    let Ok(relative) = expected_path.strip_prefix(dir) else {
+        return;
+    };
+    let tmp_path = tmp.path().join(relative);
+    let Ok(expected) = fs::read_to_string(&tmp_path) else {
+        return;
+    };
+    let actual = match fs::read_to_string(expected_path) {
+        Ok(c) => c,
+        Err(_) => {
+            out.push(DriftedFile {
+                path: filename,
+                reason: "unreadable".into(),
+                expected: None,
+                actual: None,
+            });
+            return;
+        }
+    };
+    if expected != actual {
+        out.push(DriftedFile {
+            path: filename,
+            reason: "modified".into(),
+            expected: Some(expected),
+            actual: Some(actual),
+        });
+    }
+}
+
+/// Subset compare for a merge-flavour hooks file. The expected subset is
+/// computed by running the real `sync_hooks` against an *unseeded* tempdir:
+/// since only the tagged-managed handlers are ever compared, there is
+/// nothing else worth carrying over from the real file for this
+/// computation, and the merge writer's own strip-then-merge behaviour
+/// already isolates Automatic's handlers correctly on its own.
+fn collect_merged_hooks_drift(
+    agent_instance: &dyn agent::Agent,
+    dir: &PathBuf,
+    settings_path: &PathBuf,
+    settings_key: &str,
+    hooks_for_agent: &[crate::core::Hook],
+    out: &mut Vec<DriftedFile>,
+) {
+    let filename = relative_path_string(dir, settings_path);
+
+    let tmp = match tempfile::tempdir() {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    if agent_instance
+        .sync_hooks(tmp.path(), hooks_for_agent)
+        .is_err()
+    {
+        return;
+    }
+    let Ok(relative) = settings_path.strip_prefix(dir) else {
+        return;
+    };
+    let tmp_path = tmp.path().join(relative);
+
+    let expected_subset = read_managed_hook_subset(&tmp_path, settings_key);
+    let actual_subset = read_managed_hook_subset(settings_path, settings_key);
+
+    if expected_subset != actual_subset {
+        out.push(DriftedFile {
+            path: filename,
+            reason: "modified".into(),
+            expected: Some(pretty_hook_subset(&expected_subset)),
+            actual: Some(pretty_hook_subset(&actual_subset)),
+        });
+    }
+}
+
+/// Read `path`, extract the tagged-managed handlers under `key`, and return
+/// them as a normalised map. Absent or unparseable files yield an empty map
+/// — drift detection is read-only and best-effort, matching every other
+/// collector in this file, and an unparseable settings file is the merge
+/// writer's problem to surface as a sync error, not this one's.
+fn read_managed_hook_subset(path: &PathBuf, key: &str) -> Map<String, Value> {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Map::new();
+    };
+    let Ok(Value::Object(root)) = serde_json::from_str::<Value>(&raw) else {
+        return Map::new();
+    };
+    let Some(Value::Object(hooks_obj)) = root.get(key).cloned() else {
+        return Map::new();
+    };
+    agent::extract_managed_hook_handlers(&hooks_obj)
+}
+
+fn pretty_hook_subset(subset: &Map<String, Value>) -> String {
+    serde_json::to_string_pretty(subset).unwrap_or_default()
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::{Agent, ClaudeCode};
+    use crate::agent::{Agent, ClaudeCode, CodexCli, Cursor, GeminiCli};
     use serde_json::Map;
     use std::fs;
     use std::path::Path;
@@ -1849,6 +2051,183 @@ mod tests {
         assert!(
             files.iter().any(|f| f.reason == "modified"),
             "Expected a 'modified' drift entry when library and disk diverge, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    // ── Hook drift ──────────────────────────────────────────────────────────
+
+    fn cmd_hook(agent_id: &str, name: &str, event: &str, command: &str) -> crate::core::Hook {
+        crate::core::Hook {
+            name: name.to_string(),
+            agent: agent_id.to_string(),
+            event: event.to_string(),
+            matcher: None,
+            handler: crate::core::HookHandler::Command {
+                command: command.to_string(),
+            },
+            timeout_sec: None,
+            plugin_id: None,
+            _author: None,
+        }
+    }
+
+    #[test]
+    fn no_drift_after_owned_hooks_sync() {
+        let dir = tempdir().unwrap();
+        let hooks = vec![cmd_hook("codex", "ping", "SessionStart", "echo hi")];
+        CodexCli.sync_hooks(dir.path(), &hooks).unwrap();
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_hooks_drift(&CodexCli, &dir.path().to_path_buf(), &hooks, &mut files);
+
+        assert!(
+            files.is_empty(),
+            "Expected no drift after sync, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn owned_hooks_drift_detected_when_command_changes() {
+        let dir = tempdir().unwrap();
+        let synced = vec![cmd_hook("codex", "ping", "SessionStart", "echo old")];
+        CodexCli.sync_hooks(dir.path(), &synced).unwrap();
+
+        let current = vec![cmd_hook("codex", "ping", "SessionStart", "echo new")];
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_hooks_drift(&CodexCli, &dir.path().to_path_buf(), &current, &mut files);
+
+        assert!(
+            files
+                .iter()
+                .any(|f| f.path == ".codex/hooks.json" && f.reason == "modified"),
+            "Expected modified drift on .codex/hooks.json, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn owned_hooks_file_with_no_configured_hooks_is_stale() {
+        let dir = tempdir().unwrap();
+        // Simulate a leftover file from before the hook was detached: written
+        // once, never cleaned up because sync_hooks was never called with an
+        // empty set for this project (e.g. an interrupted sync).
+        let synced = vec![cmd_hook("codex", "temp", "Stop", "echo bye")];
+        CodexCli.sync_hooks(dir.path(), &synced).unwrap();
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_hooks_drift(&CodexCli, &dir.path().to_path_buf(), &[], &mut files);
+
+        assert!(
+            files
+                .iter()
+                .any(|f| f.path == ".codex/hooks.json" && f.reason == "stale"),
+            "Expected stale drift on .codex/hooks.json, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_drift_after_merged_hooks_sync() {
+        let dir = tempdir().unwrap();
+        let hooks = vec![cmd_hook("claude", "ping", "SessionStart", "echo hi")];
+        ClaudeCode.sync_hooks(dir.path(), &hooks).unwrap();
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_hooks_drift(&ClaudeCode, &dir.path().to_path_buf(), &hooks, &mut files);
+
+        assert!(
+            files.is_empty(),
+            "Expected no drift after sync, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// The whole point of comparing only the managed subset: an edit to
+    /// `.claude/settings.json` that has nothing to do with hooks (here,
+    /// `model`) must never surface as hook drift.
+    #[test]
+    fn merged_hooks_drift_ignores_unrelated_settings_edits() {
+        let dir = tempdir().unwrap();
+        let hooks = vec![cmd_hook("claude", "ping", "SessionStart", "echo hi")];
+        ClaudeCode.sync_hooks(dir.path(), &hooks).unwrap();
+
+        let settings_path = dir.path().join(".claude/settings.json");
+        let raw = fs::read_to_string(&settings_path).unwrap();
+        let mut settings: Value = serde_json::from_str(&raw).unwrap();
+        settings["model"] = Value::String("claude-opus-4-7".to_string());
+        fs::write(
+            &settings_path,
+            serde_json::to_string_pretty(&settings).unwrap(),
+        )
+        .unwrap();
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_hooks_drift(&ClaudeCode, &dir.path().to_path_buf(), &hooks, &mut files);
+
+        assert!(
+            files.is_empty(),
+            "An unrelated settings.json edit must not report as hook drift, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn merged_hooks_drift_detected_when_managed_handler_changes() {
+        let dir = tempdir().unwrap();
+        let synced = vec![cmd_hook("gemini", "ping", "SessionStart", "echo old")];
+        GeminiCli.sync_hooks(dir.path(), &synced).unwrap();
+
+        let current = vec![cmd_hook("gemini", "ping", "SessionStart", "echo new")];
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_hooks_drift(&GeminiCli, &dir.path().to_path_buf(), &current, &mut files);
+
+        assert!(
+            files
+                .iter()
+                .any(|f| f.path == ".gemini/settings.json" && f.reason == "modified"),
+            "Expected modified drift on .gemini/settings.json, got: {:?}",
+            files
+                .iter()
+                .map(|f| format!("{} ({})", f.path, f.reason))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Cursor declares `hooks: true` but uses its own sidecar-manifest
+    /// mechanism rather than either `HookConfigTarget` flavour, so
+    /// `hook_config_target` stays `None` and this collector must produce
+    /// nothing for it — not an error, not a false "missing" entry.
+    #[test]
+    fn cursor_produces_no_hook_drift() {
+        let dir = tempdir().unwrap();
+        let hooks = vec![cmd_hook("cursor", "ping", "sessionStart", "echo hi")];
+
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_hooks_drift(&Cursor, &dir.path().to_path_buf(), &hooks, &mut files);
+
+        assert!(
+            files.is_empty(),
+            "Cursor hooks are out of scope for this collector, got: {:?}",
             files
                 .iter()
                 .map(|f| format!("{} ({})", f.path, f.reason))

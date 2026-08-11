@@ -275,6 +275,12 @@ impl Agent for CodexCli {
     ) -> Result<Vec<String>, String> {
         sync_codex_hooks(project_dir, hooks)
     }
+
+    fn hook_config_target(&self, dir: &Path) -> Option<super::HookConfigTarget> {
+        Some(super::HookConfigTarget::Owned {
+            path: dir.join(".codex").join("hooks.json"),
+        })
+    }
 }
 
 // ── Global config discovery ──────────────────────────────────────────────────

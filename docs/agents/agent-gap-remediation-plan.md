@@ -547,13 +547,81 @@ from the checklist:
 Phase 5, six agents write hooks into five files, three of which are shared user
 files.
 
-- [ ] Owned files (Codex, Copilot, Droid): whole-file byte compare
-- [ ] Merged files (Claude, Gemini): extract only handlers tagged
+- [x] Owned files (Codex, Copilot, Droid): whole-file byte compare
+- [x] Merged files (Claude, Gemini): extract only handlers tagged
       `_managedBy: "automatic"` and compare that subset
 
 The tempdir trick does not work for merge writers, for the same reason as 1b. This
 is a further argument for Phase 4 emitting the ownership tag uniformly across both
 merge writers.
+
+### Phase 6 status
+
+Landed. 813 tests pass (up from 805 at the end of Phase 5 — 7 new drift
+tests plus one new contract test). `cargo clippy --all-targets -- -D
+warnings` is clean, `make check` is clean, `cargo fmt --check` is clean on
+every file this phase touched.
+
+Two new pieces in `agent/mod.rs`, both `pub` because they appear in the
+`Agent` trait's public surface:
+
+- **`HookConfigTarget`** (`Owned { path }` / `Merged { path, key }`) behind
+  a new `Agent::hook_config_target(dir)` method. `collect_mcp_drift`'s
+  existing trick — write into a tempdir, then scan its *top-level* entries —
+  turned out not to reach hooks at all: every hook config file lives nested
+  under a per-agent directory (`.codex/hooks.json`, `.claude/settings.json`,
+  …), never at the project root, so that scan would silently check nothing.
+  `hook_config_target` names the exact path instead, sidestepping the
+  problem rather than making the scan recursive (which Phase 1b already
+  ruled out as separate work, for the same reason: it would newly
+  drift-check nested MCP config for eight agents at once, an unrelated blast
+  radius). Codex, Copilot and Droid return `Owned`; Claude Code and Gemini
+  CLI return `Merged`; Cursor returns `None` — deliberately out of scope, it
+  uses a sidecar-manifest mechanism that fits neither flavour, exactly as
+  the checklist says ("The helper serves 5 of 6").
+- **`extract_managed_hook_handlers`**, the inverse of Phase 4's
+  `drop_managed_hook_handlers`: keeps only the tagged-managed subset instead
+  of stripping it. This is what makes "compare that subset" concrete —
+  `sync/drift.rs::collect_merged_hooks_drift` runs it against both the
+  expected (freshly synced into an unseeded tempdir) and actual (the real
+  file) settings, and compares only that.
+
+One detail worth being explicit about since it wasn't obvious going in: the
+merge-flavour comparison needs **no seeding at all**, unlike
+`collect_mcp_drift`'s `mcp_merge_inputs`. Seeding matters when the *whole*
+written file is compared, because a merge writer handed an empty tempdir
+would produce a file missing every user key the real one carries. Here,
+only the tagged-managed subset is ever compared — running the merge writer
+against a bare tempdir with the current hook set produces exactly that
+subset with nothing else mixed in, which is all `collect_merged_hooks_drift`
+needs. This is also *why* subset-extraction was the right call over a
+seeded whole-file compare in the first place: even a perfectly faithful
+seeded round-trip would report drift for an edit to `model` or
+`permissions` that has nothing to do with hooks, which
+`merged_hooks_drift_ignores_unrelated_settings_edits` pins down as a test.
+
+One behaviour specific to owned-file hooks, absent from every other
+collector in this file: when there are zero configured hooks, the *expected*
+state is that the file does not exist at all (`write_owned_hooks_file`
+deletes it rather than leaving an empty shell). A file sitting on disk with
+zero configured hooks is therefore itself drift — reported as `"stale"`,
+Automatic's established vocabulary for "present but shouldn't be" (used
+already for orphaned custom-agent and custom-skill files) — not silently
+ignored the way an owned MCP writer's always-present-even-if-empty file
+would be.
+
+**Not covered, matching the checklist's literal scope:** script-file drift.
+`write_owned_hooks_file` and `merge_hooks_into_json_settings` also manage
+script bodies under a scripts directory, but this phase only compares the
+primary config artifact (the `.json` file / the tagged subset within a
+shared settings file), not individual script files. A user hand-editing a
+managed script's body without touching the hook definition itself would go
+undetected. Flagged here rather than silently scoped out.
+
+A new contract test, `hook_config_target_implies_the_hooks_capability`, is
+deliberately one-directional (unlike `hook_events_and_the_hooks_capability_agree`):
+Cursor's `hooks: true` with `hook_config_target() == None` is a legitimate,
+documented combination, not a bug to catch.
 
 ---
 

@@ -136,6 +136,13 @@ impl Agent for ClaudeCode {
         sync_claude_code_hooks(project_dir, hooks)
     }
 
+    fn hook_config_target(&self, dir: &Path) -> Option<super::HookConfigTarget> {
+        Some(super::HookConfigTarget::Merged {
+            path: dir.join(".claude").join("settings.json"),
+            key: "hooks",
+        })
+    }
+
     // ── Config writing ──────────────────────────────────────────────────
 
     fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value> {

@@ -73,6 +73,13 @@ impl Agent for GeminiCli {
         sync_gemini_hooks(project_dir, hooks)
     }
 
+    fn hook_config_target(&self, dir: &Path) -> Option<super::HookConfigTarget> {
+        Some(super::HookConfigTarget::Merged {
+            path: dir.join(".gemini").join("settings.json"),
+            key: "hooks",
+        })
+    }
+
     // ── Config writing ──────────────────────────────────────────────────
 
     fn mcp_merge_inputs(&self, dir: &Path) -> Vec<PathBuf> {
