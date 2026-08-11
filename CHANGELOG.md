@@ -4,6 +4,48 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-08-11
+
+### Added
+
+- Antigravity now discovers global MCP servers from the config file it shares with the Gemini CLI (`~/.gemini/config/mcp_config.json`), and Codex CLI marks a remote MCP server configured for OAuth with `auth = "oauth"` so Codex's own OAuth flow picks it up. ([6452415](https://github.com/velvet-tiger/automatic/commit/6452415))
+- Zed and Warp now migrate their legacy instruction files (`.rules` and `WARP.md`) to `AGENTS.md` on sync, following the same rules Cursor already used for its `.cursorrules` migration. Where a legacy file can't be safely merged, sync now surfaces it as an instruction conflict instead of leaving the vendor silently reading stale content forever. ([ae5d61e](https://github.com/velvet-tiger/automatic/commit/ae5d61e))
+- Added agent support for GitHub Copilot, Droid, and Kiro, including Kiro's newly rebuilt custom-agent JSON format. ([fb66063](https://github.com/velvet-tiger/automatic/commit/fb66063))
+- Hook configuration now participates in drift detection for every hook-capable agent except Cursor, so a project's hooks no longer silently drift from what's configured with no signal in the UI. ([3db53f0](https://github.com/velvet-tiger/automatic/commit/3db53f0))
+- Gemini CLI, GitHub Copilot, and Droid now support lifecycle hooks, matching capabilities each vendor already shipped: Gemini CLI merges hooks into `.gemini/settings.json`, Copilot writes `.github/hooks/automatic.json`, and Droid owns `.factory/hooks.json`. ([2a5362f](https://github.com/velvet-tiger/automatic/commit/2a5362f))
+- Codex CLI's and Claude Code's hook event lists are now sourced from Rust instead of hand-maintained frontend arrays, closing gaps where Codex was missing 5 of the 11 documented events and Claude Code was missing `MessageDisplay`. ([1ffc693](https://github.com/velvet-tiger/automatic/commit/1ffc693))
+- Kilo Code (rebranded to Kilo) now syncs to its new OpenCode-derived config format (`kilo.json` / `.kilo/kilo.json`, with MCP servers under a top-level `mcp` key) instead of the old `.kilocode/mcp.json` shape Kilo no longer reads, with a one-time migration that removes the legacy directory once its servers are already selected for the project. ([0fb0b14](https://github.com/velvet-tiger/automatic/commit/0fb0b14))
+
+### Fixed
+
+- Sub-agent stale-file cleanup was silently broken for any vendor using a compound file extension, such as GitHub Copilot's `{name}.agent.md`: the machine name recovered from the filename was never valid, so an orphaned sub-agent file could never be recognised or swept. Cleanup also previously deleted any file matching a vendor's extension with no ownership check at all. ([fb66063](https://github.com/velvet-tiger/automatic/commit/fb66063))
+- Importing a skill from a repository that is just a flat collection of `skills/<name>/SKILL.md` directories with no manifest (for example `evilmartians/agent-skills`) now imports every skill found, instead of importing nothing. ([b8be6ad](https://github.com/velvet-tiger/automatic/commit/b8be6ad))
+- Zed no longer writes dead sub-agent files into `.zed/agents/`, a directory Zed never reads. ([89d4c7e](https://github.com/velvet-tiger/automatic/commit/89d4c7e))
+- MCP drift detection for the agents that merge into an existing config file (Codex CLI, Gemini CLI, GitHub Copilot, OpenCode, Zed) no longer reports permanent, unclearable drift. The check was comparing against an empty file instead of the agent's real config. ([eaac483](https://github.com/velvet-tiger/automatic/commit/eaac483))
+- Gemini CLI, Zed, and GitHub Copilot no longer wipe their shared config file (`.gemini/settings.json`, `.zed/settings.json`, `.vscode/mcp.json`) on a single JSON syntax error. A parse failure now raises an error instead of silently falling back to an empty file and discarding the user's own settings. Warp also no longer deletes `AGENTS.md` when removed from a project, since it doesn't own that shared file. ([8a67679](https://github.com/velvet-tiger/automatic/commit/8a67679))
+- `tauri dev` builds no longer trigger a fresh macOS keychain confirmation prompt on every rebuild. Dev binaries are now signed with a stable self-signed identity via a cargo runner instead of an ad-hoc signature that changes on every build; redundant keychain reads were also removed. ([38091a6](https://github.com/velvet-tiger/automatic/commit/38091a6))
+- Junie's `.junie/skills` directory is now covered by drift detection. Its hand-written sync override only ever wrote `.agents/skills`, so it sat outside drift checks entirely; all 16 per-agent overrides are now derived from `skill_dirs()` so the two can no longer disagree. ([8deb9cb](https://github.com/velvet-tiger/automatic/commit/8deb9cb))
+- The bundled `automatic-service` rule now documents the project's full MCP tool surface (rules and hooks CRUD, full memory management, credentials, sessions, project context) and updates automatically on existing installs, instead of only being written once and then staying stale. ([346ff8c](https://github.com/velvet-tiger/automatic/commit/346ff8c))
+- Junie's MCP config path and instructions file path are updated to match JetBrains' current layout: MCP config now reads from `.junie/mcp/mcp.json`, and `.junie/AGENTS.md` is treated as canonical with `.junie/guidelines.md` as a legacy fallback. ([c2ce520](https://github.com/velvet-tiger/automatic/commit/c2ce520))
+
+### Changed
+
+- Claude Code's and Codex CLI's hook-writing logic is now shared through a common `HookWriteSpec`, replacing two independent ~250-line implementations of the same grouping, merging, and cleanup behaviour. ([d4d0ace](https://github.com/velvet-tiger/automatic/commit/d4d0ace))
+- OpenCode's MCP config writer is now a shared helper (`write_opencode_dialect_mcp_config`) that any OpenCode-dialect vendor can target at a different file, rather than logic embedded only in OpenCode's own writer. ([d37bb5d](https://github.com/velvet-tiger/automatic/commit/d37bb5d))
+
+### Documentation
+
+- Added an audit of agent configuration sync gaps across all 16 supported agents and the phased remediation plan that closed them across this release. ([deaca44](https://github.com/velvet-tiger/automatic/commit/deaca44))
+
+### Testing
+
+- Feature-tracking tests now run against a per-test temporary database instead of sharing one, fixing an intermittent failure where one test's cleanup could delete rows another parallel test was still using, and stopping the test suite from writing into the developer's own `~/.automatic-dev`. ([92efb40](https://github.com/velvet-tiger/automatic/commit/92efb40))
+- Added contract tests that check every agent's declared capabilities against what its sync code actually does, catching cases where a capability flag and its implementation disagree (for example Zed previously claiming sub-agent support it didn't have). ([55300b9](https://github.com/velvet-tiger/automatic/commit/55300b9))
+
+### Maintenance
+
+- Updated this project's own `AGENTS.md` and docs index to document the full Automatic MCP tool surface (rules, hooks, features, credentials, sessions) and link the new agent audit and remediation-plan documents. ([b92d6b1](https://github.com/velvet-tiger/automatic/commit/b92d6b1))
+
 ## [1.15.2] - 2026-07-28
 
 ### Fixed
