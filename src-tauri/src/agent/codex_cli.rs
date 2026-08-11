@@ -98,6 +98,17 @@ impl Agent for CodexCli {
                         toml_content.push_str(&format!("url = \"{}\"\n", escape_toml_string(url)));
                     }
 
+                    // Codex's own OAuth flow activates on `auth = "oauth"`;
+                    // unlike Cursor's `auth` block it discovers client
+                    // details itself rather than reading them from config,
+                    // so this is a marker, not a data carrier. Must precede
+                    // the `http_headers` sub-table below: once that table is
+                    // opened, a later bare key would belong to it instead of
+                    // the server table.
+                    if has_oauth_client(&config) {
+                        toml_content.push_str("auth = \"oauth\"\n");
+                    }
+
                     // Codex spells static headers `http_headers`; a plain
                     // `headers` table is an unknown key and is ignored.
                     if let Some(headers) = config.get("headers").and_then(|v| v.as_object()) {
@@ -378,6 +389,19 @@ fn discover_codex_global_config(path: &std::path::Path) -> Map<String, Value> {
 }
 
 // ── TOML Helpers ────────────────────────────────────────────────────────────
+
+/// `true` when the canonical server config carries a usable OAuth client id
+/// — the same gate Cursor's own `cursor_auth_block` uses before emitting its
+/// `auth` block, reused here since Codex's `auth = "oauth"` answers the same
+/// underlying question: is this remote server set up for OAuth at all.
+fn has_oauth_client(config: &Value) -> bool {
+    config
+        .get("oauth")
+        .and_then(|v| v.as_object())
+        .and_then(|o| o.get("clientId"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.is_empty())
+}
 
 fn escape_toml_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")

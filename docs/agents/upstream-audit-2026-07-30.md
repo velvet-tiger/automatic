@@ -6,6 +6,15 @@ implements, and the verdict.
 
 Nothing in this document has been changed in code. It is a work list.
 
+**Update, 2026-08-11:** every finding below has since been triaged and, where
+judged worth doing, fixed. The **Status** column was added after the fact —
+the finding text and severity are left as originally written, since this
+document is a snapshot of what the audit found on 2026-07-30, not a live
+tracker. Full implementation notes, phase-by-phase, are in
+[agent-gap-remediation-plan.md](./agent-gap-remediation-plan.md). Finding #2
+also required a text correction, not just a status update; see its own
+per-agent section below.
+
 ## Method
 
 Every claim below was read from the vendor's own documentation on the date in
@@ -15,24 +24,24 @@ verdict says so rather than guessing.
 
 ## Findings by priority
 
-| # | Agent | Finding | Severity |
-|---|---|---|---|
-| 1 | Kilo Code | Rebranded to Kilo. Config moved to `kilo.jsonc` with an `mcp` key. `.kilocode/` is no longer read at all. Our writer produces a file Kilo ignores. | Broken |
-| 2 | Junie | Junie scans only `.junie/skills/`. `sync_skills` writes to `.agents/skills/`. Synced skills are invisible to Junie. | Broken |
-| 3 | Zed | No `.zed/agents` directory exists in Zed. Sub-agent files we write there are inert. | Broken |
-| 4 | Gemini CLI | Gemini CLI now ships hooks (11 events, `settings.json`). We declare `hooks: false`. | Missing feature |
-| 5 | GitHub Copilot | Custom agents (`.github/agents/*.agent.md`) and hooks (`.github/hooks/*.json`, 8 events) now exist. We declare both off. | Missing feature |
-| 6 | Droid | Custom droids (`.factory/droids/*.md`) and hooks (`.factory/hooks.json`, 9 events) now exist. We declare both off. | Missing feature |
-| 7 | Kiro | Kiro CLI custom agents (`.kiro/agents/*.json`) and agent hooks (`.kiro/hooks/`) now exist. We declare both off. | Missing feature |
-| 8 | Codex CLI | Hook event list grew from 6 to 11. Five events are silently skipped at sync time. | Incomplete |
-| 9 | Claude Code | `MessageDisplay` hook event missing from the UI event list. | Incomplete |
-| 10 | Zed | `.rules` is now a backwards-compatibility file. `AGENTS.md` is the documented instruction file. | Drift |
-| 11 | Warp | `WARP.md` takes priority over `AGENTS.md`. A legacy `WARP.md` silently shadows what we write. | Drift |
-| 12 | Antigravity | Global MCP config path is now documented: `~/.gemini/config/mcp_config.json`. Resolves the open TODO in `antigravity.rs`. | Enhancement |
-| 13 | Antigravity | Global skills path in our doc comment (`~/.gemini/antigravity/skills/`) is stale. It is `~/.gemini/config/skills/`. | Doc drift |
-| 14 | Cline | A global `~/.cline/mcp.json` now exists for the Cline CLI. We implement no global discovery. | Enhancement |
-| 15 | Codex CLI | New MCP config keys not written: `auth = "oauth"`, `env_http_headers`, `required`, `enabled_tools`/`disabled_tools`. | Enhancement |
-| 16 | All | Vendor documentation URLs moved for Codex, Kilo, Junie, and Goose. Source comments point at redirects. | Doc drift |
+| # | Agent | Finding | Severity | Status |
+|---|---|---|---|---|
+| 1 | Kilo Code | Rebranded to Kilo. Config moved to `kilo.jsonc` with an `mcp` key. `.kilocode/` is no longer read at all. Our writer produces a file Kilo ignores. | Broken | Fixed — Phase 2 |
+| 2 | Junie | ~~Junie scans only `.junie/skills/`. `sync_skills` writes to `.agents/skills/`. Synced skills are invisible to Junie.~~ Corrected below: this overstated the bug. | ~~Broken~~ Drift | Fixed — Phase 1a |
+| 3 | Zed | No `.zed/agents` directory exists in Zed. Sub-agent files we write there are inert. | Broken | Fixed — Phase 1d |
+| 4 | Gemini CLI | Gemini CLI now ships hooks (11 events, `settings.json`). We declare `hooks: false`. | Missing feature | Fixed — Phase 5a |
+| 5 | GitHub Copilot | Custom agents (`.github/agents/*.agent.md`) and hooks (`.github/hooks/*.json`, 8 events) now exist. We declare both off. | Missing feature | Fixed — Phases 5b, 7b |
+| 6 | Droid | Custom droids (`.factory/droids/*.md`) and hooks (`.factory/hooks.json`, 9 events) now exist. We declare both off. | Missing feature | Fixed — Phases 5c, 7c |
+| 7 | Kiro | Kiro CLI custom agents (`.kiro/agents/*.json`) and agent hooks (`.kiro/hooks/`) now exist. We declare both off. | Missing feature | Agents fixed — Phase 7d. Hooks deliberately deferred: file-system event automations, a different model from the lifecycle hooks `core::Hook` encodes; needs a design decision, not a port |
+| 8 | Codex CLI | Hook event list grew from 6 to 11. Five events are silently skipped at sync time. | Incomplete | Fixed — Phase 3 |
+| 9 | Claude Code | `MessageDisplay` hook event missing from the UI event list. | Incomplete | Fixed — Phase 3 |
+| 10 | Zed | `.rules` is now a backwards-compatibility file. `AGENTS.md` is the documented instruction file. | Drift | Fixed — Phase 8a |
+| 11 | Warp | `WARP.md` takes priority over `AGENTS.md`. A legacy `WARP.md` silently shadows what we write. | Drift | Fixed — Phase 8b |
+| 12 | Antigravity | Global MCP config path is now documented: `~/.gemini/config/mcp_config.json`. Resolves the open TODO in `antigravity.rs`. | Enhancement | Fixed — Phase 9 |
+| 13 | Antigravity | Global skills path in our doc comment (`~/.gemini/antigravity/skills/`) is stale. It is `~/.gemini/config/skills/`. | Doc drift | Fixed — Phase 9 |
+| 14 | Cline | A global `~/.cline/mcp.json` now exists for the Cline CLI. We implement no global discovery. | Enhancement | Already done by the time Phase 9 landed — `discover_global_mcp_servers` reads `~/.cline/data/settings/cline_mcp_settings.json` (the CLI's real settings path, not the `~/.cline/mcp.json` this finding named), tested, working |
+| 15 | Codex CLI | New MCP config keys not written: `auth = "oauth"`, `env_http_headers`, `required`, `enabled_tools`/`disabled_tools`. | Enhancement | `auth = "oauth"` fixed — Phase 9. The rest deliberately deferred: none broken today |
+| 16 | All | Vendor documentation URLs moved for Codex, Kilo, Junie, and Goose. Source comments point at redirects. | Doc drift | Already resolved by the time Phase 9 checked — no stale or current-form URL for any of the four remained in source comments; most left with the code they annotated (Kilo's old-format writer in Phase 2, the `Hooks.tsx` header in Phase 3) |
 
 ## Per-agent detail
 
@@ -242,17 +251,35 @@ JetBrains has moved the Junie docs off `jetbrains.com/help/junie` to
 Correct, and confirmed again today: MCP at `.junie/mcp/mcp.json`, guidelines at
 `.junie/AGENTS.md` or root `AGENTS.md`.
 
-Skills are broken. Junie looks in exactly two places:
+**Correction, 2026-08-11:** the finding below overstated the bug. Junie looks
+in exactly two places — `<projectRoot>/.junie/skills/<skill-name>/` and
+`~/.junie/skills/<skill-name>/` — and does not scan `.agents/skills/`; the
+docs are explicit that Junie can only *detect* skills in `.cursor/skills/`,
+`.claude/skills/` and `.codex/skills/` in order to offer to import them into
+`.junie/skills/`. That part was correct. What was wrong: skills do reach
+`.junie/skills/` in practice, because the sync engine's
+`symlink_skills_from_project` step populates *every* directory `skill_dirs()`
+names — including `.junie/skills` — from the canonical `.agents/skills/` hub,
+after `sync_skills()` runs. `sync_skills()` itself is not part of that path at
+all; its only caller is drift detection, which writes the expected state into
+a tempdir and compares it against every `skill_dirs()` entry. Junie's
+`sync_skills()` writing only to `.agents/skills/` meant `.junie/skills` was
+never covered by that comparison — a drift-detection blind spot, not a
+"skills never reach Junie" runtime failure. Fixed in Phase 1a of the
+[remediation plan](./agent-gap-remediation-plan.md) by deriving `sync_skills`
+from `skill_dirs()` generically for every agent, not just Junie.
+
+~~Skills are broken. Junie looks in exactly two places:
 `<projectRoot>/.junie/skills/<skill-name>/` and `~/.junie/skills/<skill-name>/`.
 It does not scan `.agents/skills/`. The docs are explicit that Junie can *detect*
 skills in `.cursor/skills/`, `.claude/skills/` and `.codex/skills/` only in order
-to offer to import them into `.junie/skills/`.
+to offer to import them into `.junie/skills/`.~~
 
-`skill_dirs()` at [src-tauri/src/agent/junie.rs:44](../../src-tauri/src/agent/junie.rs)
+~~`skill_dirs()` at [src-tauri/src/agent/junie.rs:44](../../src-tauri/src/agent/junie.rs)
 correctly lists `.junie/skills` first. But `sync_skills()` at line 122 writes to
 `.agents/skills/` regardless. Every skill Automatic syncs to a Junie project
 lands somewhere Junie will not look. The fix is a one-line change to match the
-pattern Kiro and Cline already use.
+pattern Kiro and Cline already use.~~
 
 Custom agents exist for Junie through its extension format — an extension may
 carry an `agents/` directory alongside `skills/`, `guidelines/` and `mcp/`. That
@@ -506,12 +533,20 @@ These need a first-hand check, not another documentation read.
 
 1. Does Antigravity read `AGENTS.md`? Google's API docs now say yes; our code
    comment says community testing said no. Test before changing anything.
+   **Still open** — deliberately deferred; changing `project_file_name` on a
+   guess breaks every Antigravity project silently, and this needs a
+   first-hand test the remediation work did not perform.
 2. Does Zed read anything from `.zed/agents/`? The documentation says agent
    profiles live in `settings.json` and says nothing about the directory.
    Confirm against the Zed source before removing the capability.
+   **Acted on, not confirmed** — Phase 1d removed `agents_dir` and set
+   `agents: false` on the strength of the documentation alone; nobody checked
+   the Zed source itself. Worth flagging if Zed sub-agent behaviour is ever
+   revisited.
 3. Should Kiro's file-event hooks and Pi's `.pi/prompts/` map onto Automatic's
    hook and command models at all? Both are structurally different from the
    lifecycle-hook and slash-command shapes the library assumes.
+   **Still open** — both remain deliberately deferred in the remediation plan.
 
 ## Not covered
 

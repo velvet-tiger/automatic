@@ -1,10 +1,15 @@
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
-use super::Agent;
+use super::{discover_mcp_servers_from_json, Agent};
 
 /// Google Antigravity agent — stores skills under
 /// `<project>/.agents/skills/<name>/SKILL.md`.
+///
+/// An Antigravity CLI now exists alongside the IDE and shares the same
+/// harness and config (both the global MCP config below and, per Google's
+/// own docs, the instruction file) — one `Antigravity` implementation
+/// correctly covers both.
 ///
 /// ## Project instructions
 ///
@@ -22,8 +27,11 @@ use super::Agent;
 /// ## Skills
 ///
 /// Workspace skills: `<project>/.agents/skills/<name>/SKILL.md` ✓
-/// Global skills:    `~/.gemini/antigravity/skills/<name>/SKILL.md`
+/// Global (user-installed) skills: `~/.gemini/config/skills/<name>/SKILL.md`
 ///                   (not synced by Automatic — managed globally)
+/// Built-in skills ship from `~/.gemini/antigravity/builtin/skills/` (IDE)
+/// and `~/.gemini/antigravity-cli/builtin/skills/` (CLI) — Automatic never
+/// touches either.
 ///
 /// Note: `.agent/skills/` is retained for backward compatibility.
 ///
@@ -31,17 +39,19 @@ use super::Agent;
 ///
 /// Antigravity manages MCP servers globally through its own UI:
 /// Agent session → "…" → MCP Servers → Manage MCP Servers → View raw config.
-/// The config file is `mcp_config.json` in Antigravity's application data
-/// directory.  There is no project-scoped MCP config file.
+/// There is still no project-scoped MCP config file, so `write_mcp_config`
+/// stays a no-op and `mcp_note` stays accurate — but the global file's path
+/// is now documented and read-only discovery from it is implemented:
+/// `~/.gemini/config/mcp_config.json`, shared by the IDE and the CLI.
 ///
 /// Format uses `mcpServers` with standard stdio entries (no explicit `type`):
 /// ```json
 /// { "mcpServers": { "my-server": { "command": "npx", "args": ["-y", "..."] } } }
 /// ```
 ///
-/// The exact filesystem path of `mcp_config.json` is pending documentation.
-/// Once confirmed, `write_mcp_config` and `discover_global_mcp_servers` should
-/// be updated to read/write that path directly.
+/// One documented caveat: environment variable interpolation does not work
+/// in that file, so any values in it are hardcoded. Automatic must not write
+/// it even once a project-scoped path exists to write to — only read from it.
 pub struct Antigravity;
 
 impl Agent for Antigravity {
@@ -131,11 +141,19 @@ impl Agent for Antigravity {
     }
 
     fn discover_global_mcp_servers(&self) -> Map<String, Value> {
-        // Antigravity stores its MCP config at a platform-specific app data
-        // path under the name mcp_config.json.  The exact path is not
-        // publicly documented; discovery is not implemented.
-        Map::new()
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        // ~/.gemini/config/mcp_config.json — shared by the Antigravity IDE
+        // and the Antigravity CLI.
+        let path = home.join(".gemini").join("config").join("mcp_config.json");
+        discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+}
+
+/// Pass-through normaliser: Antigravity's format is already canonical.
+fn identity(v: Value) -> Value {
+    v
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

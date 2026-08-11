@@ -1,5 +1,10 @@
 # Agent Gap Remediation Plan
 
+**All nine phases landed as of 2026-08-11.** Each phase's own status section
+below records what shipped, what deviated from the checklist and why, and
+what was deliberately left out. The `automatic-cli` port noted just below is
+still open.
+
 Work list closing the gaps in [upstream-audit-2026-07-30.md](./upstream-audit-2026-07-30.md).
 
 Scope decisions taken: `automatic-app` only, full audit scope, the Zed
@@ -846,16 +851,19 @@ two migrations it doesn't apply to.
 
 **Depends on:** nothing. Can be picked up at any time. **Effort:** mechanical.
 
-- [ ] `discover_global_mcp_servers` for Antigravity
+- [x] `discover_global_mcp_servers` for Antigravity
       (`~/.gemini/config/mcp_config.json`)
-- [ ] `discover_global_mcp_servers` for Cline (`~/.cline/mcp.json`)
-- [ ] Codex `auth = "oauth"` in `write_mcp_config`. `cursor_auth_block`
+- [x] `discover_global_mcp_servers` for Cline (`~/.cline/mcp.json`) — already
+      implemented before this phase started, at a different (more accurate)
+      path; see status below
+- [x] Codex `auth = "oauth"` in `write_mcp_config`. `cursor_auth_block`
       ([cursor.rs:234](../../src-tauri/src/agent/cursor.rs)) is the precedent
-- [ ] `antigravity.rs` header: global skills are `~/.gemini/config/skills/`, not
+- [x] `antigravity.rs` header: global skills are `~/.gemini/config/skills/`, not
       `~/.gemini/antigravity/skills/`
-- [ ] `antigravity.rs` header: close the `mcp_config.json` TODO, note the
+- [x] `antigravity.rs` header: close the `mcp_config.json` TODO, note the
       Antigravity CLI shares the harness
-- [ ] Source-comment URLs, including the `Hooks.tsx:20-22` header
+- [x] Source-comment URLs, including the `Hooks.tsx:20-22` header — already
+      resolved before this phase started; see status below
 
 | Old | Current |
 |---|---|
@@ -865,11 +873,68 @@ two migrations it doesn't apply to.
 | `jetbrains.com/help/junie/*` | `junie.jetbrains.com/docs/*` |
 | `block.github.io/goose/*` | `goose-docs.ai/docs/*` |
 
-- [ ] Correct finding #2 in the audit document. It overstates the Junie bug.
+- [x] Correct finding #2 in the audit document. It overstates the Junie bug.
       Skills do reach `.junie/skills` via the engine's
       `symlink_skills_from_project` step. The real defect is that `.junie/skills`
       is never drift-checked. Fix the finding and its severity
-- [ ] Mark each audit finding resolved as the phases land
+- [x] Mark each audit finding resolved as the phases land
+
+### Phase 9 status
+
+Landed — the final phase. 828 tests pass (up from 826 at the end of Phase 8:
+2 new for Codex's `auth = "oauth"` marker; Antigravity's new
+`discover_global_mcp_servers` and Cline's pre-existing one are both
+untested for the same structural reason noted below). `cargo clippy
+--all-targets -- -D warnings` is clean, `make check` is clean, `cargo fmt
+--check` is clean on every touched file.
+
+Two of the six checklist items turned out to already be done by the time
+this phase started, discovered by checking rather than assumed:
+
+- **Cline's `discover_global_mcp_servers`.** Already implemented, reading
+  `~/.cline/data/settings/cline_mcp_settings.json` (optionally
+  `$CLINE_DIR`-overridden) — a different, more specific path than the
+  `~/.cline/mcp.json` this checklist item and the audit finding both named,
+  with its own passing test
+  (`test_discover_global_mcp_servers_uses_cline_dir_override`). Whether this
+  landed in an earlier phase of this same effort or from unrelated
+  concurrent work in the repository isn't something this phase could
+  determine — either way, nothing needed changing.
+- **Source-comment URLs.** An exhaustive grep for all five old-URL patterns
+  across `src/` and `src-tauri/` (every file type, not just `.rs`) found
+  zero matches — and a grep for the five *current* URLs found zero matches
+  too, except `code.claude.com` in `claude_code.rs` (added by this same
+  effort's Phase 3) and one unrelated frontend file. The stale URLs the
+  audit found were not fixed in place; the comments that carried them were
+  deleted along with the code they annotated — Kilo's old-format writer
+  (Phase 2) and the `Hooks.tsx` vendor-catalogue header (Phase 3, since the
+  event catalogue itself moved into Rust).
+
+**Antigravity's `discover_global_mcp_servers` has no unit test**, unlike
+Gemini's, Droid's, Kiro's and Copilot's own global-discovery methods —
+all of them read from `home_dir()` directly with no test-friendly override,
+matching Cline's *absence* of that pattern rather than its presence (Cline
+alone supports a `$CLINE_DIR` env var override, which is what makes it the
+one agent in this set whose global discovery is unit-testable without
+writing to — or faking — the real user's home directory). Introducing a new
+`HOME`-manipulation test pattern into `agent/antigravity.rs`, duplicating
+the `env_lock`/`HomeGuard` machinery `sync/helpers.rs`'s tests use
+privately, was judged more risk (a mutex private to one test file does not
+coordinate with a different mutex private to another, so environment
+mutation across files is a real flakiness hazard) than the coverage was
+worth for a thin function that only calls the already-tested
+`discover_mcp_servers_from_json` with a computed path. Confidence instead
+comes from matching the identical, already-proven pattern Gemini and Droid
+use, plus a clean `cargo build`.
+
+The `auth = "oauth"` marker deliberately carries no OAuth client details —
+unlike Cursor's `auth` block, Codex's own OAuth flow discovers those itself,
+per the audit's own framing of the marker as "the reachable one" among a
+list Codex's docs describe more fully than Automatic currently writes.
+`codex_writes_auth_oauth_marker_for_oauth_servers` asserts the client id and
+secret never appear in the written TOML, precisely to keep that boundary
+from eroding if a future change reaches for what Cursor's implementation
+does instead.
 
 ---
 

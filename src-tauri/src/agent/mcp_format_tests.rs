@@ -445,6 +445,49 @@ fn codex_infers_transport_and_uses_http_headers() {
 }
 
 #[test]
+fn codex_writes_auth_oauth_marker_for_oauth_servers() {
+    let mut servers = Map::new();
+    servers.insert(
+        "remote".to_string(),
+        json!({
+            "type": "http",
+            "url": "https://api.example.com/mcp",
+            "oauth": {
+                "clientId": "client_123",
+                "clientSecret": "secret_456",
+                "scope": "read write",
+            },
+        }),
+    );
+
+    let dir = tempdir().unwrap();
+    let content =
+        write_and_read(&CodexCli, dir.path(), &servers).expect("writes .codex/config.toml");
+
+    assert!(
+        content.contains("auth = \"oauth\""),
+        "expected an `auth = \"oauth\"` marker for an OAuth-configured remote server:\n{content}"
+    );
+    // Unlike Cursor's `auth` block, Codex discovers client details itself —
+    // the client id/secret must never be written into config.toml.
+    assert!(
+        !content.contains("client_123") && !content.contains("secret_456"),
+        "Codex's auth marker must not carry OAuth client details:\n{content}"
+    );
+}
+
+#[test]
+fn codex_omits_auth_marker_when_there_is_no_oauth_client() {
+    let dir = tempdir().unwrap();
+    let content = write_canonical(&CodexCli, dir.path()).expect("writes .codex/config.toml");
+
+    assert!(
+        !content.contains("auth ="),
+        "no server in the canonical fixture is OAuth-configured:\n{content}"
+    );
+}
+
+#[test]
 fn codex_output_parses_as_toml() {
     let dir = tempdir().unwrap();
     let content = write_canonical(&CodexCli, dir.path()).expect("writes .codex/config.toml");
