@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-08-12
+
+### Fixed
+
+- The app now resolves the user's real `PATH` from their login shell at startup, instead of inheriting the minimal `PATH` Finder/Dock-launched apps get on macOS and Linux. This fixed the Dev Servers plugin reporting `'npm' was not found on $PATH` even when npm was installed (via nvm, Homebrew, etc.) and working fine from a terminal; the same fix applies to editor CLI detection and MCP command detection. ([12f0cb3](https://github.com/velvet-tiger/automatic/commit/12f0cb3))
+
 ## [1.17.0] - 2026-08-12
 
 ### Added
