@@ -31,6 +31,7 @@ pub mod languages;
 pub mod mcp;
 pub mod memory;
 pub mod oauth;
+pub mod path_env;
 pub mod plugins;
 pub mod proxy;
 // Re-export the build plugin's features module under its previous top-level

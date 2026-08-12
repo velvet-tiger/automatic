@@ -2,6 +2,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // Must run before anything spawns a subprocess or resolves a binary on
+    // $PATH — a Finder/Dock-launched GUI app otherwise inherits a minimal
+    // PATH that hides nvm/Homebrew/volta-installed tools like npm.
+    automatic_lib::path_env::fix_path_env();
+
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() > 1 && args[1] == "mcp-serve" {
