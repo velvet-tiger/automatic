@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-08-12
+
+### Added
+
+- New Dev Servers plugin: start, stop, and monitor npm, pnpm, and yarn dev servers for a project. Adds a "Servers" tab to each project (list, start/stop, live output log, create/edit) and a cross-project "Servers" view under the global Tools section, both gated on the plugin being enabled. Stopping a server kills the whole process tree it spawned, not just the package-manager wrapper. ([37b58de](https://github.com/velvet-tiger/automatic/commit/37b58de))
+
 ## [1.16.0] - 2026-08-11
 
 ### Added
