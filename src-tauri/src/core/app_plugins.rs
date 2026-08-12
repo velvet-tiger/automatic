@@ -175,6 +175,7 @@ fn bundled_plugins() -> Vec<PluginManifest> {
     vec![
         crate::plugins::build::manifest(),
         crate::plugins::common_docs::manifest(),
+        crate::plugins::dev_servers::manifest(),
     ]
 }
 

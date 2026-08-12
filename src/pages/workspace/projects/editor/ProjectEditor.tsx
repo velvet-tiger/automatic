@@ -4,6 +4,7 @@ import { AgentIcon } from "../../../../components/AgentIcon";
 import { useCurrentUser } from "../../../../contexts/ProfileContext";
 import { useTaskLog } from "../../../../contexts/TaskLogContext";
 import Features from "../../../../plugins/build/Features";
+import ServersPanel from "../../../../plugins/dev-servers/ServersPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { handleExternalLinkClick } from "../../../../lib/externalLinks";
@@ -3430,6 +3431,11 @@ export function ProjectEditor({
             {activeToolName === "build" && selectedName && (
               <div className="flex-1 overflow-hidden">
                 <Features projectName={selectedName} />
+              </div>
+            )}
+            {activeToolName === "dev-servers" && selectedName && project && (
+              <div className="flex-1 overflow-hidden">
+                <ServersPanel projectName={selectedName} projectDirectory={project.directory} />
               </div>
             )}
             {/* ── Tools tab (under Configuration) ──────────────────── */}

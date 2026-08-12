@@ -18,6 +18,8 @@ pub enum ToolKind {
     Analyser,
     /// A planning and project management tool (e.g. feature tracker, kanban).
     Planning,
+    /// A long-running server process manager (e.g. dev server, local daemon).
+    Server,
     /// Any other tool that does not fit the above categories.
     #[default]
     Other,
@@ -30,6 +32,7 @@ impl ToolKind {
             ToolKind::DocGen => "Doc Generator",
             ToolKind::Analyser => "Analyser",
             ToolKind::Planning => "Planning",
+            ToolKind::Server => "Server",
             ToolKind::Other => "Other",
         }
     }

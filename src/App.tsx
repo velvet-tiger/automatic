@@ -40,7 +40,9 @@ import UpdateToast from "./components/UpdateToast";
 import RemoteInstallDialog from "./components/RemoteInstallDialog";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Featured from "./pages/community/Featured";
-import { ClipboardList, Code, Server, ChevronDown, LayoutTemplate, Bot, Layers, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, Webhook, PanelLeft, Star, RefreshCw, Hash, FlaskConical } from "lucide-react";
+import DevServersOverview from "./plugins/dev-servers/DevServersOverview";
+import { usePlugin } from "./plugins/usePlugin";
+import { ClipboardList, Code, Server, ServerCog, ChevronDown, LayoutTemplate, Bot, Layers, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, Webhook, PanelLeft, Star, RefreshCw, Hash, FlaskConical } from "lucide-react";
 import { flag } from "./lib/flags";
 import CloudSync from "./pages/CloudSync";
 import graphLogo from "../logos/graph_5.svg";
@@ -55,7 +57,7 @@ const SECTION_TABS: Record<Section, string[]> = {
   workspace: ["projects", "project-groups"],
   library: ["library-home", "templates", "instructions", "rules", "subagents", "commands", "hooks", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "community-featured", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
-  tools: ["tools-home", "library-generator", "token-estimator", "ai-playground", "recommendations"],
+  tools: ["tools-home", "library-generator", "token-estimator", "ai-playground", "recommendations", "dev-servers"],
 };
 
 const DEFAULT_TAB: Record<Section, string> = {
@@ -132,6 +134,8 @@ function AnalyticsBootstrap() {
 }
 
 function App() {
+  const devServersEnabled = usePlugin("dev-servers");
+
   // ── Active tab + section state ───────────────────────────────────────────
   const [activeTab, setActiveTab] = useState(() => {
     // Migrate legacy "nexus." localStorage keys to "automatic." prefix
@@ -641,6 +645,9 @@ function App() {
                 <NavItem id="ai-playground" icon={FlaskConical} label="AI Playground" />
               )}
               <NavItem id="recommendations" icon={Lightbulb} label="Insights" />
+              {devServersEnabled && (
+                <NavItem id="dev-servers" icon={ServerCog} label="Servers" />
+              )}
             </ul>
           )}
 
@@ -798,6 +805,11 @@ function App() {
           {flag("ai_playground") && activeTab === "ai-playground" && (
             <div className="flex-1 h-full">
               <AiPlayground />
+            </div>
+          )}
+          {devServersEnabled && activeTab === "dev-servers" && (
+            <div className="flex-1 h-full">
+              <DevServersOverview onNavigateToProject={navigateToProject} />
             </div>
           )}
           {activeTab === "skills" && (

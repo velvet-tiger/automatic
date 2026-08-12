@@ -271,7 +271,7 @@ export interface ProjectToolEntry {
   description: string;
   url: string;
   github_repo?: string;
-  kind: "cli" | "doc_gen" | "analyser" | "planning" | "other";
+  kind: "cli" | "doc_gen" | "analyser" | "planning" | "server" | "other";
   detect_binary?: string;
   detect_dir?: string;
   plugin_id?: string;

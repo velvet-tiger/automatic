@@ -34,6 +34,7 @@ mod user_commands;
 mod whats_new;
 
 pub use crate::plugins::build::commands::*;
+pub use crate::plugins::dev_servers::commands::*;
 pub use account::*;
 pub use activity::*;
 pub use agents::*;

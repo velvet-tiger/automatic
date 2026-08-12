@@ -1,5 +1,6 @@
-import { ArrowRight, FlaskConical, Hash, Lightbulb, Sparkles, Wrench } from "lucide-react";
+import { ArrowRight, FlaskConical, Hash, Lightbulb, ServerCog, Sparkles, Wrench } from "lucide-react";
 import { flag } from "../../lib/flags";
+import { usePlugin } from "../../plugins/usePlugin";
 
 interface ToolsHomeProps {
   onNavigate: (tab: string) => void;
@@ -68,6 +69,22 @@ const BASE_CARDS: ToolCard[] = [
   },
 ];
 
+const DEV_SERVERS_CARD: ToolCard = {
+  tab: "dev-servers",
+  title: "Servers",
+  description:
+    "Start, stop, and monitor npm, pnpm, and yarn dev servers across all your projects.",
+  icon: ServerCog,
+  classes: {
+    cardHover: "hover:border-icon-mcp/50",
+    iconBg: "bg-icon-mcp/10",
+    iconBgHover: "group-hover:bg-icon-mcp/20",
+    iconBorder: "border-icon-mcp/20",
+    iconText: "text-icon-mcp",
+    ctaText: "text-icon-mcp",
+  },
+};
+
 const PLAYGROUND_CARD: ToolCard = {
   tab: "ai-playground",
   title: "AI Playground",
@@ -85,9 +102,13 @@ const PLAYGROUND_CARD: ToolCard = {
 };
 
 export default function ToolsHome({ onNavigate }: ToolsHomeProps) {
-  const cards: ToolCard[] = flag("ai_playground")
-    ? [...BASE_CARDS, PLAYGROUND_CARD]
-    : BASE_CARDS;
+  const devServersEnabled = usePlugin("dev-servers");
+
+  const cards: ToolCard[] = [
+    ...BASE_CARDS,
+    ...(devServersEnabled ? [DEV_SERVERS_CARD] : []),
+    ...(flag("ai_playground") ? [PLAYGROUND_CARD] : []),
+  ];
 
   return (
     <div className="flex-1 h-full overflow-y-auto p-8 custom-scrollbar bg-bg-base">

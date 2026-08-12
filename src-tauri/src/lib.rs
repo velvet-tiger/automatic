@@ -312,6 +312,15 @@ pub fn run() {
             check_source_conflicts,
             handle_install_uri,
             get_recently_added_items,
+            list_dev_server_configs,
+            save_dev_server_config,
+            delete_dev_server_config,
+            detect_dev_server_package_manager,
+            list_dev_server_scripts,
+            start_dev_server,
+            stop_dev_server,
+            list_dev_server_statuses,
+            get_dev_server_log,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

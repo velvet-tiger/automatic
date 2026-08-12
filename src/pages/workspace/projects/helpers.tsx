@@ -135,6 +135,7 @@ export function projectToolKindLabel(kind: ProjectToolEntry["kind"]): string {
     case "doc_gen":  return "Doc Generator";
     case "analyser": return "Analyser";
     case "planning": return "Planning";
+    case "server":   return "Server";
     default:         return "Other";
   }
 }
