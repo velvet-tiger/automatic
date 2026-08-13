@@ -4,6 +4,13 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-08-13
+
+### Added
+
+- New Maildev plugin: detects the `maildev` CLI, provides an on/off toggle that always runs it with `--mcp`, links to its admin UI, and registers its MCP server in the Library. Adds a new `mcp_servers` declaration kind to `PluginManifest`, modeled on the existing rules sync: installed on enable, left in place on disable since a project may already reference it. ([84a1dfc](https://github.com/velvet-tiger/automatic/commit/84a1dfc))
+- The Dev Servers plugin now detects and links dev server URLs from process output. Dev servers print their listen URL on startup (Vite's "Local: http://…", Next.js's "- Local: …", etc); Automatic parses stdout/stderr for local/private URLs as they stream in and surfaces them as clickable Open links in the Servers panel, instead of relying only on a manually-entered port. ([0878610](https://github.com/velvet-tiger/automatic/commit/0878610))
+
 ## [1.17.1] - 2026-08-12
 
 ### Fixed
