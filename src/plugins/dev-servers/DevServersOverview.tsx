@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertCircle, ArrowUpRight, ExternalLink, Loader2, Play, Server as ServerIcon, Square, X } from "lucide-react";
 import { openExternalUrl } from "../../lib/externalLinks";
-import type { DevServerStatus } from "./types";
+import { formatServerUrlLabel, type DevServerStatus } from "./types";
 
 const STATUS_POLL_MS = 3000;
 
@@ -155,15 +155,32 @@ export default function DevServersOverview({ onNavigateToProject }: DevServersOv
                       <span className={`text-[11px] shrink-0 ${status.running ? "text-success" : "text-text-muted"}`}>
                         {status.running ? "Running" : "Stopped"}
                       </span>
-                      {status.running && status.port && (
-                        <button
-                          onClick={() => void openExternalUrl(`http://localhost:${status.port}`)}
-                          className="flex items-center gap-1 text-[11px] text-brand hover:underline shrink-0"
-                          title={`Open http://localhost:${status.port}`}
-                        >
-                          <ExternalLink size={11} />
-                          :{status.port}
-                        </button>
+                      {status.running && status.urls && status.urls.length > 0 ? (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {status.urls.map((url) => (
+                            <button
+                              key={url}
+                              onClick={() => void openExternalUrl(url)}
+                              className="flex items-center gap-1 text-[11px] text-brand hover:underline"
+                              title={`Open ${url}`}
+                            >
+                              <ExternalLink size={11} />
+                              {formatServerUrlLabel(url)}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        status.running &&
+                        status.port && (
+                          <button
+                            onClick={() => void openExternalUrl(`http://localhost:${status.port}`)}
+                            className="flex items-center gap-1 text-[11px] text-brand hover:underline shrink-0"
+                            title={`Open http://localhost:${status.port}`}
+                          >
+                            <ExternalLink size={11} />
+                            :{status.port}
+                          </button>
+                        )
                       )}
                       {busyIds.has(status.id) ? (
                         <div className="w-[26px] h-[26px] flex items-center justify-center text-text-muted shrink-0">

@@ -87,6 +87,12 @@ pub struct DevServerStatus {
     pub started_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
+    /// URLs the server has printed to stdout/stderr that point back at this
+    /// machine (e.g. `http://localhost:5173/`), in first-seen order. Detected
+    /// from output rather than configured, so it reflects the port the
+    /// server actually bound to even if that differs from `port`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub urls: Vec<String>,
 }
 
 /// A single script found in a project's `package.json`.

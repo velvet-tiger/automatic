@@ -12,6 +12,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -19,12 +20,25 @@ use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+use once_cell::sync::Lazy;
+use regex::Regex;
+
 use super::registry;
 use super::types::{DevServerStatus, LogLine, LogStream, PackageManager, ServerConfig};
 
 /// Cap on captured log lines per server, so a long-running dev server cannot
 /// grow memory usage without bound.
 const MAX_LOG_LINES: usize = 1000;
+
+/// Matches ANSI SGR escape sequences (e.g. `\x1b[32m`), which dev server
+/// tooling commonly wraps around the URL in its startup banner for coloring.
+/// Stripped before URL matching so the trailing escape isn't swallowed into
+/// the match.
+static ANSI_ESCAPE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\x1b\[[0-9;]*m").expect("ansi escape regex"));
+
+/// Matches an http(s) URL such as the ones dev servers print on startup
+/// (`http://localhost:5173/`, `https://192.168.1.5:3000`).
+static URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"https?://[^\s]+").expect("url regex"));
 
 struct RunningServer {
     project: String,
@@ -36,6 +50,53 @@ struct RunningServer {
     pid: u32,
     started_at: String,
     log: Arc<Mutex<VecDeque<LogLine>>>,
+    /// URLs the server has printed to stdout/stderr that point at this
+    /// machine, in first-seen order. See `detect_local_urls`.
+    urls: Arc<Mutex<Vec<String>>>,
+}
+
+/// Extracts URLs from a line of dev-server output, keeping only ones that
+/// point at this machine. Dev servers only ever bind to loopback or private
+/// addresses, so restricting to those filters out unrelated links a tool
+/// might print (e.g. its own docs site) without needing to recognise every
+/// framework's specific banner wording.
+fn detect_local_urls(line: &str) -> Vec<String> {
+    let cleaned = ANSI_ESCAPE_RE.replace_all(line, "");
+    URL_RE
+        .find_iter(&cleaned)
+        .filter_map(|m| normalize_local_url(m.as_str()))
+        .collect()
+}
+
+/// Parses a matched URL, trims trailing punctuation a line of prose would
+/// leave attached (e.g. a closing parenthesis), and returns it with the host
+/// rewritten to `localhost` if it was a bind-all address like `0.0.0.0`,
+/// which browsers can't navigate to directly. Returns `None` for URLs that
+/// don't point at this machine.
+fn normalize_local_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim_end_matches([')', ']', '}', ',', '.', '\'', '"', ';']);
+    let mut parsed = url::Url::parse(trimmed).ok()?;
+    let host = parsed.host_str()?;
+    if !is_local_host(host) {
+        return None;
+    }
+    if host == "0.0.0.0" || host == "::" {
+        parsed.set_host(Some("localhost")).ok()?;
+    }
+    Some(parsed.to_string())
+}
+
+fn is_local_host(host: &str) -> bool {
+    match host {
+        "localhost" | "0.0.0.0" | "::" | "::1" => true,
+        _ => host
+            .parse::<IpAddr>()
+            .map(|ip| match ip {
+                IpAddr::V4(v4) => v4.is_loopback() || v4.is_private(),
+                IpAddr::V6(v6) => v6.is_loopback(),
+            })
+            .unwrap_or(false),
+    }
 }
 
 fn processes() -> &'static Mutex<HashMap<String, RunningServer>> {
@@ -65,6 +126,7 @@ fn spawn_log_reader<R: std::io::Read + Send + 'static>(
     stream: R,
     kind: LogStream,
     log: Arc<Mutex<VecDeque<LogLine>>>,
+    urls: Arc<Mutex<Vec<String>>>,
 ) {
     // Piped stdout/stderr must be drained continuously — once the OS pipe
     // buffer fills, the child blocks on its next write() and appears to hang.
@@ -72,6 +134,12 @@ fn spawn_log_reader<R: std::io::Read + Send + 'static>(
         let reader = BufReader::new(stream);
         for line in reader.lines() {
             let Ok(text) = line else { break };
+            for found in detect_local_urls(&text) {
+                let mut list = urls.lock().unwrap();
+                if !list.contains(&found) {
+                    list.push(found);
+                }
+            }
             let mut buf = log.lock().unwrap();
             if buf.len() >= MAX_LOG_LINES {
                 buf.pop_front();
@@ -94,6 +162,7 @@ fn status_from_config(project: &str, config: &ServerConfig) -> DevServerStatus {
         pid: None,
         started_at: None,
         exit_code: None,
+        urls: Vec::new(),
     }
 }
 
@@ -115,6 +184,7 @@ fn status_from_running(id: &str, running: &mut RunningServer) -> DevServerStatus
         pid: if is_running { Some(running.pid) } else { None },
         started_at: Some(running.started_at.clone()),
         exit_code: exit_status.and_then(|s| s.code()),
+        urls: running.urls.lock().unwrap().clone(),
     }
 }
 
@@ -164,11 +234,12 @@ pub fn start(project: &str, project_dir: &str, config: &ServerConfig) -> Result<
     let pid = child.id();
 
     let log: Arc<Mutex<VecDeque<LogLine>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let urls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     if let Some(stdout) = child.stdout.take() {
-        spawn_log_reader(stdout, LogStream::Stdout, Arc::clone(&log));
+        spawn_log_reader(stdout, LogStream::Stdout, Arc::clone(&log), Arc::clone(&urls));
     }
     if let Some(stderr) = child.stderr.take() {
-        spawn_log_reader(stderr, LogStream::Stderr, Arc::clone(&log));
+        spawn_log_reader(stderr, LogStream::Stderr, Arc::clone(&log), Arc::clone(&urls));
     }
 
     let mut running = RunningServer {
@@ -178,6 +249,7 @@ pub fn start(project: &str, project_dir: &str, config: &ServerConfig) -> Result<
         pid,
         started_at: chrono::Utc::now().to_rfc3339(),
         log,
+        urls,
     };
     let status = status_from_running(&config.id, &mut running);
     map.insert(config.id.clone(), running);
@@ -282,6 +354,30 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    #[test]
+    fn detects_vite_style_local_url() {
+        let found = detect_local_urls("  \u{1b}[32m➜\u{1b}[39m  Local:   \u{1b}[36mhttp://localhost:5173/\u{1b}[39m");
+        assert_eq!(found, vec!["http://localhost:5173/"]);
+    }
+
+    #[test]
+    fn detects_multiple_urls_on_one_line_and_rewrites_bind_all_host() {
+        let found = detect_local_urls("Local: http://0.0.0.0:3000, Network: http://192.168.1.5:3000");
+        assert_eq!(found, vec!["http://localhost:3000/", "http://192.168.1.5:3000/"]);
+    }
+
+    #[test]
+    fn ignores_urls_that_do_not_point_at_this_machine() {
+        let found = detect_local_urls("See https://vitejs.dev/guide/ for docs, or https://example.com/api");
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn trims_trailing_prose_punctuation() {
+        let found = detect_local_urls("Server ready (http://localhost:8080).");
+        assert_eq!(found, vec!["http://localhost:8080/"]);
+    }
+
     /// Exercises the real spawn/kill path end to end against actual npm and
     /// node binaries — this is the property the whole module exists to get
     /// right, and it is not meaningfully testable any other way: `stop` must
@@ -336,6 +432,58 @@ mod tests {
             !pgrep_matches(marker),
             "node process should be gone after stop killed the process group"
         );
+    }
+
+    /// Exercises the full pipeline from a real child process's stdout through
+    /// to `list_statuses`: spawn a node script that prints a Vite-style
+    /// banner, then poll status until the reader thread has picked it up.
+    /// Skips (rather than fails) when npm/node are not on `$PATH`.
+    #[cfg(unix)]
+    #[test]
+    fn start_captures_a_url_printed_by_the_server() {
+        if crate::core::tools::find_binary_on_path("npm").is_none()
+            || crate::core::tools::find_binary_on_path("node").is_none()
+        {
+            eprintln!("skipping: npm/node not found on $PATH");
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let marker = "automatic_dev_server_test_marker_url_9c3a";
+        // Plain, uncolored output here — ANSI stripping is already covered
+        // directly by `detects_vite_style_local_url` above. This test's job
+        // is only to prove the real spawn -> capture -> status pipeline.
+        let package_json = format!(
+            r#"{{"name":"fixture","scripts":{{"dev":"node -e \"/*{marker}*/ console.log('Local: http://localhost:4321/'); setInterval(function(){{}}, 1000)\""}}}}"#
+        );
+        std::fs::write(tmp.path().join("package.json"), package_json).unwrap();
+
+        let config = ServerConfig {
+            id: format!("test-{}", marker),
+            name: "test".to_string(),
+            package_manager: PackageManager::Npm,
+            script: "dev".to_string(),
+            subdirectory: String::new(),
+            port: None,
+            created_at: String::new(),
+        };
+
+        start("test-project", tmp.path().to_str().unwrap(), &config).expect("server should start");
+
+        let mut captured = Vec::new();
+        for _ in 0..25 {
+            let statuses = list_statuses("test-project", std::slice::from_ref(&config));
+            if let Some(status) = statuses.first() {
+                if !status.urls.is_empty() {
+                    captured = status.urls.clone();
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+
+        stop(&config.id).expect("stop should succeed");
+        assert_eq!(captured, vec!["http://localhost:4321/".to_string()]);
     }
 
     #[cfg(unix)]

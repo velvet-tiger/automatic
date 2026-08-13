@@ -16,7 +16,15 @@ import {
   X,
 } from "lucide-react";
 import { openExternalUrl } from "../../lib/externalLinks";
-import { PACKAGE_MANAGERS, type DevServerStatus, type LogLine, type NpmScriptEntry, type PackageManager, type ServerConfig } from "./types";
+import {
+  formatServerUrlLabel,
+  PACKAGE_MANAGERS,
+  type DevServerStatus,
+  type LogLine,
+  type NpmScriptEntry,
+  type PackageManager,
+  type ServerConfig,
+} from "./types";
 
 const STATUS_POLL_MS = 2000;
 const LOG_POLL_MS = 1500;
@@ -521,15 +529,32 @@ function ServerRow({
           {running ? "Running" : "Stopped"}
         </span>
 
-        {running && config.port && (
-          <button
-            onClick={() => void openExternalUrl(`http://localhost:${config.port}`)}
-            className="flex items-center gap-1 text-[11px] text-brand hover:underline shrink-0"
-            title={`Open http://localhost:${config.port}`}
-          >
-            <ExternalLink size={11} />
-            :{config.port}
-          </button>
+        {running && status?.urls && status.urls.length > 0 ? (
+          <div className="flex items-center gap-1.5 shrink-0">
+            {status.urls.map((url) => (
+              <button
+                key={url}
+                onClick={() => void openExternalUrl(url)}
+                className="flex items-center gap-1 text-[11px] text-brand hover:underline"
+                title={`Open ${url}`}
+              >
+                <ExternalLink size={11} />
+                {formatServerUrlLabel(url)}
+              </button>
+            ))}
+          </div>
+        ) : (
+          running &&
+          config.port && (
+            <button
+              onClick={() => void openExternalUrl(`http://localhost:${config.port}`)}
+              className="flex items-center gap-1 text-[11px] text-brand hover:underline shrink-0"
+              title={`Open http://localhost:${config.port}`}
+            >
+              <ExternalLink size={11} />
+              :{config.port}
+            </button>
+          )
         )}
 
         <div className="flex items-center gap-1 shrink-0">
@@ -721,7 +746,10 @@ function ServerFormDialog({
 
           <div>
             <label className="block text-[11px] font-medium text-text-muted mb-1">
-              Port <span className="text-text-muted/60">(optional, for the Open link)</span>
+              Port{" "}
+              <span className="text-text-muted/60">
+                (optional — fallback Open link, only used if a URL can't be detected from the server's output)
+              </span>
             </label>
             <input
               type="text"

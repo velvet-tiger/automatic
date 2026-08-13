@@ -27,6 +27,13 @@ export interface DevServerStatus {
   pid?: number | null;
   started_at?: string | null;
   exit_code?: number | null;
+  /** URLs detected in the server's own output, in first-seen order. */
+  urls?: string[];
+}
+
+/** Strips the protocol and any trailing slash for compact display. */
+export function formatServerUrlLabel(url: string): string {
+  return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
 export interface NpmScriptEntry {
