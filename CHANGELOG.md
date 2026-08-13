@@ -4,6 +4,13 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.18.1] - 2026-08-14
+
+### Fixed
+
+- Toggling a plugin in Settings → Plugins now updates the sidebar and Tools-home cards immediately. `usePlugin` previously read plugin state once at mount with no way to react to later changes, so a newly enabled plugin (e.g. Maildev) required a full app restart before its nav item would appear. ([9dee61f](https://github.com/velvet-tiger/automatic/commit/9dee61f))
+- Plugins can now declare a tool as `project_scoped: false` for machine-wide features with no per-project effect. The Maildev tool is marked this way, so it no longer appears as an addable entry in a project's Tools tab, and neither auto-detect path adds it to a project just because the `maildev` binary is on `$PATH`. ([9dee61f](https://github.com/velvet-tiger/automatic/commit/9dee61f))
+
 ## [1.18.0] - 2026-08-13
 
 ### Added
