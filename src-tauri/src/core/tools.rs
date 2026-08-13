@@ -108,6 +108,20 @@ pub struct ToolDefinition {
     /// Defaults to `false` — most tools integrate via other surfaces.
     #[serde(default)]
     pub provides_tab: bool,
+
+    /// When `true`, this tool is meaningful to add or remove on an
+    /// individual project (it changes what that project's UI shows, or
+    /// what gets synced for it). When `false`, the tool represents a
+    /// machine-wide feature with no per-project effect, so the Project
+    /// Tools tab should not offer it. Defaults to `true` — the vast
+    /// majority of tools, including pre-existing ones on disk without this
+    /// field, are project-level.
+    #[serde(default = "default_project_scoped")]
+    pub project_scoped: bool,
+}
+
+fn default_project_scoped() -> bool {
+    true
 }
 
 /// A `ToolDefinition` augmented with runtime detection state.
@@ -266,6 +280,10 @@ pub(crate) fn detect_tool_binary(definition: &ToolDefinition) -> Option<bool> {
 
 /// Given a project directory, detect which registered tools are present.
 ///
+/// Tools with `project_scoped: false` are skipped entirely — a binary on
+/// PATH only proves the machine-wide feature is installed, not that it
+/// should be attached to this particular project.
+///
 /// Detection precedence — evaluated in order, first match wins:
 ///
 /// 1. If `detect_dir` is set: the tool is present **only if**
@@ -289,6 +307,10 @@ pub fn autodetect_tools_for_project(project_dir: &str) -> Result<Vec<String>, St
         let raw = read_tool(name)?;
         let definition: ToolDefinition = serde_json::from_str(&raw)
             .map_err(|e| format!("Corrupt tool file '{}': {}", name, e))?;
+
+        if !definition.project_scoped {
+            continue;
+        }
 
         let present = match definition.detect_dir.as_deref() {
             // detect_dir is set — it is the authoritative project-level signal.
@@ -445,6 +467,7 @@ mod tests {
             detect_dir: None,
             plugin_id: Some("test-tool".into()),
             provides_tab: false,
+            project_scoped: true,
             created_at: "2026-01-01T00:00:00Z".into(),
         };
 
@@ -589,5 +612,55 @@ mod tests {
             !present,
             "binary-only tool must not be detected when binary is absent"
         );
+    }
+
+    /// End-to-end regression test: `autodetect_tools_for_project` must skip
+    /// tools declared `project_scoped: false`, even when their detect signal
+    /// is present — a machine-wide daemon on PATH does not mean it belongs
+    /// on this particular project.
+    #[test]
+    fn autodetect_skips_non_project_scoped_tools() {
+        use super::super::paths::with_test_home;
+
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            let project_dir = tmp.path().join("project");
+            fs::create_dir_all(project_dir.join(".marker")).unwrap();
+
+            let tools_dir = get_tools_dir().unwrap();
+
+            // Both tools signal presence via the same detect_dir, which
+            // exists in the project — the only difference is scope.
+            let scoped = serde_json::json!({
+                "name": "scoped-tool",
+                "display_name": "Scoped Tool",
+                "description": "desc",
+                "url": "https://example.com",
+                "kind": "cli",
+                "detect_dir": ".marker",
+                "project_scoped": true,
+                "created_at": "2026-01-01T00:00:00Z"
+            });
+            let unscoped = serde_json::json!({
+                "name": "unscoped-tool",
+                "display_name": "Unscoped Tool",
+                "description": "desc",
+                "url": "https://example.com",
+                "kind": "server",
+                "detect_dir": ".marker",
+                "project_scoped": false,
+                "created_at": "2026-01-01T00:00:00Z"
+            });
+            save_at(&tools_dir, "scoped-tool", &scoped.to_string()).unwrap();
+            save_at(&tools_dir, "unscoped-tool", &unscoped.to_string()).unwrap();
+
+            let detected = autodetect_tools_for_project(project_dir.to_str().unwrap()).unwrap();
+
+            assert!(detected.contains(&"scoped-tool".to_string()));
+            assert!(
+                !detected.contains(&"unscoped-tool".to_string()),
+                "a project_scoped: false tool must never be auto-detected onto a project"
+            );
+        });
     }
 }

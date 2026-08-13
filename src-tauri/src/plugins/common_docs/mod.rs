@@ -31,6 +31,7 @@ pub fn manifest() -> PluginManifest {
             detect_binary: None,
             detect_dir: None,
             provides_tab: false,
+            project_scoped: true,
         }),
         skills: vec![
             PluginSkillDeclaration {

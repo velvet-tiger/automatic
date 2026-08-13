@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { refreshPlugins } from "./usePlugin";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -71,6 +72,7 @@ export default function SettingsPlugins() {
 
     try {
       await invoke("set_app_plugin_enabled", { id: plugin.id, enabled: newEnabled });
+      await refreshPlugins();
     } catch (e) {
       // Revert on error
       setPlugins((prev) =>

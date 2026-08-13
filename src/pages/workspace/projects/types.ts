@@ -279,4 +279,6 @@ export interface ProjectToolEntry {
   detected: boolean | null;
   /** When `true`, this tool contributes a top-level tab in the project nav. */
   provides_tab: boolean;
+  /** When `false`, this tool has no per-project effect and should not be offered in the Project Tools tab. */
+  project_scoped: boolean;
 }

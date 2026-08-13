@@ -81,7 +81,11 @@ export function ProjectToolsTab({ projectDir, projectTools, entries, loading, on
     );
   }
 
-  if (entries.length === 0) {
+  // Machine-wide tools (project_scoped: false) have no per-project effect —
+  // adding or removing them here would be a no-op, so they're excluded.
+  const projectScopedEntries = entries.filter((e) => e.project_scoped);
+
+  if (projectScopedEntries.length === 0) {
     return (
       <section>
         <div className="flex flex-col items-center justify-center gap-4 text-center py-12 px-6">
@@ -99,8 +103,8 @@ export function ProjectToolsTab({ projectDir, projectTools, entries, loading, on
     );
   }
 
-  const activeEntries = entries.filter((e) => isInProject(e.name));
-  const otherEntries  = entries.filter((e) => !isInProject(e.name));
+  const activeEntries = projectScopedEntries.filter((e) => isInProject(e.name));
+  const otherEntries  = projectScopedEntries.filter((e) => !isInProject(e.name));
 
   return (
     <section className="space-y-4">

@@ -38,6 +38,7 @@ pub fn manifest() -> PluginManifest {
             // directory — that works for a file, not just a directory.
             detect_dir: Some("package.json".to_string()),
             provides_tab: true,
+            project_scoped: true,
         }),
         skills: vec![],
         rules: vec![],

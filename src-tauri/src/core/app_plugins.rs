@@ -65,6 +65,12 @@ pub struct PluginToolDeclaration {
     /// Defaults to `false`.
     #[serde(default)]
     pub provides_tab: bool,
+
+    /// When `true`, this tool is meaningful to add or remove on an
+    /// individual project. When `false`, the tool represents a machine-wide
+    /// feature (e.g. Maildev's local SMTP daemon) with no per-project
+    /// effect, so the Project Tools tab should not offer it.
+    pub project_scoped: bool,
 }
 
 impl PluginToolDeclaration {
@@ -84,6 +90,7 @@ impl PluginToolDeclaration {
             plugin_id: Some(plugin_id.to_string()),
             created_at: chrono::Utc::now().to_rfc3339(),
             provides_tab: self.provides_tab,
+            project_scoped: self.project_scoped,
         };
 
         if let Ok(existing) = read_tool_definition(&self.name) {

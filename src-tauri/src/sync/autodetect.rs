@@ -156,6 +156,10 @@ pub(super) fn autodetect_inner(
 
     // ── Detect tools declared by enabled plugins ─────────────────────────────
     //
+    // Tools with `project_scoped: false` are skipped — a binary on PATH only
+    // proves the machine-wide feature is installed, not that it belongs on
+    // this project.
+    //
     // Detection precedence (first match wins):
     //   1. detect_dir set  → present only if <project_dir>/<detect_dir> exists.
     //      The directory is the canonical "initialised in this project" signal;
@@ -168,6 +172,10 @@ pub(super) fn autodetect_inner(
         for tool_name in &tool_names {
             if let Ok(raw) = crate::core::tools::read_tool(tool_name) {
                 if let Ok(tool) = serde_json::from_str::<crate::core::tools::ToolDefinition>(&raw) {
+                    if !tool.project_scoped {
+                        continue;
+                    }
+
                     let present = match tool.detect_dir.as_deref() {
                         Some(rel) => dir.join(rel).exists(),
                         None => tool

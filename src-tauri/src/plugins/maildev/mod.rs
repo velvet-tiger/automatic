@@ -21,6 +21,8 @@ pub const ADMIN_URL: &str = "http://localhost:1080";
 /// when the plugin is enabled. Maildev is a single machine-wide daemon, not
 /// something scoped to an individual project, so there is no per-project
 /// tab — the on/off toggle and admin link live in the global Tools area.
+/// `project_scoped: false` keeps the tool out of each project's Tools tab,
+/// since adding or removing it there would have no effect.
 pub fn manifest() -> PluginManifest {
     PluginManifest {
         id: "maildev".to_string(),
@@ -42,6 +44,7 @@ pub fn manifest() -> PluginManifest {
             detect_binary: Some("maildev".to_string()),
             detect_dir: None,
             provides_tab: false,
+            project_scoped: false,
         }),
         skills: vec![],
         rules: vec![],
