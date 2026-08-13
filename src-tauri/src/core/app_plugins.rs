@@ -120,6 +120,21 @@ pub struct PluginRuleDeclaration {
     pub display_name: String,
 }
 
+/// An MCP server declared by a plugin.  When the plugin is enabled, the
+/// server config is written to the Automatic MCP server registry
+/// (`~/.automatic/library/mcp_servers/`) so it is available to assign to any
+/// project.  Intentionally left in place when the plugin is disabled — see
+/// `sync_plugin_mcp_servers`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginMcpServerDeclaration {
+    /// The MCP server registry name (`{name}.json`).
+    pub name: String,
+    /// Raw MCP server config, in the same shape written to
+    /// `~/.automatic/library/mcp_servers/<name>.json` (e.g.
+    /// `{"type": "http", "url": "..."}`).
+    pub config: serde_json::Value,
+}
+
 /// Static definition of a bundled plugin. These are compiled into the binary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
@@ -145,6 +160,10 @@ pub struct PluginManifest {
     /// Rules this plugin provides.  Installed on enable, non-removable.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<PluginRuleDeclaration>,
+    /// MCP servers this plugin provides.  Installed into the registry on
+    /// enable; left in place on disable (see `sync_plugin_mcp_servers`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<PluginMcpServerDeclaration>,
 }
 
 /// A plugin manifest combined with its current enabled/disabled state.
@@ -176,6 +195,7 @@ fn bundled_plugins() -> Vec<PluginManifest> {
         crate::plugins::build::manifest(),
         crate::plugins::common_docs::manifest(),
         crate::plugins::dev_servers::manifest(),
+        crate::plugins::maildev::manifest(),
     ]
 }
 
@@ -521,6 +541,45 @@ fn sync_plugin_rules(manifests: &[PluginManifest], state: &PluginState) {
     }
 }
 
+// ── MCP server sync ──────────────────────────────────────────────────────
+
+/// Install plugin-declared MCP servers into the registry based on current
+/// plugin state.
+///
+/// Mirrors `sync_plugin_rules`: on disable we deliberately leave the
+/// registry entry in place rather than deleting it.  A project may already
+/// have this MCP server assigned in its `mcp_servers` list — silently
+/// removing the registry entry out from under it on a mere plugin-disable
+/// is a much bigger, more surprising action than toggling a feature flag.
+fn sync_plugin_mcp_servers(manifests: &[PluginManifest], state: &PluginState) {
+    for manifest in manifests {
+        if manifest.mcp_servers.is_empty() {
+            continue;
+        }
+
+        let enabled = state
+            .plugins
+            .get(&manifest.id)
+            .copied()
+            .unwrap_or(manifest.enabled_by_default);
+
+        if !enabled {
+            continue;
+        }
+
+        for decl in &manifest.mcp_servers {
+            if let Err(e) =
+                super::mcp_servers::save_mcp_server_config(&decl.name, &decl.config.to_string())
+            {
+                eprintln!(
+                    "[automatic] failed to register MCP server '{}' for plugin '{}': {}",
+                    decl.name, manifest.id, e
+                );
+            }
+        }
+    }
+}
+
 /// Retrieve the content for a plugin rule.  Each plugin module provides
 /// a `rule_content(machine_name)` function; this dispatches to the right one.
 fn get_plugin_rule_content(plugin_id: &str, machine_name: &str) -> Option<String> {
@@ -713,6 +772,7 @@ pub fn set_app_plugin_enabled(id: &str, enabled: bool) -> Result<(), String> {
     sync_plugin_tools(&manifests, &state);
     sync_plugin_skills(&manifests, &state);
     sync_plugin_rules(&manifests, &state);
+    sync_plugin_mcp_servers(&manifests, &state);
 
     Ok(())
 }
@@ -746,6 +806,7 @@ pub fn reconcile_plugin_resources_on_startup() {
             sync_plugin_tools(&manifests, &state);
             sync_plugin_skills(&manifests, &state);
             sync_plugin_rules(&manifests, &state);
+            sync_plugin_mcp_servers(&manifests, &state);
         }
         Err(e) => {
             eprintln!(
@@ -799,6 +860,7 @@ mod tests {
             tool: None,
             skills: vec![],
             rules: vec![],
+            mcp_servers: vec![],
         }
     }
 
@@ -900,6 +962,89 @@ mod tests {
             remove_orphaned_plugin_tools(&[known_manifest("build")]);
 
             assert!(tools_dir.join("build.json").exists());
+        });
+    }
+
+    // ── sync_plugin_mcp_servers ─────────────────────────────────────────────
+
+    fn known_manifest_with_mcp_server(id: &str, mcp_name: &str) -> PluginManifest {
+        let mut m = known_manifest(id);
+        m.mcp_servers = vec![PluginMcpServerDeclaration {
+            name: mcp_name.to_string(),
+            config: serde_json::json!({"type": "http", "url": "http://localhost:1080/mcp"}),
+        }];
+        m
+    }
+
+    fn state_with(id: &str, enabled: bool) -> PluginState {
+        let mut state = PluginState::default();
+        state.plugins.insert(id.to_string(), enabled);
+        state
+    }
+
+    #[test]
+    fn sync_plugin_mcp_servers_writes_registry_entry_when_enabled() {
+        with_temp_home(|_home| {
+            let manifests = [known_manifest_with_mcp_server("maildev", "maildev")];
+            let state = state_with("maildev", true);
+
+            sync_plugin_mcp_servers(&manifests, &state);
+
+            let raw = super::super::mcp_servers::read_mcp_server_config("maildev")
+                .expect("registry entry should exist");
+            let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(value["url"].as_str(), Some("http://localhost:1080/mcp"));
+        });
+    }
+
+    #[test]
+    fn sync_plugin_mcp_servers_skips_write_when_disabled() {
+        with_temp_home(|_home| {
+            let manifests = [known_manifest_with_mcp_server("maildev", "maildev")];
+            let state = state_with("maildev", false);
+
+            sync_plugin_mcp_servers(&manifests, &state);
+
+            assert!(super::super::mcp_servers::read_mcp_server_config("maildev").is_err());
+        });
+    }
+
+    #[test]
+    fn sync_plugin_mcp_servers_does_not_delete_registry_entry_on_disable() {
+        with_temp_home(|_home| {
+            let manifests = [known_manifest_with_mcp_server("maildev", "maildev")];
+
+            sync_plugin_mcp_servers(&manifests, &state_with("maildev", true));
+            assert!(super::super::mcp_servers::read_mcp_server_config("maildev").is_ok());
+
+            sync_plugin_mcp_servers(&manifests, &state_with("maildev", false));
+            assert!(
+                super::super::mcp_servers::read_mcp_server_config("maildev").is_ok(),
+                "registry entry must remain after the declaring plugin is disabled"
+            );
+        });
+    }
+
+    #[test]
+    fn enabling_maildev_plugin_writes_mcp_registry_entry() {
+        with_temp_home(|_home| {
+            set_app_plugin_enabled("maildev", true).expect("enable");
+            let raw = super::super::mcp_servers::read_mcp_server_config("maildev")
+                .expect("registry entry should exist");
+            let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(value["url"].as_str(), Some("http://localhost:1080/mcp"));
+        });
+    }
+
+    #[test]
+    fn disabling_maildev_plugin_leaves_mcp_registry_entry_in_place() {
+        with_temp_home(|_home| {
+            set_app_plugin_enabled("maildev", true).expect("enable");
+            set_app_plugin_enabled("maildev", false).expect("disable");
+            assert!(
+                super::super::mcp_servers::read_mcp_server_config("maildev").is_ok(),
+                "registry entry must survive disabling the plugin"
+            );
         });
     }
 }

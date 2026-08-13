@@ -41,8 +41,9 @@ import RemoteInstallDialog from "./components/RemoteInstallDialog";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Featured from "./pages/community/Featured";
 import DevServersOverview from "./plugins/dev-servers/DevServersOverview";
+import MaildevOverview from "./plugins/maildev/MaildevOverview";
 import { usePlugin } from "./plugins/usePlugin";
-import { ClipboardList, Code, Server, ServerCog, ChevronDown, LayoutTemplate, Bot, Layers, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, Webhook, PanelLeft, Star, RefreshCw, Hash, FlaskConical } from "lucide-react";
+import { ClipboardList, Code, Server, ServerCog, ChevronDown, LayoutTemplate, Bot, Layers, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, Webhook, PanelLeft, Star, RefreshCw, Hash, FlaskConical, Mail } from "lucide-react";
 import { flag } from "./lib/flags";
 import CloudSync from "./pages/CloudSync";
 import graphLogo from "../logos/graph_5.svg";
@@ -57,7 +58,7 @@ const SECTION_TABS: Record<Section, string[]> = {
   workspace: ["projects", "project-groups"],
   library: ["library-home", "templates", "instructions", "rules", "subagents", "commands", "hooks", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "community-featured", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
-  tools: ["tools-home", "library-generator", "token-estimator", "ai-playground", "recommendations", "dev-servers"],
+  tools: ["tools-home", "library-generator", "token-estimator", "ai-playground", "recommendations", "dev-servers", "maildev"],
 };
 
 const DEFAULT_TAB: Record<Section, string> = {
@@ -135,6 +136,7 @@ function AnalyticsBootstrap() {
 
 function App() {
   const devServersEnabled = usePlugin("dev-servers");
+  const maildevEnabled = usePlugin("maildev");
 
   // ── Active tab + section state ───────────────────────────────────────────
   const [activeTab, setActiveTab] = useState(() => {
@@ -648,6 +650,9 @@ function App() {
               {devServersEnabled && (
                 <NavItem id="dev-servers" icon={ServerCog} label="Servers" />
               )}
+              {maildevEnabled && (
+                <NavItem id="maildev" icon={Mail} label="Maildev" />
+              )}
             </ul>
           )}
 
@@ -810,6 +815,11 @@ function App() {
           {devServersEnabled && activeTab === "dev-servers" && (
             <div className="flex-1 h-full">
               <DevServersOverview onNavigateToProject={navigateToProject} />
+            </div>
+          )}
+          {maildevEnabled && activeTab === "maildev" && (
+            <div className="flex-1 h-full">
+              <MaildevOverview />
             </div>
           )}
           {activeTab === "skills" && (

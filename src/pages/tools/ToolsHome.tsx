@@ -1,4 +1,4 @@
-import { ArrowRight, FlaskConical, Hash, Lightbulb, ServerCog, Sparkles, Wrench } from "lucide-react";
+import { ArrowRight, FlaskConical, Hash, Lightbulb, Mail, ServerCog, Sparkles, Wrench } from "lucide-react";
 import { flag } from "../../lib/flags";
 import { usePlugin } from "../../plugins/usePlugin";
 
@@ -85,6 +85,22 @@ const DEV_SERVERS_CARD: ToolCard = {
   },
 };
 
+const MAILDEV_CARD: ToolCard = {
+  tab: "maildev",
+  title: "Maildev",
+  description:
+    "Catch outgoing SMTP mail in a local inbox during development, with a web UI and an MCP server.",
+  icon: Mail,
+  classes: {
+    cardHover: "hover:border-icon-mcp/50",
+    iconBg: "bg-icon-mcp/10",
+    iconBgHover: "group-hover:bg-icon-mcp/20",
+    iconBorder: "border-icon-mcp/20",
+    iconText: "text-icon-mcp",
+    ctaText: "text-icon-mcp",
+  },
+};
+
 const PLAYGROUND_CARD: ToolCard = {
   tab: "ai-playground",
   title: "AI Playground",
@@ -103,10 +119,12 @@ const PLAYGROUND_CARD: ToolCard = {
 
 export default function ToolsHome({ onNavigate }: ToolsHomeProps) {
   const devServersEnabled = usePlugin("dev-servers");
+  const maildevEnabled = usePlugin("maildev");
 
   const cards: ToolCard[] = [
     ...BASE_CARDS,
     ...(devServersEnabled ? [DEV_SERVERS_CARD] : []),
+    ...(maildevEnabled ? [MAILDEV_CARD] : []),
     ...(flag("ai_playground") ? [PLAYGROUND_CARD] : []),
   ];
 

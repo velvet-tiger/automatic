@@ -322,6 +322,9 @@ pub fn run() {
             stop_dev_server,
             list_dev_server_statuses,
             get_dev_server_log,
+            start_maildev,
+            stop_maildev,
+            get_maildev_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

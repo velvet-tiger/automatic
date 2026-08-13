@@ -50,6 +50,7 @@ pub fn manifest() -> PluginManifest {
             machine_name: "common-docs-documentation".to_string(),
             display_name: "Common Docs".to_string(),
         }],
+        mcp_servers: vec![],
     }
 }
 

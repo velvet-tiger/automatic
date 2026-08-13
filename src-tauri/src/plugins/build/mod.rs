@@ -35,5 +35,6 @@ pub fn manifest() -> PluginManifest {
         }),
         skills: vec![],
         rules: vec![],
+        mcp_servers: vec![],
     }
 }
