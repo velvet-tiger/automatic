@@ -868,6 +868,61 @@ export function ProjectEditor({
     }
   };
 
+  const handlePromoteCustomRule = async (idx: number) => {
+    if (!project) return;
+    const rules = project.custom_rules || [];
+    const rule = rules[idx];
+    if (!rule) return;
+    const displayName = rule.name.trim();
+    if (!displayName) return;
+
+    // Slugify: lowercase alnum, hyphens for separators, must start with a letter.
+    const base = displayName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .replace(/^([^a-z])/, "r-$1");
+    const fallback = base || "custom-rule";
+
+    // Disambiguate against existing library rules.
+    const existingIds = new Set(availableRules.map(r => r.id));
+    let machineName = fallback;
+    let suffix = 2;
+    while (existingIds.has(machineName)) {
+      machineName = `${fallback}-${suffix}`;
+      suffix++;
+    }
+
+    try {
+      await invoke("save_rule", {
+        machineName,
+        name: displayName,
+        content: rule.content,
+      });
+    } catch (err) {
+      alert(`Failed to promote rule: ${err}`);
+      return;
+    }
+
+    const remainingRules = rules.filter((_, i) => i !== idx);
+    const existingProjectRules = (project.file_rules || {})["_project"] || [];
+    const nextProjectRules = existingProjectRules.includes(machineName)
+      ? existingProjectRules
+      : [...existingProjectRules, machineName];
+    setProject({
+      ...project,
+      custom_rules: remainingRules,
+      file_rules: { ...(project.file_rules || {}), _project: nextProjectRules },
+    });
+    if (customRuleEditingIdx === idx) {
+      setCustomRuleEditingIdx(null);
+    } else if (customRuleEditingIdx !== null && customRuleEditingIdx > idx) {
+      setCustomRuleEditingIdx(customRuleEditingIdx - 1);
+    }
+    setDirty(true);
+    await loadAvailableRules();
+  };
+
   const loadAvailableProjectTemplates = async () => {
     try {
       const names: string[] = await invoke("get_templates");
@@ -3483,6 +3538,7 @@ export function ProjectEditor({
                     globalRuleContentCache={globalRuleContentCache}
                     syncStatus={syncStatus}
                     handleSave={handleSave}
+                    onPromoteCustomRule={handlePromoteCustomRule}
                   />
                 )}
 

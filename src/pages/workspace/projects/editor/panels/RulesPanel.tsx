@@ -1,6 +1,6 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
-import { Check, Edit2, Plus, ScrollText, Trash2, X } from "lucide-react";
+import { Check, Edit2, Globe, Plus, ScrollText, Trash2, X } from "lucide-react";
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { TokenPill } from "../../../../../components/TokenPill";
 import type { CustomRule, Project } from "../../types";
@@ -25,6 +25,7 @@ interface RulesPanelProps {
   globalRuleContentCache: Record<string, string>;
   syncStatus: string | null;
   handleSave: () => void | Promise<void>;
+  onPromoteCustomRule: (idx: number) => void | Promise<void>;
 }
 
 export function RulesPanel({
@@ -36,6 +37,7 @@ export function RulesPanel({
   globalRuleSearch, setGlobalRuleSearch,
   globalRuleAdding, setGlobalRuleAdding,
   globalRuleContentCache, syncStatus, handleSave,
+  onPromoteCustomRule,
 }: RulesPanelProps) {
   const MANDATORY_RULE = "automatic-service";
   const isRuleLocked = (ruleId: string) =>
@@ -221,6 +223,14 @@ export function RulesPanel({
                         </div>
                         <TokenPill text={rule.content} />
                         <div className="flex items-center gap-1 flex-shrink-0">
+                          <button
+                            onClick={() => onPromoteCustomRule(idx)}
+                            disabled={!rule.name.trim()}
+                            className="p-1.5 text-text-muted hover:text-brand hover:bg-brand/10 rounded transition-colors disabled:opacity-40 disabled:hover:text-text-muted disabled:hover:bg-transparent"
+                            title="Promote to Global Rule"
+                          >
+                            <Globe size={12} />
+                          </button>
                           <button
                             onClick={() => handleStartEditCustomRule(idx)}
                             className="p-1.5 text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded transition-colors"
