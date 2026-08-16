@@ -4,6 +4,13 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-08-16
+
+### Added
+
+- Rules panel now has a Globe button on each project (custom) rule that promotes it into the reusable rule library. The rule is saved to the library, removed from the project's inline custom rules, and re-added by machine name to the project's global rules so behaviour is preserved. The machine name is slugified from the display name and disambiguated on collision. ([4e90a07](https://github.com/velvet-tiger/automatic/commit/4e90a07))
+- Skills page now uses a full-width sortable table with a right-side drawer editor, replacing the narrow sidebar + preview layout. Adds per-row and select-all checkboxes plus a "Delete selected" action bar. Bundled skills are un-deletable at both the UI (checkbox suppressed, Lock icon shown) and the backend (`delete_skill` refuses them via the new `is_bundled_skill` guard), matching how the built-in `automatic` skill and plugin-provided skills are already protected. ([a0e6a48](https://github.com/velvet-tiger/automatic/commit/a0e6a48))
+
 ## [1.18.1] - 2026-08-14
 
 ### Fixed
