@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { escapeYamlDoubleQuoted } from "../../lib/yaml";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
 import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
@@ -105,10 +105,6 @@ interface SkillResources {
   dirs: ResourceDir[];
   root_files: ResourceFile[];
 }
-
-const SIDEBAR_MIN = 240;
-const SIDEBAR_MAX = 480;
-const SIDEBAR_DEFAULT = 340;
 
 // ── Frontmatter parser (same as SkillStore) ──────────────────────────────────
 
@@ -657,9 +653,10 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   const [collectionFilter, setCollectionFilter] = useState<string | null>(null);
   const [collections, setCollections] = useState<SkillCollection[]>([]);
 
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
-  const isDragging = useRef(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Companion resources for the selected skill
   const [skillResources, setSkillResources] = useState<SkillResources | null>(null);
@@ -676,6 +673,29 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
   useEffect(() => { loadSkills(); }, []);
 
+  // Close the drawer on Escape when it is open and not mid-edit — closing
+  // during editing would silently discard unsaved changes.
+  useEffect(() => {
+    const drawerOpen = isCreating || !!selectedSkill;
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isEditing) {
+        setIsCreating(false);
+        setIsEditing(false);
+        setSelectedSkill(null);
+        setSkillContent("");
+        setSkillUsedBy(null);
+        setNewSkillName("");
+        setNewSkillDescription("");
+        setFieldErrors({ name: null, description: null });
+        setCurrentScan(null);
+        setSecurityNotice(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isCreating, selectedSkill, isEditing]);
+
   // Navigate to the skill specified by the parent (e.g. "View in library" from Projects)
   useEffect(() => {
     if (!initialSkill) return;
@@ -687,32 +707,6 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
     }
     onInitialSkillConsumed?.();
   }, [initialSkill, skills]);
-
-  // ── Resize ────────────────────────────────────────────────────────────────
-
-  const onMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isDragging.current = true;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, []);
-
-  useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, e.clientX - 180)));
-    };
-    const onMouseUp = () => {
-      if (isDragging.current) {
-        isDragging.current = false;
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-      }
-    };
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-    return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
-  }, []);
 
   // ── Data ──────────────────────────────────────────────────────────────────
 
@@ -843,9 +837,87 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
     }
   };
 
+  // ── Selection ─────────────────────────────────────────────────────────────
+  //
+  // A skill is deletable when it is not the built-in `automatic` skill, not a
+  // bundled skill shipped with the app (those get reinstalled on next launch,
+  // so deleting them looks like the delete was ignored), and not provided by
+  // a plugin. The bulk toolbar and per-row checkbox mirror this rule so
+  // undeletable skills never end up in the selection, and the backend refuses
+  // the same set defensively.
+
+  const isDeletable = (skill: SkillEntry) =>
+    skill.name !== "automatic"
+    && !skill.plugin_id
+    && skill.source?.kind !== "bundled";
+
+  const toggleSelected = (name: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const handleBulkDelete = async () => {
+    // Only delete what is both selected AND currently deletable — a race where
+    // the list changes underneath the selection must not delete `automatic`
+    // or a plugin skill by mistake.
+    const targets = skills.filter(s => selectedIds.has(s.name) && isDeletable(s));
+    if (targets.length === 0) return;
+
+    const preview = targets.slice(0, 10).map(t => `• ${t.name}`).join("\n");
+    const overflow = targets.length > 10 ? `\n…and ${targets.length - 10} more.` : "";
+    const message = `Delete ${targets.length} skill${targets.length === 1 ? "" : "s"}?\n\n${preview}${overflow}\n\nSkill directories will be removed from disk. This cannot be undone.`;
+    const confirmed = await ask(message, { title: "Delete Skills", kind: "warning" });
+    if (!confirmed) return;
+
+    setBulkDeleting(true);
+    setBulkProgress({ done: 0, total: targets.length });
+    const failed: { name: string; error: string }[] = [];
+    for (let i = 0; i < targets.length; i++) {
+      const name = targets[i]!.name;
+      try {
+        await invoke("delete_skill", { name });
+        trackSkillDeleted(name);
+      } catch (err: any) {
+        failed.push({ name, error: String(err) });
+      }
+      setBulkProgress({ done: i + 1, total: targets.length });
+    }
+
+    // Close the drawer if its skill was in the deleted set.
+    if (selectedSkill && targets.some(t => t.name === selectedSkill)) {
+      setSelectedSkill(null);
+      setSkillContent("");
+      setSkillUsedBy(null);
+      setIsEditing(false);
+      setCurrentScan(null);
+    }
+
+    await loadSkills();
+    clearSelection();
+    setBulkDeleting(false);
+    setBulkProgress(null);
+    if (failed.length > 0) {
+      const detail = failed.slice(0, 5).map(f => `${f.name}: ${f.error}`).join("\n");
+      const more = failed.length > 5 ? `\n…and ${failed.length - 5} more.` : "";
+      setError(`Failed to delete ${failed.length} skill${failed.length === 1 ? "" : "s"}:\n${detail}${more}`);
+    } else {
+      setError(null);
+    }
+  };
+
   const handleDelete = async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const target = skills.find(s => s.name === name);
+    if (target && !isDeletable(target)) return;
     const externalSources = (target?.sources ?? []).filter(src => src !== "library");
     let message = `Delete skill "${name}"?`;
     if (externalSources.length > 0) {
@@ -956,290 +1028,440 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   const securityNoticeToneClass = getAssetSecurityNoticeClass(currentScan);
   const securityDismissButtonClass = getAssetSecurityDismissButtonClass(currentScan);
 
-  return (
-    <div className="flex h-full w-full bg-bg-base">
+  // ── Selection derived ─────────────────────────────────────────────────────
+  // The header checkbox only toggles rows the user is allowed to delete —
+  // undeletable rows never receive a checkbox, so their state is irrelevant.
+  const filteredDeletable = filteredSkills.filter(isDeletable);
+  const filteredSelectedCount = filteredDeletable.filter(s => selectedIds.has(s.name)).length;
+  const allFilteredSelected = filteredDeletable.length > 0 && filteredSelectedCount === filteredDeletable.length;
+  const someFilteredSelected = filteredSelectedCount > 0 && !allFilteredSelected;
+  const totalSelected = selectedIds.size;
+  const drawerOpen = isCreating || !!selectedSkill;
 
-      {/* ── Left Sidebar ─────────────────────────────────────────────────── */}
-      <div
-        className="flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50 relative"
-        style={{ width: sidebarWidth }}
+  const toggleSelectAllFiltered = () => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        for (const s of filteredDeletable) next.delete(s.name);
+      } else {
+        for (const s of filteredDeletable) next.add(s.name);
+      }
+      return next;
+    });
+  };
+
+  const closeDrawer = () => {
+    setIsCreating(false);
+    setIsEditing(false);
+    setSelectedSkill(null);
+    setSkillContent("");
+    setSkillUsedBy(null);
+    setNewSkillName("");
+    setNewSkillDescription("");
+    setFieldErrors({ name: null, description: null });
+    setCurrentScan(null);
+    setSecurityNotice(null);
+  };
+
+  const originLabel = (skill: SkillEntry): { label: string; className: string; title?: string } => {
+    if (skill.source) {
+      if (skill.source.kind === "bundled") {
+        return { label: "Bundled", className: "text-text-muted", title: "Shipped with Automatic" };
+      }
+      return { label: skill.source.source, className: "text-success", title: `Installed from ${skill.source.source}` };
+    }
+    if (skill.plugin_id) {
+      return { label: skill.plugin_id, className: "text-text-muted", title: `Provided by plugin ${skill.plugin_id}` };
+    }
+    return { label: "Local", className: "text-text-muted", title: "Created locally" };
+  };
+
+  const renderTableRow = (skill: SkillEntry) => {
+    const isRowSelected = selectedIds.has(skill.name);
+    const isFocused = selectedSkill === skill.name && !isCreating;
+    const deletable = isDeletable(skill);
+    const isRemote = !!skill.source;
+    const isExternalOnly = skill.sources.length > 0 && !skill.sources.includes("library");
+    const origin = originLabel(skill);
+    return (
+      <tr
+        key={skill.name}
+        onClick={() => loadSkillContent(skill.name)}
+        className={`group cursor-pointer border-b border-border-strong/20 last:border-b-0 transition-colors ${
+          isFocused ? "bg-bg-sidebar/60" : "hover:bg-bg-input/70"
+        }`}
       >
-        {/* Header */}
-        <div className="px-4 pt-4 pb-3 border-b border-border-strong/40">
-          <div className="flex items-center justify-between mb-3">
+        <td className="px-3 py-2 w-9" onClick={(e) => e.stopPropagation()}>
+          {deletable ? (
+            <input
+              type="checkbox"
+              checked={isRowSelected}
+              onChange={() => toggleSelected(skill.name)}
+              aria-label={`Select ${skill.name}`}
+              className="cursor-pointer accent-brand"
+            />
+          ) : (
+            <span
+              title={
+                skill.name === "automatic"
+                  ? "Built-in skill — cannot be deleted"
+                  : skill.source?.kind === "bundled"
+                    ? "Bundled with Automatic — cannot be deleted"
+                    : `Plugin-provided (${skill.plugin_id}) — cannot be deleted`
+              }
+            >
+              <Lock size={11} className="text-text-muted/60" />
+            </span>
+          )}
+        </td>
+        <td className="px-3 py-2 w-11">
+          <SkillAvatar name={skill.name} source={skill.source?.source} kind={skill.source?.kind} size={28} />
+        </td>
+        <td className="px-3 py-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[13px] font-medium text-text-base truncate">{skill.name}</span>
+            {recentIds.has(skill.name) && (
+              <span className="shrink-0 px-1.5 py-0.5 rounded bg-brand/15 text-brand text-[9px] font-semibold uppercase tracking-wider">New</span>
+            )}
+            {isExternalOnly && (
+              <span
+                className="shrink-0 px-1.5 py-0.5 rounded bg-warning/10 text-[9px] text-warning"
+                title="Skill lives outside Automatic's managed library. Import to sync it into projects."
+              >
+                External
+              </span>
+            )}
+            {skill.has_resources && (
+              <span title="Has additional resources" className="shrink-0 text-text-muted">
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
+                </svg>
+              </span>
+            )}
+          </div>
+        </td>
+        <td className="px-3 py-2">
+          <span
+            className={`inline-flex items-center gap-1 text-[11px] ${origin.className} truncate max-w-[200px]`}
+            title={origin.title}
+          >
+            {isRemote && skill.source!.kind !== "bundled" && <Globe size={10} className="shrink-0" />}
+            {skill.plugin_id && <Puzzle size={10} className="shrink-0" />}
+            <span className="truncate">{origin.label}</span>
+          </span>
+        </td>
+        <td className="px-3 py-2">
+          {skill.sources && skill.sources.length > 0 && (
+            <span className="inline-flex flex-wrap items-center gap-1">
+              {skill.sources.map(src => {
+                const label = src === "library"
+                  ? "library"
+                  : src === "agents"
+                    ? "~/.agents"
+                    : src === "claude"
+                      ? "~/.claude"
+                      : src;
+                return (
+                  <button
+                    key={src}
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      try {
+                        const sources = await invoke<{ id: string; path: string }[]>("list_skill_directories");
+                        const source = sources.find(s => s.id === src);
+                        if (source) {
+                          const skillDir = `${source.path}/${skill.name}`;
+                          await openPath(skillDir);
+                        }
+                      } catch (err) {
+                        console.error("Failed to open skill directory:", err);
+                      }
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-bg-base/50 text-[10px] text-text-muted hover:bg-brand/20 hover:text-brand transition-colors"
+                    title={`Open ${label} skill folder`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </span>
+          )}
+        </td>
+        <td className="px-3 py-2">
+          {skill.collection ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setCollectionFilter(collectionFilter === skill.collection ? null : skill.collection!);
+              }}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-icon-file-template/10 text-[10px] text-icon-file-template hover:bg-icon-file-template/20 transition-colors"
+              title={`Filter by collection: ${skill.collection}`}
+            >
+              <Tag size={9} />
+              <span className="truncate max-w-[120px]">{skill.collection}</span>
+            </button>
+          ) : (
+            <span className="text-[11px] text-text-muted/50">—</span>
+          )}
+        </td>
+        <td className="px-3 py-2 w-16 text-right" onClick={(e) => e.stopPropagation()}>
+          {deletable ? (
+            <button
+              onClick={(e) => handleDelete(skill.name, e)}
+              className="opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-danger rounded transition-all"
+              title="Delete skill"
+            >
+              <X size={13} />
+            </button>
+          ) : null}
+        </td>
+      </tr>
+    );
+  };
+
+  const recentSkills = filteredSkills.filter(s => recentIds.has(s.name));
+  const otherSkills = filteredSkills.filter(s => !recentIds.has(s.name));
+
+  return (
+    <div className="flex h-full w-full flex-col bg-bg-base">
+
+      {/* ── Top Toolbar ──────────────────────────────────────────────────── */}
+      <div className="shrink-0 border-b border-border-strong/40 bg-bg-input/40">
+        <div className="flex items-center justify-between px-4 pt-3 pb-2 gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
               Skills
             </span>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setShowImportDialog(true)}
-                className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-                title="Import Skill"
-              >
-                <Download size={14} />
-              </button>
-
-              <button
-                onClick={startCreateNew}
-                className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-                title="New Skill"
-              >
-                <Plus size={14} />
-              </button>
+            <div className="flex items-center gap-1 bg-bg-base rounded-md border border-border-strong/40 p-0.5">
+              {(["all", "remote", "local"] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                    filter === f
+                      ? "bg-bg-sidebar text-text-base"
+                      : "text-text-muted hover:text-text-base"
+                  }`}
+                >
+                  {f === "all" ? `All ${skills.length}` : f === "remote" ? `Remote ${remoteCount}` : `Local ${localCount}`}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Filter tabs */}
-          <div className="flex gap-1 mb-2">
-            {(["all", "remote", "local"] as const).map(f => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`flex-1 py-1 rounded text-[11px] font-medium transition-colors ${
-                  filter === f
-                    ? "bg-bg-sidebar text-text-base"
-                    : "text-text-muted hover:text-text-base"
-                }`}
-              >
-                {f === "all" ? `All ${skills.length}` : f === "remote" ? `Remote ${remoteCount}` : `Local ${localCount}`}
-              </button>
-            ))}
-          </div>
-
-          {/* Search */}
-          <div className="relative">
-            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Search skills…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-7 pr-7 py-1.5 rounded bg-bg-sidebar border border-border-strong/40 hover:border-border-strong focus:border-brand outline-none text-[12px] text-text-base placeholder-text-muted/60 transition-colors"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
-              >
-                <X size={11} />
-              </button>
-            )}
-          </div>
-
-          {/* Collection filter */}
-          {collections.length > 0 && (
-            <div className="relative mt-2">
-              <Tag size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-              <select
-                value={collectionFilter ?? ""}
-                onChange={e => setCollectionFilter(e.target.value || null)}
-                className="w-full pl-7 pr-7 py-1.5 rounded bg-bg-sidebar border border-border-strong/40 hover:border-border-strong focus:border-brand outline-none text-[12px] text-text-base transition-colors appearance-none cursor-pointer"
-              >
-                <option value="">All collections</option>
-                {collections.map(c => (
-                  <option key={c.name} value={c.name}>
-                    {c.name} ({c.skills.length})
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={11} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-            </div>
-          )}
-        </div>
-
-        {/* List */}
-        <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
-          {filteredSkills.length === 0 && !isCreating ? (
-            <div className="px-4 py-6 text-center">
-              <p className="text-[13px] text-text-muted">
-                {searchLower ? `No skills match "${search}".` : "No skills found."}
-              </p>
-            </div>
-          ) : (
-            <ul className="space-y-px px-2">
-              {isCreating && (
-                <li className="flex items-center gap-3 px-3 py-2.5 rounded-md text-[13px] bg-bg-sidebar text-text-base">
-                  <div className={ICONS.skill.iconBox}>
-                    <Code size={15} className={ICONS.skill.iconColor} />
-                  </div>
-                  <span className={newSkillName ? "text-text-base font-medium" : "italic text-text-muted"}>
-                    {newSkillName || "New Skill…"}
-                  </span>
-                </li>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="relative">
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search skills…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-56 h-7 pl-7 pr-7 rounded-md bg-bg-input border border-border-strong/50 hover:border-border-strong focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 text-[12px] text-text-base placeholder-text-muted/60 transition-colors"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
+                >
+                  <X size={11} />
+                </button>
               )}
-              {(() => {
-                const recentSkills = filteredSkills.filter(s => recentIds.has(s.name));
-                const otherSkills = filteredSkills.filter(s => !recentIds.has(s.name));
-                const renderSkill = (skill: SkillEntry) => {
-                  const isSelected = selectedSkill === skill.name && !isCreating;
-                  const isRemote = !!skill.source;
-                  const isExternalOnly = skill.sources.length > 0 && !skill.sources.includes("library");
-                  return (
-                    <li key={skill.name} className="group">
-                      <button
-                        onClick={() => loadSkillContent(skill.name)}
-                        className={`w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-md transition-colors ${
-                          isSelected ? "bg-bg-sidebar" : "hover:bg-bg-sidebar/50"
-                        }`}
-                      >
-                        <SkillAvatar name={skill.name} source={skill.source?.source} kind={skill.source?.kind} size={32} />
-                        <div className="flex-1 min-w-0">
-                        {/* Top row: name + action buttons */}
-                        <div className="flex items-center gap-2">
-                          <span className={`flex-1 text-[13px] font-medium truncate min-w-0 ${isSelected ? "text-text-base" : "text-text-base group-hover:text-text-base"}`}>
-                            {skill.name}
-                          </span>
-                          {/* Hover actions */}
-                          <span className="shrink-0 hidden group-hover:flex items-center gap-0.5">
-                            {skill.name !== "automatic" && !skill.plugin_id && (
-                            <span
-                              role="button"
-                              onClick={(e) => handleDelete(skill.name, e)}
-                              className="p-0.5 text-text-muted hover:text-danger rounded transition-colors"
-                              title="Delete"
-                            >
-                              <X size={11} />
-                            </span>
-                            )}
-                          </span>
-                        </div>
+            </div>
 
-                        {/* Bottom row: origin + location badges */}
-                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                          {isRemote ? (
-                            <span className="flex items-center gap-1 text-[10px] text-success">
-                              <Globe size={9} />
-                              <span className="truncate max-w-[120px]">{skill.source!.source}</span>
-                            </span>
-                          ) : null}
+            {collections.length > 0 && (
+              <div className="relative">
+                <Tag size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+                <select
+                  value={collectionFilter ?? ""}
+                  onChange={e => setCollectionFilter(e.target.value || null)}
+                  aria-label="Filter by collection"
+                  className="h-7 min-w-[170px] appearance-none rounded-md border border-border-strong/50 bg-bg-input pl-7 pr-7 text-[12px] text-text-base focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors"
+                >
+                  <option value="">All collections</option>
+                  {collections.map(c => (
+                    <option key={c.name} value={c.name}>
+                      {c.name} ({c.skills.length})
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+              </div>
+            )}
 
-                          {isExternalOnly && (
-                            <span
-                              className="px-1 py-0.5 rounded bg-warning/10 text-[9px] text-warning"
-                              title="Skill lives outside Automatic's managed library. Import to sync it into projects."
-                            >
-                              External
-                            </span>
-                          )}
+            <button
+              onClick={() => setShowImportDialog(true)}
+              className="flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-border-strong/50 bg-bg-input hover:bg-bg-sidebar text-[12px] text-text-base transition-colors"
+              title="Import Skill"
+            >
+              <Download size={12} /> Import
+            </button>
 
-                          {/* Source location badges */}
-                          {skill.sources && skill.sources.length > 0 && (
-                            <span className="flex items-center gap-1 text-[10px] text-text-muted">
-                              {skill.sources.map(src => {
-                                const label = src === "library"
-                                  ? "library"
-                                  : src === "agents"
-                                    ? "~/.agents"
-                                    : src === "claude"
-                                      ? "~/.claude"
-                                      : src;
-                                return (
-                                  <button
-                                    key={src}
-                                    onClick={async (e) => {
-                                      e.stopPropagation();
-                                      try {
-                                        const sources = await invoke<{ id: string; path: string }[]>("list_skill_directories");
-                                        const source = sources.find(s => s.id === src);
-                                        if (source) {
-                                          const skillDir = `${source.path}/${skill.name}`;
-                                          await openPath(skillDir);
-                                        }
-                                      } catch (err) {
-                                        console.error("Failed to open skill directory:", err);
-                                      }
-                                    }}
-                                    className="px-1 py-0.5 rounded bg-bg-base/50 text-[9px] hover:bg-brand/20 hover:text-brand cursor-pointer transition-colors"
-                                    title={`Open ${label} skill folder`}
-                                  >{label}
-                                  </button>
-                                );
-                              })}
-                            </span>
-                          )}
-
-                          {skill.collection && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setCollectionFilter(collectionFilter === skill.collection ? null : skill.collection!);
-                              }}
-                              className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-icon-file-template/10 text-[9px] text-icon-file-template hover:bg-icon-file-template/20 cursor-pointer transition-colors"
-                              title={`Collection: ${skill.collection}`}
-                            >
-                              <Tag size={8} />
-                              <span className="truncate max-w-[80px]">{skill.collection}</span>
-                            </button>
-                          )}
-
-                          {skill.plugin_id && (
-                            <span
-                              className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-bg-base/50 text-[9px] text-text-muted"
-                              title={`Installed by plugin: ${skill.plugin_id}`}
-                            >
-                              <Puzzle size={8} />
-                              <span className="truncate max-w-[80px]">{skill.plugin_id}</span>
-                            </span>
-                          )}
-
-                          {skill.has_resources && (
-                            <span title="Has additional resources">
-                              <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" className="text-text-muted">
-                                <path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/>
-                              </svg>
-                            </span>
-                          )}
-                        </div>
-                        </div>
-                      </button>
-                    </li>
-                  );
-                };
-                return (
-                  <>
-                    {recentSkills.length > 0 && <RecentlyAddedSectionLabel />}
-                    {recentSkills.map(renderSkill)}
-                    {recentSkills.length > 0 && otherSkills.length > 0 && <RecentlyAddedDivider />}
-                    {otherSkills.map(renderSkill)}
-                  </>
-                );
-              })()}
-            </ul>
-          )}
+            <button
+              onClick={startCreateNew}
+              className="flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-brand hover:bg-brand-hover text-white text-[12px] font-medium transition-colors"
+              title="New Skill"
+            >
+              <Plus size={12} /> New Skill
+            </button>
+          </div>
         </div>
 
-        {/* Resize handle */}
-        <div
-          onMouseDown={onMouseDown}
-          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-brand/40 active:bg-brand/60 transition-colors z-10"
-        />
+        {/* Selection action bar — appears whenever anything is selected */}
+        {totalSelected > 0 && (
+          <div className="flex items-center justify-between px-4 py-2 border-t border-border-strong/30 bg-brand/5">
+            <span className="text-[12px] text-text-base">
+              {totalSelected} skill{totalSelected === 1 ? "" : "s"} selected
+              {bulkProgress && (
+                <span className="ml-2 text-text-muted">
+                  · Deleting {bulkProgress.done}/{bulkProgress.total}…
+                </span>
+              )}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={clearSelection}
+                disabled={bulkDeleting}
+                className="h-7 px-2.5 rounded-md text-[12px] text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors disabled:opacity-50"
+              >
+                Clear selection
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting}
+                className="flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-danger/90 hover:bg-danger text-white text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-wait"
+              >
+                <X size={12} /> Delete selected
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* ── Right Pane ───────────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {error && (
-          <div className="border-b border-red-300/80 bg-red-50 p-3 text-[13px] text-red-950 flex items-center justify-between shrink-0">
-            <div className="whitespace-pre-wrap">{error}</div>
-            <button
-              onClick={() => setError(null)}
-              className="text-red-900/70 hover:text-red-950 transition-colors"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
-        {securityNotice && (
-          <div className={`${securityNoticeToneClass} p-3 text-[13px] border-b flex items-center justify-between shrink-0`}>
-            <div className="whitespace-pre-wrap">{securityNotice}</div>
-            <button
-              onClick={() => setSecurityNotice(null)}
-              className={securityDismissButtonClass}
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
+      {/* Error + security banners */}
+      {error && (
+        <div className="border-b border-red-300/80 bg-red-50 p-3 text-[13px] text-red-950 flex items-center justify-between shrink-0">
+          <div className="whitespace-pre-wrap">{error}</div>
+          <button
+            onClick={() => setError(null)}
+            className="text-red-900/70 hover:text-red-950 transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      {securityNotice && (
+        <div className={`${securityNoticeToneClass} p-3 text-[13px] border-b flex items-center justify-between shrink-0`}>
+          <div className="whitespace-pre-wrap">{securityNotice}</div>
+          <button
+            onClick={() => setSecurityNotice(null)}
+            className={securityDismissButtonClass}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
+      {/* ── Table ────────────────────────────────────────────────────────── */}
+      <div className="flex-1 min-h-0 overflow-auto custom-scrollbar">
+        {skills.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-center p-8">
+            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-icon-skill/12 border border-icon-skill/20 flex items-center justify-center">
+              <Code size={22} className={ICONS.skill.iconColor} strokeWidth={1.5} />
+            </div>
+            <h2 className="text-[15px] font-medium text-text-base mb-2">No skills yet</h2>
+            <p className="text-[13px] text-text-muted leading-relaxed max-w-xs mb-6">
+              Skills are reusable instruction sets that agents load on demand. Create your first skill or import one to get started.
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={startCreateNew}
+                className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors"
+              >
+                <Plus size={14} /> New Skill
+              </button>
+              <button
+                onClick={() => setShowImportDialog(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-bg-sidebar hover:bg-surface-hover border border-border-strong text-text-base rounded-lg text-[13px] font-medium transition-colors"
+              >
+                <Download size={14} /> Import
+              </button>
+            </div>
+          </div>
+        ) : filteredSkills.length === 0 ? (
+          <div className="h-full flex items-center justify-center px-4 py-6 text-center">
+            <p className="text-[13px] text-text-muted">
+              {searchLower ? `No skills match "${search}".` : "No skills match the current filter."}
+            </p>
+          </div>
+        ) : (
+          <table className="w-full border-collapse text-[12px]">
+            <thead className="sticky top-0 bg-bg-input/95 backdrop-blur z-10">
+              <tr className="border-b border-border-strong/40 text-left text-[11px] font-medium uppercase tracking-wide text-text-muted">
+                <th className="px-3 py-2 w-9">
+                  <input
+                    type="checkbox"
+                    checked={allFilteredSelected}
+                    ref={el => { if (el) el.indeterminate = someFilteredSelected; }}
+                    onChange={toggleSelectAllFiltered}
+                    disabled={filteredDeletable.length === 0}
+                    aria-label="Select all visible deletable skills"
+                    className="cursor-pointer accent-brand disabled:opacity-30"
+                  />
+                </th>
+                <th className="px-3 py-2 w-11"></th>
+                <th className="px-3 py-2 font-medium">Name</th>
+                <th className="px-3 py-2 font-medium">Origin</th>
+                <th className="px-3 py-2 font-medium">Locations</th>
+                <th className="px-3 py-2 font-medium">Collection</th>
+                <th className="px-3 py-2 w-16"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentSkills.length > 0 && (
+                <tr className="bg-bg-input/30">
+                  <td colSpan={7} className="px-3 py-1.5">
+                    <RecentlyAddedSectionLabel />
+                  </td>
+                </tr>
+              )}
+              {recentSkills.map(renderTableRow)}
+              {recentSkills.length > 0 && otherSkills.length > 0 && (
+                <tr>
+                  <td colSpan={7} className="px-3 py-1">
+                    <RecentlyAddedDivider />
+                  </td>
+                </tr>
+              )}
+              {otherSkills.map(renderTableRow)}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* ── Drawer ───────────────────────────────────────────────────────── */}
+      {drawerOpen && (
+        <>
+          <div
+            onClick={closeDrawer}
+            className="fixed inset-0 bg-black/40 z-40"
+            aria-hidden="true"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="fixed right-0 top-0 h-full w-[80vw] max-w-[1200px] min-w-[640px] bg-bg-base border-l border-border-strong/40 z-50 flex flex-col shadow-2xl"
+          >
+            <button
+              onClick={closeDrawer}
+              className="absolute top-2 right-2 z-10 p-1.5 rounded-md text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors"
+              aria-label="Close"
+              title="Close (Esc)"
+            >
+              <X size={14} />
+            </button>
+
+            <div className="flex-1 flex flex-col min-h-0">
         {isCreating ? (
           /* ── New Skill Form ─────────────────────────────────────────────── */
           <div className="flex-1 flex flex-col h-full min-h-0">
@@ -1636,38 +1858,11 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
               )}
             </div>
           </div>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-icon-skill/12 border border-icon-skill/20 flex items-center justify-center">
-              <Code size={22} className={ICONS.skill.iconColor} strokeWidth={1.5} />
-            </div>
-            <h2 className="text-[15px] font-medium text-text-base mb-2">
-              {skills.length === 0 ? "No skills yet" : "No skill selected"}
-            </h2>
-            <p className="text-[13px] text-text-muted leading-relaxed max-w-xs mb-6">
-              {skills.length === 0
-                ? "Skills are reusable instruction sets that agents load on demand. Create your first skill or import one to get started."
-                : "Select a skill from the list to view its contents, or create a new one."}
-            </p>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={startCreateNew}
-                className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors"
-              >
-                <Plus size={14} />
-                New Skill
-              </button>
-              <button
-                onClick={() => setShowImportDialog(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-bg-sidebar hover:bg-surface-hover border border-border-strong text-text-base rounded-lg text-[13px] font-medium transition-colors"
-              >
-                <Download size={14} />
-                Import
-              </button>
+        ) : null}
             </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
 
       <SkillImportDialog
         isOpen={showImportDialog}

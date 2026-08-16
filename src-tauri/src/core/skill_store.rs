@@ -480,6 +480,19 @@ fn get_skills_registry_path() -> Result<PathBuf, String> {
     Ok(super::paths::get_automatic_dir()?.join("skills.json"))
 }
 
+/// Returns `true` if the named skill was shipped with this build of
+/// Automatic (its registry entry has `kind == "bundled"`).  These are
+/// reinstalled from bundled assets and must not be user-deletable — a
+/// stray delete would remove the on-disk copy while the next launch
+/// silently reinstalls it, which reads to the user as the delete having
+/// been ignored.
+pub fn is_bundled_skill(name: &str) -> bool {
+    read_skill_sources()
+        .ok()
+        .and_then(|map| map.get(name).map(|src| src.kind == "bundled"))
+        .unwrap_or(false)
+}
+
 /// Read the full registry.  Returns an empty map if the file doesn't exist.
 pub fn read_skill_sources() -> Result<std::collections::HashMap<String, SkillSource>, String> {
     let path = get_skills_registry_path()?;

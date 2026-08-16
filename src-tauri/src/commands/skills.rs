@@ -36,6 +36,12 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
     if core::is_builtin_skill(name) {
         return Err(format!("Cannot delete built-in skill '{}'", name));
     }
+    if core::is_bundled_skill(name) {
+        return Err(format!(
+            "Cannot delete bundled skill '{}' — it ships with Automatic and would be reinstalled on next launch",
+            name
+        ));
+    }
     if let Some(pid) = core::plugin_id_for_skill(name) {
         return Err(format!(
             "Cannot delete skill '{}' — it is provided by plugin '{}'",
