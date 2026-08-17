@@ -53,6 +53,7 @@ import { InstructionConflictModal } from "../modals/InstructionConflictModal";
 import { CustomAssetConflictModal } from "../modals/CustomAssetConflictModal";
 import { SwitchToUnifiedModal } from "./SwitchToUnifiedModal";
 import { RebuildConfirmationModal } from "./RebuildConfirmationModal";
+import { OrphanConfigDialog } from "./OrphanConfigDialog";
 import { ApplyProjectTemplateModal } from "./ApplyProjectTemplateModal";
 import { SettingsPanel } from "./panels/SettingsPanel";
 import { MemoryPanel } from "./panels/MemoryPanel";
@@ -164,6 +165,13 @@ export function ProjectEditor({
   /** Tracks the name of the stub project saved during step 1 so it can be deleted on cancel. */
   const wizardStubName = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Orphan-config dialog: open when the picked directory has an on-disk
+  // `.automatic/project.json` that is not registered in Automatic. The user
+  // then chooses to import it, wipe it, or cancel.
+  const [orphanDialog, setOrphanDialog] = useState<{ directory: string; existingName: string; pendingName: string } | null>(null);
+  const [orphanBusy, setOrphanBusy] = useState(false);
+  const [orphanError, setOrphanError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameName, setRenameName] = useState("");
 
@@ -2084,6 +2092,115 @@ export function ProjectEditor({
     }
   };
 
+  // Runs the "save stub → autodetect → advance to step 2" flow that Step 1's
+  // Continue button and the orphan dialog's "start fresh" branch both need.
+  // Presumes the directory has already been screened by
+  // `inspect_project_directory` (or is being retried after a config wipe), so
+  // the caller owns the pre-check and error routing.
+  const runCreateFromDirectory = async (dir: string, name: string): Promise<boolean> => {
+    setNewName(name);
+    setWizardDiscovering(true);
+    setError(null);
+    try {
+      const stub = { ...emptyProject(name), directory: dir, name };
+      if (userId && !stub.created_by) stub.created_by = userId;
+      await invoke("save_project", {
+        name,
+        data: JSON.stringify(stub, null, 2),
+        creating: true,
+      });
+      wizardStubName.current = name;
+      const raw: string = await invoke("autodetect_project_dependencies", { name });
+      const detected = JSON.parse(raw) as Project;
+      const currentProject = project ?? emptyProject(name);
+      const mergedAgents = [
+        ...new Set([...currentProject.agents, ...detected.agents]),
+      ];
+      const mergedSkills = [
+        ...new Set([...currentProject.skills, ...detected.skills]),
+      ];
+      const mergedMcp = [
+        ...new Set([...currentProject.mcp_servers, ...detected.mcp_servers]),
+      ];
+      const detectedCustomSkills: CustomSkill[] = detected.custom_skills ?? [];
+      const existingCustomNames = new Set(
+        (currentProject.custom_skills ?? []).map((s) => s.name)
+      );
+      const mergedCustomSkills = [
+        ...(currentProject.custom_skills ?? []),
+        ...detectedCustomSkills.filter((s) => !existingCustomNames.has(s.name)),
+      ];
+      setProject({
+        ...currentProject,
+        name,
+        directory: dir,
+        agents: mergedAgents,
+        skills: mergedSkills,
+        custom_skills: mergedCustomSkills,
+        mcp_servers: mergedMcp,
+      });
+      setWizardDiscoveredAgents(detected.agents);
+      setWizardStep(2);
+      return true;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isDuplicate =
+        msg.includes("already exists")
+        || msg.includes("already registered");
+      setError(isDuplicate ? msg : `Autodetect failed: ${msg}`);
+      return false;
+    } finally {
+      setWizardDiscovering(false);
+    }
+  };
+
+  const handleOrphanImport = async () => {
+    if (!orphanDialog) return;
+    setOrphanBusy(true);
+    setOrphanError(null);
+    try {
+      const importedName: string = await invoke("import_existing_project", {
+        directory: orphanDialog.directory,
+      });
+      setOrphanDialog(null);
+      setProject(null);
+      setDirty(false);
+      setError(null);
+      await reloadProjects();
+      setIsCreating(false);
+      setSelectedName(importedName);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setOrphanError(msg);
+    } finally {
+      setOrphanBusy(false);
+    }
+  };
+
+  const handleOrphanStartFresh = async () => {
+    if (!orphanDialog) return;
+    setOrphanBusy(true);
+    setOrphanError(null);
+    try {
+      await invoke("delete_project_config", { directory: orphanDialog.directory });
+      const dir = orphanDialog.directory;
+      const name = orphanDialog.pendingName;
+      setOrphanDialog(null);
+      await runCreateFromDirectory(dir, name);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setOrphanError(msg);
+    } finally {
+      setOrphanBusy(false);
+    }
+  };
+
+  const handleOrphanCancel = () => {
+    if (orphanBusy) return;
+    setOrphanDialog(null);
+    setOrphanError(null);
+  };
+
   const startRename = () => {
     if (!selectedName || isCreating) return;
     setRenameName(selectedName);
@@ -3054,66 +3171,40 @@ export function ProjectEditor({
                               const folderName = dir.split("/").filter(Boolean).pop() ?? "";
                               const name = newName.trim() || folderName;
                               setNewName(name);
-                              setWizardDiscovering(true);
                               setError(null);
+                              setWizardDiscovering(true);
+                              let status: { kind: "Available" }
+                                | { kind: "RegisteredHere"; name: string }
+                                | { kind: "OrphanConfig"; name: string }
+                                | null = null;
                               try {
-                                // Save minimal stub so autodetect can read it back.
-                                // `creating: true` refuses to overwrite an existing
-                                // project name or directory already in the registry.
-                                const stub = { ...emptyProject(name), directory: dir, name };
-                                if (userId && !stub.created_by) stub.created_by = userId;
-                                await invoke("save_project", {
-                                  name,
-                                  data: JSON.stringify(stub, null, 2),
-                                  creating: true,
-                                });
-                                // Track stub name so cancelCreate can clean it up if the user navigates away
-                                wizardStubName.current = name;
-                                // Run read-only autodetection
-                                const raw: string = await invoke("autodetect_project_dependencies", { name });
-                                const detected = JSON.parse(raw) as Project;
-                                // Merge: start from current project state (which holds any
-                                // template-applied skills/MCP/agents), then add autodetected
-                                // items on top. Use emptyProject only for structural defaults.
-                                const currentProject = project ?? emptyProject(name);
-                                const mergedAgents = [
-                                  ...new Set([...currentProject.agents, ...detected.agents]),
-                                ];
-                                const mergedSkills = [
-                                  ...new Set([...currentProject.skills, ...detected.skills]),
-                                ];
-                                const mergedMcp = [
-                                  ...new Set([...currentProject.mcp_servers, ...detected.mcp_servers]),
-                                ];
-                                const detectedCustomSkills: CustomSkill[] = detected.custom_skills ?? [];
-                                const existingCustomNames = new Set(
-                                  (currentProject.custom_skills ?? []).map((s) => s.name)
-                                );
-                                const mergedCustomSkills = [
-                                  ...(currentProject.custom_skills ?? []),
-                                  ...detectedCustomSkills.filter((s) => !existingCustomNames.has(s.name)),
-                                ];
-                                setProject({
-                                  ...currentProject,
-                                  name,
-                                  directory: dir,
-                                  agents: mergedAgents,
-                                  skills: mergedSkills,
-                                  custom_skills: mergedCustomSkills,
-                                  mcp_servers: mergedMcp,
-                                });
-                                setWizardDiscoveredAgents(detected.agents);
-                                setWizardStep(2);
+                                status = await invoke("inspect_project_directory", { directory: dir });
                               } catch (err: unknown) {
                                 const msg = err instanceof Error ? err.message : String(err);
-                                const isDuplicate =
-                                  msg.includes("already exists")
-                                  || msg.includes("already registered")
-                                  || msg.includes("already has an Automatic project");
-                                setError(isDuplicate ? msg : `Autodetect failed: ${msg}`);
-                              } finally {
+                                setError(`Failed to inspect directory: ${msg}`);
                                 setWizardDiscovering(false);
+                                return;
                               }
+                              if (status && status.kind === "RegisteredHere") {
+                                setError(
+                                  `This directory is already registered as project '${status.name}'. Open it from the project list.`
+                                );
+                                setWizardDiscovering(false);
+                                return;
+                              }
+                              if (status && status.kind === "OrphanConfig") {
+                                setWizardDiscovering(false);
+                                setOrphanError(null);
+                                setOrphanDialog({
+                                  directory: dir,
+                                  existingName: status.name,
+                                  pendingName: name,
+                                });
+                                return;
+                              }
+                              // Available — the spinner stays on for the create flow.
+                              setWizardDiscovering(false);
+                              await runCreateFromDirectory(dir, name);
                             }}
                             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-not-allowed text-white text-[13px] font-medium rounded shadow-sm transition-colors"
                           >
@@ -3909,6 +4000,18 @@ export function ProjectEditor({
             setSyncStatus(null);
           }
         }}
+      />
+    )}
+
+    {orphanDialog && (
+      <OrphanConfigDialog
+        directory={orphanDialog.directory}
+        existingName={orphanDialog.existingName}
+        busy={orphanBusy}
+        error={orphanError}
+        onImport={handleOrphanImport}
+        onStartFresh={handleOrphanStartFresh}
+        onCancel={handleOrphanCancel}
       />
     )}
 

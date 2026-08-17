@@ -350,6 +350,32 @@ async fn run_ai_recommendations_bg(project: &str, force: bool) -> Result<(), Str
     Ok(())
 }
 
+/// Classify a candidate project directory before the Add Project wizard
+/// commits. Returns a `DirectoryStatus` variant tagged with `kind`
+/// (`"Available"`, `"RegisteredHere"`, or `"OrphanConfig"`) so the frontend
+/// can proceed straight to create, redirect to an existing project, or
+/// prompt the user to import or discard an orphan on-disk config.
+#[tauri::command]
+pub fn inspect_project_directory(directory: &str) -> Result<core::DirectoryStatus, String> {
+    core::inspect_project_directory(directory)
+}
+
+/// Adopt an existing `.automatic/project.json` as a registered project.
+/// Returns the adopted project name.
+#[tauri::command]
+pub fn import_existing_project(directory: &str) -> Result<String, String> {
+    let name = core::import_existing_project(directory)?;
+    activity::log(&name, ActivityEvent::ProjectCreated, "Project imported", &name);
+    Ok(name)
+}
+
+/// Delete `<directory>/.automatic/project.json` so the wizard can start
+/// fresh in a directory that previously held an orphan config.
+#[tauri::command]
+pub fn delete_project_config(directory: &str) -> Result<(), String> {
+    core::delete_project_config(directory)
+}
+
 #[tauri::command]
 pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     core::rename_project(old_name, new_name)?;

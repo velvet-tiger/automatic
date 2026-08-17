@@ -401,8 +401,11 @@ pub fn find_project_by_directory(directory: &str) -> Result<Option<String>, Stri
     Ok(None)
 }
 
-/// Refuse to create a project that would overwrite an existing registry entry
-/// or on-disk Automatic config. Used by the Add Project wizard.
+/// Refuse to create a project that would overwrite an existing registry entry.
+/// Used by the Add Project wizard. Orphan on-disk configs — a
+/// `.automatic/project.json` with no registry entry — are handled upstream in
+/// the wizard via [`inspect_project_directory`], so this check does not
+/// consult the disk.
 pub fn assert_can_create_project(name: &str, directory: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid project name".into());
@@ -428,13 +431,151 @@ pub fn assert_can_create_project(name: &str, directory: &str) -> Result<(), Stri
         ));
     }
 
+    Ok(())
+}
+
+/// Result of the wizard's pre-check on a candidate project directory. The
+/// frontend branches on `kind` to decide whether to proceed straight to
+/// create, redirect the user to an existing project, or prompt about an
+/// orphan on-disk config.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind")]
+pub enum DirectoryStatus {
+    /// No on-disk config, no registry hit — safe to create.
+    Available,
+    /// A registered project already points at this directory.
+    RegisteredHere { name: String },
+    /// `.automatic/project.json` exists on disk but no registry entry
+    /// references this directory. `name` is a best-effort read from the
+    /// on-disk config's `name` field (falls back to the directory basename
+    /// when the field is missing or the JSON is malformed).
+    OrphanConfig { name: String },
+}
+
+/// Classify a candidate directory for the Add Project wizard. Distinguishes
+/// registered projects from orphan on-disk configs so the frontend can offer
+/// a real choice instead of a dead-end refusal.
+pub fn inspect_project_directory(directory: &str) -> Result<DirectoryStatus, String> {
+    if directory.is_empty() {
+        return Ok(DirectoryStatus::Available);
+    }
+
+    if let Some(existing) = find_project_by_directory(directory)? {
+        return Ok(DirectoryStatus::RegisteredHere { name: existing });
+    }
+
+    let config_path = project_config_path(directory);
+    if !config_path.exists() {
+        return Ok(DirectoryStatus::Available);
+    }
+
+    let name = read_orphan_config_name(&config_path).unwrap_or_else(|| {
+        PathBuf::from(directory)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default()
+    });
+    Ok(DirectoryStatus::OrphanConfig { name })
+}
+
+fn read_orphan_config_name(config_path: &std::path::Path) -> Option<String> {
+    let raw = fs::read_to_string(config_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    value
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Adopt an on-disk project config as a new registry entry. Reads
+/// `<directory>/.automatic/project.json`, refuses on invalid or colliding
+/// names, and writes the lightweight `{name, directory}` pointer to
+/// `~/.automatic/projects/{name}.json`. Returns the adopted project name.
+/// The on-disk config is left untouched.
+pub fn import_existing_project(directory: &str) -> Result<String, String> {
+    if directory.is_empty() {
+        return Err("A project directory is required to import.".into());
+    }
+
+    let config_path = project_config_path(directory);
+    if !config_path.exists() {
+        return Err(format!(
+            "No Automatic configuration was found at {}.",
+            config_path.display()
+        ));
+    }
+
+    let raw = fs::read_to_string(&config_path).map_err(|e| {
+        format!(
+            "Failed to read {}: {}",
+            config_path.display(),
+            e
+        )
+    })?;
+    let project: Project = serde_json::from_str(&raw)
+        .map_err(|e| format!("The existing project.json could not be parsed: {}", e))?;
+
+    let name = project.name.trim();
+    if name.is_empty() {
+        return Err("The existing project.json has no name and cannot be imported.".into());
+    }
+    if !is_valid_name(name) {
+        return Err(format!(
+            "The existing project.json has an invalid name ('{}') and cannot be imported.",
+            name
+        ));
+    }
+
+    let projects_dir = get_projects_dir()?;
+    if !projects_dir.exists() {
+        fs::create_dir_all(&projects_dir).map_err(|e| e.to_string())?;
+    }
+    let registry_path = projects_dir.join(format!("{}.json", name));
+    if registry_path.exists() {
+        return Err(format!(
+            "A project named '{}' is already registered. Rename or remove it before importing.",
+            name
+        ));
+    }
+
+    let ref_data = serde_json::json!({
+        "name": name,
+        "directory": directory,
+    });
+    let ref_pretty = serde_json::to_string_pretty(&ref_data).map_err(|e| e.to_string())?;
+    fs::write(&registry_path, &ref_pretty).map_err(|e| e.to_string())?;
+
+    Ok(name.to_string())
+}
+
+/// Delete `<directory>/.automatic/project.json` and, if the enclosing
+/// `.automatic/` directory is empty afterwards, remove it too. Idempotent —
+/// succeeds when the file is already absent.
+pub fn delete_project_config(directory: &str) -> Result<(), String> {
+    if directory.is_empty() {
+        return Err("A project directory is required.".into());
+    }
+
     let config_path = project_config_path(directory);
     if config_path.exists() {
-        return Err(
-            "This directory already has an Automatic project configuration. \
-             Open the existing project from the list, or remove `.automatic/project.json` if you intend to start over."
-                .into(),
-        );
+        fs::remove_file(&config_path).map_err(|e| {
+            format!(
+                "Failed to delete {}: {}",
+                config_path.display(),
+                e
+            )
+        })?;
+    }
+
+    let automatic_dir = PathBuf::from(directory).join(".automatic");
+    if automatic_dir.exists() {
+        if let Ok(mut entries) = fs::read_dir(&automatic_dir) {
+            if entries.next().is_none() {
+                let _ = fs::remove_dir(&automatic_dir);
+            }
+        }
     }
 
     Ok(())
@@ -1157,7 +1298,7 @@ mod tests {
     }
 
     #[test]
-    fn assert_can_create_rejects_existing_on_disk_config() {
+    fn assert_can_create_allows_orphan_on_disk_config() {
         use crate::core::paths::with_test_home;
 
         let home = tempfile::tempdir().expect("tempdir");
@@ -1172,12 +1313,210 @@ mod tests {
             .expect("write config");
             let dir = project_dir.to_str().unwrap().to_string();
 
-            let err = assert_can_create_project("fresh", &dir)
-                .expect_err("on-disk project.json should be rejected");
+            // An orphan on-disk config is no longer a blocker — the wizard
+            // handles it via inspect_project_directory + user choice.
+            assert_can_create_project("fresh", &dir)
+                .expect("orphan on-disk config must not block creation");
+        });
+    }
+
+    #[test]
+    fn inspect_project_directory_reports_available_for_empty_dir() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project_dir = home.path().join("blank");
+            fs::create_dir_all(&project_dir).expect("mkdir");
+            let dir = project_dir.to_str().unwrap().to_string();
+
+            let status = inspect_project_directory(&dir).expect("inspect");
+            assert!(matches!(status, DirectoryStatus::Available), "unexpected status: {:?}", status);
+        });
+    }
+
+    #[test]
+    fn inspect_project_directory_reports_registered_here() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project_dir = home.path().join("registered");
+            fs::create_dir_all(&project_dir).expect("mkdir");
+            let dir = project_dir.to_str().unwrap().to_string();
+
+            let project = Project {
+                name: "alpha".to_string(),
+                directory: dir.clone(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                ..Default::default()
+            };
+            let data = serde_json::to_string(&project).expect("serialize");
+            save_project("alpha", &data).expect("save");
+
+            let status = inspect_project_directory(&dir).expect("inspect");
+            match status {
+                DirectoryStatus::RegisteredHere { name } => assert_eq!(name, "alpha"),
+                other => panic!("unexpected status: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn inspect_project_directory_reports_orphan_config_with_name() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project_dir = home.path().join("orphan");
+            let automatic_dir = project_dir.join(".automatic");
+            fs::create_dir_all(&automatic_dir).expect("mkdir");
+            fs::write(
+                automatic_dir.join("project.json"),
+                r#"{"name":"legacy-name","directory":"whatever"}"#,
+            )
+            .expect("write config");
+            let dir = project_dir.to_str().unwrap().to_string();
+
+            let status = inspect_project_directory(&dir).expect("inspect");
+            match status {
+                DirectoryStatus::OrphanConfig { name } => assert_eq!(name, "legacy-name"),
+                other => panic!("unexpected status: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn inspect_project_directory_falls_back_to_folder_name_on_malformed_json() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project_dir = home.path().join("orphan-broken");
+            let automatic_dir = project_dir.join(".automatic");
+            fs::create_dir_all(&automatic_dir).expect("mkdir");
+            fs::write(automatic_dir.join("project.json"), "{ not json").expect("write");
+            let dir = project_dir.to_str().unwrap().to_string();
+
+            let status = inspect_project_directory(&dir).expect("inspect");
+            match status {
+                DirectoryStatus::OrphanConfig { name } => assert_eq!(name, "orphan-broken"),
+                other => panic!("unexpected status: {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn import_existing_project_registers_the_on_disk_name() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project_dir = home.path().join("adopt-me");
+            let automatic_dir = project_dir.join(".automatic");
+            fs::create_dir_all(&automatic_dir).expect("mkdir");
+            let dir = project_dir.to_str().unwrap().to_string();
+            let full = Project {
+                name: "adopted".to_string(),
+                directory: dir.clone(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                ..Default::default()
+            };
+            fs::write(
+                automatic_dir.join("project.json"),
+                serde_json::to_string(&full).expect("serialize"),
+            )
+            .expect("write config");
+
+            let name = import_existing_project(&dir).expect("import");
+            assert_eq!(name, "adopted");
+
+            // The registry pointer must now exist and point at this dir.
+            let projects_dir = get_projects_dir().expect("projects dir");
+            let pointer = projects_dir.join("adopted.json");
+            assert!(pointer.exists(), "registry pointer must be written");
+            let raw = fs::read_to_string(&pointer).expect("read pointer");
+            let value: serde_json::Value =
+                serde_json::from_str(&raw).expect("parse pointer");
+            assert_eq!(value["name"].as_str(), Some("adopted"));
+            assert_eq!(value["directory"].as_str(), Some(dir.as_str()));
+        });
+    }
+
+    #[test]
+    fn import_existing_project_rejects_name_collision() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            // Pre-register a project with the same name.
+            let existing_dir = home.path().join("existing");
+            fs::create_dir_all(&existing_dir).expect("mkdir");
+            let existing = Project {
+                name: "clash".to_string(),
+                directory: existing_dir.to_str().unwrap().to_string(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                ..Default::default()
+            };
+            save_project(
+                "clash",
+                &serde_json::to_string(&existing).expect("serialize"),
+            )
+            .expect("save existing");
+
+            // Now try to import an orphan whose name collides.
+            let project_dir = home.path().join("orphan-clash");
+            let automatic_dir = project_dir.join(".automatic");
+            fs::create_dir_all(&automatic_dir).expect("mkdir");
+            fs::write(
+                automatic_dir.join("project.json"),
+                r#"{"name":"clash","directory":"whatever"}"#,
+            )
+            .expect("write");
+
+            let dir = project_dir.to_str().unwrap().to_string();
+            let err = import_existing_project(&dir).expect_err("collision should fail");
+            assert!(err.contains("already registered"), "unexpected error: {err}");
+        });
+    }
+
+    #[test]
+    fn delete_project_config_removes_file_and_empty_dir() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project_dir = home.path().join("wipe-me");
+            let automatic_dir = project_dir.join(".automatic");
+            fs::create_dir_all(&automatic_dir).expect("mkdir");
+            fs::write(automatic_dir.join("project.json"), "{}").expect("write");
+            let dir = project_dir.to_str().unwrap().to_string();
+
+            delete_project_config(&dir).expect("delete");
             assert!(
-                err.contains("already has an Automatic project"),
-                "unexpected error: {err}"
+                !automatic_dir.join("project.json").exists(),
+                "project.json must be gone"
             );
+            assert!(
+                !automatic_dir.exists(),
+                ".automatic must be removed when empty"
+            );
+        });
+    }
+
+    #[test]
+    fn delete_project_config_is_idempotent() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project_dir = home.path().join("nothing-here");
+            fs::create_dir_all(&project_dir).expect("mkdir");
+            let dir = project_dir.to_str().unwrap().to_string();
+            delete_project_config(&dir).expect("no-op delete should succeed");
         });
     }
 
