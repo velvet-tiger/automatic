@@ -26,22 +26,7 @@ Reference and design documentation for the Automatic desktop app. Source-of-trut
 
 - [Upstream Audit — 2026-07-30](./agents/upstream-audit-2026-07-30.md) — every supported agent checked against its vendor's current documentation, with the resulting gap list.
 - [Agent Gap Remediation Plan](./agents/agent-gap-remediation-plan.md) — phased checklist closing the audit findings, with dependencies so the work can be split up.
-- [Agent Reference Index](./agents/README.md) — supported agents, instructions files, MCP config paths, skills and sub-agents directories.
-  - [Claude Code](./agents/claude-code.md)
-  - [Codex CLI](./agents/codex-cli.md)
-  - [Cursor](./agents/cursor.md)
-  - [Gemini CLI](./agents/gemini-cli.md)
-  - [GitHub Copilot](./agents/github-copilot.md)
-  - [Cline](./agents/cline.md)
-  - [Kilo Code](./agents/kilo-code.md)
-  - [Kiro](./agents/kiro.md)
-  - [Junie](./agents/junie.md)
-  - [Goose](./agents/goose.md)
-  - [Warp](./agents/warp.md)
-  - [Antigravity](./agents/antigravity.md)
-  - [OpenCode](./agents/opencode.md)
-  - [Droid](./agents/droid.md)
-- [Sub-Agent Format Reference](./sub-agents/formats.md) — file formats, storage locations, and frontmatter schemas per agent.
+- **Per-agent format reference** — lives in the sibling `automatic-meta` repo at `general/agents/`. Start at that repo's `INDEX.md` → "Agent reference"; the index there lists every supported agent (Claude Code, Codex CLI, Cursor, Gemini CLI, GitHub Copilot, Cline, Kilo, Kiro, Junie, Goose, Warp, Antigravity, OpenCode, Droid, Pi, Z Code, Zed). The code in `src-tauri/src/agent/*.rs` is the source of truth; the meta reference is kept in sync with it.
 
 ## Version 2.0
 
@@ -49,9 +34,7 @@ Reference and design documentation for the Automatic desktop app. Source-of-trut
 
 ## Plans (in flight / proposed)
 
-- [Projects.tsx — Phase 2 Refactor Plan](./projects-phase2-refactor.md) — test-harness-first split of the projects screen.
-- [Multi-Agent Support in Settings > Agents](./plans/multi-agent/plan.md) — adding GitHub Models, Cloudflare, Z.ai, OpenCode Zen, OpenAI, and an AI Gateway router.
-- [Webapp Library Rebuild — Asset Specification](./plans/library-rebuild/webapp-library-spec.md) — per-asset reference (Templates, Instructions, Rules, Sub-Agents, Commands, Hooks, Skills, MCP Servers, Providers, Tools) for re-implementing the Library in the companion webapp.
+Cross-repo plans live in `automatic-meta` under `general/plans/`. Notable in-flight material there includes the cloud-sync contract, the webapp library rebuild specification, and the projects sync contract. See that repo's `INDEX.md` for the current list.
 
 ## Examples
 
