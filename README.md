@@ -195,7 +195,7 @@ The bundled `automatic` CLI ships as a fourth mode of the desktop binary, alongs
 
 ## Supported Agent Tools
 
-Automatic syncs configuration into 17 agent tools. The matrix below reflects what each tool's configuration format actually supports — `✓` means Automatic writes that surface, `—` means the tool does not expose it (or manages it through a separate global config Automatic does not own).
+Automatic syncs configuration into 18 agent tools. The matrix below reflects what each tool's configuration format actually supports — `✓` means Automatic writes that surface, `—` means the tool does not expose it (or manages it through a separate global config Automatic does not own).
 
 | Tool | Skills | Project instructions | MCP servers | Sub-agents | Commands |
 |---|---|---|---|---|---|
@@ -205,6 +205,7 @@ Automatic syncs configuration into 17 agent tools. The matrix below reflects wha
 | GitHub Copilot | ✓ | ✓ | ✓ | — | ✓ |
 | Codex CLI | ✓ | ✓ | ✓ | ✓ | — |
 | Cursor | ✓ | ✓ | ✓ | ✓ | — |
+| Kimi Code | ✓ | ✓ | ✓ | ✓ | — |
 | Zed | ✓ | ✓ | ✓ | ✓ | — |
 | Pi | ✓ | ✓ | ✓ | ✓ | — |
 | Droid | ✓ | ✓ | ✓ | — | — |

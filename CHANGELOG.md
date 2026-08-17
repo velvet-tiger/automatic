@@ -6,6 +6,7 @@ All notable changes to Automatic are documented here.
 
 ### Added
 
+- New agent tool: Kimi Code (Moonshot AI's coding CLI, www.kimi.com/code). Syncs project instructions to the shared `AGENTS.md`, skills to the cross-tool `.agents/skills/` hub Kimi reads natively, MCP servers to a dedicated `.kimi-code/mcp.json` under `mcpServers` (stdio, HTTP, and SSE transports), and sub-agents to `.kimi-code/agents/`. Commands and hooks are deliberately not synced this release: Kimi's slash-command surface overlaps with skills (`/skill:<name>`), and hooks are documented only at the user scope (`~/.kimi-code/config.toml`), which project sync must not touch.
 - New agent tool: Z Code (Z.ai's desktop agentic development environment, zcode.z.ai). Syncs project instructions to the shared `AGENTS.md`, skills to `.zcode/skills/`, and MCP servers merged into the shared `.zcode/config.json` under `mcpServers` — the user's other config keys are preserved on both sync and removal. Hooks, commands, and sub-agents are deliberately not synced: Z Code ignores project-level hooks for security, and its workspace-level command/sub-agent paths are undocumented (sub-agents are beta at workspace scope).
 
 ## [1.19.0] - 2026-08-16

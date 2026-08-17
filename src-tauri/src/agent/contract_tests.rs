@@ -337,6 +337,7 @@ copilot | GitHub Copilot (Beta) | .github/copilot-instructions.md | skills,instr
 goose | Goose (Beta) | AGENTS.md | skills,instructions | - | - | .agents/skills
 junie | Junie (Beta) | .junie/AGENTS.md | skills,instructions,mcp_servers | - | - | .junie/skills,.agents/skills
 kilo | Kilo (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .agents/skills
+kimi | Kimi Code | AGENTS.md | skills,instructions,mcp_servers,agents | .kimi-code/agents | - | .agents/skills
 kiro | Kiro (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents | .kiro/agents | - | .kiro/skills
 opencode | OpenCode | AGENTS.md | skills,instructions,mcp_servers,agents,commands | .opencode/agents | .opencode/commands | .agents/skills
 pi | Pi (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents | .pi/agents | - | .pi/skills

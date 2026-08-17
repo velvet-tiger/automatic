@@ -24,6 +24,7 @@ mod github_copilot;
 mod goose;
 mod junie;
 mod kilo_code;
+mod kimi_code;
 mod kiro;
 #[cfg(test)]
 mod mcp_format_tests;
@@ -52,6 +53,7 @@ pub use github_copilot::GitHubCopilot;
 pub use goose::Goose;
 pub use junie::Junie;
 pub use kilo_code::KiloCode;
+pub use kimi_code::KimiCode;
 pub use kiro::Kiro;
 pub use opencode::{
     clean_opencode_snapshots, clear_opencode_cache, CleanSnapshotsResult, ClearCacheResult,
@@ -583,6 +585,7 @@ pub fn all() -> Vec<&'static dyn Agent> {
         &KiloCode,
         &Junie,
         &Cline,
+        &KimiCode,
         &Kiro,
         &GeminiCli,
         &Antigravity,

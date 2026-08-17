@@ -106,6 +106,7 @@ const AGENT_OPTIONS = [
   { id: "goose", label: "Goose" },
   { id: "junie", label: "Junie" },
   { id: "kilo", label: "Kilo" },
+  { id: "kimi", label: "Kimi Code" },
   { id: "kiro", label: "Kiro" },
   { id: "opencode", label: "OpenCode" },
   { id: "pi", label: "Pi" },
