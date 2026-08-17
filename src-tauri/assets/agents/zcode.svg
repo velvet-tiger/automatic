@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">
+  <!-- Z mark: top bar, diagonal stroke, bottom bar as a single polygon -->
+  <path fill="#fff" d="
+    M165 165
+    H635
+    V282
+    L385 518
+    H635
+    V635
+    H165
+    V518
+    L415 282
+    H165
+    Z
+  "/>
+</svg>

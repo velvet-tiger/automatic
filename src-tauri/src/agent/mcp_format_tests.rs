@@ -2,8 +2,8 @@
 //!
 //! Every agent writes MCP servers in its own dialect: `mcpServers` in a
 //! dedicated file (Claude Code, Cursor, Junie, Kiro, Kilo Code, Droid, Pi),
-//! `mcpServers` merged into a shared settings file (Gemini CLI), `servers` in
-//! `.vscode/mcp.json` (GitHub Copilot), `context_servers` in
+//! `mcpServers` merged into a shared settings file (Gemini CLI, Z Code),
+//! `servers` in `.vscode/mcp.json` (GitHub Copilot), `context_servers` in
 //! `.zed/settings.json` (Zed), `mcp` in `opencode.json`, TOML for Codex CLI,
 //! and nothing at all for the agents that keep MCP config outside the project
 //! (Cline, Goose, Warp, Antigravity).

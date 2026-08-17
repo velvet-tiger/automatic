@@ -51,6 +51,7 @@ export default defineConfig(async () => ({
         "**/.antigravity/**",
         "**/.opencode/**",
         "**/.warp/**",
+        "**/.zcode/**",
         "**/.zed/**",
         "**/AGENTS.md",
         "**/CLAUDE.md",

@@ -4,6 +4,10 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- New agent tool: Z Code (Z.ai's desktop agentic development environment, zcode.z.ai). Syncs project instructions to the shared `AGENTS.md`, skills to `.zcode/skills/`, and MCP servers merged into the shared `.zcode/config.json` under `mcpServers` — the user's other config keys are preserved on both sync and removal. Hooks, commands, and sub-agents are deliberately not synced: Z Code ignores project-level hooks for security, and its workspace-level command/sub-agent paths are undocumented (sub-agents are beta at workspace scope).
+
 ## [1.19.0] - 2026-08-16
 
 ### Added

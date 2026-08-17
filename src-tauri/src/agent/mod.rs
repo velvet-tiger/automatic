@@ -30,6 +30,7 @@ mod mcp_format_tests;
 mod opencode;
 mod pi;
 mod warp;
+mod zcode;
 mod zed;
 
 use serde::Serialize;
@@ -58,6 +59,7 @@ pub use opencode::{
 };
 pub use pi::Pi;
 pub use warp::Warp;
+pub use zcode::ZCode;
 pub use zed::Zed;
 
 // ── Capabilities ─────────────────────────────────────────────────────────────
@@ -590,6 +592,7 @@ pub fn all() -> Vec<&'static dyn Agent> {
         &OpenCode,
         &Pi,
         &Warp,
+        &ZCode,
         &Zed,
     ];
     agents.sort_by(|a, b| a.label().to_lowercase().cmp(&b.label().to_lowercase()));

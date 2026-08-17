@@ -133,7 +133,7 @@ Browse, search, and install community resources:
 
 ### Project Sync
 
-- Sync configuration into 16 supported agent tools with one click
+- Sync configuration into 17 supported agent tools with one click
 - Auto-detect installed agents and import their existing MCP server configs
 - Detect configuration drift when on-disk files diverge from saved state
 - Rebuild or recover configuration when drift is detected
@@ -195,7 +195,7 @@ The bundled `automatic` CLI ships as a fourth mode of the desktop binary, alongs
 
 ## Supported Agent Tools
 
-Automatic syncs configuration into 16 agent tools. The matrix below reflects what each tool's configuration format actually supports — `✓` means Automatic writes that surface, `—` means the tool does not expose it (or manages it through a separate global config Automatic does not own).
+Automatic syncs configuration into 17 agent tools. The matrix below reflects what each tool's configuration format actually supports — `✓` means Automatic writes that surface, `—` means the tool does not expose it (or manages it through a separate global config Automatic does not own).
 
 | Tool | Skills | Project instructions | MCP servers | Sub-agents | Commands |
 |---|---|---|---|---|---|
@@ -211,6 +211,7 @@ Automatic syncs configuration into 16 agent tools. The matrix below reflects wha
 | Junie | ✓ | ✓ | ✓ | — | — |
 | Kilo Code | ✓ | ✓ | ✓ | — | — |
 | Kiro | ✓ | ✓ | ✓ | — | — |
+| Z Code | ✓ | ✓ | ✓ | — | — |
 | Antigravity | ✓ | ✓ | — | — | — |
 | Cline | ✓ | ✓ | — | — | — |
 | Goose | ✓ | ✓ | — | — | — |
@@ -221,6 +222,7 @@ Notes:
 - **Rules** are injected into each tool's project-instructions file (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, etc.), so rules support follows the "Project instructions" column.
 - **Antigravity, Cline, Goose, and Warp** manage MCP servers through their own global app/CLI config rather than a project file. Automatic can discover those servers but does not write project-level MCP config for them.
 - **Pi** reads MCP servers and sub-agents through the `pi-mcp-adapter` and `pi-subagents` community extensions. Automatic writes a Pi-scoped `.pi/mcp.json` (kept separate from Claude Code's `.mcp.json`) and `.pi/agents/`, and shares `AGENTS.md` rather than owning it.
+- **Z Code** merges MCP servers into the shared `.zcode/config.json`, preserving the user's other keys. Z Code ignores project-level hooks for security (only user-level `~/.zcode/cli/config.json` hooks execute), and its workspace-level command and sub-agent paths are undocumented, so Automatic does not sync those surfaces.
 - Automatic auto-detects installed tools and writes to their config directories.
 
 ## Privacy and Security
@@ -288,7 +290,7 @@ Key source locations:
 - `src-tauri/src/sync/` — Sync engine with drift detection
 - `src-tauri/src/memory.rs` — Key-value memory storage
 - `src-tauri/src/context.rs` — AI context generation
-- `src-tauri/src/agent/` — Agent tool integrations (16 providers)
+- `src-tauri/src/agent/` — Agent tool integrations (17 providers)
 
 ## License
 

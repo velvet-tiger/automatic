@@ -341,6 +341,7 @@ kiro | Kiro (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents | .kiro/
 opencode | OpenCode | AGENTS.md | skills,instructions,mcp_servers,agents,commands | .opencode/agents | .opencode/commands | .agents/skills
 pi | Pi (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents | .pi/agents | - | .pi/skills
 warp | Warp (Beta) | AGENTS.md | skills,instructions | - | - | .agents/skills
+zcode | Z Code (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .zcode/skills
 zed | Zed (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .agents/skills";
 
     assert_eq!(

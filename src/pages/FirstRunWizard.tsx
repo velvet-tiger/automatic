@@ -109,6 +109,7 @@ const AGENT_OPTIONS = [
   { id: "kiro", label: "Kiro" },
   { id: "opencode", label: "OpenCode" },
   { id: "warp", label: "Warp" },
+  { id: "zcode", label: "Z Code" },
   { id: "other", label: "Other" },
 ];
 
