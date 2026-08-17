@@ -59,7 +59,7 @@ fn canonical_servers() -> Map<String, Value> {
 /// and return the resulting file contents.  `None` means the agent stores MCP
 /// config outside the project and writes nothing.
 fn write_and_read(agent: &dyn Agent, dir: &Path, servers: &Map<String, Value>) -> Option<String> {
-    let prepared = prepare_mcp_servers(agent, servers);
+    let prepared = prepare_mcp_servers(agent, servers, dir);
     let path = agent.write_mcp_config(dir, &prepared).expect("write");
     if path.is_empty() {
         return None;
@@ -204,7 +204,7 @@ fn written_servers_are_rediscoverable_by_the_same_agent() {
 fn a_writer_that_writes_reports_the_path_it_wrote() {
     for agent in all() {
         let dir = tempdir().unwrap();
-        let prepared = prepare_mcp_servers(agent, &canonical_servers());
+        let prepared = prepare_mcp_servers(agent, &canonical_servers(), dir.path());
         let path = agent
             .write_mcp_config(dir.path(), &prepared)
             .expect("write");
@@ -230,7 +230,7 @@ fn prepare_leaves_non_empty_env_values_untouched() {
         json!({ "command": "node", "env": { "PORT": "8080", "TOKEN": "" } }),
     );
 
-    let prepared = prepare_mcp_servers(&ClaudeCode, &servers);
+    let prepared = prepare_mcp_servers(&ClaudeCode, &servers, Path::new("/tmp/project"));
 
     assert_eq!(prepared["srv"]["env"]["PORT"], "8080");
     assert_eq!(prepared["srv"]["env"]["TOKEN"], "${TOKEN}");
@@ -242,8 +242,8 @@ fn prepare_does_not_mutate_the_canonical_map() {
     // project, so preparing it for one agent must not affect the next.
     let servers = canonical_servers();
 
-    let cursor = prepare_mcp_servers(&Cursor, &servers);
-    let claude = prepare_mcp_servers(&ClaudeCode, &servers);
+    let cursor = prepare_mcp_servers(&Cursor, &servers, Path::new("/tmp/project"));
+    let claude = prepare_mcp_servers(&ClaudeCode, &servers, Path::new("/tmp/project"));
 
     assert_eq!(servers["github"]["env"]["GITHUB_TOKEN"], "");
     assert_eq!(
@@ -251,6 +251,65 @@ fn prepare_does_not_mutate_the_canonical_map() {
         "${env:GITHUB_TOKEN}"
     );
     assert_eq!(claude["github"]["env"]["GITHUB_TOKEN"], "${GITHUB_TOKEN}");
+}
+
+#[test]
+fn prepare_expands_workspace_folder_in_every_string_field() {
+    // Cursor emulates VS Code and expands `${workspaceFolder}` natively; every
+    // other agent (Claude Code, Codex, Gemini, and so on) receives the string
+    // literally and fails to launch the server. Expansion has to happen at sync
+    // time so the file on disk is portable across clients.
+    let mut servers = Map::new();
+    servers.insert(
+        "cv-workspace".to_string(),
+        json!({
+            "command": "bash",
+            "args": ["${workspaceFolder}/scripts/mcp-launch.sh", "--flag"],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PROJECT_ROOT": "${workspaceFolder}",
+                "SCRIPT": "${workspaceFolder}/bin/tool"
+            }
+        }),
+    );
+
+    let prepared = prepare_mcp_servers(&ClaudeCode, &servers, Path::new("/Users/me/project"));
+
+    assert_eq!(
+        prepared["cv-workspace"]["args"][0],
+        "/Users/me/project/scripts/mcp-launch.sh"
+    );
+    assert_eq!(prepared["cv-workspace"]["args"][1], "--flag");
+    assert_eq!(prepared["cv-workspace"]["cwd"], "/Users/me/project");
+    assert_eq!(
+        prepared["cv-workspace"]["env"]["PROJECT_ROOT"],
+        "/Users/me/project"
+    );
+    assert_eq!(
+        prepared["cv-workspace"]["env"]["SCRIPT"],
+        "/Users/me/project/bin/tool"
+    );
+}
+
+#[test]
+fn prepare_leaves_inherited_env_placeholders_alone_when_expanding() {
+    // `${GITHUB_TOKEN}` / `${env:GITHUB_TOKEN}` belong to the inherited-env
+    // system, not to VS Code's variable syntax. Rewriting them here would
+    // corrupt every agent's placeholder dialect.
+    let mut servers = Map::new();
+    servers.insert(
+        "srv".to_string(),
+        json!({
+            "command": "node",
+            "args": ["${workspaceFolder}/index.js"],
+            "env": { "GITHUB_TOKEN": "" }
+        }),
+    );
+
+    let prepared = prepare_mcp_servers(&ClaudeCode, &servers, Path::new("/w"));
+
+    assert_eq!(prepared["srv"]["args"][0], "/w/index.js");
+    assert_eq!(prepared["srv"]["env"]["GITHUB_TOKEN"], "${GITHUB_TOKEN}");
 }
 
 // ── Per-agent dialect details ───────────────────────────────────────────────
@@ -614,7 +673,7 @@ fn a_malformed_target_config_is_an_error_not_a_clobber() {
             write_seed(input, corrupt);
         }
 
-        let prepared = prepare_mcp_servers(agent, &canonical_servers());
+        let prepared = prepare_mcp_servers(agent, &canonical_servers(), dir.path());
         let result = agent.write_mcp_config(dir.path(), &prepared);
 
         assert!(
@@ -651,7 +710,7 @@ fn agents_without_project_level_mcp_config_write_nothing() {
         &Antigravity as &dyn Agent,
     ] {
         let dir = tempdir().unwrap();
-        let prepared = prepare_mcp_servers(agent, &canonical_servers());
+        let prepared = prepare_mcp_servers(agent, &canonical_servers(), dir.path());
         let path = agent
             .write_mcp_config(dir.path(), &prepared)
             .expect("write");

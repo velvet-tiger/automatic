@@ -1516,7 +1516,14 @@ pub(crate) fn substitute_inherited_env(
 
 /// Render the canonical MCP server map into the form an agent's writer expects:
 /// expand "inherit from the environment" markers into that agent's own
-/// placeholder syntax and drop Automatic-internal metadata.
+/// placeholder syntax, substitute VS Code launch variables against the project
+/// on disk, and drop Automatic-internal metadata.
+///
+/// `workspace_folder` is the project directory whose config is being written.
+/// It is the value substituted for `${workspaceFolder}`, matching VS Code's
+/// definition. Cursor (and other VS Code-derived clients) expand this variable
+/// natively; Claude Code and most others do not, so an unexpanded literal in
+/// `.mcp.json` becomes a launch path that never resolves.
 ///
 /// Both the sync engine and drift detection must call this before
 /// [`Agent::write_mcp_config`].  If only one of them does, the expected config
@@ -1524,8 +1531,10 @@ pub(crate) fn substitute_inherited_env(
 pub(crate) fn prepare_mcp_servers(
     agent: &dyn Agent,
     servers: &Map<String, Value>,
+    workspace_folder: &Path,
 ) -> Map<String, Value> {
     let mut prepared = Map::new();
+    let home = home_dir();
 
     for (name, config) in servers {
         let mut server = config.clone();
@@ -1546,10 +1555,45 @@ pub(crate) fn prepare_mcp_servers(
                 agent.rewrite_inherited_env(obj, &inherited);
             }
         }
+        expand_workspace_variables(&mut server, workspace_folder, home.as_deref());
         prepared.insert(name.clone(), server);
     }
 
     prepared
+}
+
+/// Recursively substitute `${workspaceFolder}` and `${userHome}` inside every
+/// string in `value`. Runs against a whole server map entry so that
+/// dialect-specific fields (`command`, `args`, `cwd`, `env`, `headers`, and
+/// anything nested) are all covered without enumerating them here.
+///
+/// `${env:FOO}` is intentionally left alone: Automatic's inherited-env system
+/// (see [`substitute_inherited_env`]) already owns that placeholder and each
+/// agent rewrites it into its own dialect.
+fn expand_workspace_variables(value: &mut Value, workspace_folder: &Path, home: Option<&Path>) {
+    match value {
+        Value::String(s) => {
+            if !s.contains("${") {
+                return;
+            }
+            let mut out = s.replace("${workspaceFolder}", &workspace_folder.to_string_lossy());
+            if let Some(home) = home {
+                out = out.replace("${userHome}", &home.to_string_lossy());
+            }
+            *s = out;
+        }
+        Value::Array(items) => {
+            for item in items {
+                expand_workspace_variables(item, workspace_folder, home);
+            }
+        }
+        Value::Object(map) => {
+            for (_, v) in map.iter_mut() {
+                expand_workspace_variables(v, workspace_folder, home);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Read a JSON config file containing MCP server definitions, extract them,

@@ -693,7 +693,7 @@ fn sync_agent_configs_step(
                     )?;
                 }
 
-                let prepared = agent::prepare_mcp_servers(agent_instance, selected_servers);
+                let prepared = agent::prepare_mcp_servers(agent_instance, selected_servers, dir);
                 let path = agent_instance.write_mcp_config(dir, &prepared)?;
                 if !path.is_empty() {
                     written_files.push(path);
