@@ -50,6 +50,7 @@ export default defineConfig(async () => ({
         "**/.kiro/**",
         "**/.antigravity/**",
         "**/.opencode/**",
+        "**/.pi/**",
         "**/.warp/**",
         "**/.zcode/**",
         "**/.zed/**",
