@@ -104,18 +104,11 @@ const DETAIL_TABS: { id: DetailTab; label: string }[] = [
 ];
 
 export default function Providers({ onNavigateToProject }: ProvidersProps = {}) {
-  const LAST_AGENT_KEY = "automatic.agents.selected";
   const [agents, setAgents] = useState<AgentWithProjects[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(() => {
-    // Migrate legacy "nexus." key
-    const legacy = localStorage.getItem("nexus.agents.selected");
-    if (legacy) {
-      localStorage.setItem(LAST_AGENT_KEY, legacy);
-      localStorage.removeItem("nexus.agents.selected");
-      return legacy;
-    }
-    return localStorage.getItem(LAST_AGENT_KEY);
-  });
+  // Selection is intentionally not persisted — restoring a prior selection on
+  // mount would open the AssetDrawer over the list on page entry. The drawer
+  // opens only when the user clicks a row.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<DetailTab>("details");
   const [error, setError] = useState<string | null>(null);
   /** Default agent options loaded from settings — keyed by agent id */
@@ -135,12 +128,10 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
   }, []);
 
   useEffect(() => {
-    // Drop a stale persisted selection whose agent no longer exists so the
-    // drawer does not open against a missing row. Never fall back to the
-    // first agent — that would open the drawer over the list on page entry.
+    // Clear a selection whose agent has since been removed so the drawer
+    // does not open against a missing row.
     if (agents.length > 0 && selectedId && !agents.find((a) => a.id === selectedId)) {
       setSelectedId(null);
-      localStorage.removeItem(LAST_AGENT_KEY);
     }
   }, [agents]);
 
@@ -231,7 +222,6 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
 
   const selectAgent = (id: string) => {
     setSelectedId(id);
-    localStorage.setItem(LAST_AGENT_KEY, id);
   };
 
   const renderTableRow = (agent: AgentWithProjects) => (
