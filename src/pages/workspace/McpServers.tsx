@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
-import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { trackMcpServerCreated, trackMcpServerUpdated, trackMcpServerDeleted } from "../../lib/analytics";
 import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
@@ -9,6 +8,10 @@ import { KvEditor, inputClass, smallInputClass, addBtnClass } from "../../compon
 import McpServerImportDialog from "../../components/McpServerImportDialog";
 import { handleExternalLinkClick } from "../../lib/externalLinks";
 import featuredMcpServers from "../../../src-tauri/assets/discover/featured-mcp-servers.json";
+import { AssetTable } from "../../components/AssetTable";
+import { AssetDrawer } from "../../components/AssetDrawer";
+import { BuiltInBadge, LockCell } from "../../components/ProtectionBadge";
+import { useBulkSelection } from "../../lib/useBulkSelection";
 import {
   Plus,
   ClipboardPaste,
@@ -25,6 +28,7 @@ import {
   Loader2,
   Info,
   ExternalLink,
+  Search,
 } from "lucide-react";
 import { ICONS } from "../../lib/icons";
 
@@ -139,7 +143,7 @@ function normalizeConfig(data: Partial<McpServerConfig> & { oauth?: any }): McpS
   if (!data.type && data.url && !data.command) {
     type = "http";
   }
-  
+
   let oauth;
   if (data.oauth && typeof data.oauth === 'object') {
     oauth = {
@@ -179,14 +183,14 @@ function cleanConfig(config: McpServerConfig): Record<string, unknown> {
   } else {
     if (config.url) out.url = config.url;
     if (config.headers && Object.keys(config.headers).length > 0) out.headers = config.headers;
-    
+
     if (config.oauth) {
       const cleanOauth: Record<string, unknown> = {};
       if (config.oauth.clientId) cleanOauth.clientId = config.oauth.clientId;
       if (config.oauth.clientSecret) cleanOauth.clientSecret = config.oauth.clientSecret;
       if (config.oauth.scope) cleanOauth.scope = config.oauth.scope;
       if (config.oauth.callbackPort) cleanOauth.callbackPort = config.oauth.callbackPort;
-      
+
       if (Object.keys(cleanOauth).length > 0) {
         out.oauth = cleanOauth;
       }
@@ -205,6 +209,11 @@ function cleanConfig(config: McpServerConfig): Record<string, unknown> {
 
 // ── Reusable field components ──────────────────────────────────────────────
 // KvList, inputClass, smallInputClass, addBtnClass are imported from KvField.tsx
+
+// Only the hardcoded "automatic" server is protected against deletion in the
+// list view — the richer _builtin/_author checks below require reading each
+// server's config, which the bare name list here does not carry.
+const isDeletable = (name: string) => name !== "automatic";
 
 // ── OAuth Authentication Section ────────────────────────────────────────────
 
@@ -465,6 +474,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const [error, setError] = useState<string | null>(null);
   const [opencodeWarning, setOpencodeWarning] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Inline add state
   const [newArg, setNewArg] = useState("");
@@ -502,7 +514,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       for (const name of projectNames) {
         const raw: string = await invoke("read_project", { name });
         const project: Project = JSON.parse(raw);
-        
+
         // Check if project uses OpenCode and has MCP servers configured
         if (project.agents.includes("opencode") && project.mcp_servers.length > 0) {
           affectedProjects.push(project.name);
@@ -533,6 +545,15 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
   const resetInlineState = () => {
     setNewArg("");
+  };
+
+  const closeDrawer = () => {
+    setSelectedName(null);
+    setConfig(null);
+    setDirty(false);
+    setIsCreating(false);
+    setNewName("");
+    resetInlineState();
   };
 
   const updateConfig = (patch: Partial<McpServerConfig>) => {
@@ -575,15 +596,52 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     try {
       await invoke("delete_mcp_server_config", { name });
       trackMcpServerDeleted(name);
-      if (selectedName === name) {
-        setSelectedName(null);
-        setConfig(null);
-        setDirty(false);
-      }
+      if (selectedName === name) closeDrawer();
       await loadServers();
       setError(null);
     } catch (err: any) {
       setError(`Failed to delete server: ${err}`);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const targets = servers.filter(name => selection.selectedIds.has(name) && isDeletable(name));
+    if (targets.length === 0) return;
+
+    const preview = targets.slice(0, 10).map(t => `• ${t}`).join("\n");
+    const overflow = targets.length > 10 ? `\n…and ${targets.length - 10} more.` : "";
+    const message = `Delete ${targets.length} MCP server${targets.length === 1 ? "" : "s"}?\n\n${preview}${overflow}\n\nThis cannot be undone.`;
+    const confirmed = await ask(message, { title: "Delete MCP Servers", kind: "warning" });
+    if (!confirmed) return;
+
+    setBulkDeleting(true);
+    setBulkProgress({ done: 0, total: targets.length });
+    const failed: { name: string; error: string }[] = [];
+    for (let i = 0; i < targets.length; i++) {
+      const name = targets[i]!;
+      try {
+        await invoke("delete_mcp_server_config", { name });
+        trackMcpServerDeleted(name);
+      } catch (err: any) {
+        failed.push({ name, error: String(err) });
+      }
+      setBulkProgress({ done: i + 1, total: targets.length });
+    }
+
+    if (selectedName && targets.includes(selectedName)) {
+      closeDrawer();
+    }
+
+    await loadServers();
+    selection.clearSelection();
+    setBulkDeleting(false);
+    setBulkProgress(null);
+    if (failed.length > 0) {
+      const detail = failed.slice(0, 5).map(f => `${f.name}: ${f.error}`).join("\n");
+      const more = failed.length > 5 ? `\n…and ${failed.length - 5} more.` : "";
+      setError(`Failed to delete ${failed.length} server${failed.length === 1 ? "" : "s"}:\n${detail}${more}`);
+    } else {
+      setError(null);
     }
   };
 
@@ -626,126 +684,220 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   /** Built-in server (e.g. Automatic itself) — lock everything including delete. */
   const isBuiltin = !!config?._builtin;
 
+  const searchLower = search.trim().toLowerCase();
+  const filteredServers = servers.filter(name => !searchLower || name.toLowerCase().includes(searchLower));
+
+  const selection = useBulkSelection(filteredServers, name => name, isDeletable);
+  const drawerOpen = !!config;
+
+  const renderTableRow = (name: string) => {
+    const isRowSelected = selection.isSelected(name);
+    const isFocused = selectedName === name && !isCreating;
+    const deletable = isDeletable(name);
+    return (
+      <tr
+        key={name}
+        onClick={() => selectServer(name)}
+        className={`group cursor-pointer border-b border-border-strong/20 last:border-b-0 transition-colors ${
+          isFocused ? "bg-bg-sidebar/60" : "hover:bg-bg-input/70"
+        }`}
+      >
+        <td className="px-3 py-2 w-9" onClick={(e) => e.stopPropagation()}>
+          {deletable ? (
+            <input
+              type="checkbox"
+              checked={isRowSelected}
+              onChange={() => selection.toggleSelected(name)}
+              aria-label={`Select ${name}`}
+              className="cursor-pointer accent-brand"
+            />
+          ) : (
+            <LockCell tooltip="Built-in server — cannot be deleted." />
+          )}
+        </td>
+        <td className="px-3 py-2 w-11">
+          <div className={ICONS.mcp.iconBox}>
+            <Server size={15} className={ICONS.mcp.iconColor} />
+          </div>
+        </td>
+        <td className="px-3 py-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[13px] font-medium text-text-base truncate">{name}</span>
+            {recentIds.has(name) && (
+              <span className="shrink-0 px-1.5 py-0.5 rounded bg-brand/15 text-brand text-[9px] font-semibold uppercase tracking-wider">New</span>
+            )}
+          </div>
+        </td>
+        <td className="px-3 py-2 w-16 text-right" onClick={(e) => e.stopPropagation()}>
+          {deletable ? (
+            <button
+              onClick={(e) => handleDelete(name, e)}
+              className="opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-danger rounded transition-all"
+              title="Delete server"
+            >
+              <X size={13} />
+            </button>
+          ) : null}
+        </td>
+      </tr>
+    );
+  };
+
   return (
-    <div className="flex h-full w-full bg-bg-base">
-      {/* Left sidebar */}
-      <div className="w-64 flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50">
-        <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center bg-bg-base/30">
+    <div className="flex h-full w-full flex-col bg-bg-base">
+
+      {/* ── Top Toolbar ──────────────────────────────────────────────────── */}
+      <div className="shrink-0 border-b border-border-strong/40 bg-bg-input/40">
+        <div className="flex items-center justify-between px-4 pt-3 pb-2 gap-3">
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             MCP Servers
           </span>
-          <div className="flex items-center gap-1">
+
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="relative">
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search servers…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-56 h-7 pl-7 pr-7 rounded-md bg-bg-input border border-border-strong/50 hover:border-border-strong focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 text-[12px] text-text-base placeholder-text-muted/60 transition-colors"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </div>
+
             <button
               onClick={() => setImportOpen(true)}
-              className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
+              className="flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-border-strong/50 bg-bg-input hover:bg-bg-sidebar text-[12px] text-text-base transition-colors"
               title="Import MCP Server from JSON"
             >
-              <ClipboardPaste size={14} />
+              <ClipboardPaste size={12} /> Import
             </button>
+
             <button
               onClick={startCreate}
-              className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-              title="Add MCP Server"
+              className="flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-brand hover:bg-brand-hover text-white text-[12px] font-medium transition-colors"
+              title="New Server"
             >
-              <Plus size={14} />
+              <Plus size={12} /> New Server
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
-          {servers.length === 0 && !isCreating ? (
-            <div className="px-4 py-6 text-center">
-              <p className="text-[13px] text-text-muted">No servers configured.</p>
-            </div>
-          ) : (
-            <ul className="space-y-1 px-2">
-              {isCreating && (
-                <li className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-bg-sidebar">
-                  <div className={ICONS.mcp.iconBox}>
-                    <Server size={15} className={ICONS.mcp.iconColor} />
-                  </div>
-                  <span className="text-[13px] text-text-base italic">New Server...</span>
-                </li>
+        {/* Selection action bar — appears whenever anything is selected */}
+        {selection.totalSelected > 0 && (
+          <div className="flex items-center justify-between px-4 py-2 border-t border-border-strong/30 bg-brand/5">
+            <span className="text-[12px] text-text-base">
+              {selection.totalSelected} server{selection.totalSelected === 1 ? "" : "s"} selected
+              {bulkProgress && (
+                <span className="ml-2 text-text-muted">
+                  · Deleting {bulkProgress.done}/{bulkProgress.total}…
+                </span>
               )}
-              {(() => {
-                const recentServers = servers.filter(n => recentIds.has(n));
-                const otherServers = servers.filter(n => !recentIds.has(n));
-                const renderServer = (name: string) => {
-                  const isActive = selectedName === name && !isCreating;
-                  return (
-                    <li key={name} className="group relative">
-                      <button
-                        onClick={() => selectServer(name)}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                          isActive
-                            ? "bg-bg-sidebar text-text-base"
-                            : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
-                        }`}
-                      >
-                        <div className={ICONS.mcp.iconBox}>
-                          <Server size={15} className={ICONS.mcp.iconColor} />
-                        </div>
-                        <span className={`flex-1 text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
-                          {name}
-                        </span>
-                      </button>
-                      {name !== "automatic" && (
-                      <button
-                        onClick={(e) => handleDelete(name, e)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                        title="Delete Server"
-                      >
-                        <X size={12} />
-                      </button>
-                      )}
-                    </li>
-                  );
-                };
-                return (
-                  <>
-                    {recentServers.length > 0 && <RecentlyAddedSectionLabel />}
-                    {recentServers.map(renderServer)}
-                    {recentServers.length > 0 && otherServers.length > 0 && <RecentlyAddedDivider />}
-                    {otherServers.map(renderServer)}
-                  </>
-                );
-              })()}
-            </ul>
-          )}
-        </div>
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={selection.clearSelection}
+                disabled={bulkDeleting}
+                className="h-7 px-2.5 rounded-md text-[12px] text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors disabled:opacity-50"
+              >
+                Clear selection
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting}
+                className="flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-danger/90 hover:bg-danger text-white text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-wait"
+              >
+                <X size={12} /> Delete selected
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Right area */}
-      <div className="flex-1 flex flex-col min-w-0 bg-bg-base">
-        {error && (
-          <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between">
-            {error}
-            <button onClick={() => setError(null)}>
-              <X size={14} />
-            </button>
-          </div>
-        )}
+      {/* Error + OpenCode banners */}
+      {error && (
+        <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between shrink-0">
+          {error}
+          <button onClick={() => setError(null)}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
-        {opencodeWarning.length > 0 && (
-          <div className="bg-amber-500/10 text-amber-400 p-3 text-[13px] border-b border-amber-500/20 flex items-start gap-3">
-            <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <div className="font-medium mb-1">OpenCode Restart Required for New MCP Servers</div>
-              <div className="text-[12px] text-amber-300/90 leading-relaxed">
-                The following project{opencodeWarning.length > 1 ? 's are' : ' is'} using OpenCode with MCP servers configured: <span className="font-medium">{opencodeWarning.join(", ")}</span>. 
-                OpenCode requires a restart to pick up new MCP servers. After syncing, restart OpenCode for any newly added servers to become available.
-              </div>
+      {opencodeWarning.length > 0 && (
+        <div className="bg-amber-500/10 text-amber-400 p-3 text-[13px] border-b border-amber-500/20 flex items-start gap-3 shrink-0">
+          <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-medium mb-1">OpenCode Restart Required for New MCP Servers</div>
+            <div className="text-[12px] text-amber-300/90 leading-relaxed">
+              The following project{opencodeWarning.length > 1 ? 's are' : ' is'} using OpenCode with MCP servers configured: <span className="font-medium">{opencodeWarning.join(", ")}</span>.
+              OpenCode requires a restart to pick up new MCP servers. After syncing, restart OpenCode for any newly added servers to become available.
             </div>
-            <button onClick={() => setOpencodeWarning([])} className="text-amber-300 hover:text-amber-200">
-              <X size={14} />
-            </button>
           </div>
-        )}
+          <button onClick={() => setOpencodeWarning([])} className="text-amber-300 hover:text-amber-200">
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
-        {config ? (
-          <div className="flex-1 flex flex-col h-full">
+      {/* ── Table ────────────────────────────────────────────────────────── */}
+      <AssetTable
+        items={filteredServers}
+        getId={name => name}
+        isEmpty={servers.length === 0}
+        emptyState={
+          <>
+            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-icon-mcp/12 border border-icon-mcp/20 flex items-center justify-center">
+              <Server size={22} className={ICONS.mcp.iconColor} strokeWidth={1.5} />
+            </div>
+            <h2 className="text-[15px] font-medium text-text-base mb-2">No MCP servers yet</h2>
+            <p className="text-[13px] text-text-muted leading-relaxed max-w-xs mb-6">
+              Configure Model Context Protocol servers that give your agents access to filesystems,
+              databases, and developer tools. Add them here, then assign them to projects.
+            </p>
+            <button
+              onClick={startCreate}
+              className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors"
+            >
+              <Plus size={14} /> New Server
+            </button>
+          </>
+        }
+        noMatchState={
+          <p className="text-[13px] text-text-muted">
+            {searchLower ? `No servers match "${search}".` : "No servers configured."}
+          </p>
+        }
+        columns={[
+          { key: "icon", header: "", className: "w-11" },
+          { key: "name", header: "Name" },
+          { key: "actions", header: "", className: "w-16" },
+        ]}
+        renderRow={renderTableRow}
+        selection={{
+          allSelected: selection.allSelected,
+          someSelected: selection.someSelected,
+          disabled: selection.deletableItems.length === 0,
+          onToggleAll: selection.toggleSelectAllVisible,
+          ariaLabel: "Select all visible deletable servers",
+        }}
+        recentIds={recentIds}
+      />
+
+      {/* ── Drawer ───────────────────────────────────────────────────────── */}
+      <AssetDrawer open={drawerOpen} onClose={closeDrawer} isEditing={dirty}>
+        {config && (
+          <div className="flex-1 flex flex-col h-full min-h-0">
             {/* Header */}
-            <div className="h-11 px-6 border-b border-surface flex justify-between items-center">
+            <div className="h-11 pl-6 pr-10 border-b border-surface flex justify-between items-center shrink-0">
               <div className="flex items-center gap-3">
                 <Server size={14} className={ICONS.mcp.iconColor} />
                 {isCreating ? (
@@ -766,11 +918,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
               </div>
 
               <div className="flex items-center gap-2">
-                {isBuiltin && (
-                  <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase px-2 py-1 rounded-full bg-brand/10 border border-brand/20">
-                    Built-in
-                  </span>
-                )}
+                {isBuiltin && <BuiltInBadge />}
                 {dirty && !isBuiltin && (
                   <button
                     onClick={handleSave}
@@ -1121,28 +1269,8 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
               </div>
             </div>
           </div>
-        ) : (
-          /* Empty state */
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-icon-mcp/12 border border-icon-mcp/20 flex items-center justify-center">
-              <Server size={24} className={ICONS.mcp.iconColor} strokeWidth={1.5} />
-            </div>
-            <h2 className="text-lg font-medium text-text-base mb-2">MCP Servers</h2>
-            <p className="text-[14px] text-text-muted mb-8 leading-relaxed max-w-sm">
-              Configure Model Context Protocol servers that give your agents access to filesystems,
-              databases, and developer tools. Add them here, then assign them to projects.
-            </p>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={startCreate}
-                className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
-              >
-                Add MCP Server
-              </button>
-            </div>
-          </div>
         )}
-      </div>
+      </AssetDrawer>
 
       <McpServerImportDialog
         isOpen={importOpen}

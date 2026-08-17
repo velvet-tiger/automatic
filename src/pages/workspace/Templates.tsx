@@ -1,12 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect } from "react";
 import { ICONS } from "../../lib/icons";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
-import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
 import { SkillSelector } from "../../components/SkillSelector";
 import { AgentSelector, AgentInfo } from "../../components/AgentSelector";
 import { McpSelector } from "../../components/McpSelector";
+import { AssetTable } from "../../components/AssetTable";
+import { AssetDrawer } from "../../components/AssetDrawer";
+import { useBulkSelection } from "../../lib/useBulkSelection";
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   Plus,
   X,
@@ -79,9 +82,6 @@ interface HookEntry {
   plugin_id?: string | null;
 }
 
-const SIDEBAR_MIN = 180;
-const SIDEBAR_MAX = 420;
-const SIDEBAR_DEFAULT = 220;
 
 function SubAgentSelector({
   agentIds,
@@ -564,37 +564,9 @@ export default function Templates({
   // Inline delete confirmation — holds the name awaiting confirmation
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  // Sidebar resize
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
-  const isSidebarDragging = useRef(false);
-
-  const onSidebarMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isSidebarDragging.current = true;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, []);
-
-  useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isSidebarDragging.current) return;
-      const newWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, e.clientX - 180));
-      setSidebarWidth(newWidth);
-    };
-    const onMouseUp = () => {
-      if (isSidebarDragging.current) {
-        isSidebarDragging.current = false;
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-      }
-    };
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
-  }, []);
+  const [search, setSearch] = useState("");
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => {
     loadTemplates();
@@ -611,11 +583,16 @@ export default function Templates({
 
   useEffect(() => {
     if (templates.length === 0) return;
-    const preferred = selectedName && templates.includes(selectedName)
-      ? selectedName
-      : templates[0];
-    if (preferred && (!template || template.name !== preferred) && !isCreating) {
-      selectTemplate(preferred);
+    // Honour a deep-link / previously-selected name if it is still valid, but
+    // never auto-select the first template — that would open the drawer over
+    // the list on page entry.
+    if (
+      selectedName
+      && templates.includes(selectedName)
+      && (!template || template.name !== selectedName)
+      && !isCreating
+    ) {
+      selectTemplate(selectedName);
     }
   }, [templates]);
 
@@ -785,14 +762,7 @@ export default function Templates({
     }
   };
 
-  const handleDelete = async (name: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    // First click arms the confirmation; second click executes
-    if (confirmDelete !== name) {
-      setConfirmDelete(name);
-      return;
-    }
-    setConfirmDelete(null);
+  const performDelete = async (name: string) => {
     try {
       await invoke("delete_template", { name });
       if (selectedName === name) {
@@ -804,6 +774,67 @@ export default function Templates({
       setError(null);
     } catch (err: any) {
       setError(`Failed to delete project template: ${err}`);
+    }
+  };
+
+  const handleDelete = async (name: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    // First click arms the confirmation; second click executes — used by the
+    // inline delete control inside the composer body.
+    if (confirmDelete !== name) {
+      setConfirmDelete(name);
+      return;
+    }
+    setConfirmDelete(null);
+    await performDelete(name);
+  };
+
+  const handleRowDelete = async (name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const confirmed = await ask(`Delete template "${name}"?`, { title: "Delete Template", kind: "warning" });
+    if (!confirmed) return;
+    await performDelete(name);
+  };
+
+  const handleBulkDelete = async () => {
+    const targets = templates.filter(name => selection.selectedIds.has(name));
+    if (targets.length === 0) return;
+
+    const preview = targets.slice(0, 10).map(t => `• ${t}`).join("\n");
+    const overflow = targets.length > 10 ? `\n…and ${targets.length - 10} more.` : "";
+    const message = `Delete ${targets.length} template${targets.length === 1 ? "" : "s"}?\n\n${preview}${overflow}\n\nThis cannot be undone.`;
+    const confirmed = await ask(message, { title: "Delete Templates", kind: "warning" });
+    if (!confirmed) return;
+
+    setBulkDeleting(true);
+    setBulkProgress({ done: 0, total: targets.length });
+    const failed: { name: string; error: string }[] = [];
+    for (let i = 0; i < targets.length; i++) {
+      const name = targets[i]!;
+      try {
+        await invoke("delete_template", { name });
+      } catch (err: any) {
+        failed.push({ name, error: String(err) });
+      }
+      setBulkProgress({ done: i + 1, total: targets.length });
+    }
+
+    if (selectedName && targets.includes(selectedName)) {
+      setSelectedName(null);
+      setTemplate(null);
+      setDirty(false);
+    }
+
+    await loadTemplates();
+    selection.clearSelection();
+    setBulkDeleting(false);
+    setBulkProgress(null);
+    if (failed.length > 0) {
+      const detail = failed.slice(0, 5).map(f => `${f.name}: ${f.error}`).join("\n");
+      const more = failed.length > 5 ? `\n…and ${failed.length - 5} more.` : "";
+      setError(`Failed to delete ${failed.length} template${failed.length === 1 ? "" : "s"}:\n${detail}${more}`);
+    } else {
+      setError(null);
     }
   };
 
@@ -935,151 +966,212 @@ export default function Templates({
       })
     : [];
 
+  const searchLower = search.trim().toLowerCase();
+  const filteredTemplates = templates.filter(name => !searchLower || name.toLowerCase().includes(searchLower));
+  const selection = useBulkSelection(filteredTemplates, name => name, () => true);
+  const drawerOpen = !!template;
+
+  const closeDrawer = () => {
+    setSelectedName(null);
+    setTemplate(null);
+    setDirty(false);
+    setIsCreating(false);
+    setUnifiedEditing(false);
+    setShowUnifiedTemplatePicker(false);
+    setIsRenaming(false);
+  };
+
+  const renderTableRow = (name: string) => {
+    const td = templateData[name];
+    const isRowSelected = selection.isSelected(name);
+    const isFocused = selectedName === name && !isCreating;
+    const accent = td ? templateAccent(td) : { bg: "bg-brand/15", icon: "text-brand" };
+    const skillCount = td?.skills.length ?? 0;
+    const mcpCount = td?.mcp_servers.length ?? 0;
+    const fileCount = td?.project_files?.length ?? 0;
+    const parts: string[] = [];
+    if (skillCount > 0) parts.push(`${skillCount} skill${skillCount !== 1 ? "s" : ""}`);
+    if (mcpCount > 0) parts.push(`${mcpCount} server${mcpCount !== 1 ? "s" : ""}`);
+    if (fileCount > 0) parts.push(`${fileCount} file${fileCount !== 1 ? "s" : ""}`);
+
+    return (
+      <tr
+        key={name}
+        onClick={() => { if (!isCreating) selectTemplate(name); }}
+        className={`group cursor-pointer border-b border-border-strong/20 last:border-b-0 transition-colors ${
+          isFocused ? "bg-bg-sidebar/60" : "hover:bg-bg-input/70"
+        }`}
+      >
+        <td className="px-3 py-2 w-9" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={isRowSelected}
+            onChange={() => selection.toggleSelected(name)}
+            aria-label={`Select ${name}`}
+            className="cursor-pointer accent-brand"
+          />
+        </td>
+        <td className="px-3 py-2 w-11">
+          <div className={`w-8 h-8 rounded-md ${accent.bg} flex items-center justify-center flex-shrink-0`}>
+            <LayoutTemplate size={15} className={accent.icon} />
+          </div>
+        </td>
+        <td className="px-3 py-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[13px] font-medium text-text-base truncate">{name}</span>
+            {recentIds.has(name) && (
+              <span className="shrink-0 px-1.5 py-0.5 rounded bg-brand/15 text-brand text-[9px] font-semibold uppercase tracking-wider">New</span>
+            )}
+          </div>
+        </td>
+        <td className="px-3 py-2 text-[11px] text-text-muted">
+          {parts.join(" · ")}
+        </td>
+        <td className="px-3 py-2 w-16 text-right" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={(e) => handleRowDelete(name, e)}
+            className="opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-danger rounded transition-all"
+            title="Delete template"
+          >
+            <X size={13} />
+          </button>
+        </td>
+      </tr>
+    );
+  };
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full w-full bg-bg-base">
-      {/* Left sidebar */}
-      <div
-        className="flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50 relative"
-        style={{ width: sidebarWidth }}
-      >
-        <div className="h-11 px-4 border-b border-border-strong/40 flex justify-between items-center">
+    <div className="flex h-full w-full flex-col bg-bg-base">
+
+      {/* ── Top Toolbar ──────────────────────────────────────────────────── */}
+      <div className="shrink-0 border-b border-border-strong/40 bg-bg-input/40">
+        <div className="flex items-center justify-between px-4 pt-3 pb-2 gap-3">
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             Templates
           </span>
-          <button
-            onClick={startCreate}
-            className="text-text-muted hover:text-text-base transition-colors p-1 hover:bg-bg-sidebar rounded"
-            title="Create New Template"
-          >
-            <Plus size={14} />
-          </button>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="relative">
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search templates…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-56 h-7 pl-7 pr-7 rounded-md bg-bg-input border border-border-strong/50 hover:border-border-strong focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 text-[12px] text-text-base placeholder-text-muted/60 transition-colors"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </div>
+
+            <button
+              onClick={startCreate}
+              className="flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-brand hover:bg-brand-hover text-white text-[12px] font-medium transition-colors"
+              title="New Template"
+            >
+              <Plus size={12} /> New Template
+            </button>
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
-          {templates.length === 0 && !isCreating ? (
-            <div className="px-4 py-8 text-center">
-              <div className="w-10 h-10 mx-auto mb-3 rounded-full border border-dashed border-border-strong flex items-center justify-center">
-                <LayoutTemplate size={16} className="text-text-muted" strokeWidth={1.5} />
-              </div>
-              <p className="text-[12px] text-text-muted">No templates yet.</p>
+        {/* Selection action bar — appears whenever anything is selected */}
+        {selection.totalSelected > 0 && (
+          <div className="flex items-center justify-between px-4 py-2 border-t border-border-strong/30 bg-brand/5">
+            <span className="text-[12px] text-text-base">
+              {selection.totalSelected} template{selection.totalSelected === 1 ? "" : "s"} selected
+              {bulkProgress && (
+                <span className="ml-2 text-text-muted">
+                  · Deleting {bulkProgress.done}/{bulkProgress.total}…
+                </span>
+              )}
+            </span>
+            <div className="flex items-center gap-2">
               <button
-                onClick={startCreate}
-                className="mt-3 text-[12px] text-brand hover:text-brand-hover transition-colors"
+                onClick={selection.clearSelection}
+                disabled={bulkDeleting}
+                className="h-7 px-2.5 rounded-md text-[12px] text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors disabled:opacity-50"
               >
-                Create one
+                Clear selection
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting}
+                className="flex items-center gap-1.5 h-7 px-2.5 rounded-md bg-danger/90 hover:bg-danger text-white text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-wait"
+              >
+                <X size={12} /> Delete selected
               </button>
             </div>
-          ) : (
-            <ul className="space-y-1 px-2">
-              {isCreating && (
-                <li className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-bg-sidebar">
-                  <div className="w-9 h-9 rounded-lg bg-brand/15 flex items-center justify-center flex-shrink-0">
-                    <LayoutTemplate size={16} className="text-brand" />
-                  </div>
-                  <span className="text-[13px] text-text-base italic">New Template...</span>
-                </li>
-              )}
-              {(() => {
-                const recentTemplates = templates.filter(n => recentIds.has(n));
-                const otherTemplates = templates.filter(n => !recentIds.has(n));
-                const renderTemplate = (name: string) => {
-                  const td = templateData[name];
-                  const isActive = selectedName === name && !isCreating;
-                  const accent = td ? templateAccent(td) : { bg: "bg-brand/15", icon: "text-brand" };
-                  const skillCount = td?.skills.length ?? 0;
-                  const mcpCount = td?.mcp_servers.length ?? 0;
-                  const fileCount = td?.project_files?.length ?? 0;
-                  const parts: string[] = [];
-                  if (skillCount > 0) parts.push(`${skillCount} skill${skillCount !== 1 ? "s" : ""}`);
-                  if (mcpCount > 0) parts.push(`${mcpCount} server${mcpCount !== 1 ? "s" : ""}`);
-                  if (fileCount > 0) parts.push(`${fileCount} file${fileCount !== 1 ? "s" : ""}`);
-
-                  return (
-                    <li key={name} className="group relative">
-                      <button
-                        onClick={() => { if (!isCreating) selectTemplate(name); }}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                          isActive
-                            ? "bg-bg-sidebar text-text-base"
-                            : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
-                        }`}
-                      >
-                        <div className={`w-9 h-9 rounded-lg ${accent.bg} flex items-center justify-center flex-shrink-0`}>
-                          <LayoutTemplate size={16} className={accent.icon} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className={`text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
-                            {name}
-                          </div>
-                          {parts.length > 0 && (
-                            <div className="text-[11px] text-text-muted mt-0.5">
-                              {parts.join(" · ")}
-                            </div>
-                          )}
-                        </div>
-                      </button>
-                      {confirmDelete === name ? (
-                        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                          <button
-                            onClick={(e) => handleDelete(name, e)}
-                            className="px-1.5 py-0.5 text-[11px] font-medium text-danger hover:bg-danger/15 rounded transition-colors"
-                          >
-                            Delete
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setConfirmDelete(null); }}
-                            className="p-0.5 text-text-muted hover:text-text-base hover:bg-surface rounded transition-colors"
-                          >
-                            <X size={11} />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={(e) => handleDelete(name, e)}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 hover:bg-surface rounded transition-all"
-                          title="Delete template"
-                        >
-                          <X size={12} />
-                        </button>
-                      )}
-                    </li>
-                  );
-                };
-                return (
-                  <>
-                    {recentTemplates.length > 0 && <RecentlyAddedSectionLabel />}
-                    {recentTemplates.map(renderTemplate)}
-                    {recentTemplates.length > 0 && otherTemplates.length > 0 && <RecentlyAddedDivider />}
-                    {otherTemplates.map(renderTemplate)}
-                  </>
-                );
-              })()}
-            </ul>
-          )}
-        </div>
-
-        {/* Resize handle */}
-        <div
-          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-brand/40 active:bg-brand/60 transition-colors z-10"
-          onMouseDown={onSidebarMouseDown}
-        />
-      </div>
-
-      {/* Right panel */}
-      <div className="flex-1 flex flex-col min-w-0 bg-bg-base">
-        {error && (
-          <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between">
-            {error}
-            <button onClick={() => setError(null)}><X size={14} /></button>
           </div>
         )}
+      </div>
 
-        {template ? (
+      {/* Error banner */}
+      {error && (
+        <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between shrink-0">
+          {error}
+          <button onClick={() => setError(null)}><X size={14} /></button>
+        </div>
+      )}
+
+      {/* ── Table ────────────────────────────────────────────────────────── */}
+      <AssetTable
+        items={filteredTemplates}
+        getId={name => name}
+        isEmpty={templates.length === 0}
+        emptyState={
+          <>
+            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-icon-agent/12 border border-icon-agent/20 flex items-center justify-center">
+              <LayoutTemplate size={22} className={ICONS.projectTemplate.iconColor} strokeWidth={1.5} />
+            </div>
+            <h2 className="text-[15px] font-medium text-text-base mb-2">No templates yet</h2>
+            <p className="text-[13px] text-text-muted leading-relaxed max-w-xs mb-6">
+              Project Templates capture agents, skills, MCP servers, and project files
+              that can be applied to new or existing projects.
+            </p>
+            <button
+              onClick={startCreate}
+              className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white rounded-lg text-[13px] font-medium transition-colors"
+            >
+              <Plus size={14} /> New Template
+            </button>
+          </>
+        }
+        noMatchState={
+          <p className="text-[13px] text-text-muted">
+            {searchLower ? `No templates match "${search}".` : "No templates yet."}
+          </p>
+        }
+        columns={[
+          { key: "icon", header: "", className: "w-11" },
+          { key: "name", header: "Name" },
+          { key: "summary", header: "" },
+          { key: "actions", header: "", className: "w-16" },
+        ]}
+        renderRow={renderTableRow}
+        selection={{
+          allSelected: selection.allSelected,
+          someSelected: selection.someSelected,
+          disabled: selection.deletableItems.length === 0,
+          onToggleAll: selection.toggleSelectAllVisible,
+          ariaLabel: "Select all visible templates",
+        }}
+        recentIds={recentIds}
+      />
+
+      {/* ── Drawer ───────────────────────────────────────────────────────── */}
+      <AssetDrawer open={drawerOpen} onClose={closeDrawer} isEditing={dirty}>
+        {template && (
           <div className="flex-1 flex flex-col h-full">
             {/* Header */}
-            <div className="h-11 px-6 border-b border-border-strong/40 flex justify-between items-center">
+            <div className="h-11 pl-6 pr-10 border-b border-border-strong/40 flex justify-between items-center">
               <div className="flex items-center gap-3">
                 {isCreating ? (
                   <input
@@ -1439,26 +1531,8 @@ export default function Templates({
               </div>
             </div>
           </div>
-        ) : (
-          /* Empty state */
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-icon-agent/15 border border-icon-agent/20 flex items-center justify-center">
-              <LayoutTemplate size={24} strokeWidth={1.5} className={ICONS.projectTemplate.iconColor} />
-            </div>
-            <h2 className="text-[16px] font-semibold text-text-base mb-2">No template selected</h2>
-            <p className="text-[13px] text-text-muted max-w-sm leading-relaxed mb-6">
-              Project Templates capture agents, skills, MCP servers, and project files
-              that can be applied to new or existing projects.
-            </p>
-            <button
-              onClick={startCreate}
-              className="flex items-center gap-2 px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors"
-            >
-              <Plus size={14} /> New Template
-            </button>
-          </div>
         )}
-      </div>
+      </AssetDrawer>
 
       {/* Apply-to-project modal */}
       {showApplyPicker && template && (

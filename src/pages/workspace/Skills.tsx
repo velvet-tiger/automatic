@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { escapeYamlDoubleQuoted } from "../../lib/yaml";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
-import { RecentlyAddedSectionLabel, RecentlyAddedDivider } from "../../components/RecentlyAddedMarker";
 import { MarkdownPreview } from "../../components/MarkdownPreview";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
@@ -27,7 +26,6 @@ import {
   FolderOpen,
   LayoutTemplate,
   Copy,
-  Lock,
   Download,
   Tag,
   ChevronDown,
@@ -37,6 +35,10 @@ import { ICONS } from "../../lib/icons";
 import { SkillAvatar } from "../../components/SkillAvatar";
 import { TokenPill } from "../../components/TokenPill";
 import SkillImportDialog from "../../components/SkillImportDialog";
+import { AssetTable } from "../../components/AssetTable";
+import { AssetDrawer } from "../../components/AssetDrawer";
+import { BuiltInBadge, ReadOnlyBadge, LockCell } from "../../components/ProtectionBadge";
+import { useBulkSelection } from "../../lib/useBulkSelection";
 import {
   type AssetSecurityScanRecord,
   formatAssetScanResult,
@@ -654,7 +656,6 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   const [collections, setCollections] = useState<SkillCollection[]>([]);
 
   const [showImportDialog, setShowImportDialog] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -672,29 +673,6 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   const [editBody, setEditBody] = useState("");
 
   useEffect(() => { loadSkills(); }, []);
-
-  // Close the drawer on Escape when it is open and not mid-edit — closing
-  // during editing would silently discard unsaved changes.
-  useEffect(() => {
-    const drawerOpen = isCreating || !!selectedSkill;
-    if (!drawerOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !isEditing) {
-        setIsCreating(false);
-        setIsEditing(false);
-        setSelectedSkill(null);
-        setSkillContent("");
-        setSkillUsedBy(null);
-        setNewSkillName("");
-        setNewSkillDescription("");
-        setFieldErrors({ name: null, description: null });
-        setCurrentScan(null);
-        setSecurityNotice(null);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isCreating, selectedSkill, isEditing]);
 
   // Navigate to the skill specified by the parent (e.g. "View in library" from Projects)
   useEffect(() => {
@@ -851,25 +829,11 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
     && !skill.plugin_id
     && skill.source?.kind !== "bundled";
 
-  const toggleSelected = (name: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(name)) {
-        next.delete(name);
-      } else {
-        next.add(name);
-      }
-      return next;
-    });
-  };
-
-  const clearSelection = () => setSelectedIds(new Set());
-
   const handleBulkDelete = async () => {
     // Only delete what is both selected AND currently deletable — a race where
     // the list changes underneath the selection must not delete `automatic`
     // or a plugin skill by mistake.
-    const targets = skills.filter(s => selectedIds.has(s.name) && isDeletable(s));
+    const targets = skills.filter(s => selection.selectedIds.has(s.name) && isDeletable(s));
     if (targets.length === 0) return;
 
     const preview = targets.slice(0, 10).map(t => `• ${t.name}`).join("\n");
@@ -902,7 +866,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
     }
 
     await loadSkills();
-    clearSelection();
+    selection.clearSelection();
     setBulkDeleting(false);
     setBulkProgress(null);
     if (failed.length > 0) {
@@ -1031,24 +995,8 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   // ── Selection derived ─────────────────────────────────────────────────────
   // The header checkbox only toggles rows the user is allowed to delete —
   // undeletable rows never receive a checkbox, so their state is irrelevant.
-  const filteredDeletable = filteredSkills.filter(isDeletable);
-  const filteredSelectedCount = filteredDeletable.filter(s => selectedIds.has(s.name)).length;
-  const allFilteredSelected = filteredDeletable.length > 0 && filteredSelectedCount === filteredDeletable.length;
-  const someFilteredSelected = filteredSelectedCount > 0 && !allFilteredSelected;
-  const totalSelected = selectedIds.size;
+  const selection = useBulkSelection(filteredSkills, s => s.name, isDeletable);
   const drawerOpen = isCreating || !!selectedSkill;
-
-  const toggleSelectAllFiltered = () => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (allFilteredSelected) {
-        for (const s of filteredDeletable) next.delete(s.name);
-      } else {
-        for (const s of filteredDeletable) next.add(s.name);
-      }
-      return next;
-    });
-  };
 
   const closeDrawer = () => {
     setIsCreating(false);
@@ -1077,7 +1025,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
   };
 
   const renderTableRow = (skill: SkillEntry) => {
-    const isRowSelected = selectedIds.has(skill.name);
+    const isRowSelected = selection.isSelected(skill.name);
     const isFocused = selectedSkill === skill.name && !isCreating;
     const deletable = isDeletable(skill);
     const isRemote = !!skill.source;
@@ -1096,22 +1044,20 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
             <input
               type="checkbox"
               checked={isRowSelected}
-              onChange={() => toggleSelected(skill.name)}
+              onChange={() => selection.toggleSelected(skill.name)}
               aria-label={`Select ${skill.name}`}
               className="cursor-pointer accent-brand"
             />
           ) : (
-            <span
-              title={
+            <LockCell
+              tooltip={
                 skill.name === "automatic"
                   ? "Built-in skill — cannot be deleted"
                   : skill.source?.kind === "bundled"
                     ? "Bundled with Automatic — cannot be deleted"
                     : `Plugin-provided (${skill.plugin_id}) — cannot be deleted`
               }
-            >
-              <Lock size={11} className="text-text-muted/60" />
-            </span>
+            />
           )}
         </td>
         <td className="px-3 py-2 w-11">
@@ -1219,9 +1165,6 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
     );
   };
 
-  const recentSkills = filteredSkills.filter(s => recentIds.has(s.name));
-  const otherSkills = filteredSkills.filter(s => !recentIds.has(s.name));
-
   return (
     <div className="flex h-full w-full flex-col bg-bg-base">
 
@@ -1308,10 +1251,10 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
         </div>
 
         {/* Selection action bar — appears whenever anything is selected */}
-        {totalSelected > 0 && (
+        {selection.totalSelected > 0 && (
           <div className="flex items-center justify-between px-4 py-2 border-t border-border-strong/30 bg-brand/5">
             <span className="text-[12px] text-text-base">
-              {totalSelected} skill{totalSelected === 1 ? "" : "s"} selected
+              {selection.totalSelected} skill{selection.totalSelected === 1 ? "" : "s"} selected
               {bulkProgress && (
                 <span className="ml-2 text-text-muted">
                   · Deleting {bulkProgress.done}/{bulkProgress.total}…
@@ -1320,7 +1263,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
             </span>
             <div className="flex items-center gap-2">
               <button
-                onClick={clearSelection}
+                onClick={selection.clearSelection}
                 disabled={bulkDeleting}
                 className="h-7 px-2.5 rounded-md text-[12px] text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors disabled:opacity-50"
               >
@@ -1363,9 +1306,12 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
       )}
 
       {/* ── Table ────────────────────────────────────────────────────────── */}
-      <div className="flex-1 min-h-0 overflow-auto custom-scrollbar">
-        {skills.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center p-8">
+      <AssetTable
+        items={filteredSkills}
+        getId={s => s.name}
+        isEmpty={skills.length === 0}
+        emptyState={
+          <>
             <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-icon-skill/12 border border-icon-skill/20 flex items-center justify-center">
               <Code size={22} className={ICONS.skill.iconColor} strokeWidth={1.5} />
             </div>
@@ -1387,87 +1333,40 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                 <Download size={14} /> Import
               </button>
             </div>
-          </div>
-        ) : filteredSkills.length === 0 ? (
-          <div className="h-full flex items-center justify-center px-4 py-6 text-center">
-            <p className="text-[13px] text-text-muted">
-              {searchLower ? `No skills match "${search}".` : "No skills match the current filter."}
-            </p>
-          </div>
-        ) : (
-          <table className="w-full border-collapse text-[12px]">
-            <thead className="sticky top-0 bg-bg-input/95 backdrop-blur z-10">
-              <tr className="border-b border-border-strong/40 text-left text-[11px] font-medium uppercase tracking-wide text-text-muted">
-                <th className="px-3 py-2 w-9">
-                  <input
-                    type="checkbox"
-                    checked={allFilteredSelected}
-                    ref={el => { if (el) el.indeterminate = someFilteredSelected; }}
-                    onChange={toggleSelectAllFiltered}
-                    disabled={filteredDeletable.length === 0}
-                    aria-label="Select all visible deletable skills"
-                    className="cursor-pointer accent-brand disabled:opacity-30"
-                  />
-                </th>
-                <th className="px-3 py-2 w-11"></th>
-                <th className="px-3 py-2 font-medium">Name</th>
-                <th className="px-3 py-2 font-medium">Origin</th>
-                <th className="px-3 py-2 font-medium">Locations</th>
-                <th className="px-3 py-2 font-medium">Collection</th>
-                <th className="px-3 py-2 w-16"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentSkills.length > 0 && (
-                <tr className="bg-bg-input/30">
-                  <td colSpan={7} className="px-3 py-1.5">
-                    <RecentlyAddedSectionLabel />
-                  </td>
-                </tr>
-              )}
-              {recentSkills.map(renderTableRow)}
-              {recentSkills.length > 0 && otherSkills.length > 0 && (
-                <tr>
-                  <td colSpan={7} className="px-3 py-1">
-                    <RecentlyAddedDivider />
-                  </td>
-                </tr>
-              )}
-              {otherSkills.map(renderTableRow)}
-            </tbody>
-          </table>
-        )}
-      </div>
+          </>
+        }
+        noMatchState={
+          <p className="text-[13px] text-text-muted">
+            {searchLower ? `No skills match "${search}".` : "No skills match the current filter."}
+          </p>
+        }
+        columns={[
+          { key: "avatar", header: "", className: "w-11" },
+          { key: "name", header: "Name" },
+          { key: "origin", header: "Origin" },
+          { key: "locations", header: "Locations" },
+          { key: "collection", header: "Collection" },
+          { key: "actions", header: "", className: "w-16" },
+        ]}
+        renderRow={renderTableRow}
+        selection={{
+          allSelected: selection.allSelected,
+          someSelected: selection.someSelected,
+          disabled: selection.deletableItems.length === 0,
+          onToggleAll: selection.toggleSelectAllVisible,
+          ariaLabel: "Select all visible deletable skills",
+        }}
+        recentIds={recentIds}
+      />
 
       {/* ── Drawer ───────────────────────────────────────────────────────── */}
-      {drawerOpen && (
-        <>
-          <div
-            onClick={closeDrawer}
-            className="fixed inset-0 bg-black/40 z-40"
-            aria-hidden="true"
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            className="fixed right-0 top-0 h-full w-[80vw] max-w-[1200px] min-w-[640px] bg-bg-base border-l border-border-strong/40 z-50 flex flex-col shadow-2xl"
-          >
-            <button
-              onClick={closeDrawer}
-              className="absolute top-2 right-2 z-10 p-1.5 rounded-md text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors"
-              aria-label="Close"
-              title="Close (Esc)"
-            >
-              <X size={14} />
-            </button>
-
-            <div className="flex-1 flex flex-col min-h-0">
+      <AssetDrawer open={drawerOpen} onClose={closeDrawer} isEditing={isEditing}>
         {isCreating ? (
           /* ── New Skill Form ─────────────────────────────────────────────── */
           <div className="flex-1 flex flex-col h-full min-h-0">
 
             {/* Header */}
-            <div className="h-11 px-5 border-b border-border-strong/40 flex items-center justify-between shrink-0">
+            <div className="h-11 pl-5 pr-10 border-b border-border-strong/40 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2 min-w-0">
                 <Plus size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
                 <span className="text-[14px] font-medium text-text-base">New Skill</span>
@@ -1585,7 +1484,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
           <div className="flex-1 flex flex-col h-full min-h-0">
 
             {/* Header */}
-            <div className="h-11 px-5 border-b border-border-strong/40 flex items-center justify-between shrink-0">
+            <div className="h-11 pl-5 pr-10 border-b border-border-strong/40 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
                 <FileText size={13} className={`${ICONS.skill.iconColor} shrink-0`} />
                 <>
@@ -1611,23 +1510,16 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
               <div className="flex items-center gap-2 shrink-0">
                 <TokenPill text={isEditing ? editBody : skillContent} />
                 {/* Built-in badge for the automatic skill */}
-                {selectedSkill === "automatic" && (
-                  <span className="text-[10px] font-semibold text-text-muted tracking-wider uppercase px-2 py-1 rounded-full bg-brand/10 border border-brand/20">
-                    Built-in
-                  </span>
-                )}
+                {selectedSkill === "automatic" && <BuiltInBadge />}
                 {/* External badge — skill lives outside the managed library */}
                 {selectedEntry && selectedEntry.sources.length > 0 && !selectedEntry.sources.includes("library") && !isEditing && (
                   <span className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-warning bg-warning/10 border border-warning/20" title="This skill lives in ~/.agents/skills or a similar external location. Import it to Automatic's library to sync it into projects.">
                     <span>External</span>
                   </span>
                 )}
-                {/* Remote skills are read-only — show a lock badge */}
+                {/* Remote skills are read-only */}
                 {selectedEntry?.source && !isEditing && selectedSkill !== "automatic" && (
-                  <span className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/40" title="Installed from a remote source — editing is disabled">
-                    <Lock size={10} />
-                    <span>Read-only</span>
-                  </span>
+                  <ReadOnlyBadge tooltip="Installed from a remote source — editing is disabled" />
                 )}
                 {/* Import to library — offered for external-only skills */}
                 {!isEditing && selectedEntry && selectedEntry.sources.length > 0 && !selectedEntry.sources.includes("library") && (
@@ -1859,10 +1751,7 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
             </div>
           </div>
         ) : null}
-            </div>
-          </div>
-        </>
-      )}
+      </AssetDrawer>
 
       <SkillImportDialog
         isOpen={showImportDialog}

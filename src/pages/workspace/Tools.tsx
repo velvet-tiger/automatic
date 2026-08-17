@@ -16,6 +16,8 @@ import {
   Save,
   X,
 } from "lucide-react";
+import { AssetTable } from "../../components/AssetTable";
+import { AssetDrawer } from "../../components/AssetDrawer";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -156,74 +158,96 @@ export default function Tools() {
 
   const selectedEntry = entries.find((e) => e.name === selected) ?? null;
 
+  const renderTableRow = (entry: ToolEntry) => (
+    <tr
+      key={entry.name}
+      onClick={() => setSelected(entry.name)}
+      className={`group cursor-pointer border-b border-border-strong/20 last:border-b-0 transition-colors ${
+        selected === entry.name ? "bg-bg-sidebar/60" : "hover:bg-bg-input/70"
+      }`}
+    >
+      <td className="px-3 py-2 w-11">
+        <ToolAvatar tool={entry} size={28} />
+      </td>
+      <td className="px-3 py-2 min-w-0">
+        <div className="text-[13px] font-medium text-text-base truncate">{entry.display_name}</div>
+        <div className="flex items-center gap-1.5 mt-0.5">
+          {kindIcon(entry.kind, 10)}
+          <span className="text-[11px] text-text-muted truncate">{kindLabel(entry.kind)}</span>
+        </div>
+      </td>
+      <td className="px-3 py-2 w-32">
+        <DetectionBadge detected={entry.detected} />
+      </td>
+    </tr>
+  );
+
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* ── Left pane: list ── */}
-      <div className="w-[260px] flex-shrink-0 border-r border-border-strong/40 flex flex-col">
-        {/* Search */}
-        <div className="px-3 pt-3 pb-2 border-b border-border-strong/30">
-          <div className="relative">
-            <Search
-              size={12}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
-            />
+    <div className="flex h-full w-full flex-col bg-bg-base">
+
+      {/* ── Top Toolbar ──────────────────────────────────────────────────── */}
+      <div className="shrink-0 border-b border-border-strong/40 bg-bg-input/40">
+        <div className="flex items-center justify-between px-4 pt-3 pb-2 gap-3">
+          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
+            Tools
+          </span>
+
+          <div className="relative shrink-0">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
             <input
-              className="w-full pl-7 pr-3 py-1.5 rounded-md bg-bg-input border border-border-strong/50 text-[12px] text-text-base placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-brand/60"
+              type="text"
               placeholder="Search tools…"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={e => setQuery(e.target.value)}
+              className="w-56 h-7 pl-7 pr-7 rounded-md bg-bg-input border border-border-strong/50 hover:border-border-strong focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 text-[12px] text-text-base placeholder-text-muted/60 transition-colors"
             />
+            {query && (
+              <button
+                onClick={() => setQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base transition-colors"
+              >
+                <X size={11} />
+              </button>
+            )}
           </div>
         </div>
-
-        {/* List */}
-        <div className="flex-1 overflow-y-auto py-1 custom-scrollbar">
-          {loading ? (
-            <div className="px-4 py-6 text-[12px] text-text-muted text-center">
-              Loading…
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="px-4 py-6 text-[12px] text-text-muted text-center">
-              {query ? "No matching tools" : "No tools installed"}
-            </div>
-          ) : (
-            filtered.map((entry) => (
-              <button
-                key={entry.name}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
-                  selected === entry.name
-                    ? "bg-bg-sidebar text-text-base"
-                    : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
-                }`}
-                onClick={() => setSelected((prev) => (prev === entry.name ? null : entry.name))}
-              >
-                <ToolAvatar tool={entry} size={24} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-medium truncate">{entry.display_name}</div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    {kindIcon(entry.kind, 10)}
-                    <span className="text-[11px] truncate">{kindLabel(entry.kind)}</span>
-                    {entry.detected === true && (
-                      <span className="ml-auto">
-                        <CheckCircle2 size={10} className="text-green-400 flex-shrink-0" />
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </button>
-            ))
-          )}
-        </div>
       </div>
 
-      {/* ── Right pane: detail ── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {selectedEntry ? (
-          <ToolDetail entry={selectedEntry} onReload={load} />
-        ) : (
-          <EmptyState />
-        )}
-      </div>
+      {/* ── Table ────────────────────────────────────────────────────────── */}
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center text-[13px] text-text-muted">Loading…</div>
+      ) : (
+        <AssetTable
+          items={filtered}
+          getId={e => e.name}
+          isEmpty={entries.length === 0}
+          emptyState={
+            <>
+              <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-icon-skill/12 border border-icon-skill/20 flex items-center justify-center">
+                <Wrench size={22} className="text-icon-skill" strokeWidth={1.5} />
+              </div>
+              <h2 className="text-[15px] font-medium text-text-base mb-2">No tools installed</h2>
+              <p className="text-[13px] text-text-muted leading-relaxed max-w-xs">
+                Tools are installed by plugins. Install a plugin that declares a tool type and it will appear here.
+              </p>
+            </>
+          }
+          noMatchState={
+            <p className="text-[13px] text-text-muted">No tools match "{query}".</p>
+          }
+          columns={[
+            { key: "icon", header: "", className: "w-11" },
+            { key: "name", header: "Name" },
+            { key: "detection", header: "", className: "w-32" },
+          ]}
+          renderRow={renderTableRow}
+        />
+      )}
+
+      {/* ── Drawer ───────────────────────────────────────────────────────── */}
+      <AssetDrawer open={!!selectedEntry} onClose={() => setSelected(null)}>
+        {selectedEntry && <ToolDetail entry={selectedEntry} onReload={load} />}
+      </AssetDrawer>
     </div>
   );
 }
@@ -434,22 +458,6 @@ function MetaRow({
           {label}
         </div>
         {children}
-      </div>
-    </div>
-  );
-}
-
-// ── Empty state ───────────────────────────────────────────────────────────────
-
-function EmptyState() {
-  return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center px-8">
-      <Wrench size={36} className="text-text-muted opacity-40" />
-      <div>
-        <p className="text-[13px] font-medium text-text-base mb-1">No tool selected</p>
-        <p className="text-[12px] text-text-muted leading-relaxed max-w-[300px]">
-          Tools are installed by plugins. Install a plugin that declares a tool type and it will appear here.
-        </p>
       </div>
     </div>
   );

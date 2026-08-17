@@ -4,6 +4,8 @@ import { Bot, FolderOpen, AlertCircle, ArrowRight, CheckCircle2, XCircle, Settin
 import { ICONS } from "../../lib/icons";
 import { AgentIcon } from "../../components/AgentIcon";
 import type { AgentCapabilities, AgentOptions } from "../../components/AgentSelector";
+import { AssetTable } from "../../components/AssetTable";
+import { AssetDrawer } from "../../components/AssetDrawer";
 
 interface AgentProject {
   name: string;
@@ -133,11 +135,12 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
   }, []);
 
   useEffect(() => {
-    // Auto-select first agent if none selected or selection is invalid
-    if (agents.length > 0 && (!selectedId || !agents.find((a) => a.id === selectedId))) {
-      const first = agents[0].id;
-      setSelectedId(first);
-      localStorage.setItem(LAST_AGENT_KEY, first);
+    // Drop a stale persisted selection whose agent no longer exists so the
+    // drawer does not open against a missing row. Never fall back to the
+    // first agent — that would open the drawer over the list on page entry.
+    if (agents.length > 0 && selectedId && !agents.find((a) => a.id === selectedId)) {
+      setSelectedId(null);
+      localStorage.removeItem(LAST_AGENT_KEY);
     }
   }, [agents]);
 
@@ -231,70 +234,82 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
     localStorage.setItem(LAST_AGENT_KEY, id);
   };
 
+  const renderTableRow = (agent: AgentWithProjects) => (
+    <tr
+      key={agent.id}
+      onClick={() => selectAgent(agent.id)}
+      className={`group cursor-pointer border-b border-border-strong/20 last:border-b-0 transition-colors ${
+        selectedId === agent.id ? "bg-bg-sidebar/60" : "hover:bg-bg-input/70"
+      }`}
+    >
+      <td className="px-3 py-2 w-11">
+        <div className="w-8 h-8 flex items-center justify-center flex-shrink-0">
+          <AgentIcon agentId={agent.id} size={20} />
+        </div>
+      </td>
+      <td className="px-3 py-2 min-w-0">
+        <div className="text-[13px] font-medium text-text-base truncate">{agent.label}</div>
+        {agent.projects.length > 0 && (
+          <div className="text-[11px] text-text-muted mt-0.5">
+            {agent.projects.length} project{agent.projects.length !== 1 ? "s" : ""}
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+
   return (
-    <div className="flex h-full w-full bg-bg-base">
-      {/* Left sidebar - agent list */}
-      <div className="w-64 flex-shrink-0 flex flex-col border-r border-border-strong/40 bg-bg-input/50">
-        <div className="h-11 px-4 border-b border-border-strong/40 flex items-center bg-bg-base/30">
+    <div className="flex h-full w-full flex-col bg-bg-base">
+
+      {/* ── Top Toolbar ──────────────────────────────────────────────────── */}
+      <div className="shrink-0 border-b border-border-strong/40 bg-bg-input/40">
+        <div className="flex items-center px-4 pt-3 pb-2">
           <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
             Providers
           </span>
         </div>
-
-        <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
-          {agents.length === 0 ? (
-            <div className="px-4 py-3 text-[13px] text-text-muted text-center">
-              No agents registered.
-            </div>
-          ) : (
-            <ul className="space-y-1 px-2">
-              {agents.map((agent) => {
-                const isActive = selectedId === agent.id;
-                return (
-                  <li key={agent.id}>
-                    <button
-                      onClick={() => selectAgent(agent.id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                        isActive
-                          ? "bg-bg-sidebar text-text-base"
-                          : "text-text-muted hover:bg-bg-sidebar/60 hover:text-text-base"
-                      }`}
-                    >
-                      <AgentIcon agentId={agent.id} size={20} />
-                      <div className="flex-1 min-w-0">
-                        <div className={`text-[13px] font-medium truncate ${isActive ? "text-text-base" : "text-text-base"}`}>
-                          {agent.label}
-                        </div>
-                        {agent.projects.length > 0 && (
-                          <div className="text-[11px] text-text-muted mt-0.5">
-                            {agent.projects.length} project{agent.projects.length !== 1 ? "s" : ""}
-                          </div>
-                        )}
-                      </div>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
       </div>
 
-      {/* Right area - agent detail */}
-      <div className="flex-1 flex flex-col min-w-0 bg-bg-base">
-        {error && (
-          <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between">
-            {error}
-            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300">
-              &times;
-            </button>
-          </div>
-        )}
+      {/* Error banner */}
+      {error && (
+        <div className="bg-red-500/10 text-red-400 p-3 text-[13px] border-b border-red-500/20 flex items-center justify-between shrink-0">
+          {error}
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300">
+            &times;
+          </button>
+        </div>
+      )}
 
-{selected ? (
-          <div className="flex-1 flex flex-col h-full">
+      {/* ── Table ────────────────────────────────────────────────────────── */}
+      <AssetTable
+        items={agents}
+        getId={a => a.id}
+        isEmpty={agents.length === 0}
+        emptyState={
+          <>
+            <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-brand/10 border border-brand/20 flex items-center justify-center">
+              <Bot size={22} className={ICONS.agent.iconColor} strokeWidth={1.5} />
+            </div>
+            <h2 className="text-[15px] font-medium text-text-base mb-2">No agents registered</h2>
+            <p className="text-[13px] text-text-muted leading-relaxed max-w-xs">
+              Providers are the coding tools that Automatic syncs configurations to.
+            </p>
+          </>
+        }
+        noMatchState={<p className="text-[13px] text-text-muted">No agents registered.</p>}
+        columns={[
+          { key: "icon", header: "", className: "w-11" },
+          { key: "name", header: "Name" },
+        ]}
+        renderRow={renderTableRow}
+      />
+
+      {/* ── Drawer ───────────────────────────────────────────────────────── */}
+      <AssetDrawer open={!!selected} onClose={() => setSelectedId(null)}>
+        {selected && (
+          <div className="flex-1 flex flex-col h-full min-h-0">
             {/* Header */}
-            <div className="h-11 px-6 border-b border-border-strong/40 flex items-center gap-3">
+            <div className="h-11 px-6 border-b border-border-strong/40 flex items-center gap-3 shrink-0">
               <AgentIcon agentId={selected.id} size={16} />
               <h3 className="text-[14px] font-medium text-text-base">
                 {selected.label}
@@ -302,7 +317,7 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
             </div>
 
             {/* Tab Bar */}
-            <div className="h-10 px-6 border-b border-border-strong/40 flex items-center gap-6">
+            <div className="h-10 px-6 border-b border-border-strong/40 flex items-center gap-6 shrink-0">
               {DETAIL_TABS.map((tab) => {
                 const isActive = detailTab === tab.id;
                 return (
@@ -557,22 +572,8 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
               </div>
             </div>
           </div>
-        ) : (
-          /* Empty state */
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-brand/10 border border-brand/20 flex items-center justify-center">
-              <Bot size={24} className={ICONS.agent.iconColor} strokeWidth={1.5} />
-            </div>
-            <h2 className="text-lg font-medium text-text-base mb-2">
-              Providers
-            </h2>
-            <p className="text-[14px] text-text-muted mb-4 leading-relaxed max-w-sm">
-              Providers are the coding tools that Automatic syncs configurations to.
-              Select one from the sidebar to see which projects use it.
-            </p>
-          </div>
         )}
-      </div>
+      </AssetDrawer>
     </div>
   );
 }
