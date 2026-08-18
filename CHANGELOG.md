@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.20.1] - 2026-08-18
+
+### Fixed
+
+- The expanded dev-server log pane no longer pins itself to the bottom on every poll, so you can scroll back through earlier output while the server is still writing. Auto-follow only re-engages when you scroll back to (or within 8px of) the bottom. Added a Copy button that copies the full captured output to the clipboard. ([e353756](https://github.com/velvet-tiger/automatic/commit/e353756))
+
 ## [1.20.0] - 2026-08-17
 
 ### Added
