@@ -3,8 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   AlertCircle,
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   ExternalLink,
   Loader2,
   Pencil,
@@ -68,7 +70,6 @@ export default function ServersPanel({ projectName, projectDirectory }: ServersP
   const [detectedScripts, setDetectedScripts] = useState<NpmScriptEntry[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const logEndRef = useRef<HTMLDivElement>(null);
 
   // Quick-add suggestions shown in the empty state, detected from the
   // project root's package.json. Only relevant while no servers are
@@ -140,10 +141,6 @@ export default function ServersPanel({ projectName, projectDirectory }: ServersP
       clearInterval(interval);
     };
   }, [expandedId]);
-
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ block: "end" });
-  }, [logLines]);
 
   useEffect(() => {
     if (loading || configs.length > 0) {
@@ -435,7 +432,6 @@ export default function ServersPanel({ projectName, projectDirectory }: ServersP
                 busy={busyIds.has(config.id)}
                 expanded={expandedId === config.id}
                 logLines={expandedId === config.id ? logLines : []}
-                logEndRef={logEndRef}
                 onToggleExpand={() => setExpandedId((prev) => (prev === config.id ? null : config.id))}
                 onStart={() => handleStart(config)}
                 onStop={() => handleStop(config)}
@@ -472,7 +468,6 @@ interface ServerRowProps {
   busy: boolean;
   expanded: boolean;
   logLines: LogLine[];
-  logEndRef: React.RefObject<HTMLDivElement | null>;
   onToggleExpand: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -480,13 +475,16 @@ interface ServerRowProps {
   onDelete: () => void;
 }
 
+// Pixel threshold from the bottom that still counts as "at the bottom" —
+// covers sub-pixel rounding and lets a nearly-pinned view keep tracking.
+const STICK_TO_BOTTOM_PX = 8;
+
 function ServerRow({
   config,
   status,
   busy,
   expanded,
   logLines,
-  logEndRef,
   onToggleExpand,
   onStart,
   onStop,
@@ -494,6 +492,48 @@ function ServerRow({
   onDelete,
 }: ServerRowProps) {
   const running = status?.running ?? false;
+  const logScrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const [copied, setCopied] = useState(false);
+
+  const isAtBottom = useCallback((el: HTMLDivElement) => {
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_TO_BOTTOM_PX;
+  }, []);
+
+  // When the pane expands, snap to the bottom once so users see the tail
+  // first; from then on, scroll position is user-controlled.
+  useEffect(() => {
+    if (!expanded) return;
+    const el = logScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    stickToBottomRef.current = true;
+  }, [expanded]);
+
+  // Only auto-scroll on new output if the user was already at the bottom.
+  useEffect(() => {
+    if (!expanded) return;
+    const el = logScrollRef.current;
+    if (!el) return;
+    if (stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [expanded, logLines]);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    stickToBottomRef.current = isAtBottom(e.currentTarget);
+  };
+
+  const handleCopy = async () => {
+    const text = logLines.map((l) => l.text).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error("Failed to copy log:", err);
+    }
+  };
 
   return (
     <div className="rounded-lg border border-border-strong/40 bg-bg-input overflow-hidden">
@@ -603,8 +643,22 @@ function ServerRow({
       </div>
 
       {expanded && (
-        <div className="border-t border-border-strong/40 bg-bg-base">
-          <div className="max-h-64 overflow-y-auto custom-scrollbar px-4 py-3 font-mono text-[11px] leading-relaxed">
+        <div className="border-t border-border-strong/40 bg-bg-base relative">
+          <button
+            onClick={handleCopy}
+            disabled={logLines.length === 0}
+            className="absolute top-2 right-2 z-10 flex items-center gap-1 px-2 py-1 rounded-md text-[11px] bg-bg-input/90 border border-border-strong/50 text-text-muted hover:text-text-base hover:border-brand/60 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+            title="Copy output"
+            aria-label="Copy output"
+          >
+            {copied ? <Check size={11} /> : <Copy size={11} />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <div
+            ref={logScrollRef}
+            onScroll={handleScroll}
+            className="max-h-64 overflow-y-auto custom-scrollbar px-4 py-3 font-mono text-[11px] leading-relaxed"
+          >
             {logLines.length === 0 ? (
               <p className="text-text-muted">No output captured yet.</p>
             ) : (
@@ -617,7 +671,6 @@ function ServerRow({
                 </div>
               ))
             )}
-            <div ref={logEndRef} />
           </div>
         </div>
       )}
