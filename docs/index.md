@@ -6,6 +6,7 @@ Reference and design documentation for the Automatic desktop app. Source-of-trut
 
 - [Plugin System](./plugins.md) — plugin architecture, registry, and lifecycle.
 - **Assets** — bundled skills, rules, templates, and how they are loaded. Reference lives in the sibling `automatic-meta` repo at `general/assets.md`.
+- [Content Library](./library.md) — the external `automatic-library` repository, how the app extracts and refreshes it, manifest schema, retired assets, and the signing model.
 - [Remote Sources](./remote-sources.md) — loading resources from git repositories via `automatic.json` manifests.
 - **Sub-Agents Feature** — Automatic's sub-agent model and storage. Reference lives in the sibling `automatic-meta` repo at `general/sub-agents/sub-agents.md`.
 - [Session Tracking](./session-tracking.md) — design for tracking agent sessions across projects.
