@@ -143,6 +143,7 @@ The app currently loads assets at compile time. The switch to library-driven loa
 3. Add a build step that packs `automatic-library/` at a pinned version into a single `include_bytes!` blob. Adding a new asset to the library no longer requires a Rust edit.
 4. Add the background refresh loop, signature verification, hash verification, atomic swap, and rollback.
 5. Move `REMOVED_DEFAULT_RULES` from the binary into `retired.json` on the library side. Delete the constant from the app.
+6. Drop the `{pack}-{filename}` concatenation from the rules sync path. In its place, expect library source filenames to carry the pack prefix already (`rules/automatic/automatic-guardrails.md`) and install them verbatim. This is a coordinated change across the library and the app: the library rename and the loader change must land together, otherwise every installed rule file gets double-prefixed.
 
 Open questions before step 3:
 
