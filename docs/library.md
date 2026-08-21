@@ -72,8 +72,8 @@ Failures during download, signature verification, hash verification, or extracti
     {
       "kind": "rule",
       "pack": "automatic",
-      "id": "guardrails",
-      "path": "rules/automatic/guardrails.md",
+      "id": "automatic-guardrails",
+      "path": "rules/automatic/automatic-guardrails.md",
       "sha256": "…"
     },
     {
@@ -100,6 +100,8 @@ Failures during download, signature verification, hash verification, or extracti
 ```
 
 Kinds are `skill`, `rule`, `instruction`, `subagent`, `hook`, and `manifest-fragment`. A fragment is a loose top-level file like `skills/skill.json` that the library owns but that is not itself an asset the app installs.
+
+The app installs each asset by copying the file at `path` verbatim. It does not rename or transform the filename on the way in. Rule and subagent packs are expected to carry their pack prefix in the source filename (`rules/automatic/automatic-guardrails.md`), so an installed asset in a project is self-describing without the app having to compose a name.
 
 ## Retired assets
 
