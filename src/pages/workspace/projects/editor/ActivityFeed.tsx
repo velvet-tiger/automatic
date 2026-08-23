@@ -16,11 +16,11 @@ export function ActivityFeed({ entries, loading }: ActivityFeedProps) {
         <History size={13} className="text-text-muted" />
         <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Recent Activity</span>
       </div>
-      <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+      <div className="bg-bg-input border border-border-strong/35 rounded-lg overflow-hidden">
         {loading ? (
-          <div className="px-4 py-6 text-center text-[12px] text-text-muted">Loading activity…</div>
+          <div className="px-4 py-4 text-center text-[12px] text-text-muted">Loading activity…</div>
         ) : entries.length === 0 ? (
-          <div className="px-4 py-6 text-center text-[12px] text-text-muted italic">
+          <div className="px-4 py-4 text-center text-[12px] text-text-muted italic">
             No activity yet. Save or sync the project to start recording events.
           </div>
         ) : (

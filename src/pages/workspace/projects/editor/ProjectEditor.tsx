@@ -2780,7 +2780,7 @@ export function ProjectEditor({
 
             {/* ── Project title ───────────────────────────────────── */}
             {!isCreating && (
-              <div className="px-6 pt-5 pb-4 border-b border-border-strong/40 flex-shrink-0 flex items-start justify-between gap-4">
+              <div className="flex flex-shrink-0 items-start justify-between gap-4 border-b border-border-strong/35 px-6 pt-4 pb-3">
                 {/* Left: name + directory */}
                 <div className="min-w-0 flex-1">
                   {isRenaming ? (
@@ -2794,11 +2794,11 @@ export function ProjectEditor({
                       }}
                       onBlur={handleRename}
                       autoFocus
-                      className="bg-transparent border-none outline-none text-[22px] font-semibold text-text-base placeholder-text-muted/50 w-full"
+                      className="w-full border-none bg-transparent text-[16px] font-semibold text-text-base outline-none placeholder-text-muted/50"
                     />
                   ) : (
                     <h1
-                      className="text-[22px] font-semibold text-text-base cursor-text leading-tight"
+                      className="cursor-text text-[16px] font-semibold leading-snug text-text-base"
                       onDoubleClick={startRename}
                       title="Double-click to rename"
                     >
@@ -2816,43 +2816,45 @@ export function ProjectEditor({
                       }
                       if (selected) updateField("directory", selected);
                     }}
-                    className="mt-1 flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text-base font-mono transition-colors group"
+                    className="group mt-1 flex items-center gap-1.5 font-mono text-[11px] text-text-muted transition-colors hover:text-text-base"
                     title="Click to change directory"
                   >
-                    <FolderOpen size={11} className="flex-shrink-0 text-text-muted/60 group-hover:text-text-muted transition-colors" />
+                    <FolderOpen size={11} className="flex-shrink-0 text-text-muted/50 transition-colors group-hover:text-text-muted" />
                     {project.directory
-                      ? <span className="truncate max-w-[480px]">{project.directory.replace(/^\/Users\/[^/]+/, "~")}</span>
+                      ? <span className="max-w-[480px] truncate">{project.directory.replace(/^\/Users\/[^/]+/, "~")}</span>
                       : <span className="italic text-text-muted/50">No directory set — click to choose</span>
                     }
                   </button>
                 </div>
 
-                {/* Right: agent icons + group pills */}
-                <div className="flex flex-col items-end flex-shrink-0">
+                {/* Right: agent icons + group links */}
+                <div className="flex flex-shrink-0 flex-col items-end gap-1.5 pt-0.5">
                   {project.agents.length > 0 && (
                     <button
+                      type="button"
                       onClick={() => selectTab("agents")}
-                      className="flex items-center gap-1.5 mt-1 group"
+                      className="flex items-center gap-1.5"
                       title="Agents — click to manage"
                     >
                       {project.agents.map((agentId) => (
                         <span
                           key={agentId}
-                          className="opacity-70 group-hover:opacity-100 transition-opacity"
+                          className="opacity-75 transition-opacity hover:opacity-100"
                           title={availableAgents.find(a => a.id === agentId)?.label ?? agentId}
                         >
-                          <AgentIcon agentId={agentId} size={20} />
+                          <AgentIcon agentId={agentId} size={14} />
                         </span>
                       ))}
                     </button>
                   )}
                   {projectGroupMemberships.length > 0 && (
-                    <div className="flex flex-wrap justify-end gap-1.5 mt-1.5">
+                    <div className="flex flex-wrap justify-end gap-x-2 gap-y-0.5">
                       {projectGroupMemberships.map((groupName) => (
                         <button
                           key={groupName}
+                          type="button"
                           onClick={() => selectTab("groups")}
-                          className="rounded-full border border-border-strong/40 bg-bg-sidebar px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:text-text-base hover:border-border-strong"
+                          className="text-[11px] text-text-muted/55 transition-colors hover:text-text-base"
                         >
                           {groupName}
                         </button>
@@ -3445,20 +3447,20 @@ export function ProjectEditor({
             )}
             {/* Primary group tabs — hidden when a secondary (controls bar) view is active. */}
             {!(activeToolName === null && isSecondaryGroup(projectGroup)) && (
-            <div className="flex items-center gap-0 px-6 border-b border-border-strong/40 flex-shrink-0">
+            <div className="flex flex-shrink-0 items-center gap-0 border-b border-border-strong/35 px-6">
               {PROJECT_GROUPS.map((group) => (
                 <button
                   key={group.id}
                   onClick={() => selectGroup(group.id)}
-                  className={`px-3 py-2.5 text-[13px] font-medium transition-colors relative flex items-center gap-1.5 ${
+                  className={`relative flex items-center gap-1.5 px-3 py-2 text-[12px] font-medium transition-colors ${
                     activeToolName === null && projectGroup === group.id
                       ? "text-text-base"
-                      : "text-text-muted hover:text-text-base"
+                      : "text-text-muted/70 hover:text-text-base"
                   }`}
                 >
                   {group.label}
                   {activeToolName === null && projectGroup === group.id && (
-                    <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
+                    <span className="absolute bottom-0 left-2 right-2 h-px bg-brand/70" />
                   )}
                 </button>
               ))}
@@ -3469,15 +3471,15 @@ export function ProjectEditor({
                 <button
                   key={entry.name}
                   onClick={() => selectTopLevelTool(entry.name)}
-                  className={`px-3 py-2.5 text-[13px] font-medium transition-colors relative flex items-center gap-1.5 ${
+                  className={`relative flex items-center gap-1.5 px-3 py-2 text-[12px] font-medium transition-colors ${
                     activeToolName === entry.name
                       ? "text-text-base"
-                      : "text-text-muted hover:text-text-base"
+                      : "text-text-muted/70 hover:text-text-base"
                   }`}
                 >
                   {entry.display_name}
                   {activeToolName === entry.name && (
-                    <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand rounded-t" />
+                    <span className="absolute bottom-0 left-2 right-2 h-px bg-brand/70" />
                   )}
                 </button>
               ))}
@@ -3491,20 +3493,20 @@ export function ProjectEditor({
                 PROJECT_CONTROLS.find((g) => g.id === projectGroup);
               if (!activeGroup || activeGroup.tabs.length <= 1) return null;
               return (
-                <div className="flex items-center gap-0 px-6 border-b border-border-strong/20 bg-bg-input/30 flex-shrink-0">
+                <div className="flex flex-shrink-0 items-center gap-0 border-b border-border-strong/20 bg-bg-input/20 px-6">
                   {activeGroup.tabs.map((tab) => (
                     <button
                       key={tab.id}
                       onClick={() => selectTab(tab.id)}
-                      className={`px-3 py-2 text-[12px] font-medium transition-colors relative flex items-center gap-1.5 ${
+                      className={`relative flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium transition-colors ${
                         projectTab === tab.id
                           ? "text-text-base"
-                          : "text-text-muted hover:text-text-base"
+                          : "text-text-muted/70 hover:text-text-base"
                       }`}
                     >
                       {tab.label}
                       {projectTab === tab.id && (
-                        <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand/60 rounded-t" />
+                        <span className="absolute bottom-0 left-2 right-2 h-px bg-brand/50" />
                       )}
                     </button>
                   ))}
@@ -3935,7 +3937,7 @@ export function ProjectEditor({
                   >
                     {ctrl.label}
                     {ctrl.id === "insights" && recsDisplayCount > 0 && (
-                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-warning/15 text-warning border border-warning/20 leading-none">
+                      <span className="text-[11px] tabular-nums text-text-muted/50 leading-none">
                         {recsDisplayCount}
                       </span>
                     )}
