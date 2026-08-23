@@ -105,6 +105,8 @@ pub fn run() {
             write_settings,
             reset_settings,
             reinstall_defaults,
+            get_library_version,
+            check_library_updates,
             erase_app_data,
             dismiss_welcome,
             clear_opencode_cache,

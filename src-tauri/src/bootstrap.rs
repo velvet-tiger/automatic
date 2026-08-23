@@ -13,6 +13,28 @@
 
 use crate::{commands, core, sync};
 
+/// Decide whether the bundled library must be re-seeded, given the version
+/// currently recorded in settings and the version compiled into the binary.
+///
+/// - No installed version → treat as upgrade (reinstall).
+/// - Installed < bundled → upgrade (reinstall).
+/// - Installed >= bundled → the Phase 3 refresh may have moved the
+///   installed library ahead of the binary; leave content alone.
+/// - Non-semver strings on either side → treat as upgrade defensively.
+fn needs_reinstall(installed: Option<&str>, bundled: &str) -> bool {
+    let installed = match installed {
+        Some(v) => v,
+        None => return true,
+    };
+    match (
+        semver::Version::parse(installed),
+        semver::Version::parse(bundled),
+    ) {
+        (Ok(inst), Ok(bund)) => inst < bund,
+        _ => true,
+    }
+}
+
 /// Run all startup housekeeping synchronously.
 ///
 /// Idempotent: every step either no-ops when already done or safely
@@ -20,19 +42,14 @@ use crate::{commands, core, sync};
 /// never abort the remaining steps, so one broken migration can't take the
 /// whole app down with it.
 pub fn run_startup_housekeeping() {
-    // Version-gated default-asset reinstall: when the stored library
-    // version differs from the current library shipped in the binary,
-    // rewrite bundled defaults so on-disk copies match the new release.
-    // Phase 2 tracks this on the library's own semver rather than
-    // CARGO_PKG_VERSION, so a library release can ship without an app
-    // release and vice versa.
+    // Version-gated default-asset reinstall: force a re-seed only when
+    // the installed library version is *older* than the library shipped
+    // in the binary. A newer installed version (e.g. picked up by the
+    // Phase 3 background refresh) is left alone so we never roll back
+    // to older bundled content on a subsequent boot.
     let library_version: &str = core::bundled_library::version();
     let force_reinstall = match core::read_settings() {
-        Ok(settings) => settings
-            .library_version
-            .as_deref()
-            .map(|v| v != library_version)
-            .unwrap_or(true), // no version stored → treat as upgrade
+        Ok(settings) => needs_reinstall(settings.library_version.as_deref(), library_version),
         Err(_) => true, // can't read settings → safe to overwrite
     };
 
@@ -170,4 +187,37 @@ pub fn run_startup_housekeeping() {
     }
     // Reconcile tool/skill/rule registries with current plugin states.
     core::reconcile_plugin_resources_on_startup();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_reinstall;
+
+    #[test]
+    fn missing_installed_version_forces_reinstall() {
+        assert!(needs_reinstall(None, "0.1.0"));
+    }
+
+    #[test]
+    fn older_installed_forces_reinstall() {
+        assert!(needs_reinstall(Some("0.1.0"), "0.2.0"));
+        assert!(needs_reinstall(Some("0.1.9"), "0.2.0"));
+    }
+
+    #[test]
+    fn matching_installed_skips_reinstall() {
+        assert!(!needs_reinstall(Some("0.1.0"), "0.1.0"));
+    }
+
+    #[test]
+    fn newer_installed_does_not_roll_back() {
+        // Refresh moved the disk ahead of the bundled snapshot; leave it.
+        assert!(!needs_reinstall(Some("0.2.0"), "0.1.0"));
+    }
+
+    #[test]
+    fn non_semver_defaults_to_reinstall() {
+        assert!(needs_reinstall(Some("not-a-version"), "0.1.0"));
+        assert!(needs_reinstall(Some("0.1.0"), "not-a-version"));
+    }
 }

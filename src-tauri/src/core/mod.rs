@@ -15,6 +15,7 @@ mod author;
 pub mod bundled_app_skills;
 pub mod bundled_library;
 mod bundled_skills;
+pub mod library_refresh;
 pub mod cli_install;
 pub mod cloud_sync;
 pub mod cloud_sync_diff;

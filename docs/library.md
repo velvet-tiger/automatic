@@ -7,7 +7,9 @@ This document is the design and operational reference for that library from the 
 ## Status
 
 - **Phase 1 landed.** The library ships as a git submodule at `automatic-app/automatic-library/`, packed into a `.zip` by `src-tauri/build.rs`, and read at runtime by `src-tauri/src/core/bundled_library.rs`. The four asset kinds (skills, rules, instructions, subagents) load from that archive rather than from `include_str!` of `src-tauri/assets/`.
-- **Phase 2 (version tracking migration) and Phase 3 (background refresh)** are not yet implemented. `Settings.bundled_skills_version` still tracks default-install state against `CARGO_PKG_VERSION`.
+- **Phase 2 landed.** `Settings.library_version` tracks default-install state against `bundled_library::version()`. Retired rules move via `retired.json` in the library repo. `Settings.bundled_skills_version` is retained for legacy JSON round-trip only.
+- **Phase 3a landed.** The bootstrap version comparison is semver-aware — the app never rolls back an installed library that is newer than the binary snapshot. Tauri commands `get_library_version` and `check_library_updates` are wired; the latter polls `api.github.com/repos/velvet-tiger/automatic-library/releases/latest`.
+- **Phase 3b (download / verify / apply / background scheduler)** is not yet implemented. Blocked on Phase 4 producing signed release artefacts.
 
 App-side residue that stays in the binary (not in the library):
 
