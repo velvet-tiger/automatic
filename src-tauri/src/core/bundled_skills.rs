@@ -243,7 +243,7 @@ pub fn bundled_skill_names() -> Vec<String> {
         .map(|(n, _)| (*n).to_string())
         .collect();
     for skill in bundled_library::skills() {
-        if !names.iter().any(|n| *n == skill.id) {
+        if !names.contains(&skill.id) {
             names.push(skill.id);
         }
     }

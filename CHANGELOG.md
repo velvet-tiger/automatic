@@ -4,6 +4,22 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-08-23
+
+### Added
+
+- External content library. Skills, rules, instructions, and sub-agents now load from the `automatic-library` git submodule at runtime instead of being compiled in one file at a time via `include_str!`. The library carries its own semver version (`automatic-library/VERSION`); the app polls for newer releases, downloads them with minisign signature verification, and applies them in the background. On-disk install locations and behaviour are unchanged. Redundant bundled assets removed from `src-tauri/assets/`. ([434cf14](https://github.com/velvet-tiger/automatic/commit/434cf14), [da81e4d](https://github.com/velvet-tiger/automatic/commit/da81e4d), [45e7f89](https://github.com/velvet-tiger/automatic/commit/45e7f89), [9d3fafe](https://github.com/velvet-tiger/automatic/commit/9d3fafe), [46e613f](https://github.com/velvet-tiger/automatic/commit/46e613f))
+- Group-aware project overview and sidebar. Projects belonging to a project group now show group context in both the sidebar and project overview. ([62d5f23](https://github.com/velvet-tiger/automatic/commit/62d5f23))
+- Dev Servers plugin now stacks detected URLs in a vertical list below the server row, each with its own open link and stop button. Falls back to `http://localhost:<port>` when no URL was detected from stdout. ([bfe4ce8](https://github.com/velvet-tiger/automatic/commit/bfe4ce8))
+
+### Changed
+
+- Quieter project summary and editor chrome with softer visual weight across the workspace UI. ([92de561](https://github.com/velvet-tiger/automatic/commit/92de561), [a293017](https://github.com/velvet-tiger/automatic/commit/a293017))
+
+### Fixed
+
+- Library update candidates are now compared against the installed version, not the bundled version. A library already updated on disk could previously be re-downloaded if the bundled version was older. ([99fd480](https://github.com/velvet-tiger/automatic/commit/99fd480))
+
 ## [1.20.1] - 2026-08-18
 
 ### Fixed
