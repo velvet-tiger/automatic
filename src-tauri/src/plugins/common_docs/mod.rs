@@ -4,8 +4,10 @@ use crate::core::{
     PluginToolDeclaration,
 };
 
-/// Bundled rule content for the common-docs plugin.
-const RULE_CONTENT: &str = include_str!("../../../assets/rules/common-docs/documentation.md");
+/// Bundled rule content for the common-docs plugin. Colocated with the
+/// plugin manifest so the plugin owns its own asset rather than reaching
+/// across the tree into `src-tauri/assets/`.
+const RULE_CONTENT: &str = include_str!("documentation.md");
 
 /// Return the manifest that describes this plugin to the Automatic plugin
 /// registry.  Called by `core::app_plugins::bundled_plugins()`.

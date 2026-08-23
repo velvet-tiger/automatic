@@ -68,17 +68,17 @@ npm run tauri [cmd]     # Direct Tauri CLI access
 - `src-tauri/src/agent/` — Agent type definitions and sync target logic
 
 **Data & Assets:**
-- `src-tauri/assets/skills/` — Bundled skill definitions (automatic-*, laravel-specialist, php-pro, etc.)
-- `src-tauri/assets/rules/` — Bundled rule templates
-- `src-tauri/assets/subagents/` — Agent-specific templates and config structures
-- `src-tauri/assets/instructions/` — Markdown instruction templates (Agent Project Brief, Session Context)
+- `automatic-library/` (git submodule) — Automatic-authored skills, rules, instructions, and subagents. Packed into a zip by `src-tauri/build.rs` and read by `src-tauri/src/core/bundled_library.rs`. See `docs/library.md`.
+- `src-tauri/assets/skills/` — App-only skills: `automatic` and `automatic-features` (product-specific), plus the seven third-party vendored skills (Laravel, Pennant, PHP, Python, Tailwind CSS, Terraform, Vercel/React). Wired in `src-tauri/src/core/bundled_app_skills.rs`.
+- `src-tauri/assets/rules/automatic/automatic-service.md` — The one app-only rule (`APP_BUNDLED_RULES` in `rules.rs`). Every other rule ships via the library.
 - `src-tauri/assets/discover/project-templates/` — Bundled project-config templates (JSON, surfaced as "Templates" in the Discover UI)
 - `src-tauri/languages/` — Language-specific module definitions (.mod files)
 - `src-tauri/assets/discover/featured-mcp-servers.json` — Curated MCP server registry
 - `src-tauri/collections.json` — Skill/server collection definitions
 
 **User Data Storage:**
-- All runtime configuration stored in `~/.agents/` (file-based, no database)
+- All runtime configuration stored in `~/.automatic/` (`~/.automatic-dev/` in debug builds), file-based, no database.
+- `~/.agents/skills/` is read-only external content the app scans but never writes.
 - Drift detection compares in-memory config with on-disk files in project directories
 
 ## Coding Conventions
