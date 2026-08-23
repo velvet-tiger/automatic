@@ -569,34 +569,6 @@ function ServerRow({
           {running ? "Running" : "Stopped"}
         </span>
 
-        {running && status?.urls && status.urls.length > 0 ? (
-          <div className="flex items-center gap-1.5 shrink-0">
-            {status.urls.map((url) => (
-              <button
-                key={url}
-                onClick={() => void openExternalUrl(url)}
-                className="flex items-center gap-1 text-[11px] text-brand hover:underline"
-                title={`Open ${url}`}
-              >
-                <ExternalLink size={11} />
-                {formatServerUrlLabel(url)}
-              </button>
-            ))}
-          </div>
-        ) : (
-          running &&
-          config.port && (
-            <button
-              onClick={() => void openExternalUrl(`http://localhost:${config.port}`)}
-              className="flex items-center gap-1 text-[11px] text-brand hover:underline shrink-0"
-              title={`Open http://localhost:${config.port}`}
-            >
-              <ExternalLink size={11} />
-              :{config.port}
-            </button>
-          )
-        )}
-
         <div className="flex items-center gap-1 shrink-0">
           {busy ? (
             <div className="w-[26px] h-[26px] flex items-center justify-center text-text-muted">
@@ -641,6 +613,45 @@ function ServerRow({
           </button>
         </div>
       </div>
+
+      {running && (() => {
+        const detected = status?.urls ?? [];
+        const urls =
+          detected.length > 0
+            ? detected
+            : config.port
+              ? [`http://localhost:${config.port}`]
+              : [];
+        if (urls.length === 0) return null;
+        return (
+          <div className="border-t border-border-strong/40 bg-bg-base/40">
+            {urls.map((url) => (
+              <div
+                key={url}
+                className="flex items-center gap-3 px-4 py-2 border-b border-border-strong/20 last:border-b-0"
+              >
+                <button
+                  onClick={() => void openExternalUrl(url)}
+                  className="flex items-center gap-1.5 min-w-0 flex-1 text-left text-[12px] text-brand hover:underline"
+                  title={`Open ${url}`}
+                >
+                  <ExternalLink size={11} className="shrink-0" />
+                  <span className="truncate">{formatServerUrlLabel(url)}</span>
+                </button>
+                <button
+                  onClick={onStop}
+                  disabled={busy}
+                  className="w-[24px] h-[24px] flex items-center justify-center rounded-md text-text-muted hover:bg-red-500/10 hover:text-red-400 transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none"
+                  title="Stop server"
+                  aria-label="Stop server"
+                >
+                  {busy ? <Loader2 size={12} className="animate-spin" /> : <Square size={12} />}
+                </button>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {expanded && (
         <div className="border-t border-border-strong/40 bg-bg-base relative">
