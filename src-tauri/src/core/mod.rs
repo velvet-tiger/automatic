@@ -12,6 +12,8 @@ pub mod ai_generate;
 mod app_plugins;
 mod asset_security;
 mod author;
+pub mod bundled_app_skills;
+pub mod bundled_library;
 mod bundled_skills;
 pub mod cli_install;
 pub mod cloud_sync;

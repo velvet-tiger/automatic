@@ -312,63 +312,110 @@ pub fn save_plugin_rule(
     fs::write(path, pretty).map_err(|e| e.to_string())
 }
 
-/// Built-in rules shipped with the app.  Each entry is (machine_name, display_name, content).
-/// Written to `~/.automatic/rules/{machine_name}.json` on first run (or when missing),
-/// but never overwrite existing files — user edits are preserved.
-const DEFAULT_RULES: &[(&str, &str, &str)] = &[
-    (
-        "automatic-general",
-        "Automatic: General",
-        include_str!("../../assets/rules/automatic/general.md"),
-    ),
-    (
-        "automatic-code-style",
-        "Automatic: Code Style",
-        include_str!("../../assets/rules/automatic/code-style.md"),
-    ),
-    (
-        "automatic-process",
-        "Automatic: Agent process",
-        include_str!("../../assets/rules/automatic/process.md"),
-    ),
-    (
-        "automatic-guardrails",
-        "Automatic: Guardrails",
-        include_str!("../../assets/rules/automatic/guardrails.md"),
-    ),
-    (
-        "automatic-prose",
-        "Automatic: Prose",
-        include_str!("../../assets/rules/automatic/prose.md"),
-    ),
-    (
-        "automatic-agent-guidance",
-        "Automatic: Agent guidance",
-        include_str!("../../assets/rules/automatic/agent-guidance.md"),
-    ),
-    (
-        "automatic-service",
-        "Automatic: Service",
-        include_str!("../../assets/rules/automatic/automatic-service.md"),
-    ),
-    (
-        GITIGNORE_RULE,
-        "Automatic: Managed .gitignore",
-        include_str!("../../assets/rules/automatic/gitignore.md"),
-    ),
+/// Rules bundled by the app rather than by the content library. Kept
+/// separately because they are Automatic-specific and belong with the
+/// product itself (see also `bundled_app_skills`). Each entry is
+/// `(machine_name, display_name, content)`.
+const APP_BUNDLED_RULES: &[(&str, &str, &str)] = &[(
+    "automatic-service",
+    "Automatic: Service",
+    include_str!("../../assets/rules/automatic/automatic-service.md"),
+)];
+
+/// Display names for library-provided rules, keyed by compound machine name
+/// (`{pack}-{id}`). Rules present in the library but not in this map fall
+/// back to a computed name from the pack and id.
+const LIBRARY_RULE_DISPLAY_NAMES: &[(&str, &str)] = &[
+    ("automatic-code", "Automatic: Code"),
+    ("automatic-general", "Automatic: General"),
+    ("automatic-gitignore", "Automatic: Managed .gitignore"),
+    ("automatic-process", "Automatic: Agent Process"),
+    ("automatic-prose", "Automatic: Prose"),
 ];
+
+/// Return the default rules the app should install, keyed as
+/// `(machine_name, display_name, content)`. Combines rules from the
+/// `bundled_library` with the app-bundled residue in `APP_BUNDLED_RULES`.
+///
+/// The machine name for library rules is `{pack}-{id}` (see the pack-prefix
+/// note in the library repo's CLAUDE.md — the app concatenates at load time
+/// so installed rule filenames remain self-describing).
+fn default_rules() -> Vec<(String, String, String)> {
+    let mut rules = Vec::new();
+
+    for entry in super::bundled_library::rules() {
+        let machine_name = format!("{}-{}", entry.pack, entry.id);
+        let display_name = LIBRARY_RULE_DISPLAY_NAMES
+            .iter()
+            .find(|(name, _)| *name == machine_name.as_str())
+            .map(|(_, display)| (*display).to_string())
+            .unwrap_or_else(|| {
+                format!(
+                    "{}: {}",
+                    title_case(&entry.pack),
+                    title_case(&entry.id.replace('-', " "))
+                )
+            });
+        let content = match super::bundled_library::read_file_string(&entry.path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[automatic] library rule {} unreadable: {}", machine_name, e);
+                continue;
+            }
+        };
+        rules.push((machine_name, display_name, content));
+    }
+
+    for (machine_name, display_name, content) in APP_BUNDLED_RULES {
+        rules.push((
+            (*machine_name).to_string(),
+            (*display_name).to_string(),
+            (*content).to_string(),
+        ));
+    }
+
+    rules
+}
+
+fn title_case(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut capitalize_next = true;
+    for c in input.chars() {
+        if c.is_whitespace() {
+            out.push(c);
+            capitalize_next = true;
+        } else if capitalize_next {
+            for u in c.to_uppercase() {
+                out.push(u);
+            }
+            capitalize_next = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
 
 /// Rules that shipped as bundled defaults in a past version and have since
 /// been removed from the product.  Installation is declarative via
-/// `DEFAULT_RULES`; removal is declarative here.  When you drop a rule from
-/// `DEFAULT_RULES`, add its machine name to this list so existing installs
+/// `default_rules()`; removal is declarative here.  When you drop a rule
+/// from `default_rules()` (either by removing it from the library or from
+/// `APP_BUNDLED_RULES`), add its machine name here so existing installs
 /// have the orphaned file (and any project references to it) cleaned up on
 /// the next update.
 ///
 /// A name listed here is removed even if the user edited the rule, because
 /// listing it asserts the rule no longer exists in the product.  A rule that
 /// a plugin has since claimed (carries a `plugin_id`) is left untouched.
-const REMOVED_DEFAULT_RULES: &[&str] = &["automatic-commands"];
+const REMOVED_DEFAULT_RULES: &[&str] = &[
+    // Historical: pre-library-migration retirement.
+    "automatic-commands",
+    // Superseded when the library merged them into `automatic-code`.
+    "automatic-code-style",
+    "automatic-guardrails",
+    // Superseded when the library merged it into `automatic-general`.
+    "automatic-agent-guidance",
+];
 
 /// Write default rules to `~/.automatic/rules/`.
 ///
@@ -381,18 +428,18 @@ pub fn install_default_rules_inner(force: bool) -> Result<(), String> {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
 
-    for (machine_name, display_name, content) in DEFAULT_RULES {
+    for (machine_name, display_name, content) in default_rules() {
         let path = dir.join(format!("{}.json", machine_name));
         if force || !path.exists() {
             let rule = Rule {
-                name: display_name.to_string(),
-                content: content.to_string(),
+                name: display_name.clone(),
+                content: content.clone(),
                 plugin_id: None,
                 _author: None,
             };
             let pretty = serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())?;
             fs::write(&path, pretty).map_err(|e| e.to_string())?;
-        } else if *machine_name == "automatic-process" || *machine_name == "automatic-service" {
+        } else if machine_name == "automatic-process" || machine_name == "automatic-service" {
             // Migration: always overwrite with the latest bundled content.
             // `automatic-process` replaces the old checklist rule's content;
             // `automatic-service` documents the live MCP tool surface, so a
@@ -402,8 +449,8 @@ pub fn install_default_rules_inner(force: bool) -> Result<(), String> {
             // Service" / "Automatic" -> "Automatic: Service"), since the
             // name is rewritten unconditionally here.
             let rule = Rule {
-                name: display_name.to_string(),
-                content: content.to_string(),
+                name: display_name.clone(),
+                content: content.clone(),
                 plugin_id: None,
                 _author: None,
             };

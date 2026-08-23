@@ -1,0 +1,3 @@
+[submodule "automatic-library"]
+	path = automatic-library
+	url = https://github.com/velvet-tiger/automatic-library.git

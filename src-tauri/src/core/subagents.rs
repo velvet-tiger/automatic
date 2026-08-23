@@ -396,27 +396,27 @@ pub fn delete_subagent(machine_name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Built-in agents shipped with the app. Each entry is
-/// (machine_name, display_name, content).
-/// Written to `~/.automatic/agents/{machine_name}.md` on first run (or when missing),
-/// but never overwrite existing files — user edits are preserved.
-const DEFAULT_USER_AGENTS: &[(&str, &str, &str)] = &[
-    (
-        "automatic-code-reviewer",
-        "Code Reviewer",
-        include_str!("../../assets/subagents/automatic/code-reviewer.md"),
-    ),
-    (
-        "automatic-debugger",
-        "Debugger",
-        include_str!("../../assets/subagents/automatic/debugger.md"),
-    ),
-    (
-        "automatic-planner",
-        "Planner",
-        include_str!("../../assets/subagents/automatic/planner.md"),
-    ),
-];
+/// Compose the compound machine name the app uses for a library subagent
+/// (`{pack}-{id}`, e.g. `automatic-code-reviewer`).
+fn subagent_machine_name(entry: &super::bundled_library::SubagentEntry) -> String {
+    format!("{}-{}", entry.pack, entry.id)
+}
+
+/// Load the default subagents shipped with the app from the bundled library.
+/// Each returned tuple is `(machine_name, content)`. Entries whose file is
+/// unreadable are skipped with an eprintln.
+fn default_subagents() -> Vec<(String, String)> {
+    super::bundled_library::subagents()
+        .into_iter()
+        .filter_map(|entry| {
+            let machine_name = subagent_machine_name(&entry);
+            let content = super::bundled_library::read_file_string(&entry.path)
+                .map_err(|e| eprintln!("[automatic] subagent {} unreadable: {}", machine_name, e))
+                .ok()?;
+            Some((machine_name, content))
+        })
+        .collect()
+}
 
 /// Write default user agents to `~/.automatic/agents/`.
 ///
@@ -429,15 +429,15 @@ pub fn install_default_subagents_inner(force: bool) -> Result<(), String> {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
 
-    for (machine_name, _display_name, content) in DEFAULT_USER_AGENTS {
+    for (machine_name, content) in default_subagents() {
         let path = dir.join(format!("{}.md", machine_name));
         if force || !path.exists() {
             enforce_text_asset(
                 AssetKind::UserAgent,
                 &format!("bundled user agent '{}'", machine_name),
-                content,
+                &content,
             )?;
-            fs::write(&path, content).map_err(|e| e.to_string())?;
+            fs::write(&path, &content).map_err(|e| e.to_string())?;
         }
     }
 
@@ -452,9 +452,9 @@ pub fn install_default_subagents() -> Result<(), String> {
 
 /// Check if a machine name refers to a bundled (read-only) agent.
 pub fn is_bundled_agent(machine_name: &str) -> bool {
-    DEFAULT_USER_AGENTS
+    super::bundled_library::subagents()
         .iter()
-        .any(|(name, _, _)| *name == machine_name)
+        .any(|entry| subagent_machine_name(entry) == machine_name)
 }
 
 #[cfg(test)]
@@ -607,11 +607,11 @@ mod tests {
 
     #[test]
     fn bundled_agents_pass_security_scan() {
-        for (machine_name, _display_name, content) in DEFAULT_USER_AGENTS {
+        for (machine_name, content) in default_subagents() {
             let result = enforce_text_asset(
                 AssetKind::UserAgent,
                 &format!("bundled user agent '{}'", machine_name),
-                content,
+                &content,
             );
             assert!(
                 result.is_ok(),

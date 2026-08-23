@@ -102,20 +102,20 @@ pub fn delete_instruction(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Built-in instructions shipped with the app. Each entry is (name, content).
-/// These are written to `~/.automatic/library/instructions/` on first run
-/// (or when missing), but never overwrite a file that already exists — user
-/// edits are preserved.
-const DEFAULT_INSTRUCTIONS: &[(&str, &str)] = &[
-    (
-        "Agent Project Brief",
-        include_str!("../../assets/instructions/Agent Project Brief.md"),
-    ),
-    (
-        "Session Context",
-        include_str!("../../assets/instructions/Session Context.md"),
-    ),
-];
+/// Load one default instruction as `(name, content)` from the bundled
+/// library. `name` is the filename stem (spaces allowed); `content` is the
+/// markdown body.
+fn default_instructions() -> Vec<(String, String)> {
+    super::bundled_library::instructions()
+        .into_iter()
+        .filter_map(|entry| {
+            let content = super::bundled_library::read_file_string(&entry.path)
+                .map_err(|e| eprintln!("[automatic] {}", e))
+                .ok()?;
+            Some((entry.id, content))
+        })
+        .collect()
+}
 
 /// Write default instructions to `~/.automatic/library/instructions/`.
 ///
@@ -128,15 +128,15 @@ pub fn install_default_instructions_inner(force: bool) -> Result<(), String> {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     }
 
-    for (name, content) in DEFAULT_INSTRUCTIONS {
+    for (name, content) in default_instructions() {
         let path = dir.join(format!("{}.md", name));
         if force || !path.exists() {
             enforce_text_asset(
                 AssetKind::Template,
                 &format!("bundled instruction '{}'", name),
-                content,
+                &content,
             )?;
-            fs::write(&path, content).map_err(|e| e.to_string())?;
+            fs::write(&path, &content).map_err(|e| e.to_string())?;
         }
     }
 
@@ -163,11 +163,11 @@ mod tests {
 
     #[test]
     fn bundled_instructions_pass_security_scan() {
-        for (name, content) in DEFAULT_INSTRUCTIONS {
+        for (name, content) in default_instructions() {
             let result = enforce_text_asset(
                 AssetKind::Template,
                 &format!("bundled instruction '{}'", name),
-                content,
+                &content,
             );
             assert!(
                 result.is_ok(),

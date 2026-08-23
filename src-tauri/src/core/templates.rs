@@ -383,7 +383,7 @@ async fn install_community_skills(template: &BundledProjectTemplate) {
         return;
     }
 
-    let bundled_names: std::collections::HashSet<&str> =
+    let bundled_names: std::collections::HashSet<String> =
         super::bundled_skill_names().into_iter().collect();
 
     let installed_names: std::collections::HashSet<String> =
@@ -645,7 +645,7 @@ pub fn check_template_dependencies(template_name: &str) -> Result<String, String
         .into_iter()
         .collect();
 
-    let bundled_names: std::collections::HashSet<&str> =
+    let bundled_names: std::collections::HashSet<String> =
         super::bundled_skill_names().into_iter().collect();
 
     let skill_statuses: Vec<SkillDependencyStatus> = bundled

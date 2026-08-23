@@ -6,7 +6,14 @@ This document is the design and operational reference for that library from the 
 
 ## Status
 
-The library repository exists and is populated. The app still compiles its assets in via `include_str!` under `src-tauri/src/core/bundled_skills.rs` and equivalents. Switching the app over to the library is the next step and is described under "Migration" below.
+- **Phase 1 landed.** The library ships as a git submodule at `automatic-app/automatic-library/`, packed into a `.zip` by `src-tauri/build.rs`, and read at runtime by `src-tauri/src/core/bundled_library.rs`. The four asset kinds (skills, rules, instructions, subagents) load from that archive rather than from `include_str!` of `src-tauri/assets/`.
+- **Phase 2 (version tracking migration) and Phase 3 (background refresh)** are not yet implemented. `Settings.bundled_skills_version` still tracks default-install state against `CARGO_PKG_VERSION`.
+
+App-side residue that stays in the binary (not in the library):
+
+- `bundled_app_skills` — Automatic-specific skills (`automatic`, `automatic-features`) and third-party vendored skills (Laravel, PHP, Python, Tailwind CSS, Terraform, Vercel/React, Laravel Pennant).
+- `rules.rs` `APP_BUNDLED_RULES` — the `automatic-service` rule, which describes the Automatic MCP surface and belongs with the product.
+- `rules.rs` `LIBRARY_RULE_DISPLAY_NAMES` — display-name mapping for library rules, so the library can ship content while the app owns UI copy.
 
 ## Scope
 
@@ -22,35 +29,36 @@ Not in the library:
 
 - Discover surfaces (`assets/discover/`), agent format adapters (`src-tauri/src/agent/*.rs`), provider metadata, curated MCP-server registry, and language modules. Those stay in the app repository because they are code or code-adjacent registries.
 
-## How the app consumes the library
+## How the app consumes the library (Phase 1)
 
-1. **Bundled snapshot.** Every Automatic release embeds a snapshot tarball of a pinned library version in the binary. The snapshot is the fallback for offline installs.
-2. **First run.** If `~/.agents/library/current/` does not exist, the app extracts the bundled snapshot into it.
-3. **Background refresh.** On a schedule (default weekly) and on user demand from Settings, the app polls GitHub Releases for the newest tag in the app's supported major-version range.
-4. **Verify and swap.** When a newer version is available, the app downloads `library-vN.tar.gz` and `library-vN.tar.gz.sig` to a temp path, verifies the signature, verifies each file's sha256 against `manifest.json`, extracts to `~/.agents/library/next/`, then atomically renames `next` → `current`. The previous version becomes `previous/` for one-step rollback.
-5. **Manifest is source of truth.** The app never walks the extracted tree to discover assets. It reads `manifest.json` and looks up files by the paths and hashes recorded there. This means an asset silently added to the tree without a manifest update is invisible to the app.
-6. **`library_version`** is recorded in `~/.agents/config.json` so the app knows what has been extracted without re-scanning.
+1. **Submodule.** `automatic-library/` is a git submodule at the app repo root, pinned to a specific library commit. `git submodule update --init` fetches it. CI adds `submodules: true` to `actions/checkout`.
+2. **Build-time pack.** `src-tauri/build.rs` walks the submodule, compresses it into `${OUT_DIR}/library.zip`, and writes the semver from `automatic-library/VERSION` into `${OUT_DIR}/library_version.txt`. `cargo:rerun-if-changed` markers cover the tree.
+3. **Runtime read.** `src-tauri/src/core/bundled_library.rs` embeds the archive via `include_bytes!` and lazily extracts every entry into an in-memory `HashMap` on first access. `manifest.json` and `retired.json` are deserialised once and cached in `OnceLock`s.
+4. **Loader wiring.** `install_default_skills_inner`, `install_default_rules_inner`, `install_default_instructions_inner`, and `install_default_subagents_inner` iterate typed views from `bundled_library` (`skills()`, `rules()`, `instructions()`, `subagents()`) alongside any app-only entries. Each writes into `~/.automatic/library/{skills,rules,instructions}/` and `~/.automatic/agents/` exactly as it did before.
+5. **Manifest is source of truth.** The app reads `manifest.json` for what the library contains. Content silently added to the tree without a manifest update is invisible to the app.
 
-Failures during download, signature verification, hash verification, or extraction leave `current/` untouched.
+## How the app will consume the library (Phase 3, not yet implemented)
+
+- On a schedule and on user demand from Settings, the app polls the library repo's GitHub Releases for a newer version than `bundled_library::version()`.
+- When a newer release is available, the app downloads `library-vX.Y.Z.zip` and `library-vX.Y.Z.zip.minisig`, verifies the signature with `rsign2` against a public key baked into the binary, and rehashes every file against the archive's own `manifest.json`.
+- If verification succeeds, the loaders are re-run with `force: true` pointing at the newly-extracted archive as content source. `~/.automatic/library/…` is refreshed in place.
+- If any check fails, the on-disk library is untouched and the app keeps its bundled version until the next scheduled attempt.
 
 ## Runtime layout
 
+Everything stays under the existing `<root>/library/` tree. The library location is not moved; only the source of the bytes that seed it changes.
+
 ```
-~/.agents/
-  config.json                # tracks library_version
+~/.automatic/                # ~/.automatic-dev/ in debug builds
+  settings.json              # tracks default-install state
   library/
-    current/                 # the extracted library, read-only
-      manifest.json
-      skills/…
-      rules/…
-      instructions/…
-      subagents/…
-      hooks/…
-    previous/                # last version, for rollback
-    next/                    # transient, during download+extract
+    skills/…                 # written by install_default_skills_inner
+    rules/…                  # written by install_default_rules_inner
+    instructions/…           # written by install_default_instructions_inner
+  agents/…                   # written by install_default_subagents_inner
 ```
 
-`current/` is a read-only template. User edits fork into the existing `~/.agents/` stores (`~/.agents/skills/`, etc.), matching how skill and rule editing already works today. Upstream refreshes never overwrite user edits.
+User edits are preserved across upgrades and (once Phase 3 lands) library refreshes: the installers use `force: false` on every run except the "Reinstall Defaults" reset path.
 
 ## Manifest schema
 
@@ -138,7 +146,7 @@ Signing tool is undecided. Minisign is smaller and simpler; cosign is more stand
 
 The app currently loads assets at compile time. The switch to library-driven loading is a self-contained refactor:
 
-1. Introduce a `BundledLibrary` module in `src-tauri/src/core/`. Owns extraction of the embedded snapshot to `~/.agents/library/current/` on first run, and owns reading `manifest.json`.
+1. Introduce a `BundledLibrary` module in `src-tauri/src/core/`. Owns extraction of the embedded snapshot to `~/.automatic/library/` on first run, and owns reading `manifest.json`.
 2. Replace the `include_str!` list in `bundled_skills.rs` and equivalents with a call into `BundledLibrary` that reads from `current/` at runtime.
 3. Add a build step that packs `automatic-library/` at a pinned version into a single `include_bytes!` blob. Adding a new asset to the library no longer requires a Rust edit.
 4. Add the background refresh loop, signature verification, hash verification, atomic swap, and rollback.
