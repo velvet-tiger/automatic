@@ -1,13 +1,20 @@
 // Extracted verbatim from Projects.tsx (behavior-preserving refactor).
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AgentIcon } from "../../../../components/AgentIcon";
 import {
-  AlertCircle, ChevronDown, FolderOpen, LayoutGrid, Plus, RefreshCw, Search, Table2,
+  AlertCircle, ChevronDown, FolderOpen, Layers, LayoutGrid, Plus, RefreshCw, Search, Table2,
 } from "lucide-react";
 import { relativeTime } from "../helpers";
 import type { Project } from "../types";
+
+/** One section in the grouped projects view (a named group, or ungrouped). */
+interface ProjectGroupSection {
+  id: string;
+  label: string;
+  projects: string[];
+}
 
 interface ProjectsOverviewProps {
   projects: string[];
@@ -74,24 +81,30 @@ function ProjectCard({
       onClick={() => onSelect(name)}
       className="group w-full text-left bg-bg-input border border-border-strong/35 hover:border-border-strong/60 rounded-lg px-3 py-2.5 flex flex-col gap-1 transition-colors hover:bg-surface-hover"
     >
-      <div className="flex items-center gap-2.5 min-w-0">
-        <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border border-border-strong/40 text-text-muted/70">
-          {isMissingDir ? (
-            <AlertCircle size={13} className="flex-shrink-0 text-danger" />
-          ) : (
-            <FolderOpen size={13} className="flex-shrink-0" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-medium text-text-base leading-snug truncate">{name}</div>
-          {isConfigured ? (
-            <ProjectStatusBadge drift={drift} missingDir={isMissingDir} />
-          ) : (
-            <div className="text-[11px] text-warning/80">No agents configured</div>
-          )}
+      {/*
+        Buttons shrink-wrap flex children unless the row is explicitly full-width.
+        Use justify-between + w-full so agents pin to the right edge.
+      */}
+      <div className="flex w-full items-start justify-between gap-2.5">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border border-border-strong/40 text-text-muted/70">
+            {isMissingDir ? (
+              <AlertCircle size={13} className="flex-shrink-0 text-danger" />
+            ) : (
+              <FolderOpen size={13} className="flex-shrink-0" />
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="text-[13px] font-medium text-text-base leading-snug truncate">{name}</div>
+            {isConfigured ? (
+              <ProjectStatusBadge drift={drift} missingDir={isMissingDir} />
+            ) : (
+              <div className="text-[11px] text-warning/80">No agents configured</div>
+            )}
+          </div>
         </div>
         {(project?.agents?.length ?? 0) > 0 && (
-          <div className="flex items-center gap-1.5 flex-shrink-0">
+          <div className="flex flex-shrink-0 items-center gap-1.5 pt-0.5">
             {(project?.agents ?? []).map((agentId) => (
               <AgentIcon key={agentId} agentId={agentId} size={14} />
             ))}
@@ -181,6 +194,39 @@ function ProjectsHealthBar({ projects, projectDetails, driftByProject, label }: 
   );
 }
 
+/** Compact section heading used when projects are partitioned by group. */
+function GroupSectionHeader({
+  label,
+  projects,
+  driftByProject,
+}: {
+  label: string;
+  projects: string[];
+  driftByProject: Record<string, boolean>;
+}) {
+  const total = projects.length;
+  const synced = projects.filter((n) => driftByProject[n] === false).length;
+  const drifted = projects.filter((n) => driftByProject[n] === true).length;
+
+  return (
+    <div className="flex items-baseline gap-2.5 min-w-0">
+      <h2 className="text-[13px] font-semibold text-text-base truncate">{label}</h2>
+      <span className="text-[12px] text-text-muted/50 tabular-nums whitespace-nowrap">
+        {total} {total === 1 ? "project" : "projects"}
+      </span>
+      {(synced > 0 || drifted > 0) && (
+        <span className="text-[11px] text-text-muted/50 whitespace-nowrap">
+          {synced > 0 && `${synced} synced`}
+          {synced > 0 && drifted > 0 && " · "}
+          {drifted > 0 && (
+            <span style={{ color: "var(--health-drifted)" }}>{drifted} drifted</span>
+          )}
+        </span>
+      )}
+    </div>
+  );
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -190,6 +236,7 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
   // Projects can be displayed as a card grid or a compact table. The choice is
   // persisted per-machine so it survives navigation and restarts.
   const VIEW_MODE_KEY = "automatic.projects.viewMode";
+  const SHOW_GROUPS_KEY = "automatic.projects.showGroups";
   const [viewMode, setViewMode] = useState<"grid" | "table">(() => {
     const stored = localStorage.getItem(VIEW_MODE_KEY);
     return stored === "table" ? "table" : "grid";
@@ -198,9 +245,23 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
     setViewMode(mode);
     localStorage.setItem(VIEW_MODE_KEY, mode);
   };
+  // When true (and not filtered to a single group), render all projects in
+  // sections by Project Group, with ungrouped projects last.
+  const [showGroups, setShowGroups] = useState(() => {
+    return localStorage.getItem(SHOW_GROUPS_KEY) === "true";
+  });
+  const toggleShowGroups = () => {
+    setShowGroups((prev) => {
+      const next = !prev;
+      localStorage.setItem(SHOW_GROUPS_KEY, String(next));
+      return next;
+    });
+  };
   const [groupProjectNames, setGroupProjectNames] = useState<Set<string> | null>(null);
   /** For "__ungrouped__" filter: set of all projects that ARE in some group. */
   const [allGroupedNames, setAllGroupedNames] = useState<Set<string> | null>(null);
+  /** Sections for the "Show Groups" layout (all groups + ungrouped). null = not loaded yet. */
+  const [groupSections, setGroupSections] = useState<ProjectGroupSection[] | null>(null);
 
   /** Load all grouped project names (union of every group's members). */
   const loadAllGroupedNames = async (): Promise<Set<string>> => {
@@ -217,6 +278,31 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
     } catch { /* skip */ }
     return grouped;
   };
+
+  /** Build ordered sections: each group (A–Z), then ungrouped leftovers. */
+  const loadGroupSections = useCallback(async (allProjects: string[]): Promise<ProjectGroupSection[]> => {
+    const projectSet = new Set(allProjects);
+    const sections: ProjectGroupSection[] = [];
+    const inAnyGroup = new Set<string>();
+    try {
+      const groupNames: string[] = await invoke("list_groups");
+      for (const name of [...groupNames].sort((a, b) => a.localeCompare(b))) {
+        try {
+          const raw: string = await invoke("read_group", { name });
+          const g = JSON.parse(raw);
+          const members = (g.projects ?? []).filter((p: string) => projectSet.has(p));
+          for (const p of members) inAnyGroup.add(p);
+          if (members.length === 0) continue;
+          sections.push({ id: name, label: name, projects: members });
+        } catch { /* skip unreadable group */ }
+      }
+    } catch { /* no groups */ }
+    const ungrouped = allProjects.filter((p) => !inAnyGroup.has(p));
+    if (ungrouped.length > 0) {
+      sections.push({ id: "__ungrouped__", label: "Other Projects", projects: ungrouped });
+    }
+    return sections;
+  }, []);
 
   // Load group members when filterGroup changes
   useEffect(() => {
@@ -257,6 +343,35 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
     return () => window.removeEventListener("groups-updated", handler);
   }, [filterGroup]);
 
+  // Load group sections when "Show Groups" is on (and not filtered to one group)
+  const groupingActive = showGroups && !filterGroup;
+  useEffect(() => {
+    if (!groupingActive) {
+      setGroupSections(null);
+      return;
+    }
+    let cancelled = false;
+    loadGroupSections(projects).then((sections) => {
+      if (!cancelled) setGroupSections(sections);
+    });
+    return () => { cancelled = true; };
+  }, [groupingActive, projects, loadGroupSections]);
+
+  useEffect(() => {
+    if (!groupingActive) return;
+    const handler = () => {
+      loadGroupSections(projects).then(setGroupSections);
+    };
+    window.addEventListener("groups-updated", handler);
+    window.addEventListener("project-added", handler);
+    window.addEventListener("project-removed", handler);
+    return () => {
+      window.removeEventListener("groups-updated", handler);
+      window.removeEventListener("project-added", handler);
+      window.removeEventListener("project-removed", handler);
+    };
+  }, [groupingActive, projects, loadGroupSections]);
+
   const getSortTimestamp = (project: Project | undefined, key: "created" | "updated" | "last_activity"): number => {
     if (!project) return 0;
     if (key === "created") return new Date(project.created_at ?? 0).getTime();
@@ -291,6 +406,18 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
       ? projects.filter((n) => groupProjectNames.has(n))
       : projects;
   const filteredProjects = sortNames(baseProjects.filter(matchesSearch));
+
+  // Grouped view: same search + sort, but partitioned into sections
+  const filteredSections: ProjectGroupSection[] =
+    groupingActive && groupSections
+      ? groupSections
+          .map((section) => ({
+            ...section,
+            projects: sortNames(section.projects.filter(matchesSearch)),
+          }))
+          .filter((section) => section.projects.length > 0)
+      : [];
+  const groupsReady = !groupingActive || groupSections !== null;
 
   const renderCardGrid = (names: string[]) => (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -439,6 +566,21 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
               <Table2 size={13} />
             </button>
           </div>
+          {!filterGroup && (
+            <button
+              onClick={toggleShowGroups}
+              aria-pressed={showGroups}
+              title={showGroups ? "Show all projects in one list" : "Group projects by Project Group"}
+              className={`flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium transition-colors ${
+                showGroups
+                  ? "border-brand/40 bg-brand/15 text-brand"
+                  : "border-border-strong/50 bg-bg-input text-text-muted hover:text-text-base"
+              }`}
+            >
+              <Layers size={12} />
+              Show Groups
+            </button>
+          )}
           <div className="relative">
             <select
               value={sortOrder}
@@ -460,7 +602,7 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
             <button
               onClick={onSyncAll}
               disabled={syncAllStatus === "syncing"}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-transparent hover:bg-bg-input text-text-muted hover:text-text-base border border-border-strong/50 rounded-md text-[12px] font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              className="flex h-7 items-center gap-1.5 rounded-md border border-border-strong/50 bg-transparent px-3 text-[12px] font-medium text-text-muted transition-colors hover:bg-bg-input hover:text-text-base disabled:cursor-not-allowed disabled:opacity-60"
             >
               <RefreshCw size={12} className={syncAllStatus === "syncing" ? "animate-spin" : ""} />
               {syncAllStatus === "syncing" ? "Syncing…" : "Sync all"}
@@ -468,7 +610,7 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
           )}
           <button
             onClick={onCreate}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors shadow-sm"
+            className="flex h-7 items-center gap-1.5 rounded bg-brand px-3 text-[12px] font-medium text-white shadow-sm transition-colors hover:bg-brand-hover"
           >
             <Plus size={12} /> Add Project
           </button>
@@ -503,6 +645,28 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
               Create Project
             </button>
           </div>
+        ) : groupingActive ? (
+          !groupsReady ? null : filteredSections.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center border border-border-strong/30 rounded-lg bg-bg-input/40">
+              <p className="text-[13px] text-text-base mb-1">No matching projects</p>
+              <p className="text-[12px] text-text-muted">Try another search term.</p>
+            </div>
+          ) : (
+            <div className="space-y-8">
+              {filteredSections.map((section) => (
+                <section key={section.id} className="space-y-3">
+                  <GroupSectionHeader
+                    label={section.label}
+                    projects={section.projects}
+                    driftByProject={driftByProject}
+                  />
+                  {viewMode === "table"
+                    ? renderTable(section.projects)
+                    : renderCardGrid(section.projects)}
+                </section>
+              ))}
+            </div>
+          )
         ) : filteredProjects.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center border border-border-strong/30 rounded-lg bg-bg-input/40">
             <p className="text-[13px] text-text-base mb-1">No matching projects</p>

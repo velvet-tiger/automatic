@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { Folder, FolderOpen as FolderOpenIcon, Layers, Plus, FolderPlus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Layers, LayoutGrid, Plus, Trash2 } from "lucide-react";
 import { trackProjectDeleted } from "../lib/analytics";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -27,8 +27,6 @@ interface WorkspaceSidebarProps {
   activeGroupFilter: string | null;
   /** Called when a group name is clicked — filters the Projects page to that group. */
   onFilterByGroup: (groupName: string | null) => void;
-  /** Called when "Add Project" is clicked in the sidebar. */
-  onCreateProject: () => void;
 }
 
 // ── NavItem (matches App.tsx pattern) ────────────────────────────────────────
@@ -57,7 +55,7 @@ function NavItem({ id, icon: Icon, label, isActive, onClick }: {
 
 // ── WorkspaceSidebar ─────────────────────────────────────────────────────────
 
-export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToProject, activeGroupFilter, onFilterByGroup, onCreateProject }: WorkspaceSidebarProps) {
+export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToProject, activeGroupFilter, onFilterByGroup }: WorkspaceSidebarProps) {
   // ── Project + group data ─────────────────────────────────────────────────
   const [projects, setProjects] = useState<string[]>([]);
   const [groups, setGroups] = useState<SidebarGroup[]>([]);
@@ -304,156 +302,174 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
-  return (
-    <>
-      {/* Add Project action */}
+  const renderProjectRow = (projectName: string, sourceGroup: string | null) => (
+    <div key={projectName} className="group/project relative">
       <button
-        onClick={onCreateProject}
-        className="w-full flex items-center gap-2.5 px-3 py-2 mb-3 rounded-md text-[13px] font-medium text-text-muted/80 hover:bg-bg-sidebar hover:text-text-base transition-colors"
+        onClick={() => onNavigateToProject(projectName)}
+        className="w-full truncate rounded-md py-1.5 pl-[34px] pr-9 text-left text-[13px] font-normal text-text-muted transition-colors hover:bg-bg-sidebar hover:text-text-base"
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          const timeout = setTimeout(() => handleDragStart(projectName, sourceGroup, e), 200);
+          const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
+          window.addEventListener("pointerup", cancel, { once: true });
+        }}
       >
-        <FolderPlus size={14} className="shrink-0 text-text-muted" />
-        <span className="flex-1 text-left">Add Project</span>
+        {projectName}
       </button>
+      <button
+        type="button"
+        onClick={(event) => void handleRemoveProject(projectName, event)}
+        className="pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-text-muted/50 opacity-0 transition-[background-color,color,opacity] hover:bg-danger/10 hover:text-danger group-hover/project:pointer-events-auto group-hover/project:opacity-100 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100"
+        aria-label={`Remove ${projectName}`}
+        title={`Remove ${projectName}`}
+      >
+        <Trash2 size={12} />
+      </button>
+    </div>
+  );
 
-      {/* Projects section header with create group button */}
-      <div className="flex items-center justify-between mb-1.5">
-        <button
-          onClick={() => { onFilterByGroup(null); onTabClick("projects"); }}
-          className="flex items-center gap-1 px-3 py-1 hover:text-text-base transition-colors"
-        >
-          <span className="text-[11px] font-semibold tracking-wider text-text-muted/50 hover:text-text-muted/80">Projects</span>
-        </button>
-        <button
-          onClick={() => { setCreatingGroup(true); setNewGroupName(""); }}
-          className="flex items-center justify-center w-[22px] h-[22px] rounded text-text-muted/50 hover:text-text-base hover:bg-bg-sidebar transition-colors mr-1"
-          title="New group"
-        >
-          <Plus size={12} />
-        </button>
-      </div>
-
-      {/* Inline group creation */}
-      {creatingGroup && (
-        <div className="mb-1 px-3">
-          <input
-            ref={newGroupInputRef}
-            value={newGroupName}
-            onChange={(e) => setNewGroupName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleCreateGroup();
-              if (e.key === "Escape") { setCreatingGroup(false); setNewGroupName(""); }
+  return (
+    <div className="flex min-h-full flex-col">
+      <div className="flex-1">
+        {/* View all projects — clears any group filter */}
+        <div className="mb-3">
+          <NavItem
+            id="projects"
+            icon={LayoutGrid}
+            label="View All"
+            isActive={activeTab === "projects" && activeGroupFilter === null}
+            onClick={() => {
+              onFilterByGroup(null);
+              onTabClick("projects");
             }}
-            onBlur={handleCreateGroup}
-            placeholder="Group name..."
-            className="w-full text-[13px] bg-bg-base border border-border-strong/40 rounded px-2 py-1 text-text-base focus:outline-none focus:border-brand"
           />
         </div>
-      )}
 
-      {/* Ungrouped projects — top level */}
-      {ungroupedProjects.length > 0 && (
-        <div className="mb-1" data-sidebar-group="__ungrouped__">
-          {ungroupedProjects.map((projectName) => (
-            <div
-              key={projectName}
-              className="group/project relative"
-            >
-              <button
-                onClick={() => onNavigateToProject(projectName)}
-                className="w-full text-left pl-[34px] pr-9 py-1.5 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
-                onPointerDown={(e) => {
-                  if (e.button !== 0) return;
-                  const timeout = setTimeout(() => handleDragStart(projectName, null, e), 200);
-                  const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
-                  window.addEventListener("pointerup", cancel, { once: true });
-                }}
-              >
-                {projectName}
-              </button>
-              <button
-                type="button"
-                onClick={(event) => void handleRemoveProject(projectName, event)}
-                className="pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-text-muted/50 opacity-0 transition-[background-color,color,opacity] hover:bg-danger/10 hover:text-danger group-hover/project:pointer-events-auto group-hover/project:opacity-100 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100"
-                aria-label={`Remove ${projectName}`}
-                title={`Remove ${projectName}`}
-              >
-                <Trash2 size={12} />
-              </button>
-            </div>
-          ))}
+        {/* Projects section header with create group button */}
+        <div className="mb-1.5 flex items-center justify-between">
+          <button
+            onClick={() => { onFilterByGroup(null); onTabClick("projects"); }}
+            className="flex items-center gap-1 px-3 py-1 transition-colors hover:text-text-base"
+          >
+            <span className="text-[11px] font-semibold tracking-wider text-text-muted/50 hover:text-text-muted/80">
+              Projects
+            </span>
+          </button>
+          <button
+            onClick={() => { setCreatingGroup(true); setNewGroupName(""); }}
+            className="mr-1 flex h-[22px] w-[22px] items-center justify-center rounded text-text-muted/50 transition-colors hover:bg-bg-sidebar hover:text-text-base"
+            title="New group"
+          >
+            <Plus size={12} />
+          </button>
         </div>
-      )}
 
-      {/* Groups */}
-      <div className="mb-3 space-y-0.5">
-        {groups.map((group) => {
-          const isCollapsed = collapsedGroups.has(group.name);
-          const isActiveFilter = activeGroupFilter === group.name && activeTab === "projects";
-          const GroupIcon = isCollapsed ? Folder : FolderOpenIcon;
-          return (
-          <div key={group.name} data-sidebar-group={group.name}>
+        {/* Inline group creation */}
+        {creatingGroup && (
+          <div className="mb-1 px-3">
+            <input
+              ref={newGroupInputRef}
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreateGroup();
+                if (e.key === "Escape") { setCreatingGroup(false); setNewGroupName(""); }
+              }}
+              onBlur={handleCreateGroup}
+              placeholder="Group name..."
+              className="w-full rounded border border-border-strong/40 bg-bg-base px-2 py-1 text-[13px] text-text-base focus:border-brand focus:outline-none"
+            />
+          </div>
+        )}
+
+        {/* Groups first — matches overview "Show Groups" order */}
+        <div className="mb-1 space-y-0.5">
+          {groups.map((group) => {
+            const isCollapsed = collapsedGroups.has(group.name);
+            const isActiveFilter = activeGroupFilter === group.name && activeTab === "projects";
+            const Chevron = isCollapsed ? ChevronRight : ChevronDown;
+            const visibleProjects = group.projects
+              .filter((p) => projects.includes(p))
+              .sort((a, b) => a.localeCompare(b));
+            return (
+              <div key={group.name} data-sidebar-group={group.name}>
+                <button
+                  onClick={() => {
+                    toggleGroupCollapse(group.name);
+                    onFilterByGroup(group.name);
+                    onTabClick("projects");
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-md py-1.5 pl-3 pr-3 text-[13px] font-medium transition-colors ${
+                    isActiveFilter
+                      ? "bg-bg-sidebar text-text-base"
+                      : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
+                  }`}
+                >
+                  <Chevron
+                    size={14}
+                    className={`shrink-0 ${isActiveFilter ? "text-text-base" : "text-text-muted/60"}`}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-left">{group.name}</span>
+                  <span className="shrink-0 text-[11px] tabular-nums text-text-muted/40">
+                    {visibleProjects.length}
+                  </span>
+                </button>
+                {!isCollapsed && (
+                  <div>
+                    {visibleProjects.map((projectName) => renderProjectRow(projectName, group.name))}
+                    {visibleProjects.length === 0 && (
+                      <div className="px-3 py-1.5 pl-[34px] text-[11px] italic text-text-muted/35">
+                        Empty
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Ungrouped projects — after groups, as "Other Projects" */}
+        {ungroupedProjects.length > 0 && (
+          <div className="mb-1 space-y-0.5" data-sidebar-group="__ungrouped__">
             <button
-              onClick={() => { toggleGroupCollapse(group.name); onFilterByGroup(group.name); onTabClick("projects"); }}
-              className={`w-full flex items-center gap-2 pl-[12px] pr-3 py-1.5 rounded-md text-[13px] font-medium transition-colors ${
-                isActiveFilter
+              onClick={() => {
+                onFilterByGroup("__ungrouped__");
+                onTabClick("projects");
+              }}
+              className={`flex w-full items-center gap-2 rounded-md py-1.5 pl-3 pr-3 text-[13px] font-medium transition-colors ${
+                activeGroupFilter === "__ungrouped__" && activeTab === "projects"
                   ? "bg-bg-sidebar text-text-base"
                   : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
               }`}
             >
-              <GroupIcon size={14} className={`shrink-0 ${isActiveFilter ? "text-text-base" : "text-text-muted"}`} />
-              <span className="flex-1 text-left truncate">{group.name}</span>
-              <span className="text-[11px] text-text-muted/40 shrink-0">{group.projects.length}</span>
+              {/* Spacer matches group chevron width so labels align */}
+              <span className="inline-block w-3.5 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-left">Other Projects</span>
+              <span className="shrink-0 text-[11px] tabular-nums text-text-muted/40">
+                {ungroupedProjects.length}
+              </span>
             </button>
-            {!isCollapsed && (
-              <div>
-                {group.projects
-                  .filter((p) => projects.includes(p))
-                  .sort((a, b) => a.localeCompare(b))
-                  .map((projectName) => (
-                    <div
-                      key={projectName}
-                      className="group/project relative"
-                    >
-                      <button
-                        onClick={() => onNavigateToProject(projectName)}
-                        className="w-full text-left pl-[34px] pr-9 py-1.5 text-[13px] text-text-muted hover:text-text-base hover:bg-bg-sidebar rounded-md transition-colors truncate"
-                        onPointerDown={(e) => {
-                          if (e.button !== 0) return;
-                          const timeout = setTimeout(() => handleDragStart(projectName, group.name, e), 200);
-                          const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
-                          window.addEventListener("pointerup", cancel, { once: true });
-                        }}
-                      >
-                        {projectName}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => void handleRemoveProject(projectName, event)}
-                        className="pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-text-muted/50 opacity-0 transition-[background-color,color,opacity] hover:bg-danger/10 hover:text-danger group-hover/project:pointer-events-auto group-hover/project:opacity-100 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100"
-                        aria-label={`Remove ${projectName}`}
-                        title={`Remove ${projectName}`}
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  ))}
-                {group.projects.filter((p) => projects.includes(p)).length === 0 && (
-                  <div className="pl-[34px] pr-3 py-1.5 text-[11px] text-text-muted/35 italic">Empty</div>
-                )}
-              </div>
-            )}
+            {ungroupedProjects.map((projectName) => renderProjectRow(projectName, null))}
           </div>
-        );})}
+        )}
       </div>
 
-      <ul className="space-y-0.5">
-        <NavItem id="project-groups" icon={Layers} label="Groups" isActive={activeTab === "project-groups"} onClick={onTabClick} />
-      </ul>
+      {/* Groups management — pinned to bottom when space allows */}
+      <div className="mt-auto border-t border-border-strong/30 pt-2">
+        <NavItem
+          id="project-groups"
+          icon={Layers}
+          label="Groups"
+          isActive={activeTab === "project-groups"}
+          onClick={onTabClick}
+        />
+      </div>
 
       {/* Drag ghost */}
       {dragGhost && (
         <div
-          className="fixed z-[9999] pointer-events-none px-3 py-1.5 rounded-md bg-bg-sidebar border border-border-strong/60 text-[13px] text-text-base shadow-lg"
+          className="pointer-events-none fixed z-[9999] rounded-md border border-border-strong/60 bg-bg-sidebar px-3 py-1.5 text-[13px] text-text-base shadow-lg"
           style={{ left: dragGhost.x + 12, top: dragGhost.y - 10 }}
         >
           {dragGhost.name}
@@ -469,6 +485,6 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
           }
         `}</style>
       )}
-    </>
+    </div>
   );
 }
