@@ -69,11 +69,22 @@ pub struct Settings {
     /// use `AgentOptions::default()` when a project is created.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub default_agent_options: HashMap<String, AgentOptions>,
-    /// The app version at which bundled skills were last written to disk.
-    /// When the current app version differs from this value, all bundled
-    /// skills are overwritten with the versions shipped in the new binary.
+    /// Legacy: the app version at which bundled skills were last written
+    /// to disk. Superseded by `library_version`; read-only from Phase 2
+    /// onward, retained on the struct so older settings.json files still
+    /// round-trip without data loss. `bootstrap::ensure_library_version`
+    /// migrates the value into `library_version` on first boot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundled_skills_version: Option<String>,
+    /// The content-library version at which bundled assets were last
+    /// written to disk. When the current library version (see
+    /// `bundled_library::version()`) differs from this value, bundled
+    /// assets that still match the last-installed content are overwritten
+    /// with the versions shipped in the new library. User edits are
+    /// preserved: an on-disk file whose contents diverge from the last
+    /// installed version is left alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library_version: Option<String>,
     /// The release version the user last viewed in the "What's New" section.
     /// Used to determine whether a badge/indicator should be shown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -121,6 +132,7 @@ impl Default for Settings {
             welcome_dismissed: false,
             default_agent_options: HashMap::new(),
             bundled_skills_version: None,
+            library_version: None,
             whats_new_seen_version: None,
             agent_features_enabled: None,
             active_agent: None,
@@ -322,6 +334,34 @@ mod tests {
 
         let loaded = read_at(dir.path()).expect("read");
         assert!(loaded.wizard_completed);
+    }
+
+    // ── Legacy `bundled_skills_version` round-trip ──────────────────────────
+
+    /// Older settings files carry `bundled_skills_version` (the pre-Phase-2
+    /// marker keyed against `CARGO_PKG_VERSION`) and no `library_version`.
+    /// They must deserialise cleanly with the legacy value preserved.
+    #[test]
+    fn legacy_bundled_skills_version_round_trips() {
+        let dir = tmp();
+        fs::write(
+            settings_path(dir.path()),
+            r#"{"sync_mode":"symlink","analytics_enabled":true,"bundled_skills_version":"1.19.0"}"#,
+        )
+        .expect("write legacy settings");
+        let loaded = read_at(dir.path()).expect("read legacy");
+        assert_eq!(loaded.bundled_skills_version.as_deref(), Some("1.19.0"));
+        assert_eq!(loaded.library_version, None);
+    }
+
+    #[test]
+    fn library_version_round_trips() {
+        let dir = tmp();
+        let mut s = Settings::default();
+        s.library_version = Some("0.1.0".to_string());
+        write_at(dir.path(), &s).expect("write");
+        let loaded = read_at(dir.path()).expect("read");
+        assert_eq!(loaded.library_version.as_deref(), Some("0.1.0"));
     }
 
     // ── Default agents ────────────────────────────────────────────────────────

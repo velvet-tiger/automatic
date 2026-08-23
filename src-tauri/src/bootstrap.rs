@@ -20,15 +20,18 @@ use crate::{commands, core, sync};
 /// never abort the remaining steps, so one broken migration can't take the
 /// whole app down with it.
 pub fn run_startup_housekeeping() {
-    // Version-gated skill reinstall: if the stored version differs
-    // from the current binary version, overwrite all bundled skills
-    // so on-disk copies always match what shipped in this release.
-    const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+    // Version-gated default-asset reinstall: when the stored library
+    // version differs from the current library shipped in the binary,
+    // rewrite bundled defaults so on-disk copies match the new release.
+    // Phase 2 tracks this on the library's own semver rather than
+    // CARGO_PKG_VERSION, so a library release can ship without an app
+    // release and vice versa.
+    let library_version: &str = core::bundled_library::version();
     let force_reinstall = match core::read_settings() {
         Ok(settings) => settings
-            .bundled_skills_version
+            .library_version
             .as_deref()
-            .map(|v| v != APP_VERSION)
+            .map(|v| v != library_version)
             .unwrap_or(true), // no version stored → treat as upgrade
         Err(_) => true, // can't read settings → safe to overwrite
     };
@@ -88,15 +91,15 @@ pub fn run_startup_housekeeping() {
     if let Err(e) = core::install_default_skills_inner(force_reinstall) {
         eprintln!("[automatic] skill install error: {}", e);
     } else if force_reinstall {
-        // Persist the current version so we don't reinstall next launch.
+        // Persist the current library version so we don't reinstall next
+        // launch. Older installs may still have `bundled_skills_version`
+        // set; leave it untouched — Settings keeps it as a legacy field
+        // for round-trip safety and it is no longer read by anything.
         match core::read_settings() {
             Ok(mut settings) => {
-                settings.bundled_skills_version = Some(APP_VERSION.to_string());
+                settings.library_version = Some(library_version.to_string());
                 if let Err(e) = core::write_settings(&settings) {
-                    eprintln!(
-                        "[automatic] failed to persist bundled_skills_version: {}",
-                        e
-                    );
+                    eprintln!("[automatic] failed to persist library_version: {}", e);
                 }
             }
             Err(e) => eprintln!(

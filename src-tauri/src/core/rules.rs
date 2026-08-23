@@ -396,26 +396,15 @@ fn title_case(input: &str) -> String {
     out
 }
 
-/// Rules that shipped as bundled defaults in a past version and have since
-/// been removed from the product.  Installation is declarative via
-/// `default_rules()`; removal is declarative here.  When you drop a rule
-/// from `default_rules()` (either by removing it from the library or from
-/// `APP_BUNDLED_RULES`), add its machine name here so existing installs
-/// have the orphaned file (and any project references to it) cleaned up on
-/// the next update.
-///
-/// A name listed here is removed even if the user edited the rule, because
-/// listing it asserts the rule no longer exists in the product.  A rule that
-/// a plugin has since claimed (carries a `plugin_id`) is left untouched.
-const REMOVED_DEFAULT_RULES: &[&str] = &[
-    // Historical: pre-library-migration retirement.
-    "automatic-commands",
-    // Superseded when the library merged them into `automatic-code`.
-    "automatic-code-style",
-    "automatic-guardrails",
-    // Superseded when the library merged it into `automatic-general`.
-    "automatic-agent-guidance",
-];
+// Retired-rule cleanup is driven by `retired.json` in the library repo,
+// read here via `bundled_library::retired_rules()`. To retire a rule, add
+// an entry to that file with kind=rule and its pack/id; the next boot
+// removes the orphaned rule file and any project references to it. A rule
+// that a plugin has since claimed (carries a `plugin_id`) is left untouched.
+//
+// A name returned by `retired_rules()` is removed even if the user edited
+// the rule, because listing it asserts the rule no longer exists in the
+// product.
 
 /// Write default rules to `~/.automatic/rules/`.
 ///
@@ -466,9 +455,14 @@ pub fn install_default_rules_inner(force: bool) -> Result<(), String> {
     // 3. Rename .claude/rules/automatic-checklist.md in project directories.
     migrate_checklist_to_process(&dir)?;
 
-    // Migration: drop rules that were removed from DEFAULT_RULES in a past
-    // version so they don't linger as undeletable orphans on existing installs.
-    migrate_remove_default_rules(&dir, REMOVED_DEFAULT_RULES)?;
+    // Migration: drop rules that the library marks as retired so they
+    // don't linger as undeletable orphans on existing installs. The list
+    // lives in `automatic-library/retired.json` and reaches us through
+    // `bundled_library::retired_rules()`, so retiring a rule needs no
+    // app release.
+    let retired = super::bundled_library::retired_rules();
+    let retired_refs: Vec<&str> = retired.iter().map(String::as_str).collect();
+    migrate_remove_default_rules(&dir, &retired_refs)?;
 
     Ok(())
 }

@@ -308,6 +308,22 @@ mod tests {
     }
 
     #[test]
+    fn retired_rules_are_prefixed_and_populated() {
+        let retired = retired_rules();
+        assert!(!retired.is_empty(), "retired.json has no rule entries");
+        assert!(
+            retired.iter().any(|n| n == "automatic-commands"),
+            "expected automatic-commands in retired list: {:?}",
+            retired
+        );
+        assert!(
+            retired.iter().any(|n| n == "automatic-code-style"),
+            "expected automatic-code-style in retired list: {:?}",
+            retired
+        );
+    }
+
+    #[test]
     fn rule_files_readable() {
         for rule in rules() {
             let bytes =
