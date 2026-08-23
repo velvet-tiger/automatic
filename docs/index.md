@@ -2,6 +2,10 @@
 
 Reference and design documentation for the Automatic desktop app. Source-of-truth project instructions live in [CLAUDE.md](../CLAUDE.md) and [AGENTS.md](../AGENTS.md); this directory holds longer-form references.
 
+## UI and design
+
+- [Workspace UI Design Rules](./ui-design.md) — quiet chrome rules for project overview, sidebar, Summary, and project editor header/tabs.
+
 ## Systems
 
 - [Plugin System](./plugins.md) — plugin architecture, registry, and lifecycle.
