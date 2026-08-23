@@ -48,19 +48,16 @@ pub struct LibraryRelease {
 }
 
 /// Return the newest release that is strictly newer (by semver) than the
-/// library bundled with the current binary. Returns `Ok(None)` when the
-/// bundled version is already current, when GitHub reports no release
-/// yet, or when the tag is not a valid semver.
+/// library currently installed. The baseline is the higher of the bundled
+/// version and `settings.library_version`, so a previous refresh that
+/// moved the installed library ahead of the binary snapshot is not
+/// re-downloaded on subsequent polls. Returns `Ok(None)` when already
+/// current, when GitHub reports no release yet, or when the tag is not
+/// valid semver.
 ///
 /// Errors describe transport failures (network, HTTP status, JSON parse).
 pub async fn check_for_update() -> Result<Option<LibraryRelease>, String> {
-    let bundled = bundled_library::version();
-    let bundled_semver = semver::Version::parse(bundled).map_err(|e| {
-        format!(
-            "bundled library version '{}' is not valid semver: {}",
-            bundled, e
-        )
-    })?;
+    let baseline = effective_version()?;
 
     let latest = fetch_latest_release().await?;
     let Some(latest) = latest else {
@@ -72,10 +69,35 @@ pub async fn check_for_update() -> Result<Option<LibraryRelease>, String> {
         Err(_) => return Ok(None), // upstream tag is not semver; ignore
     };
 
-    if candidate_semver > bundled_semver {
+    if candidate_semver > baseline {
         Ok(Some(latest))
     } else {
         Ok(None)
+    }
+}
+
+/// The highest of the bundled library version and the version already
+/// installed on disk. Without this, a successful refresh (which moves the
+/// installed version ahead of the bundled snapshot) would be re-downloaded
+/// on every subsequent poll because the comparison only saw the bundled
+/// baseline.
+fn effective_version() -> Result<semver::Version, String> {
+    let bundled = bundled_library::version();
+    let bundled_semver = semver::Version::parse(bundled).map_err(|e| {
+        format!(
+            "bundled library version '{}' is not valid semver: {}",
+            bundled, e
+        )
+    })?;
+
+    let installed = super::read_settings()
+        .ok()
+        .and_then(|s| s.library_version)
+        .and_then(|v| semver::Version::parse(&v).ok());
+
+    match installed {
+        Some(inst) if inst > bundled_semver => Ok(inst),
+        _ => Ok(bundled_semver),
     }
 }
 
@@ -691,6 +713,47 @@ mod tests {
         .expect("spawn_blocking")
         .expect("apply chain");
         assert_eq!(applied_version, version);
+    }
+
+    #[test]
+    fn effective_version_uses_installed_when_ahead_of_bundled() {
+        use crate::core::paths::with_test_home;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            // Seed a settings.json with library_version ahead of bundled.
+            let bundled = bundled_library::version();
+            let ahead = {
+                let mut v = semver::Version::parse(bundled).unwrap();
+                v.minor += 10;
+                v.to_string()
+            };
+            let mut settings = crate::core::Settings::default();
+            settings.library_version = Some(ahead.clone());
+            crate::core::write_settings(&settings).expect("write settings");
+
+            let eff = effective_version().expect("effective_version");
+            assert_eq!(
+                eff.to_string(),
+                ahead,
+                "should return installed version when it is ahead of bundled"
+            );
+        });
+    }
+
+    #[test]
+    fn effective_version_falls_back_to_bundled_when_no_installed() {
+        use crate::core::paths::with_test_home;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            let eff = effective_version().expect("effective_version");
+            let bundled = semver::Version::parse(bundled_library::version()).unwrap();
+            assert_eq!(
+                eff, bundled,
+                "should return bundled version when no settings exist"
+            );
+        });
     }
 
     #[test]
