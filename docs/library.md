@@ -9,7 +9,8 @@ This document is the design and operational reference for that library from the 
 - **Phase 1 landed.** The library ships as a git submodule at `automatic-app/automatic-library/`, packed into a `.zip` by `src-tauri/build.rs`, and read at runtime by `src-tauri/src/core/bundled_library.rs`. The four asset kinds (skills, rules, instructions, subagents) load from that archive rather than from `include_str!` of `src-tauri/assets/`.
 - **Phase 2 landed.** `Settings.library_version` tracks default-install state against `bundled_library::version()`. Retired rules move via `retired.json` in the library repo. `Settings.bundled_skills_version` is retained for legacy JSON round-trip only.
 - **Phase 3a landed.** The bootstrap version comparison is semver-aware — the app never rolls back an installed library that is newer than the binary snapshot. Tauri commands `get_library_version` and `check_library_updates` are wired; the latter polls `api.github.com/repos/velvet-tiger/automatic-library/releases/latest`.
-- **Phase 3b (download / verify / apply / background scheduler)** is not yet implemented. Blocked on Phase 4 producing signed release artefacts.
+- **Phase 4 landed (pipeline only).** The library repo now ships `.github/workflows/release.yml` (tag → verify → zip → minisign → publish) and `.github/workflows/pr.yml` (manifest parity gate). A maintainer still needs to generate the signing keypair per `automatic-library/KEYGEN.md` and commit `src-tauri/keys/library.pub` here.
+- **Phase 3b (download / verify / apply / background scheduler)** is not yet implemented. Unblocked once the first signed release lands on the library repo.
 
 App-side residue that stays in the binary (not in the library):
 
