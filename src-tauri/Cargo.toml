@@ -49,7 +49,7 @@ chrono = { version = "0.4", features = ["serde"] }
 rmcp = { version = "1.6", features = [
     "server", "transport-io",
 ] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "net", "time"] }
 url = "2"
 tempfile = "3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
@@ -59,6 +59,7 @@ base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 semver = "1"
+minisign-verify = "0.2"
 open = "5"
 rand = "0.9"
 aes-gcm = "0.10"

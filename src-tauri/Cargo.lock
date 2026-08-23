@@ -330,6 +330,7 @@ dependencies = [
  "dirs",
  "hex",
  "keyring",
+ "minisign-verify",
  "once_cell",
  "open",
  "rand",

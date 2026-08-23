@@ -40,36 +40,33 @@ const LIBRARY_ZIP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/library.zip
 /// rules/subagents carry `pack`, `path`, and `sha256`; instructions and hooks
 /// carry only `path` and `sha256`.
 #[derive(Debug, Clone, Deserialize)]
-struct RawEntry {
-    kind: String,
-    id: String,
+pub struct RawEntry {
+    pub kind: String,
+    pub id: String,
     #[serde(default)]
-    pack: Option<String>,
+    pub pack: Option<String>,
     #[serde(default)]
-    root: Option<String>,
+    pub root: Option<String>,
     #[serde(default)]
-    path: Option<String>,
+    pub path: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
-    sha256: Option<String>,
+    pub sha256: Option<String>,
     #[serde(default)]
-    files: Option<Vec<RawFileEntry>>,
+    pub files: Option<Vec<RawFileEntry>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RawFileEntry {
     pub path: String,
-    #[allow(dead_code)]
     pub sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct RawManifest {
+pub struct RawManifest {
+    pub library_version: String,
     #[allow(dead_code)]
-    library_version: String,
-    #[allow(dead_code)]
-    manifest_schema: u32,
-    assets: Vec<RawEntry>,
+    pub manifest_schema: u32,
+    pub assets: Vec<RawEntry>,
 }
 
 fn manifest() -> &'static RawManifest {

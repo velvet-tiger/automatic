@@ -344,18 +344,8 @@ fn default_rules() -> Vec<(String, String, String)> {
     let mut rules = Vec::new();
 
     for entry in super::bundled_library::rules() {
-        let machine_name = format!("{}-{}", entry.pack, entry.id);
-        let display_name = LIBRARY_RULE_DISPLAY_NAMES
-            .iter()
-            .find(|(name, _)| *name == machine_name.as_str())
-            .map(|(_, display)| (*display).to_string())
-            .unwrap_or_else(|| {
-                format!(
-                    "{}: {}",
-                    title_case(&entry.pack),
-                    title_case(&entry.id.replace('-', " "))
-                )
-            });
+        let machine_name = library_rule_machine_name(&entry.pack, &entry.id);
+        let display_name = library_rule_display_name(&machine_name, &entry.pack, &entry.id);
         let content = match super::bundled_library::read_file_string(&entry.path) {
             Ok(c) => c,
             Err(e) => {
@@ -375,6 +365,44 @@ fn default_rules() -> Vec<(String, String, String)> {
     }
 
     rules
+}
+
+/// Compose the compound machine name the app uses for a library rule
+/// (`{pack}-{id}`). Used by both the bundled loader and the Phase 3b
+/// refresh installer so both sides agree on the on-disk filename.
+pub fn library_rule_machine_name(pack: &str, id: &str) -> String {
+    format!("{}-{}", pack, id)
+}
+
+/// Resolve the UI display name for a library rule. Static
+/// `LIBRARY_RULE_DISPLAY_NAMES` wins; unknown rules fall back to a
+/// title-cased "Pack: Id" form so the library can add a rule without
+/// blocking on an app update.
+pub fn library_rule_display_name(machine_name: &str, pack: &str, id: &str) -> String {
+    LIBRARY_RULE_DISPLAY_NAMES
+        .iter()
+        .find(|(name, _)| *name == machine_name)
+        .map(|(_, display)| (*display).to_string())
+        .unwrap_or_else(|| {
+            format!(
+                "{}: {}",
+                title_case(pack),
+                title_case(&id.replace('-', " "))
+            )
+        })
+}
+
+/// Serialise `(display_name, content)` into the JSON shape the rules
+/// directory stores. Used by both the bundled installer and the Phase
+/// 3b refresh installer.
+pub fn serialise_bundled_rule(display_name: &str, content: &str) -> Result<String, String> {
+    let rule = Rule {
+        name: display_name.to_string(),
+        content: content.to_string(),
+        plugin_id: None,
+        _author: None,
+    };
+    serde_json::to_string_pretty(&rule).map_err(|e| e.to_string())
 }
 
 fn title_case(input: &str) -> String {
@@ -584,6 +612,16 @@ fn migrate_checklist_to_process(rules_dir: &Path) -> Result<(), String> {
 ///
 /// A rule file that carries a `plugin_id` is left in place — a plugin now
 /// owns that name, so it is no longer an orphaned default.
+/// Public entry point for the Phase 3b refresh: apply a list of retired
+/// rule machine names taken from the newly-downloaded library's
+/// `retired.json`. Uses the same underlying cleanup as the boot-time
+/// migration.
+pub fn remove_retired_rules(retired: &[String]) -> Result<(), String> {
+    let dir = get_rules_dir()?;
+    let refs: Vec<&str> = retired.iter().map(String::as_str).collect();
+    migrate_remove_default_rules(&dir, &refs)
+}
+
 fn migrate_remove_default_rules(rules_dir: &Path, removed: &[&str]) -> Result<(), String> {
     if removed.is_empty() {
         return Ok(());

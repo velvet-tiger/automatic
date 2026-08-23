@@ -31,3 +31,25 @@ pub async fn check_library_updates() -> Result<Option<core::library_refresh::Lib
 {
     core::library_refresh::check_for_update().await
 }
+
+/// End-to-end refresh triggered by the Settings UI's "check now" button
+/// or by the background scheduler. Combines check_for_update →
+/// download_and_verify → apply.
+///
+/// Returns the applied version on success, or `None` when there was no
+/// newer release. Errors describe transport, signature, hash, or write
+/// failures.
+#[tauri::command]
+pub async fn apply_library_update() -> Result<Option<String>, String> {
+    let Some(release) = core::library_refresh::check_for_update().await? else {
+        return Ok(None);
+    };
+    let verified = core::library_refresh::download_and_verify(&release).await?;
+    let version = verified.version.clone();
+    // apply is synchronous fs work; spawn_blocking keeps it off the
+    // async executor when called from a Tauri command.
+    tokio::task::spawn_blocking(move || core::library_refresh::apply(&verified))
+        .await
+        .map_err(|e| format!("apply task panicked: {}", e))??;
+    Ok(Some(version))
+}

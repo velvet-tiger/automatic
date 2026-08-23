@@ -82,6 +82,63 @@ pub fn run() {
             // it has no GUI event loop to block and needs the repair done
             // before it starts serving.
             std::thread::spawn(bootstrap::run_startup_housekeeping);
+
+            // Background library-refresh loop. Runs one check ~30s
+            // after startup (grace period lets the boot-time seed
+            // finish first), then every 24h. A newer signed release is
+            // downloaded, verified, and applied; failures are logged
+            // and the loop continues.
+            tauri::async_runtime::spawn(async {
+                use std::time::Duration;
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                let mut ticker = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
+                // First tick fires immediately; drop it so the grace
+                // period sleep above is the actual first delay.
+                ticker.tick().await;
+                loop {
+                    ticker.tick().await;
+                    match core::library_refresh::check_for_update().await {
+                        Ok(Some(release)) => {
+                            eprintln!(
+                                "[automatic] library refresh: candidate {} available",
+                                release.tag
+                            );
+                            match core::library_refresh::download_and_verify(&release).await {
+                                Ok(verified) => {
+                                    let version = verified.version.clone();
+                                    let res = tokio::task::spawn_blocking(move || {
+                                        core::library_refresh::apply(&verified)
+                                    })
+                                    .await;
+                                    match res {
+                                        Ok(Ok(())) => eprintln!(
+                                            "[automatic] library refresh: applied {}",
+                                            version
+                                        ),
+                                        Ok(Err(e)) => eprintln!(
+                                            "[automatic] library refresh apply failed: {}",
+                                            e
+                                        ),
+                                        Err(e) => eprintln!(
+                                            "[automatic] library refresh apply panicked: {}",
+                                            e
+                                        ),
+                                    }
+                                }
+                                Err(e) => eprintln!(
+                                    "[automatic] library refresh verify failed: {}",
+                                    e
+                                ),
+                            }
+                        }
+                        Ok(None) => {
+                            // No update — quiet, this is the common case.
+                        }
+                        Err(e) => eprintln!("[automatic] library refresh check failed: {}", e),
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -107,6 +164,7 @@ pub fn run() {
             reinstall_defaults,
             get_library_version,
             check_library_updates,
+            apply_library_update,
             erase_app_data,
             dismiss_welcome,
             clear_opencode_cache,
