@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Workspace Overview — Design Mockup</title>
+  <style>
+    :root {
+      --health-synced: #22c55e;
+      --health-drifted: #f59e0b;
+      --health-checking: #3f3f46;
+      --brand: #6366f1;
+      --bg-base: #232328;
+      --bg-sidebar: #18181b;
+      --bg-input: #2e2e34;
+      --text: #fafafa;
+      --muted: #d4d4d8;
+      --warning: #f59e0b;
+      --success: #22c55e;
+      --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0c0c0e; color: var(--text); font-family: var(--font); }
+    body { display: flex; flex-direction: column; padding: 24px; gap: 16px; }
+
+    .banner {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      padding: 12px 16px; border-radius: 10px; background: #151518; border: 1px solid #2a2a30;
+    }
+    .banner h1 { margin: 0; font-size: 14px; font-weight: 600; }
+    .banner p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+    .toggle {
+      display: inline-flex; padding: 3px; border-radius: 8px;
+      background: var(--bg-input); border: 1px solid rgba(63,63,70,.5);
+    }
+    .toggle button {
+      border: 0; background: transparent; color: var(--muted);
+      font-size: 12px; font-weight: 500; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+    }
+    .toggle button.active {
+      background: var(--bg-sidebar); color: var(--text); box-shadow: 0 1px 0 rgba(0,0,0,.25);
+    }
+
+    .shell {
+      flex: 1; min-height: 540px; display: grid;
+      grid-template-rows: 44px 1fr; grid-template-columns: 240px 1fr;
+      border-radius: 12px; overflow: hidden; border: 1px solid rgba(63,63,70,.55); background: var(--bg-base);
+    }
+    .topnav {
+      grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; padding: 0 16px;
+      border-bottom: 1px solid rgba(63,63,70,.4);
+    }
+    .pill {
+      display: inline-flex; gap: 2px; padding: 3px; border-radius: 8px;
+      background: var(--bg-input); border: 1px solid rgba(63,63,70,.4);
+    }
+    .pill span { font-size: 12px; padding: 5px 10px; border-radius: 6px; color: var(--muted); }
+    .pill span.on { background: var(--bg-sidebar); color: var(--text); box-shadow: 0 1px 0 rgba(0,0,0,.2); }
+
+    .sidebar {
+      background: var(--bg-input); border-right: 1px solid rgba(63,63,70,.4);
+      padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; overflow: auto;
+    }
+    .sidebar button {
+      display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: transparent;
+      color: var(--muted); font-size: 13px; font-weight: 500; cursor: pointer; text-align: left; border-radius: 6px;
+    }
+    .sidebar button:hover { background: var(--bg-sidebar); color: var(--text); }
+    .add { padding: 8px 10px; margin-bottom: 4px; }
+    .label {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 10px 6px; font-size: 11px; font-weight: 600;
+      letter-spacing: 0.06em; text-transform: uppercase; color: rgba(212,212,216,.45);
+    }
+    .group { padding: 7px 10px; }
+    .group.active { background: var(--bg-sidebar); color: var(--text); }
+    .count { margin-left: auto; font-size: 11px; color: rgba(212,212,216,.32); font-variant-numeric: tabular-nums; }
+    .proj { padding: 6px 10px 6px 34px; font-weight: 400; }
+    .bottom { margin-top: auto; padding-top: 8px; border-top: 1px solid rgba(63,63,70,.3); }
+
+    .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .toolbar {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 10px 20px; border-bottom: 1px solid rgba(63,63,70,.4);
+    }
+    .toolbar h2 {
+      margin: 0; font-size: 13px; font-weight: 600; color: var(--muted);
+      letter-spacing: 0.04em; text-transform: uppercase;
+    }
+    .tools { display: flex; align-items: center; gap: 8px; }
+    .search {
+      height: 28px; width: 168px; border-radius: 6px; border: 1px solid rgba(63,63,70,.5);
+      background: var(--bg-input); color: var(--text); padding: 0 10px; font-size: 12px;
+    }
+    .seg {
+      display: inline-flex; padding: 2px; border-radius: 6px;
+      border: 1px solid rgba(63,63,70,.5); background: var(--bg-input);
+    }
+    .seg i {
+      width: 24px; height: 24px; border-radius: 4px; display: grid; place-items: center;
+      font-style: normal; font-size: 11px; color: var(--muted);
+    }
+    .seg i.on { background: rgba(99,102,241,.15); color: var(--brand); }
+    .select, .btn {
+      height: 28px; border-radius: 6px; border: 1px solid rgba(63,63,70,.5);
+      background: var(--bg-input); color: var(--muted); font-size: 12px; font-weight: 500;
+      display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; cursor: pointer;
+    }
+    .btn.primary { background: var(--brand); border-color: transparent; color: #fff; }
+    .btn.secondary { background: transparent; }
+    .btn.warn { background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.3); color: var(--warning); }
+
+    .health-before { border-bottom: 1px solid rgba(63,63,70,.4); background: var(--bg-input); }
+    .stats { display: grid; grid-template-columns: repeat(6, 1fr); }
+    .stat {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 2px; padding: 12px 8px; border-right: 1px solid rgba(63,63,70,.3);
+    }
+    .stat:last-child { border-right: 0; }
+    .stat .n { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .stat .l { font-size: 10px; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; }
+    .stat.ok .n { color: var(--health-synced); }
+    .stat.warn .n { color: var(--health-drifted); }
+    .stat.brand .n { color: var(--brand); }
+    .health-row {
+      display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+      border-top: 1px solid rgba(63,63,70,.3); font-size: 10px; color: var(--muted);
+    }
+
+    .health-after {
+      display: flex; align-items: center; gap: 16px; padding: 10px 20px;
+      border-bottom: 1px solid rgba(63,63,70,.35);
+    }
+    .health-after .title { font-size: 13px; font-weight: 600; }
+    .health-after .meta { font-size: 12px; color: rgba(212,212,216,.5); margin-left: 8px; }
+    .health-after .legend {
+      margin-left: auto; display: flex; gap: 10px; font-size: 11px;
+      color: var(--muted); white-space: nowrap;
+    }
+    .health-after .legend .d { color: var(--health-drifted); }
+
+    .bar {
+      flex: 1; height: 6px; border-radius: 999px; overflow: hidden;
+      background: var(--health-checking); display: flex;
+    }
+    .health-after .bar { width: 160px; flex: 0 0 160px; height: 4px; }
+    .bar .s { background: var(--health-synced); height: 100%; }
+    .bar .d { background: var(--health-drifted); height: 100%; }
+
+    .grid {
+      padding: 20px; display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 14px; overflow: auto;
+    }
+
+    .card-before {
+      position: relative; padding: 18px; border-radius: 12px;
+      background: var(--bg-input); border: 1px solid rgba(63,63,70,.4);
+      display: flex; flex-direction: column; gap: 12px; min-height: 148px;
+    }
+    .card-before.drift { border-color: rgba(245,158,11,.35); }
+    .badge {
+      position: absolute; top: 14px; right: 14px; font-size: 10px; font-weight: 600;
+      padding: 2px 6px; border-radius: 4px;
+    }
+    .badge.ok { background: rgba(34,197,94,.1); color: var(--success); border: 1px solid rgba(34,197,94,.2); }
+    .badge.warn { background: rgba(245,158,11,.1); color: var(--warning); border: 1px solid rgba(245,158,11,.2); }
+    .icon-box {
+      width: 36px; height: 36px; border-radius: 8px; display: grid; place-items: center;
+      border: 1px solid rgba(99,102,241,.2); background: rgba(99,102,241,.1);
+      color: var(--brand); font-size: 14px; flex-shrink: 0;
+    }
+    .icon-box.warn { border-color: rgba(245,158,11,.3); background: rgba(245,158,11,.1); color: var(--warning); }
+    .name { font-size: 14px; font-weight: 600; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip {
+      font-size: 10px; color: var(--muted); padding: 2px 8px; border-radius: 999px;
+      background: var(--bg-sidebar); border: 1px solid rgba(63,63,70,.4);
+    }
+    .footer {
+      margin-top: auto; padding-top: 10px; border-top: 1px solid rgba(63,63,70,.3);
+      display: flex; gap: 12px; font-size: 11px; color: var(--muted);
+    }
+    .footer .date { margin-left: auto; opacity: .7; }
+
+    .card-after {
+      padding: 10px 12px; border-radius: 8px; background: var(--bg-input);
+      border: 1px solid rgba(63,63,70,.35); display: flex; flex-direction: column; gap: 4px;
+      transition: background .15s ease, border-color .15s ease;
+    }
+    .card-after:hover { background: rgba(46,46,52,.92); border-color: rgba(63,63,70,.7); }
+    .card-after .row { display: flex; align-items: center; gap: 10px; }
+    .card-after .glyph {
+      width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center;
+      border: 1px solid rgba(63,63,70,.45); color: rgba(212,212,216,.7); font-size: 12px; flex-shrink: 0;
+    }
+    .card-after .body { min-width: 0; flex: 1; }
+    .card-after .name { font-size: 13px; font-weight: 550; letter-spacing: -0.01em; line-height: 1.25; }
+    .card-after .status { font-size: 11px; color: rgba(212,212,216,.45); margin-top: 1px; line-height: 1.2; }
+    .card-after .status.drift { color: var(--warning); }
+    .agents { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+    .agents img {
+      width: 14px; height: 14px; display: block; opacity: .85;
+      filter: brightness(0) invert(1);
+    }
+    .metrics {
+      display: none; padding-left: 34px;
+      font-size: 11px; color: rgba(212,212,216,.45); line-height: 1.2;
+    }
+    .card-after:hover .metrics { display: block; }
+    .note { font-size: 11px; color: rgba(212,212,216,.45); padding: 0 20px 16px; }
+
+    .panel-after .before-only,
+    .panel-before .after-only { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="banner">
+    <div>
+      <h1>Workspace overview mockup</h1>
+      <p>Cursor-inspired refinement — same data, quieter chrome. Toggle Before / After.</p>
+    </div>
+    <div class="toggle" role="group" aria-label="Design version">
+      <button type="button" id="btn-before">Before</button>
+      <button type="button" id="btn-after" class="active">After</button>
+    </div>
+  </div>
+
+  <div class="shell panel-after" id="shell">
+    <div class="topnav">
+      <div class="pill">
+        <span>Start</span><span class="on">Workspace</span><span>Library</span><span>Discover</span><span>Tools</span>
+      </div>
+    </div>
+
+    <aside class="sidebar">
+      <button class="add" type="button">＋ Add Project</button>
+      <div class="label"><span>Projects</span><span>+</span></div>
+      <button class="group active" type="button"><span>▾ Aura</span><span class="count">15</span></button>
+      <button class="proj" type="button">aura</button>
+      <button class="proj" type="button">bounce</button>
+      <button class="proj" type="button">lasso</button>
+      <button class="group" type="button"><span>▸ Automatic</span><span class="count">6</span></button>
+      <button class="group" type="button"><span>▸ Velvet Tiger</span><span class="count">12</span></button>
+      <div class="bottom">
+        <button class="group" type="button">Groups</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="toolbar">
+        <h2>Aura</h2>
+        <div class="tools">
+          <input class="search" placeholder="Search projects" />
+          <div class="seg"><i class="on">▦</i><i>☰</i></div>
+          <select class="select"><option>Alphabetical</option></select>
+          <button class="btn warn before-only" type="button">↻ Sync all</button>
+          <button class="btn secondary after-only" type="button">↻ Sync all</button>
+          <button class="btn primary" type="button">＋ Add Project</button>
+        </div>
+      </div>
+
+      <div class="health-before before-only">
+        <div class="stats">
+          <div class="stat"><div class="n">15</div><div class="l">Projects</div></div>
+          <div class="stat ok"><div class="n">8</div><div class="l">Synced</div></div>
+          <div class="stat warn"><div class="n">1</div><div class="l">Drifted</div></div>
+          <div class="stat brand"><div class="n">4</div><div class="l">Agents</div></div>
+          <div class="stat brand"><div class="n">41</div><div class="l">Skills</div></div>
+          <div class="stat brand"><div class="n">10</div><div class="l">MCP Servers</div></div>
+        </div>
+        <div class="health-row">
+          <span>SYNC HEALTH</span>
+          <div class="bar"><span class="s" style="width:53%"></span><span class="d" style="width:7%"></span></div>
+          <span style="color:var(--health-synced)">53% synced</span>
+          <span style="color:var(--health-drifted)">1 drifted</span>
+          <span>6 checking…</span>
+          <span>1 unconfigured</span>
+        </div>
+      </div>
+
+      <div class="health-after after-only">
+        <div>
+          <span class="title">Aura</span>
+          <span class="meta">15 projects</span>
+        </div>
+        <div class="bar"><span class="s" style="width:53%"></span><span class="d" style="width:7%"></span></div>
+        <div class="legend">
+          <span>8 synced</span>
+          <span class="d">1 drifted</span>
+          <span>6 checking</span>
+        </div>
+      </div>
+
+      <div class="grid before-only">
+        <div class="card-before">
+          <span class="badge ok">✓ Synced</span>
+          <div style="display:flex;gap:12px;align-items:flex-start">
+            <div class="icon-box">📁</div>
+            <div class="name">aura</div>
+          </div>
+          <div class="chips"><span class="chip">claude</span><span class="chip">codex</span><span class="chip">opencode</span></div>
+          <div class="footer"><span>{} 12</span><span>⧉ 3</span><span>≡ 5</span><span>♟ 2</span><span>⌘ 4</span><span class="date">20 Aug</span></div>
+        </div>
+        <div class="card-before drift">
+          <span class="badge warn">⚠ Drifted</span>
+          <div style="display:flex;gap:12px;align-items:flex-start">
+            <div class="icon-box warn">📁</div>
+            <div class="name">lasso</div>
+          </div>
+          <div class="chips"><span class="chip">claude</span><span class="chip">cursor</span></div>
+          <div class="footer"><span>{} 8</span><span>⧉ 2</span><span>≡ 3</span><span>♟ 1</span><span>⌘ 2</span><span class="date">18 Aug</span></div>
+        </div>
+        <div class="card-before">
+          <span class="badge ok">✓ Synced</span>
+          <div style="display:flex;gap:12px;align-items:flex-start">
+            <div class="icon-box">📁</div>
+            <div class="name">bounce</div>
+          </div>
+          <div class="chips"><span class="chip">claude</span></div>
+          <div class="footer"><span>{} 4</span><span>⧉ 1</span><span>≡ 2</span><span>♟ 0</span><span>⌘ 1</span><span class="date">12 Aug</span></div>
+        </div>
+      </div>
+
+      <div class="grid after-only">
+        <div class="card-after">
+          <div class="row">
+            <div class="glyph">📁</div>
+            <div class="body">
+              <div class="name">aura</div>
+              <div class="status">Synced</div>
+            </div>
+            <div class="agents" aria-label="Agents">
+              <img src="../../../../../public/agents/claude-code.svg" alt="claude" title="claude" />
+              <img src="../../../../../public/agents/codex.svg" alt="codex" title="codex" />
+              <img src="../../../../../public/agents/opencode.svg" alt="opencode" title="opencode" />
+            </div>
+          </div>
+          <div class="metrics">12 skills · 3 mcp · 5 rules · 20 Aug</div>
+        </div>
+        <div class="card-after">
+          <div class="row">
+            <div class="glyph">📁</div>
+            <div class="body">
+              <div class="name">lasso</div>
+              <div class="status drift">Drifted</div>
+            </div>
+            <div class="agents" aria-label="Agents">
+              <img src="../../../../../public/agents/claude-code.svg" alt="claude" title="claude" />
+              <img src="../../../../../public/agents/cursor.svg" alt="cursor" title="cursor" />
+            </div>
+          </div>
+          <div class="metrics">8 skills · 2 mcp · 3 rules · 18 Aug</div>
+        </div>
+        <div class="card-after">
+          <div class="row">
+            <div class="glyph">📁</div>
+            <div class="body">
+              <div class="name">bounce</div>
+              <div class="status">Synced</div>
+            </div>
+            <div class="agents" aria-label="Agents">
+              <img src="../../../../../public/agents/claude-code.svg" alt="claude" title="claude" />
+            </div>
+          </div>
+          <div class="metrics">4 skills · 1 mcp · 2 rules · 12 Aug</div>
+        </div>
+      </div>
+      <p class="note after-only">Hover a card to reveal metrics. Synced stays muted; only Drifted uses color. Agent logos sit on the title row.</p>
+    </main>
+  </div>
+
+  <script>
+    const shell = document.getElementById("shell");
+    const beforeBtn = document.getElementById("btn-before");
+    const afterBtn = document.getElementById("btn-after");
+    function setMode(mode) {
+      const after = mode === "after";
+      shell.classList.toggle("panel-after", after);
+      shell.classList.toggle("panel-before", !after);
+      afterBtn.classList.toggle("active", after);
+      beforeBtn.classList.toggle("active", !after);
+    }
+    beforeBtn.addEventListener("click", () => setMode("before"));
+    afterBtn.addEventListener("click", () => setMode("after"));
+  </script>
+</body>
+</html>

@@ -309,19 +309,19 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
       {/* Add Project action */}
       <button
         onClick={onCreateProject}
-        className="w-full flex items-center gap-2.5 px-3 py-2 mb-2 rounded-md text-[13px] font-medium text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors"
+        className="w-full flex items-center gap-2.5 px-3 py-2 mb-3 rounded-md text-[13px] font-medium text-text-muted/80 hover:bg-bg-sidebar hover:text-text-base transition-colors"
       >
         <FolderPlus size={14} className="shrink-0 text-text-muted" />
         <span className="flex-1 text-left">Add Project</span>
       </button>
 
       {/* Projects section header with create group button */}
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-center justify-between mb-1.5">
         <button
           onClick={() => { onFilterByGroup(null); onTabClick("projects"); }}
           className="flex items-center gap-1 px-3 py-1 hover:text-text-base transition-colors"
         >
-          <span className="text-[11px] font-semibold tracking-wider text-text-muted/60 hover:text-text-muted">Projects</span>
+          <span className="text-[11px] font-semibold tracking-wider text-text-muted/50 hover:text-text-muted/80">Projects</span>
         </button>
         <button
           onClick={() => { setCreatingGroup(true); setNewGroupName(""); }}
@@ -385,7 +385,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
       )}
 
       {/* Groups */}
-      <div className="mb-2">
+      <div className="mb-3 space-y-0.5">
         {groups.map((group) => {
           const isCollapsed = collapsedGroups.has(group.name);
           const isActiveFilter = activeGroupFilter === group.name && activeTab === "projects";
@@ -402,7 +402,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
             >
               <GroupIcon size={14} className={`shrink-0 ${isActiveFilter ? "text-text-base" : "text-text-muted"}`} />
               <span className="flex-1 text-left truncate">{group.name}</span>
-              <span className="text-[11px] text-text-muted/50 shrink-0">{group.projects.length}</span>
+              <span className="text-[11px] text-text-muted/40 shrink-0">{group.projects.length}</span>
             </button>
             {!isCollapsed && (
               <div>
@@ -438,7 +438,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
                     </div>
                   ))}
                 {group.projects.filter((p) => projects.includes(p)).length === 0 && (
-                  <div className="pl-[34px] pr-3 py-1.5 text-[11px] text-text-muted/40 italic">Empty</div>
+                  <div className="pl-[34px] pr-3 py-1.5 text-[11px] text-text-muted/35 italic">Empty</div>
                 )}
               </div>
             )}
