@@ -116,8 +116,10 @@ function ProjectCard({
         <div className="pl-8 text-[11px] text-danger/80">Folder not found — relink required</div>
       )}
 
-      <div className="pl-8 text-[11px] text-text-muted/40 hidden group-hover:block group-focus-visible:block">
-        {metricParts.join(" · ")}
+      <div className="pl-8 grid grid-rows-[0fr] group-hover:grid-rows-[1fr] group-focus-visible:grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out">
+        <div className="overflow-hidden text-[11px] text-text-muted/40">
+          {metricParts.join(" · ")}
+        </div>
       </div>
     </button>
   );
