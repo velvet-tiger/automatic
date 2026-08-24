@@ -8,6 +8,7 @@ import ServersPanel from "../../../../plugins/dev-servers/ServersPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { handleExternalLinkClick } from "../../../../lib/externalLinks";
+import { useProjectNavLayout } from "../../../../lib/projectNavLayout";
 import {
   trackProjectCreated,
   trackProjectUpdated,
@@ -266,6 +267,8 @@ export function ProjectEditor({
   const [availableTemplates, setAvailableTemplates] = useState<string[]>([]);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
+
+  const navLayout = useProjectNavLayout();
 
   // Tab navigation within a project
   type ProjectTab = "summary" | "agents" | "commands" | "hooks" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools" | "settings";
@@ -3445,8 +3448,8 @@ export function ProjectEditor({
                 </button>
               </div>
             )}
-            {/* Primary group tabs — hidden when a secondary (controls bar) view is active. */}
-            {!(activeToolName === null && isSecondaryGroup(projectGroup)) && (
+            {/* Primary group tabs — hidden when a secondary (controls bar) view is active, or when using sidebar layout. */}
+            {navLayout === "horizontal" && !(activeToolName === null && isSecondaryGroup(projectGroup)) && (
             <div className="flex flex-shrink-0 items-center gap-0 border-b border-border-strong/35 px-6">
               {PROJECT_GROUPS.map((group) => (
                 <button
@@ -3486,6 +3489,10 @@ export function ProjectEditor({
 
             </div>
             )}
+            {(() => {
+              const isSecondaryActive = activeToolName === null && isSecondaryGroup(projectGroup);
+              const bodyContent = (
+                <>
             {/* Secondary sub-tabs (only shown when a static group with sub-tabs is active) */}
             {activeToolName === null && projectGroup !== "summary" && (() => {
               const activeGroup =
@@ -3920,6 +3927,57 @@ export function ProjectEditor({
               </div>
             </div>
             )}
+                </>
+              );
+              if (navLayout === "sidebar" && !isSecondaryActive) {
+                return (
+                  <div className="flex-1 flex min-h-0">
+                    <aside className="w-[168px] flex-shrink-0 border-r border-border-strong/35 bg-bg-input/10 py-2 overflow-y-auto">
+                      <nav className="flex flex-col gap-0.5 px-2">
+                        {PROJECT_GROUPS.map((group) => (
+                          <button
+                            key={group.id}
+                            onClick={() => selectGroup(group.id)}
+                            className={`relative flex items-center gap-1.5 pl-3 pr-2 py-1.5 text-[12px] font-medium rounded transition-colors text-left ${
+                              activeToolName === null && projectGroup === group.id
+                                ? "bg-bg-input text-text-base"
+                                : "text-text-muted/80 hover:text-text-base hover:bg-bg-input/60"
+                            }`}
+                          >
+                            {activeToolName === null && projectGroup === group.id && (
+                              <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-brand rounded-r" />
+                            )}
+                            {group.label}
+                          </button>
+                        ))}
+                        {toolEntries.filter((e) =>
+                          e.provides_tab && (project?.tools ?? []).includes(e.name)
+                        ).map((entry) => (
+                          <button
+                            key={entry.name}
+                            onClick={() => selectTopLevelTool(entry.name)}
+                            className={`relative flex items-center gap-1.5 pl-3 pr-2 py-1.5 text-[12px] font-medium rounded transition-colors text-left ${
+                              activeToolName === entry.name
+                                ? "bg-bg-input text-text-base"
+                                : "text-text-muted/80 hover:text-text-base hover:bg-bg-input/60"
+                            }`}
+                          >
+                            {activeToolName === entry.name && (
+                              <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-brand rounded-r" />
+                            )}
+                            {entry.display_name}
+                          </button>
+                        ))}
+                      </nav>
+                    </aside>
+                    <div className="flex-1 flex flex-col min-w-0 min-h-0">
+                      {bodyContent}
+                    </div>
+                  </div>
+                );
+              }
+              return bodyContent;
+            })()}
             </>}
 
             {/* ── Project controls bar (Configuration, Insights, Activity, Memory) — pinned to bottom ── */}

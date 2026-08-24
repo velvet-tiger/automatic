@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { THEMES, applyTheme, Theme } from "../lib/theme";
+import {
+  useProjectNavLayout,
+  setProjectNavLayout,
+  type ProjectNavLayout,
+} from "../lib/projectNavLayout";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { setAnalyticsEnabled, trackSettingChanged } from "../lib/analytics";
@@ -155,6 +160,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
   });
 
   const followSystem = currentTheme === "system";
+  const projectNavLayout = useProjectNavLayout();
 
   const handleThemeChange = (theme: Theme) => {
     setCurrentTheme(theme);
@@ -838,6 +844,38 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                     </button>
                   );
                 })}
+              </div>
+
+              {/* Project navigation layout */}
+              <div className="mt-10">
+                <h3 className="text-sm font-medium mb-2 text-text-base">Project navigation</h3>
+                <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
+                  Choose where the primary project navigation (Summary, Instructions, Rules, and so on) appears when a project is open.
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  {(["horizontal", "sidebar"] as ProjectNavLayout[]).map((layout) => {
+                    const isActive = projectNavLayout === layout;
+                    const label = layout === "horizontal" ? "Horizontal tabs" : "Left sidebar";
+                    const description =
+                      layout === "horizontal"
+                        ? "Tabs run along the top of the project pane."
+                        : "Nav sits in a vertical sidebar on the left of the project pane.";
+                    return (
+                      <button
+                        key={layout}
+                        onClick={() => setProjectNavLayout(layout)}
+                        className={`flex flex-col text-left p-4 rounded-xl border transition-all ${
+                          isActive
+                            ? "border-brand bg-brand/10 ring-1 ring-brand/50"
+                            : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                        }`}
+                      >
+                        <div className="text-[13px] font-medium text-text-base mb-1">{label}</div>
+                        <span className="text-[12px] text-text-muted">{description}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
