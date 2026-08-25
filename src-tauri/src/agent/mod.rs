@@ -1609,6 +1609,16 @@ pub(crate) fn discover_mcp_servers_from_json(
     root_key: &str,
     normalise: fn(Value) -> Value,
 ) -> Map<String, Value> {
+    discover_mcp_servers_from_json_at(path, &[root_key], normalise)
+}
+
+/// Same as [`discover_mcp_servers_from_json`], but walks a nested key path to
+/// the servers map (e.g. `["mcp", "servers"]` for Z Code's CLI config).
+pub(crate) fn discover_mcp_servers_from_json_at(
+    path: &Path,
+    key_path: &[&str],
+    normalise: fn(Value) -> Value,
+) -> Map<String, Value> {
     let mut result = Map::new();
 
     let content = match fs::read_to_string(path) {
@@ -1616,13 +1626,21 @@ pub(crate) fn discover_mcp_servers_from_json(
         Err(_) => return result,
     };
 
-    let map: Map<String, Value> = match serde_json::from_str::<Value>(&content) {
-        Ok(Value::Object(m)) => m,
+    let root: Value = match serde_json::from_str::<Value>(&content) {
+        Ok(v @ Value::Object(_)) => v,
         _ => return result,
     };
 
-    let servers_obj = match map.get(root_key) {
-        Some(Value::Object(s)) => s,
+    let mut node = &root;
+    for key in key_path {
+        node = match node.get(key) {
+            Some(v) => v,
+            None => return result,
+        };
+    }
+
+    let servers_obj = match node {
+        Value::Object(s) => s,
         _ => return result,
     };
 
@@ -2580,6 +2598,36 @@ mod tests {
             discovered.contains_key("fetch"),
             "genuine local servers must still be discovered"
         );
+    }
+
+    #[test]
+    fn discover_at_nested_key_path_reads_servers_and_applies_the_same_filters() {
+        // Z Code's CLI config nests servers under `mcp.servers`.  The nested
+        // walker must find them and apply the same automatic/proxy-stub
+        // filtering as the single-key variant.
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("config.json");
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "theme": "dark",
+                "mcp": {
+                    "servers": {
+                        "automatic": { "command": "automatic", "args": ["mcp-serve"] },
+                        "memory": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-memory"] },
+                    }
+                }
+            }))
+            .expect("serialize"),
+        )
+        .expect("write config.json");
+
+        let discovered = discover_mcp_servers_from_json_at(&path, &["mcp", "servers"], |v| v);
+        assert_eq!(discovered.len(), 1);
+        assert!(discovered.contains_key("memory"));
+
+        // A missing intermediate key yields an empty map, not a panic.
+        assert!(discover_mcp_servers_from_json_at(&path, &["mcp", "missing"], |v| v).is_empty());
     }
 
     #[test]

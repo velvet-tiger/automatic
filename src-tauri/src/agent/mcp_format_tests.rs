@@ -1,12 +1,13 @@
 //! Cross-agent MCP configuration format tests.
 //!
 //! Every agent writes MCP servers in its own dialect: `mcpServers` in a
-//! dedicated file (Claude Code, Cursor, Junie, Kiro, Kilo Code, Droid, Pi),
+//! dedicated file (Claude Code, Cursor, Junie, Kiro, Droid, Pi, Kimi Code),
 //! `mcpServers` merged into a shared settings file (Gemini CLI, Z Code),
 //! `servers` in `.vscode/mcp.json` (GitHub Copilot), `context_servers` in
-//! `.zed/settings.json` (Zed), `mcp` in `opencode.json`, TOML for Codex CLI,
-//! and nothing at all for the agents that keep MCP config outside the project
-//! (Cline, Goose, Warp, Antigravity).
+//! `.zed/settings.json` (Zed), the OpenCode `mcp` dialect (OpenCode's
+//! `opencode.json`, Kilo's `kilo.json`), TOML for Codex CLI, and nothing at
+//! all for the agents that keep MCP config outside the project (Cline, Goose,
+//! Warp, Antigravity).
 //!
 //! The table-driven tests pin the invariants that must hold for *every*
 //! dialect, so a new agent cannot be registered in [`all()`] without

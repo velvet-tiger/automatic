@@ -172,11 +172,16 @@ impl Agent for ZCode {
             "mcpServers",
             |v| v,
         );
-        for (name, config) in discover_mcp_servers_from_json(
-            &home.join(".zcode").join("cli").join("config.json"),
-            "mcpServers",
-            |v| v,
-        ) {
+        let cli_config = home.join(".zcode").join("cli").join("config.json");
+        for (name, config) in discover_mcp_servers_from_json(&cli_config, "mcpServers", |v| v) {
+            servers.entry(name).or_insert(config);
+        }
+        // Z Code's own docs describe the CLI config's native shape as a
+        // nested `mcp.servers` object rather than top-level `mcpServers`.
+        // Read it additively so either shape surfaces; existing entries win.
+        for (name, config) in
+            super::discover_mcp_servers_from_json_at(&cli_config, &["mcp", "servers"], |v| v)
+        {
             servers.entry(name).or_insert(config);
         }
         servers

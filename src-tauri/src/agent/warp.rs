@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
-use super::{Agent, AgentCapabilities};
+use super::{discover_mcp_servers_from_json, Agent, AgentCapabilities};
 
 /// Warp agent — uses `AGENTS.md` as the project rules file and stores
 /// skills under `<project>/.agents/skills/<name>/SKILL.md`.
@@ -12,10 +12,13 @@ use super::{Agent, AgentCapabilities};
 /// directories and legacy `WARP.md` files so that existing projects continue to
 /// be recognised.
 ///
-/// **MCP note**: Warp manages MCP servers through its own GUI and internal
-/// database — there is no project-level config file that Automatic can write.
-/// MCP servers must be configured manually inside the Warp app
-/// (Settings › MCP Servers or Warp Drive › MCP Servers).
+/// **MCP note**: Warp reads file-based MCP config from a global
+/// `~/.warp/.mcp.json` and a project-level `.warp/.mcp.json` (`mcpServers`
+/// key), and also auto-discovers Claude Code's `~/.claude.json` and Codex's
+/// `~/.codex/config.toml`.  File-based servers need one-time approval inside
+/// Warp before they start.  UI-added servers live in Warp Drive
+/// (account-scoped, no local file).  Automatic does not yet write Warp's
+/// files — it only discovers the global one.
 pub struct Warp;
 
 impl Agent for Warp {
@@ -78,9 +81,11 @@ impl Agent for Warp {
 
     fn mcp_note(&self) -> Option<&'static str> {
         Some(
-            "Warp manages MCP servers through its own app (Settings \u{203a} AI \u{203a} MCP Servers \
-             or Warp Drive \u{203a} MCP Servers). Automatic cannot write Warp\u{2019}s MCP config \
-             \u{2014} add servers manually in Warp.",
+            "Warp reads MCP servers from ~/.warp/.mcp.json (global) and .warp/.mcp.json \
+             (project); file-based servers need one-time approval inside Warp \
+             (Settings \u{203a} Agents \u{203a} MCP servers). Warp also auto-discovers Claude Code \
+             and Codex configs, so servers Automatic writes for those agents may already \
+             appear in Warp. Automatic does not yet write Warp\u{2019}s files.",
         )
     }
 
@@ -110,11 +115,27 @@ impl Agent for Warp {
 
     // ── Discovery ───────────────────────────────────────────────────────
 
-    /// Warp stores MCP config in its app database — nothing discoverable
-    /// from the project directory.
+    /// Automatic does not sync a project-level Warp MCP file, so project
+    /// discovery is empty.  (Warp itself reads `.warp/.mcp.json`, but writing
+    /// it is future work — see the MCP note above.)
     fn discover_mcp_servers(&self, _dir: &Path) -> Map<String, Value> {
         Map::new()
     }
+
+    fn discover_global_mcp_servers(&self) -> Map<String, Value> {
+        let Some(home) = super::home_dir() else {
+            return Map::new();
+        };
+        // ~/.warp/.mcp.json — Warp's global file-based MCP config, standard
+        // `mcpServers` key.  Entries may carry a Warp-specific
+        // `working_directory` field; it is harmless on import.
+        let path = home.join(".warp").join(".mcp.json");
+        discover_mcp_servers_from_json(&path, "mcpServers", identity)
+    }
+}
+
+fn identity(v: Value) -> Value {
+    v
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

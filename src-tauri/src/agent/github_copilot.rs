@@ -243,15 +243,60 @@ impl Agent for GitHubCopilot {
         let Some(home) = super::home_dir() else {
             return Map::new();
         };
-        // ~/.vscode/mcp.json — user-level VS Code MCP config
-        let path = home.join(".vscode").join("mcp.json");
-        discover_mcp_servers_from_json(&path, "servers", identity)
+        discover_global_from(&home)
     }
 }
 
 /// Pass-through normaliser: VS Code/Copilot format is close to canonical.
 fn identity(v: Value) -> Value {
     v
+}
+
+/// VS Code's documented user-level MCP config: `mcp.json` in the default
+/// profile folder ("MCP: Open User Configuration").  Non-default profiles
+/// keep their own copy under `User/profiles/<id>/`; only the default profile
+/// is read here.
+fn vscode_user_mcp_path(home: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        home.join("Library")
+            .join("Application Support")
+            .join("Code")
+            .join("User")
+            .join("mcp.json")
+    }
+    #[cfg(target_os = "windows")]
+    {
+        home.join("AppData")
+            .join("Roaming")
+            .join("Code")
+            .join("User")
+            .join("mcp.json")
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        home.join(".config").join("Code").join("User").join("mcp.json")
+    }
+}
+
+/// User-level discovery, first-wins across the places Copilot actually reads:
+/// the VS Code profile `mcp.json` (`servers` key), the Copilot CLI's
+/// `~/.copilot/mcp-config.json` (`mcpServers` key), and the legacy
+/// `~/.vscode/mcp.json` (`servers` key) — the last is not a documented VS Code
+/// location but is kept so previously discovered setups don't vanish.
+fn discover_global_from(home: &Path) -> Map<String, Value> {
+    let sources = [
+        (vscode_user_mcp_path(home), "servers"),
+        (home.join(".copilot").join("mcp-config.json"), "mcpServers"),
+        (home.join(".vscode").join("mcp.json"), "servers"),
+    ];
+    let mut servers = Map::new();
+    for (path, key) in sources {
+        for (name, config) in discover_mcp_servers_from_json(&path, key, identity) {
+            servers.entry(name).or_insert(config);
+        }
+    }
+    servers
 }
 
 // ── Hooks ────────────────────────────────────────────────────────────────────
@@ -463,5 +508,48 @@ mod tests {
 
         GitHubCopilot.sync_hooks(dir.path(), &[]).unwrap();
         assert!(!dir.path().join(".github/hooks/automatic.json").exists());
+    }
+
+    #[test]
+    fn global_discovery_reads_all_three_sources_first_wins() {
+        let home = tempdir().unwrap();
+
+        let profile = vscode_user_mcp_path(home.path());
+        fs::create_dir_all(profile.parent().unwrap()).unwrap();
+        fs::write(
+            &profile,
+            r#"{"servers":{"github":{"type":"stdio","command":"npx"},"shared":{"type":"stdio","command":"profile-wins"}}}"#,
+        )
+        .unwrap();
+
+        fs::create_dir_all(home.path().join(".copilot")).unwrap();
+        fs::write(
+            home.path().join(".copilot/mcp-config.json"),
+            r#"{"mcpServers":{"cli-only":{"type":"http","url":"https://example.com/mcp"},"shared":{"type":"stdio","command":"cli-loses"}}}"#,
+        )
+        .unwrap();
+
+        fs::create_dir_all(home.path().join(".vscode")).unwrap();
+        fs::write(
+            home.path().join(".vscode/mcp.json"),
+            r#"{"servers":{"legacy":{"type":"stdio","command":"old"}}}"#,
+        )
+        .unwrap();
+
+        let servers = discover_global_from(home.path());
+        assert_eq!(servers.len(), 4);
+        assert_eq!(servers["github"]["command"], "npx");
+        assert_eq!(servers["cli-only"]["url"], "https://example.com/mcp");
+        assert_eq!(servers["legacy"]["command"], "old");
+        assert_eq!(
+            servers["shared"]["command"], "profile-wins",
+            "the documented profile file must take precedence over the CLI file"
+        );
+    }
+
+    #[test]
+    fn global_discovery_with_no_files_is_empty() {
+        let home = tempdir().unwrap();
+        assert!(discover_global_from(home.path()).is_empty());
     }
 }
