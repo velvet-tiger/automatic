@@ -4,6 +4,29 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-08-25
+
+### Added
+
+- Sidebar layout variant for the primary project navigation (Summary, Instructions, Rules, etc.), with a matching Appearance setting to switch between horizontal tabs and the sidebar. Sidebar is now the default; a saved preference is honoured either way. ([c0d3c34](https://github.com/velvet-tiger/automatic/commit/c0d3c34))
+
+### Changed
+
+- Activity list in the project editor is quieter: the per-event colour dot and bordered card are replaced with a subtle filled surface and faint row dividers, so the list reads as its own section without competing with the rest of the summary page. ([b49c149](https://github.com/velvet-tiger/automatic/commit/b49c149))
+
+### Fixed
+
+- The sidebar's active-project indicator now tracks the actually-open project instead of leaving a stale group filter highlighted. Opening a project directly (for example, from the sidebar's Other Projects list) previously never cleared `activeGroupFilter`; the open project name is now lifted from `Projects.tsx` up to `App.tsx` and used to highlight the correct row. ([2f7174e](https://github.com/velvet-tiger/automatic/commit/2f7174e))
+- Hover metrics on project cards now ease open with a grid-rows height transition instead of snapping the row of cards downward. ([f2483f1](https://github.com/velvet-tiger/automatic/commit/f2483f1))
+
+### CI
+
+- Release builds now check out the `automatic-library` git submodule so bundled default assets are present in packaged releases. ([8f7ba9b](https://github.com/velvet-tiger/automatic/commit/8f7ba9b))
+
+### Documentation
+
+- Removed the "Good Coding Patterns" section from `AGENTS.md`. ([b0941c0](https://github.com/velvet-tiger/automatic/commit/b0941c0))
+
 ## [1.21.0] - 2026-08-23
 
 ### Added
