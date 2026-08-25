@@ -40,6 +40,9 @@ async function _fetchAndApply(): Promise<void> {
     console.warn("[usePlugin] Failed to load plugin state:", e);
   }
   _notify();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("plugins-updated"));
+  }
 }
 
 // Start loading immediately on module import (before any component mounts).

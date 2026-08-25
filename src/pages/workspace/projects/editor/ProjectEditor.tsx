@@ -709,6 +709,15 @@ export function ProjectEditor({
     if (selectedName) loadToolEntries();
   }, [selectedName]);
 
+  // Reload tool entries when a plugin is toggled elsewhere (e.g. Settings),
+  // so newly-enabled plugin tabs appear in the sidebar without a project switch.
+  useEffect(() => {
+    if (!selectedName) return;
+    const handler = () => { loadToolEntries(); };
+    window.addEventListener("plugins-updated", handler);
+    return () => window.removeEventListener("plugins-updated", handler);
+  }, [selectedName]);
+
   // Fetch plugin-locked skills/rules whenever the project's tools change.
   useEffect(() => {
     const tools = project?.tools ?? [];
