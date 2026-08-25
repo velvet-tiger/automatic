@@ -4,6 +4,24 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-08-26
+
+### Added
+
+- Providers now has an MCP tab where a registry MCP server can be assigned to an agent globally, so its tools are available in every chat or session regardless of project. State lives in a dedicated `~/.automatic/global_mcp.json` (selection plus an ownership set), and a shared entry-level JSON merge preserves foreign entries byte-for-byte, refuses malformed targets, and skip-writes when the bytes are unchanged. Codex TOML gets a section-splice writer that keeps comments and non-managed `[mcp_servers.*]` blocks intact. Sixteen agents opt in via a new `AgentCapabilities.global_mcp_servers` flag; Goose (YAML) and Pi (no native MCP) stay deferred. The `McpUserScopeConflict` project problem now suppresses names Automatic manages globally (identical bytes on both scopes, no drop-tools hazard) and still fires on foreign global entries. ([0e59330](https://github.com/velvet-tiger/automatic/commit/0e59330))
+
+### Changed
+
+- The remote-MCP OAuth banner no longer asserts "This server requires OAuth" for every remote server without a stored token. When credentials have already been supplied via an Authorization header the banner is inappropriate; the copy is now framed as an available option rather than a requirement. ([80d5792](https://github.com/velvet-tiger/automatic/commit/80d5792))
+
+### Fixed
+
+- Enabling a plugin from Settings while a project was open now adds its top-level tab (Build, Servers, etc.) to the project editor sidebar immediately, instead of only after switching projects. `usePlugin`'s refresh dispatches a `plugins-updated` window event, and `ProjectEditor` reloads its tool entries when it fires. ([4e27a56](https://github.com/velvet-tiger/automatic/commit/4e27a56))
+- The MCP servers panel treated any agent that carries an `mcp_note` as "MCP not configurable via Automatic". Z Code and OpenCode ship informational notes but are writable, so they were mislabelled. The manual-MCP callout now keys off `capabilities.mcp_servers`, falling back to the note heuristic only when capabilities are absent. ([79b431d](https://github.com/velvet-tiger/automatic/commit/79b431d))
+- Corrected several stale global MCP discovery paths and notes: Warp now reads `~/.warp/.mcp.json` with an updated in-app approval note; GitHub Copilot reads the VS Code profile's `User/mcp.json` first, then the Copilot CLI's `~/.copilot/mcp-config.json`, keeping the previous path as a fallback; Z Code additionally reads the CLI config's vendor-documented nested `mcp.servers` shape via a shared `discover_mcp_servers_from_json_at` helper. No capability flips and no write-path changes. ([4301fd6](https://github.com/velvet-tiger/automatic/commit/4301fd6))
+- The Recently Added rows in library sections no longer draw stray bullet markers at the left edge; the `<li>` label and divider rendered inside a `<td>` (not a `<ul>`), so the browser was adding default list dots. ([af15a93](https://github.com/velvet-tiger/automatic/commit/af15a93))
+- A drawer's scrim and panel covered the app's top-bar drag region, leaving the window undraggable while a drawer was open. Slim `data-tauri-drag-region` strips at the top of the scrim and panel keep the top ~11px draggable across the whole width. ([748a44d](https://github.com/velvet-tiger/automatic/commit/748a44d))
+
 ## [1.22.0] - 2026-08-25
 
 ### Added
