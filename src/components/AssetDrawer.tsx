@@ -45,12 +45,17 @@ export function AssetDrawer({
 
   return (
     <>
-      <div onClick={onClose} className="fixed inset-0 bg-black/40 z-40" aria-hidden="true" />
+      <div onClick={onClose} className="fixed inset-0 bg-black/40 z-40" aria-hidden="true">
+        {/* Window drag strip — the scrim otherwise blocks the app's own top-bar drag region */}
+        <div data-tauri-drag-region className="absolute top-0 inset-x-0 h-11 select-none" />
+      </div>
       <div
         role="dialog"
         aria-modal="true"
         className={`fixed right-0 top-0 h-full ${widthClassName} bg-bg-base border-l border-border-strong/40 z-50 flex flex-col shadow-2xl`}
       >
+        {/* Window drag strip — recovers window drag over the panel; consumer header content paints on top */}
+        <div data-tauri-drag-region className="absolute top-0 inset-x-0 h-11 select-none" />
         <button
           onClick={onClose}
           className={`absolute ${closeButtonTopClassName} right-2 z-10 p-1.5 rounded-md text-text-muted hover:text-text-base hover:bg-bg-sidebar transition-colors`}
