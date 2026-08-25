@@ -6,6 +6,12 @@ export interface AgentCapabilities {
   skills: boolean;
   instructions: boolean;
   mcp_servers: boolean;
+  /**
+   * Automatic can write user-level MCP config for this agent (Providers > MCP tab).
+   * Decoupled from mcp_servers — some agents are global-yes / project-no
+   * (Cline, Warp, Antigravity) and Pi is the opposite.
+   */
+  global_mcp_servers: boolean;
   agents: boolean;
   commands: boolean;
   hooks: boolean;

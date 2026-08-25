@@ -4,8 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{
-    discover_mcp_servers_from_json, normalise_opencode_dialect_server,
-    write_opencode_dialect_mcp_config, Agent,
+    discover_mcp_servers_from_json, merge_global_mcp_entries_json,
+    normalise_opencode_dialect_server, render_opencode_entry,
+    write_opencode_dialect_mcp_config, Agent, GlobalMcpTarget, GlobalMcpWriteReport,
 };
 
 /// OpenCode's published config schema, written as `$schema` so editors can
@@ -53,6 +54,7 @@ impl Agent for OpenCode {
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
             commands: true,
+            global_mcp_servers: true,
             ..Default::default()
         }
     }
@@ -83,6 +85,38 @@ impl Agent for OpenCode {
             Some(OPENCODE_SCHEMA_URL),
             servers,
         )
+    }
+
+    // ── Global MCP ──────────────────────────────────────────────────────
+
+    /// Global config lives at `~/.config/opencode/config.json`.
+    ///
+    /// OpenCode also reads `~/.opencode.json` and `~/opencode.json`
+    /// (see [`discover_global_mcp_servers`]), but Automatic only *writes* to
+    /// the XDG-standard path so we don't have to guess which of the three the
+    /// user is treating as authoritative.
+    fn global_mcp_target(&self) -> Option<GlobalMcpTarget> {
+        super::home_dir().map(|home| GlobalMcpTarget {
+            path: home.join(".config").join("opencode").join("config.json"),
+            reload_note: Some("OpenCode requires a restart to pick up new MCP servers."),
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<GlobalMcpWriteReport, String> {
+        let target = self.global_mcp_target().ok_or_else(|| {
+            "Cannot resolve OpenCode global config path — home directory unknown".to_string()
+        })?;
+
+        let mut rendered: Map<String, Value> = Map::new();
+        for (name, config) in desired {
+            rendered.insert(name.clone(), render_opencode_entry(config));
+        }
+
+        merge_global_mcp_entries_json(&target.path, "mcp", &rendered, previously_managed)
     }
 
     // ── MCP capability ──────────────────────────────────────────────────

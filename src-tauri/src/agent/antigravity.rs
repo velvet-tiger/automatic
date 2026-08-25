@@ -83,6 +83,7 @@ impl Agent for Antigravity {
             // MCP config is global, managed via the Antigravity UI.
             mcp_servers: false,
             agents: false,
+            global_mcp_servers: true,
             ..Default::default()
         }
     }
@@ -91,9 +92,9 @@ impl Agent for Antigravity {
 
     fn mcp_note(&self) -> Option<&'static str> {
         Some(
-            "Antigravity manages MCP servers via its own UI: Agent session \u{2192} \u{22ef} \u{2192} \
-             MCP Servers \u{2192} Manage MCP Servers \u{2192} View raw config. \
-             Automatic cannot write Antigravity\u{2019}s mcp_config.json.",
+            "Antigravity manages project MCP through its own UI, but Automatic can now write \
+             global MCP config to ~/.gemini/config/mcp_config.json \u{2014} assign servers in \
+             Providers > Antigravity > MCP.",
         )
     }
 
@@ -127,6 +128,33 @@ impl Agent for Antigravity {
         _servers: &Map<String, Value>,
     ) -> Result<String, String> {
         Ok(String::new())
+    }
+
+    fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
+        let home = super::home_dir()?;
+        Some(super::GlobalMcpTarget {
+            path: home.join(".gemini").join("config").join("mcp_config.json"),
+            reload_note: None,
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<super::GlobalMcpWriteReport, String> {
+        let Some(target) = self.global_mcp_target() else {
+            return Err(
+                "Home directory not available for Antigravity global MCP write".to_string(),
+            );
+        };
+
+        // Antigravity has no project-scope writer to mirror; pass entries
+        // through unchanged (the shape documented for
+        // ~/.gemini/config/mcp_config.json is standard `mcpServers` — same as
+        // Gemini/Claude Code — and Antigravity does not do env interpolation,
+        // so the caller is expected to hand us hardcoded values).
+        super::merge_global_mcp_entries_json(&target.path, "mcpServers", desired, previously_managed)
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

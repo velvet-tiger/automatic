@@ -2,8 +2,9 @@ use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
 use super::{
-    discover_mcp_servers_from_json, normalise_opencode_dialect_server,
-    write_opencode_dialect_mcp_config, Agent,
+    discover_mcp_servers_from_json, merge_global_mcp_entries_json,
+    normalise_opencode_dialect_server, render_opencode_entry,
+    write_opencode_dialect_mcp_config, Agent, GlobalMcpTarget, GlobalMcpWriteReport,
 };
 
 /// Kilo agent — writes `.kilo/kilo.json` (or an existing root `kilo.json`)
@@ -40,7 +41,7 @@ fn resolve_config_path(dir: &Path) -> PathBuf {
 
 /// Candidate global config paths, in the order Kilo would read them.
 fn global_config_candidates() -> Vec<PathBuf> {
-    match dirs::home_dir() {
+    match super::home_dir() {
         Some(home) => {
             let base = home.join(".config").join("kilo");
             vec![base.join("kilo.json"), base.join("kilo.jsonc")]
@@ -87,6 +88,7 @@ impl Agent for KiloCode {
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
             agents: false,
+            global_mcp_servers: true,
             ..Default::default()
         }
     }
@@ -108,6 +110,48 @@ impl Agent for KiloCode {
     /// no published `$schema`, unlike OpenCode, so none is written.
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         write_opencode_dialect_mcp_config(&resolve_config_path(dir), None, servers)
+    }
+
+    // ── Global MCP ──────────────────────────────────────────────────────
+
+    /// Global config target is `~/.config/kilo/kilo.json` (JSON only —
+    /// [`write_global_mcp_config`] refuses to edit a `.jsonc` because serde
+    /// would strip comments).
+    fn global_mcp_target(&self) -> Option<GlobalMcpTarget> {
+        super::home_dir().map(|home| GlobalMcpTarget {
+            path: home.join(".config").join("kilo").join("kilo.json"),
+            reload_note: None,
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<GlobalMcpWriteReport, String> {
+        let target = self.global_mcp_target().ok_or_else(|| {
+            "Cannot resolve Kilo global config path — home directory unknown".to_string()
+        })?;
+
+        // Refuse to touch a JSONC-only config: serde_json strips comments on
+        // re-serialise, which would silently destroy the user's annotations
+        // the first time we ran a sync.  If both files exist, prefer JSON.
+        let jsonc_path = target.path.with_extension("jsonc");
+        if jsonc_path.is_file() && !target.path.is_file() {
+            return Err(format!(
+                "Automatic cannot safely edit {} because .jsonc comments would be lost. \
+                 Convert it to {} or delete it, then re-sync.",
+                jsonc_path.display(),
+                target.path.display()
+            ));
+        }
+
+        let mut rendered: Map<String, Value> = Map::new();
+        for (name, config) in desired {
+            rendered.insert(name.clone(), render_opencode_entry(config));
+        }
+
+        merge_global_mcp_entries_json(&target.path, "mcp", &rendered, previously_managed)
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

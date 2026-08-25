@@ -61,6 +61,7 @@ impl Agent for Droid {
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
             hooks: true,
+            global_mcp_servers: true,
             ..Default::default()
         }
     }
@@ -140,6 +141,48 @@ impl Agent for Droid {
             .map_err(|e| format!("Failed to write .factory/mcp.json: {}", e))?;
 
         Ok(path.display().to_string())
+    }
+
+    fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
+        let home = super::home_dir()?;
+        Some(super::GlobalMcpTarget {
+            path: home.join(".factory").join("mcp.json"),
+            reload_note: Some("Droid reloads automatically on file change."),
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<super::GlobalMcpWriteReport, String> {
+        let Some(target) = self.global_mcp_target() else {
+            return Err("Home directory not available for Droid global MCP write".to_string());
+        };
+
+        // Mirror the project writer: Droid distinguishes transports with an
+        // explicit `"type": "stdio"` or `"type": "http"` on every entry.
+        let mut rendered = Map::new();
+        for (name, config) in desired {
+            let transport = config
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdio");
+
+            let mut server = config.clone();
+            if let Some(obj) = server.as_object_mut() {
+                if transport == "stdio" {
+                    obj.insert("type".to_string(), json!("stdio"));
+                    obj.remove("enabled");
+                    obj.remove("timeout");
+                } else {
+                    obj.insert("type".to_string(), json!("http"));
+                }
+            }
+            rendered.insert(name.clone(), server);
+        }
+
+        super::merge_global_mcp_entries_json(&target.path, "mcpServers", &rendered, previously_managed)
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

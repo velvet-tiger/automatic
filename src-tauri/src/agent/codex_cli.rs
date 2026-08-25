@@ -1,8 +1,9 @@
 use serde_json::{Map, Value};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::Agent;
+use super::{Agent, GlobalMcpTarget, GlobalMcpWriteReport};
 
 /// Codex CLI agent — writes `.codex/config.toml` and stores skills under
 /// `<project>/.agents/skills/<name>/SKILL.md`.
@@ -271,8 +272,30 @@ impl Agent for CodexCli {
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
             hooks: true,
+            global_mcp_servers: true,
             ..Default::default()
         }
+    }
+
+    fn global_mcp_target(&self) -> Option<GlobalMcpTarget> {
+        let home = super::home_dir()?;
+        Some(GlobalMcpTarget {
+            path: home.join(".codex").join("config.toml"),
+            reload_note: Some(
+                "Codex, Codex IDE, and the ChatGPT desktop app all pick up changes in new sessions.",
+            ),
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<GlobalMcpWriteReport, String> {
+        let target = self.global_mcp_target().ok_or_else(|| {
+            "Cannot determine home directory for Codex CLI global MCP config".to_string()
+        })?;
+        write_codex_global_mcp(&target.path, desired, previously_managed)
     }
 
     fn hook_events(&self) -> &'static [&'static str] {
@@ -409,6 +432,262 @@ fn escape_toml_string(s: &str) -> String {
 
 fn read_existing_toml(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_default()
+}
+
+/// Render one MCP server entry in Codex's `.codex/config.toml` dialect,
+/// including its own `[mcp_servers.<name>]` header (plus any `env` /
+/// `http_headers` sub-tables). The output ends with a blank line so multiple
+/// rendered sections can be concatenated directly.
+///
+/// Deliberately duplicated from the entry-render logic in
+/// [`Agent::write_mcp_config`] so the project writer stays byte-identical for
+/// the drift tests in `agent/mcp_format_tests.rs`.
+fn render_codex_server_section(name: &str, config: &Value) -> String {
+    let mut toml_content = String::new();
+    let config = config.clone();
+    let transport = config
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("stdio");
+
+    toml_content.push_str(&format!("[mcp_servers.{}]\n", name));
+
+    match transport {
+        "http" | "sse" => {
+            if let Some(url) = config.get("url").and_then(|v| v.as_str()) {
+                toml_content.push_str(&format!("url = \"{}\"\n", escape_toml_string(url)));
+            }
+
+            if has_oauth_client(&config) {
+                toml_content.push_str("auth = \"oauth\"\n");
+            }
+
+            if let Some(headers) = config.get("headers").and_then(|v| v.as_object()) {
+                if !headers.is_empty() {
+                    toml_content
+                        .push_str(&format!("\n[mcp_servers.{}.http_headers]\n", name));
+                    for (key, val) in headers {
+                        if let Some(val_str) = val.as_str() {
+                            toml_content.push_str(&format!(
+                                "\"{}\" = \"{}\"\n",
+                                escape_toml_string(key),
+                                escape_toml_string(val_str)
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            if let Some(command) = config.get("command").and_then(|v| v.as_str()) {
+                toml_content
+                    .push_str(&format!("command = \"{}\"\n", escape_toml_string(command)));
+            }
+
+            if let Some(args) = config.get("args").and_then(|v| v.as_array()) {
+                let args_str: Vec<String> = args
+                    .iter()
+                    .filter_map(|a| a.as_str())
+                    .map(|a| format!("\"{}\"", escape_toml_string(a)))
+                    .collect();
+                toml_content.push_str(&format!("args = [{}]\n", args_str.join(", ")));
+            }
+
+            if let Some(cwd) = config.get("cwd").and_then(|v| v.as_str()) {
+                toml_content.push_str(&format!("cwd = \"{}\"\n", escape_toml_string(cwd)));
+            }
+
+            if let Some(env_vars) = config.get("env_vars").and_then(|v| v.as_array()) {
+                let names: Vec<String> = env_vars
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|v| format!("\"{}\"", escape_toml_string(v)))
+                    .collect();
+                if !names.is_empty() {
+                    toml_content.push_str(&format!("env_vars = [{}]\n", names.join(", ")));
+                }
+            }
+
+            if let Some(env) = config.get("env").and_then(|v| v.as_object()) {
+                if !env.is_empty() {
+                    toml_content.push_str(&format!("\n[mcp_servers.{}.env]\n", name));
+                    for (key, val) in env {
+                        if let Some(val_str) = val.as_str() {
+                            toml_content.push_str(&format!(
+                                "\"{}\" = \"{}\"\n",
+                                escape_toml_string(key),
+                                escape_toml_string(val_str)
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    toml_content.push('\n');
+    toml_content
+}
+
+/// If `trimmed` is a section header of the form `[mcp_servers.<name>]` or
+/// `[mcp_servers.<name>.<subtable>]`, return `<name>`. Handles both bare and
+/// double-quoted keys so foreign entries with hyphens or other non-bare
+/// characters still classify correctly. Returns `None` for any other header.
+fn parse_mcp_server_header(trimmed: &str) -> Option<&str> {
+    let inner = trimmed.strip_prefix('[')?.strip_suffix(']')?;
+    let rest = inner.strip_prefix("mcp_servers.")?;
+    if let Some(after_quote) = rest.strip_prefix('"') {
+        let end_quote = after_quote.find('"')?;
+        Some(&after_quote[..end_quote])
+    } else {
+        let end = rest.find('.').unwrap_or(rest.len());
+        Some(&rest[..end])
+    }
+}
+
+/// Section-aware TOML splice for the user-level Codex config file.
+///
+/// The unqualified [`merge_toml_mcp_section`] used by the project writer
+/// nukes every `[mcp_servers.*]` block and re-emits the entire set — the
+/// project owns its `.codex/config.toml` outright. The global file is
+/// shared: the user may have hand-added their own `[mcp_servers.*]` entries
+/// alongside anything Automatic wrote. This function preserves both those
+/// foreign entries and every non-`mcp_servers` section byte-for-byte, and
+/// only touches names Automatic knows it managed itself.
+fn write_codex_global_mcp(
+    path: &Path,
+    desired: &Map<String, Value>,
+    previously_managed: &[String],
+) -> Result<GlobalMcpWriteReport, String> {
+    let existing = if path.exists() {
+        fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?
+    } else {
+        String::new()
+    };
+
+    // Validate parse — a broken TOML file is an error rather than an empty
+    // starting point, matching the JSON merge helper's never-clobber policy.
+    if !existing.is_empty() {
+        toml::from_str::<toml::Value>(&existing).map_err(|e| {
+            format!(
+                "{} is not valid TOML — refusing to overwrite: {}",
+                path.display(),
+                e
+            )
+        })?;
+    }
+
+    // Enumerate every top-level name currently under `mcp_servers` in the file.
+    let existing_names: HashSet<String> = if existing.is_empty() {
+        HashSet::new()
+    } else {
+        toml::from_str::<toml::Value>(&existing)
+            .ok()
+            .and_then(|doc| {
+                doc.get("mcp_servers")
+                    .and_then(|v| v.as_table())
+                    .map(|t| t.keys().cloned().collect())
+            })
+            .unwrap_or_default()
+    };
+
+    let previously_managed_set: HashSet<&str> =
+        previously_managed.iter().map(|s| s.as_str()).collect();
+
+    // Classify.
+    let mut to_remove: HashSet<String> = HashSet::new();
+    let mut skipped: Vec<String> = Vec::new();
+    let mut removed: Vec<String> = Vec::new();
+
+    for name in previously_managed {
+        if desired.contains_key(name) {
+            // Will be re-emitted from `desired` below.
+            if existing_names.contains(name) {
+                to_remove.insert(name.clone());
+            }
+        } else if existing_names.contains(name) {
+            to_remove.insert(name.clone());
+            removed.push(name.clone());
+        }
+    }
+
+    for name in desired.keys() {
+        if !previously_managed_set.contains(name.as_str()) && existing_names.contains(name) {
+            // Foreign collision — leave the existing entry alone.
+            skipped.push(name.clone());
+        }
+    }
+
+    // Line-scan the existing content, skipping only sections in `to_remove`.
+    let mut retained = String::new();
+    let mut skip_block = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            skip_block = parse_mcp_server_header(trimmed)
+                .map(|name| to_remove.contains(name))
+                .unwrap_or(false);
+        }
+        if !skip_block {
+            retained.push_str(line);
+            retained.push('\n');
+        }
+    }
+
+    // Build the appended block from every desired entry we own.
+    let skipped_set: HashSet<&str> = skipped.iter().map(|s| s.as_str()).collect();
+    let mut written: Vec<String> = Vec::new();
+    let mut appended = String::new();
+    for (name, cfg) in desired {
+        if skipped_set.contains(name.as_str()) {
+            continue;
+        }
+        appended.push_str(&render_codex_server_section(name, cfg));
+        written.push(name.clone());
+    }
+
+    // Compose final content. Trim trailing whitespace on the retained block so
+    // the join point is predictable, then re-attach a trailing newline.
+    let retained_trimmed = retained.trim_end();
+    let appended_trimmed = appended.trim_end();
+
+    let mut final_content = String::new();
+    if !retained_trimmed.is_empty() {
+        final_content.push_str(retained_trimmed);
+    }
+    if !appended_trimmed.is_empty() {
+        if !final_content.is_empty() {
+            final_content.push_str("\n\n");
+        }
+        final_content.push_str(appended_trimmed);
+    }
+    if !final_content.is_empty() {
+        final_content.push('\n');
+    }
+
+    let report = GlobalMcpWriteReport {
+        path: path.display().to_string(),
+        written,
+        removed,
+        skipped,
+        unchanged: final_content.as_bytes() == existing.as_bytes(),
+    };
+
+    if report.unchanged {
+        return Ok(report);
+    }
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+        }
+    }
+    fs::write(path, final_content)
+        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+
+    Ok(report)
 }
 
 /// Replace existing `[mcp_servers.*]` sections in TOML while preserving

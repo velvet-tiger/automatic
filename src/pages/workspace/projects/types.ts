@@ -92,6 +92,8 @@ export interface AgentCapabilities {
   skills: boolean;
   instructions: boolean;
   mcp_servers: boolean;
+  /** Automatic can write user-level MCP config for this agent (Providers > MCP tab). */
+  global_mcp_servers: boolean;
   agents: boolean;
   commands: boolean;
   hooks: boolean;

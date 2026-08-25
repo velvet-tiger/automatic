@@ -459,6 +459,56 @@ pub(crate) fn build_selected_servers(
     selected_servers
 }
 
+/// Build the selected MCP server map for a *global* (user-level) write,
+/// applying the same OAuth-proxy substitution and internal-field stripping as
+/// [`build_selected_servers`] but with the project-only concerns removed:
+///
+/// - The `"automatic"` builtin is NOT injected — its config bakes in a
+///   project name via `AUTOMATIC_PROJECT` and registering it at multiple
+///   scopes makes Claude Code deduplicate and drop tools.  See the doc on
+///   [`crate::core::ensure_automatic_in_global_mcp`].
+/// - `AUTOMATIC_PROJECT` env is therefore absent from every entry.
+///
+/// OAuth'd HTTP servers still become `mcp-proxy` stubs — the proxy loads the
+/// token from the keychain and does not depend on any project context.
+pub(crate) fn build_global_selected_servers(
+    server_names: &[String],
+    mcp_config: &Map<String, Value>,
+) -> Map<String, Value> {
+    let mut selected_servers = Map::new();
+    let automatic_binary = find_automatic_binary();
+
+    for server_name in server_names {
+        if server_name == "automatic" {
+            continue;
+        }
+        let Some(server_config) = mcp_config.get(server_name) else {
+            continue;
+        };
+        let cleaned = strip_internal_fields(server_config.clone());
+
+        let is_http = cleaned
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(|t| t == "http" || t == "sse")
+            .unwrap_or(false);
+
+        if is_http && crate::proxy::has_oauth_token(server_name) {
+            selected_servers.insert(
+                server_name.clone(),
+                json!({
+                    "command": automatic_binary,
+                    "args": ["mcp-proxy", server_name],
+                }),
+            );
+        } else {
+            selected_servers.insert(server_name.clone(), cleaned);
+        }
+    }
+
+    selected_servers
+}
+
 /// Remove fields whose names start with `_` from a JSON object.
 /// These are Automatic-internal metadata fields (e.g. `_author`) that should
 /// never be written to agent configuration files.

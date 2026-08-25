@@ -23,6 +23,9 @@ pub struct McpOAuthTokenStatus {
 pub async fn authorize_mcp_server(server_name: String, mcp_url: String) -> Result<String, String> {
     let token = crate::oauth::authorize_server(&server_name, &mcp_url).await?;
     crate::commands::projects::sync_projects_referencing_mcp_server(&server_name);
+    // Storing a token flips the rendered config from direct-entry to a
+    // local `mcp-proxy` stub, so global assignments must re-emit too.
+    crate::sync::global_mcp::reapply_agents_referencing(&server_name);
     Ok(token)
 }
 

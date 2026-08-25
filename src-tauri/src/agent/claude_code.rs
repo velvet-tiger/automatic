@@ -2,7 +2,7 @@ use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{discover_mcp_servers_from_json, Agent};
+use super::{discover_mcp_servers_from_json, Agent, GlobalMcpTarget, GlobalMcpWriteReport};
 
 /// Claude Code agent — writes `.mcp.json` and stores skills under
 /// `<project>/.claude/skills/<name>/SKILL.md`.
@@ -120,6 +120,7 @@ impl Agent for ClaudeCode {
         super::AgentCapabilities {
             commands: true,
             hooks: true,
+            global_mcp_servers: true,
             ..Default::default()
         }
     }
@@ -192,6 +193,56 @@ impl Agent for ClaudeCode {
 
     fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
         vec![dir.join(".mcp.json")]
+    }
+
+    // ── Global MCP config ──────────────────────────────────────────────────
+
+    fn global_mcp_target(&self) -> Option<GlobalMcpTarget> {
+        let home = super::home_dir()?;
+        Some(GlobalMcpTarget {
+            path: home.join(".claude.json"),
+            reload_note: Some(
+                "Claude Code picks up global MCP servers in new sessions. Apply this while no session is running to avoid stomping on an in-progress write.",
+            ),
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<GlobalMcpWriteReport, String> {
+        let target = self.global_mcp_target().ok_or_else(|| {
+            "Cannot determine home directory for Claude Code global MCP config".to_string()
+        })?;
+
+        // Render each entry with the same shape the project writer produces: stdio
+        // entries strip `type`/`enabled`/`timeout`, everything else passes through.
+        // Deliberately duplicated from `write_mcp_config` so the project writer
+        // stays byte-identical for the drift tests in `agent/mcp_format_tests.rs`.
+        let mut rendered = Map::new();
+        for (name, config) in desired {
+            let transport = config
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdio");
+            let mut server = config.clone();
+            if let Some(obj) = server.as_object_mut() {
+                if transport == "stdio" {
+                    obj.remove("type");
+                    obj.remove("enabled");
+                    obj.remove("timeout");
+                }
+            }
+            rendered.insert(name.clone(), server);
+        }
+
+        super::merge_global_mcp_entries_json(
+            &target.path,
+            "mcpServers",
+            &rendered,
+            previously_managed,
+        )
     }
 }
 

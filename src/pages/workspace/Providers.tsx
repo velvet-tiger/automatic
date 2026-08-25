@@ -6,6 +6,7 @@ import { AgentIcon } from "../../components/AgentIcon";
 import type { AgentCapabilities, AgentOptions } from "../../components/AgentSelector";
 import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
+import { GlobalMcpTab } from "./providers/GlobalMcpTab";
 
 interface AgentProject {
   name: string;
@@ -51,7 +52,7 @@ const AGENT_OPTION_DEFS: Record<string, AgentOptionDef[]> = {
   ],
 };
 
-interface AgentWithProjects {
+export interface AgentWithProjects {
   id: string;
   label: string;
   description: string;
@@ -95,11 +96,12 @@ interface ProvidersProps {
   onNavigateToProject?: (projectName: string) => void;
 }
 
-type DetailTab = "details" | "management" | "projects";
+type DetailTab = "details" | "management" | "mcp" | "projects";
 
 const DETAIL_TABS: { id: DetailTab; label: string }[] = [
   { id: "details", label: "Details" },
   { id: "management", label: "Management" },
+  { id: "mcp", label: "MCP" },
   { id: "projects", label: "Projects" },
 ];
 
@@ -519,6 +521,9 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
                     )}
                   </>
                 )}
+
+                {/* MCP Tab */}
+                {detailTab === "mcp" && <GlobalMcpTab agent={selected} />}
 
                 {/* Projects Tab */}
                 {detailTab === "projects" && (

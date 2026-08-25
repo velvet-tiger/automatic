@@ -41,6 +41,7 @@ impl Agent for Kiro {
 
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
+            global_mcp_servers: true,
             ..Default::default()
         }
     }
@@ -124,6 +125,46 @@ impl Agent for Kiro {
             .map_err(|e| format!("Failed to write .kiro/settings/mcp.json: {}", e))?;
 
         Ok(path.display().to_string())
+    }
+
+    fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
+        let home = super::home_dir()?;
+        Some(super::GlobalMcpTarget {
+            path: home.join(".kiro").join("settings").join("mcp.json"),
+            reload_note: Some("Kiro reconnects automatically when the file is saved."),
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<super::GlobalMcpWriteReport, String> {
+        let Some(target) = self.global_mcp_target() else {
+            return Err("Home directory not available for Kiro global MCP write".to_string());
+        };
+
+        // Mirror the project writer's entry dialect: strip type/enabled/timeout
+        // for stdio entries; leave http/sse otherwise alone.
+        let mut rendered = Map::new();
+        for (name, config) in desired {
+            let transport = config
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdio");
+
+            let mut server = config.clone();
+            if let Some(obj) = server.as_object_mut() {
+                if transport == "stdio" {
+                    obj.remove("type");
+                    obj.remove("enabled");
+                    obj.remove("timeout");
+                }
+            }
+            rendered.insert(name.clone(), server);
+        }
+
+        super::merge_global_mcp_entries_json(&target.path, "mcpServers", &rendered, previously_managed)
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

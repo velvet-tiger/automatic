@@ -97,9 +97,20 @@ pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport
         }
 
         // Find names that appear in both the project-local and user-scoped configs.
+        //
+        // Entries Automatic manages at global scope are deliberately excluded —
+        // they render byte-identical to the project entry (both come from the
+        // same registry config), so Claude Code's "user scope wins" precedence
+        // is behaviorally a no-op.  Warning on Automatic-managed conflicts would
+        // mean every server the user assigned via Providers > agent > MCP
+        // showed up in every project's problems list.  Foreign global entries
+        // (a `claude mcp add --scope user` the user ran themselves) still
+        // conflict and are still surfaced.
+        let managed_global = crate::sync::global_mcp::managed_entries_for(agent_id);
         let conflicts: Vec<String> = project_servers
             .keys()
             .filter(|name| global_servers.contains_key(*name))
+            .filter(|name| !managed_global.iter().any(|m| m == *name))
             .cloned()
             .collect();
 

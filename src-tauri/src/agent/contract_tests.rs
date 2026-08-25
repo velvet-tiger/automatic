@@ -39,6 +39,7 @@ fn enabled_capabilities(caps: &AgentCapabilities) -> String {
         ("skills", caps.skills),
         ("instructions", caps.instructions),
         ("mcp_servers", caps.mcp_servers),
+        ("global_mcp_servers", caps.global_mcp_servers),
         ("agents", caps.agents),
         ("commands", caps.commands),
         ("hooks", caps.hooks),
@@ -326,24 +327,24 @@ fn the_capability_matrix_is_unchanged() {
         .join("\n");
 
     let expected = "\
-antigravity | Antigravity (Beta) | GEMINI.md | skills,instructions | - | - | .agents/skills
-claude | Claude Code | CLAUDE.md | skills,instructions,mcp_servers,agents,commands,hooks | .claude/agents | .claude/commands | .claude/skills
-cline | Cline (Beta) | .clinerules/automatic.md | skills,instructions | - | - | .cline/skills
-codex | Codex CLI | AGENTS.md | skills,instructions,mcp_servers,agents,hooks | .codex/agents | - | .agents/skills
-cursor | Cursor | AGENTS.md | skills,instructions,mcp_servers,agents,commands,hooks | .cursor/agents | .cursor/commands | .agents/skills
-droid | Droid (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents,hooks | .factory/droids | - | .agents/skills
-gemini | Gemini CLI (Beta) | GEMINI.md | skills,instructions,mcp_servers,agents,commands,hooks | .gemini/agents | .gemini/commands | .agents/skills
-copilot | GitHub Copilot (Beta) | .github/copilot-instructions.md | skills,instructions,mcp_servers,agents,commands,hooks | .github/agents | .github/prompts | .agents/skills
+antigravity | Antigravity (Beta) | GEMINI.md | skills,instructions,global_mcp_servers | - | - | .agents/skills
+claude | Claude Code | CLAUDE.md | skills,instructions,mcp_servers,global_mcp_servers,agents,commands,hooks | .claude/agents | .claude/commands | .claude/skills
+cline | Cline (Beta) | .clinerules/automatic.md | skills,instructions,global_mcp_servers | - | - | .cline/skills
+codex | Codex CLI | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers,agents,hooks | .codex/agents | - | .agents/skills
+cursor | Cursor | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers,agents,commands,hooks | .cursor/agents | .cursor/commands | .agents/skills
+droid | Droid (Beta) | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers,agents,hooks | .factory/droids | - | .agents/skills
+gemini | Gemini CLI (Beta) | GEMINI.md | skills,instructions,mcp_servers,global_mcp_servers,agents,commands,hooks | .gemini/agents | .gemini/commands | .agents/skills
+copilot | GitHub Copilot (Beta) | .github/copilot-instructions.md | skills,instructions,mcp_servers,global_mcp_servers,agents,commands,hooks | .github/agents | .github/prompts | .agents/skills
 goose | Goose (Beta) | AGENTS.md | skills,instructions | - | - | .agents/skills
-junie | Junie (Beta) | .junie/AGENTS.md | skills,instructions,mcp_servers | - | - | .junie/skills,.agents/skills
-kilo | Kilo (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .agents/skills
-kimi | Kimi Code | AGENTS.md | skills,instructions,mcp_servers,agents | .kimi-code/agents | - | .agents/skills
-kiro | Kiro (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents | .kiro/agents | - | .kiro/skills
-opencode | OpenCode | AGENTS.md | skills,instructions,mcp_servers,agents,commands | .opencode/agents | .opencode/commands | .agents/skills
+junie | Junie (Beta) | .junie/AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers | - | - | .junie/skills,.agents/skills
+kilo | Kilo (Beta) | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers | - | - | .agents/skills
+kimi | Kimi Code | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers,agents | .kimi-code/agents | - | .agents/skills
+kiro | Kiro (Beta) | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers,agents | .kiro/agents | - | .kiro/skills
+opencode | OpenCode | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers,agents,commands | .opencode/agents | .opencode/commands | .agents/skills
 pi | Pi (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents | .pi/agents | - | .pi/skills
-warp | Warp (Beta) | AGENTS.md | skills,instructions | - | - | .agents/skills
-zcode | Z Code (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .zcode/skills
-zed | Zed (Beta) | AGENTS.md | skills,instructions,mcp_servers | - | - | .agents/skills";
+warp | Warp (Beta) | AGENTS.md | skills,instructions,global_mcp_servers | - | - | .agents/skills
+zcode | Z Code (Beta) | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers | - | - | .zcode/skills
+zed | Zed (Beta) | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers | - | - | .agents/skills";
 
     assert_eq!(
         actual, expected,

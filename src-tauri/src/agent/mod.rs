@@ -28,6 +28,9 @@ mod kimi_code;
 mod kiro;
 #[cfg(test)]
 mod mcp_format_tests;
+
+#[cfg(test)]
+mod global_mcp_tests;
 mod opencode;
 mod pi;
 mod warp;
@@ -84,6 +87,13 @@ pub struct AgentCapabilities {
     pub instructions: bool,
     /// Automatic can write MCP server config for this agent.
     pub mcp_servers: bool,
+    /// Automatic can write user-level (home-directory) MCP server config for
+    /// this agent, so servers are available in every session/chat regardless of
+    /// project.  Deliberately decoupled from [`mcp_servers`] — Cline, Warp and
+    /// Antigravity all have global-yes / project-no, and Pi has the opposite.
+    ///
+    /// Defaults to `false`; each agent opts in with an actual writer.
+    pub global_mcp_servers: bool,
     /// Automatic can sync sub-agents to this agent's agents directory.
     /// Agents that don't have a sub-agent discovery location set this to false.
     pub agents: bool,
@@ -95,12 +105,14 @@ pub struct AgentCapabilities {
 }
 
 impl Default for AgentCapabilities {
-    /// All capabilities enabled by default.
+    /// All capabilities enabled by default, except the opt-in ones
+    /// (`commands`, `hooks`, `global_mcp_servers`).
     fn default() -> Self {
         Self {
             skills: true,
             instructions: true,
             mcp_servers: true,
+            global_mcp_servers: false,
             agents: true,
             commands: false,
             hooks: false,
@@ -119,6 +131,37 @@ pub struct ManagedPath {
     pub path: PathBuf,
     /// `true` if this path is a directory Automatic writes into.
     pub is_dir: bool,
+}
+
+// ── Global MCP write target ────────────────────────────────────────────────────
+
+/// The user-level (home-directory) MCP config file Automatic can write for an
+/// agent.  Present iff `AgentCapabilities.global_mcp_servers` is `true`.
+#[derive(Debug, Clone, Serialize)]
+pub struct GlobalMcpTarget {
+    /// Absolute path Automatic merges into.
+    pub path: PathBuf,
+    /// How the agent picks up changes to this file, e.g. "reconnects on save"
+    /// or "requires a one-time approval in Warp > Settings > MCP servers".
+    /// Surfaced verbatim in the UI so the user knows whether a restart is
+    /// needed.
+    pub reload_note: Option<&'static str>,
+}
+
+/// Outcome of one entry-level merge into a global MCP config file.
+///
+/// Names in `written` and `removed` join the ownership set for the next call;
+/// `skipped` names surface in the UI so the user can rename the colliding
+/// entries themselves.  `unchanged` means the file bytes were not rewritten:
+/// used to skip watcher churn in auto-reloading agents like Droid/Kiro and to
+/// shrink the race window against a running Claude Code process.
+#[derive(Debug, Default, Serialize)]
+pub struct GlobalMcpWriteReport {
+    pub path: String,
+    pub written: Vec<String>,
+    pub removed: Vec<String>,
+    pub skipped: Vec<String>,
+    pub unchanged: bool,
 }
 
 // ── Trait ────────────────────────────────────────────────────────────────────
@@ -171,6 +214,41 @@ pub trait Agent: Send + Sync {
     /// none at all.
     fn mcp_merge_inputs(&self, _dir: &Path) -> Vec<PathBuf> {
         vec![]
+    }
+
+    /// The user-level MCP config file Automatic can write for this agent, or
+    /// `None` if the agent has no writable global config.  Must be `Some` iff
+    /// [`AgentCapabilities::global_mcp_servers`] is `true`.
+    ///
+    /// The path is resolved at call time (some depend on `$CLINE_DIR` or
+    /// similar) and may fall back to `None` when the home directory cannot be
+    /// determined.
+    fn global_mcp_target(&self) -> Option<GlobalMcpTarget> {
+        None
+    }
+
+    /// Write `desired` into this agent's user-level MCP config file using
+    /// entry-level merge semantics.
+    ///
+    /// - `desired`: already prepared (see [`prepare_global_mcp_servers`]) and
+    ///   dialect-rendered.  Keys are server names.
+    /// - `previously_managed`: the set of entry names Automatic wrote on the
+    ///   last apply.  Deletion of an entry only happens for names in this set,
+    ///   and a desired name that collides with an entry *not* in this set is
+    ///   left untouched and returned in [`GlobalMcpWriteReport::skipped`] —
+    ///   user-authored entries are never overwritten.
+    ///
+    /// Default: returns `Err` — override on any agent whose
+    /// [`AgentCapabilities::global_mcp_servers`] is `true`.
+    fn write_global_mcp_config(
+        &self,
+        _desired: &Map<String, Value>,
+        _previously_managed: &[String],
+    ) -> Result<GlobalMcpWriteReport, String> {
+        Err(format!(
+            "{} does not support global MCP server writes",
+            self.label()
+        ))
     }
 
     /// Rewrite the "inherit from the environment" markers of one server entry.
@@ -1485,7 +1563,17 @@ pub(crate) fn collect_new_skills_from_extra_dirs(agent: &dyn Agent) -> Vec<(Stri
 ///
 /// Thin wrapper around [`dirs::home_dir`] used by agent implementations to
 /// resolve global config paths (e.g. `~/.claude/settings.json`).
+///
+/// Under `cfg(test)` this first consults [`crate::core::paths::test_home_override`]
+/// so global-scope tests can redirect reads and writes into a tempdir via
+/// [`crate::core::paths::with_test_home`].  The override is thread-local; every
+/// test that installs one must do its work on the same thread (cargo's default
+/// per-test threading is fine).
 pub(crate) fn home_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(home) = crate::core::test_home_override() {
+        return Some(home);
+    }
     dirs::home_dir()
 }
 
@@ -1536,6 +1624,29 @@ pub(crate) fn prepare_mcp_servers(
     servers: &Map<String, Value>,
     workspace_folder: &Path,
 ) -> Map<String, Value> {
+    prepare_mcp_servers_impl(agent, servers, Some(workspace_folder))
+}
+
+/// Global-scope sibling of [`prepare_mcp_servers`].
+///
+/// Same `_`-strip and inherited-env rewrite; `${userHome}` is expanded but
+/// `${workspaceFolder}` is left alone because there is no project directory
+/// at global scope.  Callers are expected to filter servers whose config
+/// still references `${workspaceFolder}` via [`server_uses_workspace_folder`]
+/// before calling this, otherwise the literal reaches the agent config file
+/// and becomes a launch path that never resolves.
+pub(crate) fn prepare_global_mcp_servers(
+    agent: &dyn Agent,
+    servers: &Map<String, Value>,
+) -> Map<String, Value> {
+    prepare_mcp_servers_impl(agent, servers, None)
+}
+
+fn prepare_mcp_servers_impl(
+    agent: &dyn Agent,
+    servers: &Map<String, Value>,
+    workspace_folder: Option<&Path>,
+) -> Map<String, Value> {
     let mut prepared = Map::new();
     let home = home_dir();
 
@@ -1573,13 +1684,26 @@ pub(crate) fn prepare_mcp_servers(
 /// `${env:FOO}` is intentionally left alone: Automatic's inherited-env system
 /// (see [`substitute_inherited_env`]) already owns that placeholder and each
 /// agent rewrites it into its own dialect.
-fn expand_workspace_variables(value: &mut Value, workspace_folder: &Path, home: Option<&Path>) {
+///
+/// `workspace_folder = None` skips `${workspaceFolder}` substitution — used by
+/// the global-scope writer, which has no project to substitute for.  Servers
+/// still carrying `${workspaceFolder}` after preparation are meaningless at
+/// global scope; the eligibility helper [`server_uses_workspace_folder`]
+/// filters them out before they reach the writer.
+fn expand_workspace_variables(
+    value: &mut Value,
+    workspace_folder: Option<&Path>,
+    home: Option<&Path>,
+) {
     match value {
         Value::String(s) => {
             if !s.contains("${") {
                 return;
             }
-            let mut out = s.replace("${workspaceFolder}", &workspace_folder.to_string_lossy());
+            let mut out = s.clone();
+            if let Some(workspace_folder) = workspace_folder {
+                out = out.replace("${workspaceFolder}", &workspace_folder.to_string_lossy());
+            }
             if let Some(home) = home {
                 out = out.replace("${userHome}", &home.to_string_lossy());
             }
@@ -1596,6 +1720,20 @@ fn expand_workspace_variables(value: &mut Value, workspace_folder: &Path, home: 
             }
         }
         _ => {}
+    }
+}
+
+/// Return `true` if any string anywhere in `value` contains the literal
+/// `${workspaceFolder}`.  Used at global-scope selection time to mark servers
+/// ineligible for global assignment: `${workspaceFolder}` has no meaning
+/// without a project, and expanding it to an empty or arbitrary path would
+/// silently point the agent at the wrong directory.
+pub(crate) fn server_uses_workspace_folder(value: &Value) -> bool {
+    match value {
+        Value::String(s) => s.contains("${workspaceFolder}"),
+        Value::Array(items) => items.iter().any(server_uses_workspace_folder),
+        Value::Object(map) => map.values().any(server_uses_workspace_folder),
+        _ => false,
     }
 }
 
@@ -1721,63 +1859,7 @@ pub(crate) fn write_opencode_dialect_mcp_config(
 
     let mut dialect_servers = Map::new();
     for (name, config) in servers {
-        let transport = config
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("stdio");
-
-        let mut server = Map::new();
-
-        match transport {
-            "http" | "sse" => {
-                server.insert("type".to_string(), json!("remote"));
-
-                if let Some(url) = config.get("url") {
-                    server.insert("url".to_string(), url.clone());
-                }
-                if let Some(headers) = config.get("headers") {
-                    server.insert("headers".to_string(), headers.clone());
-                }
-                if let Some(oauth) = config.get("oauth") {
-                    server.insert("oauth".to_string(), oauth.clone());
-                }
-            }
-            _ => {
-                server.insert("type".to_string(), json!("local"));
-
-                // command as array: [command, ...args]
-                let mut cmd_array: Vec<Value> = Vec::new();
-                if let Some(command) = config.get("command").and_then(|v| v.as_str()) {
-                    cmd_array.push(json!(command));
-                }
-                if let Some(args) = config.get("args").and_then(|v| v.as_array()) {
-                    for arg in args {
-                        cmd_array.push(arg.clone());
-                    }
-                }
-                if !cmd_array.is_empty() {
-                    server.insert("command".to_string(), Value::Array(cmd_array));
-                }
-
-                // "environment" instead of "env"
-                if let Some(env) = config.get("env").and_then(|v| v.as_object()) {
-                    if !env.is_empty() {
-                        server.insert("environment".to_string(), Value::Object(env.clone()));
-                    }
-                }
-            }
-        }
-
-        if let Some(enabled) = config.get("enabled") {
-            if enabled.as_bool() == Some(false) {
-                server.insert("enabled".to_string(), json!(false));
-            }
-        }
-        if let Some(timeout) = config.get("timeout") {
-            server.insert("timeout".to_string(), timeout.clone());
-        }
-
-        dialect_servers.insert(name.clone(), Value::Object(server));
+        dialect_servers.insert(name.clone(), render_opencode_entry(config));
     }
 
     if let Some(schema_url) = schema_url {
@@ -1797,6 +1879,82 @@ pub(crate) fn write_opencode_dialect_mcp_config(
     fs::write(path, content).map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
 
     Ok(path.display().to_string())
+}
+
+/// Render one MCP server entry into the OpenCode-dialect shape used by the
+/// top-level `mcp` object.
+///
+/// This is the per-entry work shared by [`write_opencode_dialect_mcp_config`]
+/// (project-scope, replace-whole-key writer) and the global-scope
+/// [`Agent::write_global_mcp_config`] implementations for OpenCode and Kilo,
+/// which need to render entries individually before feeding them to
+/// [`merge_global_mcp_entries_json`].
+///
+/// The dialect:
+/// - `type: "stdio"` (or absent) becomes `type: "local"`, with `command`
+///   rendered as a `[command, ...args]` array and `env` renamed to
+///   `environment`.
+/// - `type: "http"`/`"sse"` becomes `type: "remote"`, preserving `url`,
+///   `headers` and `oauth` as-is.
+/// - `enabled: false` and `timeout` are copied through when present.
+pub(crate) fn render_opencode_entry(config: &Value) -> Value {
+    let transport = config
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("stdio");
+
+    let mut server = Map::new();
+
+    match transport {
+        "http" | "sse" => {
+            server.insert("type".to_string(), json!("remote"));
+
+            if let Some(url) = config.get("url") {
+                server.insert("url".to_string(), url.clone());
+            }
+            if let Some(headers) = config.get("headers") {
+                server.insert("headers".to_string(), headers.clone());
+            }
+            if let Some(oauth) = config.get("oauth") {
+                server.insert("oauth".to_string(), oauth.clone());
+            }
+        }
+        _ => {
+            server.insert("type".to_string(), json!("local"));
+
+            // command as array: [command, ...args]
+            let mut cmd_array: Vec<Value> = Vec::new();
+            if let Some(command) = config.get("command").and_then(|v| v.as_str()) {
+                cmd_array.push(json!(command));
+            }
+            if let Some(args) = config.get("args").and_then(|v| v.as_array()) {
+                for arg in args {
+                    cmd_array.push(arg.clone());
+                }
+            }
+            if !cmd_array.is_empty() {
+                server.insert("command".to_string(), Value::Array(cmd_array));
+            }
+
+            // "environment" instead of "env"
+            if let Some(env) = config.get("env").and_then(|v| v.as_object()) {
+                if !env.is_empty() {
+                    server.insert("environment".to_string(), Value::Object(env.clone()));
+                }
+            }
+        }
+    }
+
+    if let Some(enabled) = config.get("enabled") {
+        if enabled.as_bool() == Some(false) {
+            server.insert("enabled".to_string(), json!(false));
+        }
+    }
+    if let Some(timeout) = config.get("timeout") {
+        server.insert("timeout".to_string(), timeout.clone());
+    }
+
+    Value::Object(server)
 }
 
 /// Convert one OpenCode-dialect MCP server entry back to Automatic's canonical
@@ -1852,6 +2010,114 @@ pub(crate) fn is_automatic_proxy_stub(config: &Value) -> bool {
         Some(obj) => mentions_mcp_proxy(obj.get("args")) || mentions_mcp_proxy(obj.get("command")),
         None => false,
     }
+}
+
+// ── Global MCP entry-level merge ────────────────────────────────────────────
+
+/// Entry-level merge for a JSON-dialect global MCP config file.
+///
+/// Reads the file at `path`, locates `root[servers_key]`, and applies the
+/// desired-vs-managed diff described in the plan:
+///
+/// - Names in `previously_managed` that are absent from `desired` are removed
+///   (returned as [`GlobalMcpWriteReport::removed`]).
+/// - For each `(name, cfg)` in `desired`: if the file already carries `name`
+///   and it is **not** in `previously_managed` it is a foreign entry — left
+///   untouched, returned as [`GlobalMcpWriteReport::skipped`].  Otherwise the
+///   entry is upserted (returned as [`GlobalMcpWriteReport::written`]).
+/// - If the servers map is empty after the merge, the key is stripped from
+///   root (matching the empty-map behaviour of the hook merge and the
+///   OpenCode-dialect writer).
+///
+/// Never clobber: an unparseable target file is an error, not an empty
+/// starting point — every non-managed key in the same file is preserved
+/// byte-for-byte otherwise.  A pretty-printed JSON re-serialise identical to
+/// the pre-read bytes skips the write entirely (`unchanged = true`), which is
+/// what protects auto-reloading agents (Droid/Kiro) from watcher churn and
+/// keeps the race window against a running Claude Code as small as possible.
+pub(crate) fn merge_global_mcp_entries_json(
+    path: &Path,
+    servers_key: &str,
+    desired: &Map<String, Value>,
+    previously_managed: &[String],
+) -> Result<GlobalMcpWriteReport, String> {
+    // Read the raw bytes for the no-op comparison as well as the parsed root.
+    let original_bytes = if path.exists() {
+        fs::read(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?
+    } else {
+        Vec::new()
+    };
+    let mut root = read_mergeable_json_object(path)?;
+
+    // Extract the current servers map. Absent -> empty; present-but-not-object
+    // -> error rather than clobber.
+    let mut entries: Map<String, Value> = match root.remove(servers_key) {
+        Some(Value::Object(m)) => m,
+        Some(_) => {
+            return Err(format!(
+                "{} contains a non-object value under \"{}\" — refusing to overwrite",
+                path.display(),
+                servers_key
+            ));
+        }
+        None => Map::new(),
+    };
+
+    let mut report = GlobalMcpWriteReport {
+        path: path.display().to_string(),
+        ..Default::default()
+    };
+
+    // ── Remove: names Automatic wrote last time that are no longer desired.
+    for name in previously_managed {
+        if desired.contains_key(name) {
+            continue;
+        }
+        if entries.remove(name).is_some() {
+            report.removed.push(name.clone());
+        }
+    }
+
+    // ── Upsert / skip on foreign collision.
+    let previously_managed_set: std::collections::HashSet<&String> =
+        previously_managed.iter().collect();
+    for (name, cfg) in desired {
+        if entries.contains_key(name) && !previously_managed_set.contains(name) {
+            report.skipped.push(name.clone());
+            continue;
+        }
+        entries.insert(name.clone(), cfg.clone());
+        report.written.push(name.clone());
+    }
+
+    // ── Re-attach the servers key (or drop it if now empty).
+    if !entries.is_empty() {
+        root.insert(servers_key.to_string(), Value::Object(entries));
+    }
+
+    // ── Serialise + skip-when-unchanged.
+    let mut content = serde_json::to_string_pretty(&Value::Object(root))
+        .map_err(|e| format!("JSON serialise error: {}", e))?;
+    // Match the trailing-newline convention of the existing writers, which
+    // makes diffs and hand-edits play nice with editors.
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+
+    if content.as_bytes() == original_bytes.as_slice() {
+        report.unchanged = true;
+        return Ok(report);
+    }
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+        }
+    }
+    fs::write(path, content).map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+
+    Ok(report)
 }
 
 // ── Hook sync helpers ───────────────────────────────────────────────────────

@@ -73,6 +73,7 @@ impl Agent for Warp {
         AgentCapabilities {
             mcp_servers: false,
             agents: false,
+            global_mcp_servers: true,
             ..Default::default()
         }
     }
@@ -81,11 +82,10 @@ impl Agent for Warp {
 
     fn mcp_note(&self) -> Option<&'static str> {
         Some(
-            "Warp reads MCP servers from ~/.warp/.mcp.json (global) and .warp/.mcp.json \
-             (project); file-based servers need one-time approval inside Warp \
-             (Settings \u{203a} Agents \u{203a} MCP servers). Warp also auto-discovers Claude Code \
-             and Codex configs, so servers Automatic writes for those agents may already \
-             appear in Warp. Automatic does not yet write Warp\u{2019}s files.",
+            "Warp manages project MCP through its own UI. Automatic can write global MCP config \
+             to ~/.warp/.mcp.json (requires one-time approval in Warp). Note: Warp also \
+             auto-ingests ~/.claude.json and ~/.codex/config.toml, so servers already assigned \
+             to Claude Code or Codex may already appear.",
         )
     }
 
@@ -111,6 +111,41 @@ impl Agent for Warp {
         _servers: &Map<String, Value>,
     ) -> Result<String, String> {
         Ok(String::new())
+    }
+
+    fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
+        let home = super::home_dir()?;
+        Some(super::GlobalMcpTarget {
+            path: home.join(".warp").join(".mcp.json"),
+            reload_note: Some(
+                "Warp requires a one-time approval in Settings > AI > MCP servers.",
+            ),
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<super::GlobalMcpWriteReport, String> {
+        let Some(target) = self.global_mcp_target() else {
+            return Err("Home directory not available for Warp global MCP write".to_string());
+        };
+
+        // Warp's dialect keeps configs as-is (its Warp-specific
+        // `working_directory` field is harmless on write); strip only the
+        // internal enabled/timeout markers to keep the file readable.
+        let mut rendered = Map::new();
+        for (name, config) in desired {
+            let mut server = config.clone();
+            if let Some(obj) = server.as_object_mut() {
+                obj.remove("enabled");
+                obj.remove("timeout");
+            }
+            rendered.insert(name.clone(), server);
+        }
+
+        super::merge_global_mcp_entries_json(&target.path, "mcpServers", &rendered, previously_managed)
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

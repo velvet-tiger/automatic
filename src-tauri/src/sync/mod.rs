@@ -2,6 +2,7 @@ mod autodetect;
 mod cleanup;
 pub mod drift;
 mod engine;
+pub mod global_mcp;
 mod helpers;
 mod rebuild;
 

@@ -74,6 +74,15 @@ impl Agent for KimiCode {
         }
     }
 
+    // ── Capabilities ────────────────────────────────────────────────────
+
+    fn capabilities(&self) -> super::AgentCapabilities {
+        super::AgentCapabilities {
+            global_mcp_servers: true,
+            ..Default::default()
+        }
+    }
+
     // ── Sub-agents ──────────────────────────────────────────────────────
 
     fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
@@ -141,6 +150,65 @@ impl Agent for KimiCode {
             .map_err(|e| format!("Failed to write .kimi-code/mcp.json: {}", e))?;
 
         Ok(path.display().to_string())
+    }
+
+    fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
+        let home = super::home_dir()?;
+        Some(super::GlobalMcpTarget {
+            path: home.join(".kimi-code").join("mcp.json"),
+            reload_note: Some(
+                "Kimi Code only registers servers for sessions started after the file changes.",
+            ),
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<super::GlobalMcpWriteReport, String> {
+        let Some(target) = self.global_mcp_target() else {
+            return Err("Home directory not available for Kimi Code global MCP write".to_string());
+        };
+
+        // Mirror the project writer's Kimi dialect: strip type/enabled/timeout,
+        // then for HTTP drop command/args, for SSE mark with `transport: "sse"`
+        // and drop command/args, otherwise (stdio) drop url/headers.
+        let mut rendered = Map::new();
+        for (name, config) in desired {
+            let transport = config
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdio");
+
+            let mut server = config.clone();
+            if let Some(obj) = server.as_object_mut() {
+                obj.remove("enabled");
+                obj.remove("timeout");
+                obj.remove("type");
+                match transport {
+                    "http" => {
+                        obj.remove("command");
+                        obj.remove("args");
+                    }
+                    "sse" => {
+                        obj.remove("command");
+                        obj.remove("args");
+                        obj.insert(
+                            "transport".to_string(),
+                            Value::String("sse".to_string()),
+                        );
+                    }
+                    _ => {
+                        obj.remove("url");
+                        obj.remove("headers");
+                    }
+                }
+            }
+            rendered.insert(name.clone(), server);
+        }
+
+        super::merge_global_mcp_entries_json(&target.path, "mcpServers", &rendered, previously_managed)
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

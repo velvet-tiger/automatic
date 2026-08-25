@@ -92,6 +92,7 @@ impl Agent for Cursor {
         super::AgentCapabilities {
             commands: true,
             hooks: true,
+            global_mcp_servers: true,
             ..Default::default()
         }
     }
@@ -164,6 +165,50 @@ impl Agent for Cursor {
             .map_err(|e| format!("Failed to write .cursor/mcp.json: {}", e))?;
 
         Ok(path.display().to_string())
+    }
+
+    fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
+        let home = super::home_dir()?;
+        Some(super::GlobalMcpTarget {
+            path: home.join(".cursor").join("mcp.json"),
+            reload_note: None,
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<super::GlobalMcpWriteReport, String> {
+        let Some(target) = self.global_mcp_target() else {
+            return Err("Home directory not available for Cursor global MCP write".to_string());
+        };
+
+        // Mirror the project writer's entry dialect: drop `enabled`/`timeout`,
+        // ensure stdio entries carry `"type": "stdio"`, and translate an
+        // `oauth` block into Cursor's `auth` for http/sse entries.
+        let mut rendered = Map::new();
+        for (name, config) in desired {
+            let transport = config
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdio");
+
+            let mut server = config.clone();
+            if let Some(obj) = server.as_object_mut() {
+                obj.remove("enabled");
+                obj.remove("timeout");
+
+                if transport == "stdio" {
+                    obj.insert("type".to_string(), Value::String("stdio".to_string()));
+                } else if let Some(auth) = cursor_auth_block(obj.remove("oauth")) {
+                    obj.insert("auth".to_string(), auth);
+                }
+            }
+            rendered.insert(name.clone(), server);
+        }
+
+        super::merge_global_mcp_entries_json(&target.path, "mcpServers", &rendered, previously_managed)
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

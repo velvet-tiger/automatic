@@ -23,6 +23,11 @@ pub fn read_mcp_server_config(name: &str) -> Result<String, String> {
 pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     core::save_mcp_server_config(name, data)?;
     sync_projects_referencing_mcp_server(name);
+    // Global assignments render the same registry entry per agent, so an
+    // edit here should propagate to every agent that has this server
+    // assigned globally too.  Best-effort — individual failures are logged
+    // in the orchestrator, not propagated (mirrors the projects path).
+    crate::sync::global_mcp::reapply_agents_referencing(name);
     Ok(())
 }
 
@@ -33,6 +38,10 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     }
     core::delete_mcp_server_config(name)?;
     prune_mcp_server_from_projects(name);
+    // Drop the server from every agent's global selection and rewrite the
+    // affected files so the entry disappears from any place Automatic
+    // manages it.
+    crate::sync::global_mcp::prune_server_from_global(name);
     Ok(())
 }
 

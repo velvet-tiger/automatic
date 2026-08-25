@@ -29,6 +29,7 @@ mod editors;
 mod env_crypto;
 mod flags;
 pub mod gitignore;
+pub mod global_mcp;
 mod groups;
 mod hooks;
 mod instructions;

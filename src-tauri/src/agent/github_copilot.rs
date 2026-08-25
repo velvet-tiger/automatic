@@ -49,6 +49,7 @@ impl Agent for GitHubCopilot {
         super::AgentCapabilities {
             commands: true,
             hooks: true,
+            global_mcp_servers: true,
             ..Default::default()
         }
     }
@@ -170,6 +171,49 @@ impl Agent for GitHubCopilot {
             .map_err(|e| format!("Failed to write .vscode/mcp.json: {}", e))?;
 
         Ok(path.display().to_string())
+    }
+
+    fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
+        let home = super::home_dir()?;
+        Some(super::GlobalMcpTarget {
+            path: home.join(".vscode").join("mcp.json"),
+            reload_note: Some("Reload VS Code to pick up new servers in Copilot Chat."),
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<super::GlobalMcpWriteReport, String> {
+        let Some(target) = self.global_mcp_target() else {
+            return Err(
+                "Home directory not available for GitHub Copilot global MCP write".to_string(),
+            );
+        };
+
+        // Mirror the project writer's VS Code dialect: strip type/enabled/timeout
+        // for stdio entries; leave http entries otherwise alone.  The servers
+        // map is keyed under `"servers"`, not `"mcpServers"`.
+        let mut rendered = Map::new();
+        for (name, config) in desired {
+            let transport = config
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdio");
+
+            let mut server = config.clone();
+            if let Some(obj) = server.as_object_mut() {
+                if transport == "stdio" {
+                    obj.remove("type");
+                    obj.remove("enabled");
+                    obj.remove("timeout");
+                }
+            }
+            rendered.insert(name.clone(), server);
+        }
+
+        super::merge_global_mcp_entries_json(&target.path, "servers", &rendered, previously_managed)
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────

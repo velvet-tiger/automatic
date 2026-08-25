@@ -215,6 +215,22 @@ thread_local! {
     static TEST_HOME_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
+/// Return the active per-thread home override, if any.
+///
+/// Read by [`crate::agent::home_dir`] so that agent-level global writes and
+/// discovery redirect into a test tempdir instead of the developer's real
+/// `~`.  Only present under `cfg(test)`; production builds inline
+/// [`dirs::home_dir`] directly.
+///
+/// The override is thread-local (see [`TEST_HOME_OVERRIDE`]), so any code that
+/// reads it must run on the same thread that installed it via
+/// [`with_test_home`].  Cargo's default one-test-per-thread model satisfies
+/// this without extra care.
+#[cfg(test)]
+pub(crate) fn test_home_override() -> Option<PathBuf> {
+    TEST_HOME_OVERRIDE.with(|override_path| override_path.borrow().clone())
+}
+
 #[cfg(test)]
 pub(crate) fn with_test_home<T>(path: PathBuf, test: impl FnOnce() -> T) -> T {
     struct RestoreHome(Option<PathBuf>);

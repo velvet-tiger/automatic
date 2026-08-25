@@ -48,13 +48,14 @@ impl Agent for Cline {
         super::AgentCapabilities {
             mcp_servers: false,
             agents: false,
+            global_mcp_servers: true,
             ..Default::default()
         }
     }
 
     fn mcp_note(&self) -> Option<&'static str> {
         Some(
-            "Cline CLI stores MCP servers in global CLI settings, not in a project file. Automatic can discover those settings but does not sync project-specific MCP config for Cline.",
+            "Cline reads MCP servers from a global CLI settings file, not per project. Assign servers in Providers > Cline > MCP; Automatic writes to ~/.cline/data/settings/cline_mcp_settings.json (or $CLINE_DIR).",
         )
     }
 
@@ -75,6 +76,45 @@ impl Agent for Cline {
         // Cline stores MCP settings in global CLI state, not per-project.
         // Skip silently — the user is informed via `mcp_note()` in the UI.
         Ok(String::new())
+    }
+
+    fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
+        Some(super::GlobalMcpTarget {
+            path: self.global_mcp_settings_path()?,
+            reload_note: Some("Cline usually hot-reloads on file change."),
+        })
+    }
+
+    fn write_global_mcp_config(
+        &self,
+        desired: &Map<String, Value>,
+        previously_managed: &[String],
+    ) -> Result<super::GlobalMcpWriteReport, String> {
+        let Some(target) = self.global_mcp_target() else {
+            return Err("Home directory not available for Cline global MCP write".to_string());
+        };
+
+        // Cline's settings file follows the Claude-compatible mcpServers shape
+        // — strip type/enabled/timeout on stdio entries; pass http/sse through.
+        let mut rendered = Map::new();
+        for (name, config) in desired {
+            let transport = config
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdio");
+
+            let mut server = config.clone();
+            if let Some(obj) = server.as_object_mut() {
+                if transport == "stdio" {
+                    obj.remove("type");
+                    obj.remove("enabled");
+                    obj.remove("timeout");
+                }
+            }
+            rendered.insert(name.clone(), server);
+        }
+
+        super::merge_global_mcp_entries_json(&target.path, "mcpServers", &rendered, previously_managed)
     }
 
     // ── Discovery ───────────────────────────────────────────────────────
