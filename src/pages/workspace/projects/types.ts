@@ -101,7 +101,11 @@ export interface AgentInfo {
   id: string;
   label: string;
   description: string;
-  /** Non-null when this agent cannot have MCP config written by Automatic. */
+  /**
+   * Informational note about the agent's MCP handling. Presence alone does
+   * not mean Automatic cannot write MCP config — Z Code and OpenCode carry
+   * notes but are writable. Check `capabilities.mcp_servers` for that.
+   */
   mcp_note: string | null;
   capabilities?: AgentCapabilities;
 }

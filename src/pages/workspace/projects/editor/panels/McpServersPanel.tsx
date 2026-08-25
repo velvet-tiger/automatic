@@ -37,8 +37,13 @@ export function McpServersPanel({
   onNavigateToMcpServer,
   onNavigateToDiscoverMcp,
 }: McpServersPanelProps) {
+  // "No MCP" means Automatic cannot write the agent's MCP config
+  // (capabilities.mcp_servers is false) — not merely that the agent carries an
+  // informational mcp_note (Z Code and OpenCode have notes but are writable).
   const noMcpAgents = availableAgents.filter(
-    (a) => project.agents.includes(a.id) && a.mcp_note
+    (a) =>
+      project.agents.includes(a.id) &&
+      (a.capabilities ? !a.capabilities.mcp_servers : Boolean(a.mcp_note))
   );
   const allNoMcp = noMcpAgents.length > 0 && noMcpAgents.length === project.agents.length;
   const someNoMcp = noMcpAgents.length > 0 && !allNoMcp;
