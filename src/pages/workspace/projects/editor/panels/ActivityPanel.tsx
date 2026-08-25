@@ -46,26 +46,25 @@ export function ActivityPanel({
       </div>
 
       {/* Entries list */}
-      <div className="bg-bg-input border border-border-strong/40 rounded-lg overflow-hidden">
+      <div className="rounded-lg bg-bg-input/60 px-3">
         {loadingActivityPage ? (
-          <div className="px-4 py-8 text-center text-[12px] text-text-muted">
+          <div className="py-8 text-center text-[12px] text-text-muted">
             <RefreshCw size={14} className="animate-spin mx-auto mb-2" />
             Loading activity…
           </div>
         ) : activityPageEntries.length === 0 ? (
-          <div className="px-4 py-8 text-center text-[12px] text-text-muted italic">
+          <div className="py-8 text-center text-[12px] text-text-muted italic">
             No activity recorded yet. Save or sync the project to start logging events.
           </div>
         ) : (
           activityPageEntries.map((item, i) => {
-            const { icon, dot } = activityMeta(item.event);
+            const { icon } = activityMeta(item.event);
             return (
               <div
                 key={item.id}
-                className={`flex items-center gap-3 px-4 py-2.5 ${i < activityPageEntries.length - 1 ? "border-b border-border-strong/20" : ""}`}
+                className={`flex items-center gap-3 py-2 ${i < activityPageEntries.length - 1 ? "border-b border-border-strong/10" : ""}`}
               >
-                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
-                <div className="flex-shrink-0 text-text-muted">{icon}</div>
+                <div className="flex-shrink-0 text-text-muted opacity-70">{icon}</div>
                 <div className="flex-1 min-w-0">
                   <span className="text-[12px] text-text-base">{item.label}</span>
                   {item.detail && (
