@@ -405,9 +405,9 @@ function OAuthSection({ serverName, url }: { serverName: string; url: string }) 
           <div className="flex items-center gap-3 rounded-lg border border-brand/25 bg-brand/8 px-4 py-3">
             <Shield size={14} className="text-brand shrink-0" />
             <div className="flex-1">
-              <p className="text-[12px] font-medium text-text-base">Authentication required</p>
+              <p className="text-[12px] font-medium text-text-base">OAuth authentication</p>
               <p className="text-[11px] text-text-muted">
-                This server requires OAuth. Authenticate to store the token securely in your system keychain.
+                This server may support OAuth. If it does, authenticate to store the token securely in your system keychain.
                 Agents will connect through a local proxy — no secrets are written to project files.
               </p>
             </div>
