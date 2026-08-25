@@ -35,6 +35,8 @@ interface ProjectsProps {
   onInitialCreateWithTemplateConsumed?: () => void;
   /** When set, filters the overview to show only projects in this group. */
   filterGroup?: string | null;
+  /** Called whenever the currently open project (editor view) changes, including to null when returning to the overview. */
+  onActiveProjectChange?: (name: string | null) => void;
 }
 
 const LAST_PROJECT_KEY = "automatic.projects.selected";
@@ -56,6 +58,7 @@ export default function Projects({
   initialCreateWithTemplate = null,
   onInitialCreateWithTemplateConsumed,
   filterGroup = null,
+  onActiveProjectChange,
 }: ProjectsProps = {}) {
   // ── List state ────────────────────────────────────────────────────────────
   const [projects, setProjects] = useState<string[]>([]);
@@ -69,6 +72,12 @@ export default function Projects({
   const [isCreating, setIsCreating] = useState(false);
   /** Resolved templates seeded into the wizard via initialCreateWithTemplate. */
   const [createFromTemplates, setCreateFromTemplates] = useState<ProjectTemplate[] | null>(null);
+
+  // Report the currently open project up to the parent (drives sidebar highlighting).
+  useEffect(() => {
+    onActiveProjectChange?.(selectedName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedName]);
 
   // ── Legacy localStorage migration ────────────────────────────────────────
   useEffect(() => {

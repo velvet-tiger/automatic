@@ -27,6 +27,8 @@ interface WorkspaceSidebarProps {
   activeGroupFilter: string | null;
   /** Called when a group name is clicked — filters the Projects page to that group. */
   onFilterByGroup: (groupName: string | null) => void;
+  /** Name of the project currently open in the editor, if any. */
+  activeProjectName: string | null;
 }
 
 // ── NavItem (matches App.tsx pattern) ────────────────────────────────────────
@@ -55,7 +57,7 @@ function NavItem({ id, icon: Icon, label, isActive, onClick }: {
 
 // ── WorkspaceSidebar ─────────────────────────────────────────────────────────
 
-export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToProject, activeGroupFilter, onFilterByGroup }: WorkspaceSidebarProps) {
+export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToProject, activeGroupFilter, onFilterByGroup, activeProjectName }: WorkspaceSidebarProps) {
   // ── Project + group data ─────────────────────────────────────────────────
   const [projects, setProjects] = useState<string[]>([]);
   const [groups, setGroups] = useState<SidebarGroup[]>([]);
@@ -302,31 +304,36 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
-  const renderProjectRow = (projectName: string, sourceGroup: string | null) => (
-    <div key={projectName} className="group/project relative">
-      <button
-        onClick={() => onNavigateToProject(projectName)}
-        className="w-full truncate rounded-md py-1.5 pl-[34px] pr-9 text-left text-[13px] font-normal text-text-muted transition-colors hover:bg-bg-sidebar hover:text-text-base"
-        onPointerDown={(e) => {
-          if (e.button !== 0) return;
-          const timeout = setTimeout(() => handleDragStart(projectName, sourceGroup, e), 200);
-          const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
-          window.addEventListener("pointerup", cancel, { once: true });
-        }}
-      >
-        {projectName}
-      </button>
-      <button
-        type="button"
-        onClick={(event) => void handleRemoveProject(projectName, event)}
-        className="pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-text-muted/50 opacity-0 transition-[background-color,color,opacity] hover:bg-danger/10 hover:text-danger group-hover/project:pointer-events-auto group-hover/project:opacity-100 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100"
-        aria-label={`Remove ${projectName}`}
-        title={`Remove ${projectName}`}
-      >
-        <Trash2 size={12} />
-      </button>
-    </div>
-  );
+  const renderProjectRow = (projectName: string, sourceGroup: string | null) => {
+    const isActive = activeTab === "projects" && projectName === activeProjectName;
+    return (
+      <div key={projectName} className="group/project relative">
+        <button
+          onClick={() => onNavigateToProject(projectName)}
+          className={`w-full truncate rounded-md py-1.5 pl-[34px] pr-9 text-left text-[13px] font-normal transition-colors hover:bg-bg-sidebar hover:text-text-base ${
+            isActive ? "bg-bg-sidebar text-text-base" : "text-text-muted"
+          }`}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return;
+            const timeout = setTimeout(() => handleDragStart(projectName, sourceGroup, e), 200);
+            const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
+            window.addEventListener("pointerup", cancel, { once: true });
+          }}
+        >
+          {projectName}
+        </button>
+        <button
+          type="button"
+          onClick={(event) => void handleRemoveProject(projectName, event)}
+          className="pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-text-muted/50 opacity-0 transition-[background-color,color,opacity] hover:bg-danger/10 hover:text-danger group-hover/project:pointer-events-auto group-hover/project:opacity-100 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100"
+          aria-label={`Remove ${projectName}`}
+          title={`Remove ${projectName}`}
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div className="flex min-h-full flex-col">
@@ -337,7 +344,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
             id="projects"
             icon={LayoutGrid}
             label="View All"
-            isActive={activeTab === "projects" && activeGroupFilter === null}
+            isActive={activeTab === "projects" && activeGroupFilter === null && !activeProjectName}
             onClick={() => {
               onFilterByGroup(null);
               onTabClick("projects");
@@ -386,7 +393,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
         <div className="mb-1 space-y-0.5">
           {groups.map((group) => {
             const isCollapsed = collapsedGroups.has(group.name);
-            const isActiveFilter = activeGroupFilter === group.name && activeTab === "projects";
+            const isActiveFilter = activeGroupFilter === group.name && activeTab === "projects" && !activeProjectName;
             const Chevron = isCollapsed ? ChevronRight : ChevronDown;
             const visibleProjects = group.projects
               .filter((p) => projects.includes(p))
@@ -438,7 +445,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
                 onTabClick("projects");
               }}
               className={`flex w-full items-center gap-2 rounded-md py-1.5 pl-3 pr-3 text-[13px] font-medium transition-colors ${
-                activeGroupFilter === "__ungrouped__" && activeTab === "projects"
+                activeGroupFilter === "__ungrouped__" && activeTab === "projects" && !activeProjectName
                   ? "bg-bg-sidebar text-text-base"
                   : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
               }`}

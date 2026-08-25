@@ -211,6 +211,9 @@ function App() {
   // ── Group filter for Projects page ────────────────────────────────────────
   const [activeGroupFilter, setActiveGroupFilter] = useState<string | null>(null);
 
+  // ── Currently open project (drives sidebar active-project highlighting) ────
+  const [activeProjectName, setActiveProjectName] = useState<string | null>(null);
+
   // ── Pending navigation state ─────────────────────────────────────────────
   const [pendingProject, setPendingProject] = useState<string | null>(null);
   const [pendingProjectTab, setPendingProjectTab] = useState<string | null>(null);
@@ -593,6 +596,7 @@ function App() {
               onNavigateToProject={navigateToProject}
               activeGroupFilter={activeGroupFilter}
               onFilterByGroup={setActiveGroupFilter}
+              activeProjectName={activeProjectName}
             />
           )}
 
@@ -740,6 +744,7 @@ function App() {
                 initialCreateWithTemplate={pendingCreateWithTemplate}
                 onInitialCreateWithTemplateConsumed={() => setPendingCreateWithTemplate(null)}
                 filterGroup={activeGroupFilter}
+                onActiveProjectChange={setActiveProjectName}
               />
             </div>
           )}
