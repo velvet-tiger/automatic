@@ -4,6 +4,12 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.23.1] - 2026-08-26
+
+### Fixed
+
+- The 44px `data-tauri-drag-region` strip added to the AssetDrawer panel in 1.23.0 covered the drawer's own header, so Save, Duplicate, Edit, the close X, and every title/machine-name input across Rules, Instructions, Templates, MCP Servers, Hooks, and Tools were unclickable. The panel-side strip has been removed; the scrim strip stays, so the window still drags from the uncovered left area while a drawer is open.
+
 ## [1.23.0] - 2026-08-26
 
 ### Added
