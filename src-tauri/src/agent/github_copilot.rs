@@ -289,6 +289,17 @@ impl Agent for GitHubCopilot {
         };
         discover_global_from(&home)
     }
+
+    fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
+        // Drift compares against the file Automatic actually writes
+        // (`global_mcp_target` -> `~/.vscode/mcp.json`), not the multi-source
+        // discovery list used for imports.
+        let Some(home) = super::home_dir() else {
+            return std::collections::HashSet::new();
+        };
+        let path = home.join(".vscode").join("mcp.json");
+        super::read_global_mcp_entry_names_json(&path, "servers")
+    }
 }
 
 /// Pass-through normaliser: VS Code/Copilot format is close to canonical.

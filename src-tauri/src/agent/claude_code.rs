@@ -181,6 +181,13 @@ impl Agent for ClaudeCode {
         discover_claude_global_config(&home.join(".claude.json"))
     }
 
+    fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
+        let Some(home) = super::home_dir() else {
+            return std::collections::HashSet::new();
+        };
+        super::read_global_mcp_entry_names_json(&home.join(".claude.json"), "mcpServers")
+    }
+
     // ── Discovery ───────────────────────────────────────────────────────
 
     fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {

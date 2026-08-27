@@ -237,6 +237,14 @@ impl Agent for Zed {
         let path = config_dir.join("settings.json");
         discover_mcp_servers_from_json(&path, "context_servers", normalise_zed_server)
     }
+
+    fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
+        let Some(config_dir) = global_config_dir() else {
+            return std::collections::HashSet::new();
+        };
+        let path = config_dir.join("settings.json");
+        super::read_global_mcp_entry_names_json(&path, "context_servers")
+    }
 }
 
 /// Returns the platform-appropriate Zed global config directory.

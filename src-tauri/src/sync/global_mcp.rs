@@ -128,12 +128,17 @@ pub fn preview_global_mcp(
         .map(|a| a.managed.clone())
         .unwrap_or_default();
 
-    // Snapshot foreign entries by round-tripping through the agent's own
-    // discovery — it already knows how to find the servers map inside the
-    // dialect-specific file layout.
-    let existing = agent.discover_global_mcp_servers();
-    let foreign_entries: Vec<String> = existing
-        .keys()
+    // Snapshot raw entry names on disk.  Uses
+    // `discover_global_mcp_entry_names` rather than
+    // `discover_global_mcp_servers` because the latter filters out
+    // Automatic-generated `mcp-proxy` stubs (to protect the registry-import
+    // path) — but for drift comparisons a stub for a managed remote server
+    // is a valid on-disk entry that must count toward `on_disk`, otherwise
+    // every managed remote/OAuth server reports as permanently missing and
+    // the tab sticks on "Out of sync".
+    let existing_names = agent.discover_global_mcp_entry_names();
+    let foreign_entries: Vec<String> = existing_names
+        .iter()
         .filter(|name| !previously_managed.contains(name))
         .cloned()
         .collect();
@@ -147,7 +152,7 @@ pub fn preview_global_mcp(
     let mut would_skip = Vec::new();
     for name in desired_map.keys() {
         let is_managed = previously_managed_set.contains(name);
-        let on_disk = existing.contains_key(name);
+        let on_disk = existing_names.contains(name);
         if on_disk && !is_managed {
             // Foreign entry with the same name — left alone.
             would_skip.push(name.clone());
@@ -500,6 +505,48 @@ mod tests {
             assert!(status.supported);
             assert!(status.in_sync);
             assert!(status.missing.is_empty());
+        });
+    }
+
+    /// Regression: a managed remote OAuth server is written to disk as an
+    /// `mcp-proxy` stub, and drift/status must not treat that stub as a
+    /// "missing" entry.  Before the fix, `discover_global_mcp_servers`
+    /// filtered stubs to protect the registry-import path, which made every
+    /// managed remote server show as permanently out of sync — clicking
+    /// Re-apply was a no-op because the bytes already matched.
+    #[test]
+    fn managed_remote_proxy_stub_reports_in_sync() {
+        let tmp = TempDir::new().unwrap();
+        with_test_home(tmp.path().to_path_buf(), || {
+            // Seed a remote HTTP server, mirroring how a user-added Linear
+            // MCP entry actually looks in the registry.
+            let raw = serde_json::to_string(&serde_json::json!({
+                "type": "http",
+                "url": "https://mcp.example.com/mcp",
+            }))
+            .unwrap();
+            crate::core::save_mcp_server_config("linear", &raw).unwrap();
+
+            apply_global_mcp("cursor", vec!["linear".to_string()])
+                .expect("apply managed remote");
+
+            // The file now contains an mcp-proxy stub for `linear`.
+            let target = tmp.path().join(".cursor").join("mcp.json");
+            let contents = std::fs::read_to_string(&target).expect("cursor mcp.json exists");
+            assert!(
+                contents.contains("mcp-proxy") && contents.contains("linear"),
+                "expected an mcp-proxy stub, got:\n{contents}"
+            );
+
+            // Status must report in-sync — not missing/skipped/rejected.
+            let status = global_mcp_status("cursor").expect("status");
+            assert!(
+                status.in_sync,
+                "managed remote reports out of sync (missing={:?}, skipped={:?})",
+                status.missing, status.skipped
+            );
+            assert!(status.missing.is_empty(), "missing={:?}", status.missing);
+            assert!(status.skipped.is_empty(), "skipped={:?}", status.skipped);
         });
     }
 

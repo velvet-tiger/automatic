@@ -180,6 +180,16 @@ impl Agent for KiloCode {
         }
         Map::new()
     }
+
+    fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
+        // Drift compares against the file Automatic actually writes
+        // (`global_mcp_target` -> `~/.config/kilo/kilo.json`, `mcp` key),
+        // not the multi-candidate scan used for imports.
+        let Some(target) = self.global_mcp_target() else {
+            return std::collections::HashSet::new();
+        };
+        super::read_global_mcp_entry_names_json(&target.path, "mcp")
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

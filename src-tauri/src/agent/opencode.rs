@@ -180,6 +180,17 @@ impl Agent for OpenCode {
         result
     }
 
+    fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
+        // Drift compares against the file Automatic actually writes
+        // (`global_mcp_target` -> `~/.config/opencode/config.json`, `mcp`
+        // key), not the multi-source discovery list used for imports.
+        let Some(home) = super::home_dir() else {
+            return std::collections::HashSet::new();
+        };
+        let path = home.join(".config").join("opencode").join("config.json");
+        super::read_global_mcp_entry_names_json(&path, "mcp")
+    }
+
     fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
         Some(dir.join(".opencode").join("agents"))
     }

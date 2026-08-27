@@ -167,6 +167,14 @@ impl Agent for Warp {
         let path = home.join(".warp").join(".mcp.json");
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
+        let Some(home) = super::home_dir() else {
+            return std::collections::HashSet::new();
+        };
+        let path = home.join(".warp").join(".mcp.json");
+        super::read_global_mcp_entry_names_json(&path, "mcpServers")
+    }
 }
 
 fn identity(v: Value) -> Value {

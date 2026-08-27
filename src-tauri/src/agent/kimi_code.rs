@@ -228,6 +228,14 @@ impl Agent for KimiCode {
         let path = home.join(".kimi-code").join("mcp.json");
         discover_mcp_servers_from_json(&path, "mcpServers", normalise_kimi_server)
     }
+
+    fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
+        let Some(home) = super::home_dir() else {
+            return std::collections::HashSet::new();
+        };
+        let path = home.join(".kimi-code").join("mcp.json");
+        super::read_global_mcp_entry_names_json(&path, "mcpServers")
+    }
 }
 
 /// Re-derive Automatic's canonical `type` field from Kimi's field-shape

@@ -372,6 +372,27 @@ pub trait Agent: Send + Sync {
         Map::new()
     }
 
+    /// Return the raw set of entry *names* present in this agent's global
+    /// MCP config file.
+    ///
+    /// This differs from [`discover_global_mcp_servers`] in one specific way:
+    /// it does not filter Automatic-generated `mcp-proxy` stubs.  Global-scope
+    /// drift/status logic ([`crate::sync::global_mcp::preview_global_mcp`])
+    /// needs to know which names are on disk regardless of whether they were
+    /// written as a stub for a remote OAuth server — otherwise every managed
+    /// remote server reports as permanently missing.
+    ///
+    /// The default implementation derives from `discover_global_mcp_servers`,
+    /// which is correct for agents whose discovery does not filter stubs
+    /// (Codex TOML, Goose YAML, Pi).  JSON-dialect agents should override to
+    /// return the raw key set of their on-disk servers object.
+    fn discover_global_mcp_entry_names(&self) -> HashSet<String> {
+        self.discover_global_mcp_servers()
+            .keys()
+            .cloned()
+            .collect()
+    }
+
     /// Return home-directory skill directories that this agent uses
     /// **outside** of the external scan paths Automatic already tracks
     /// (`~/.agents/skills/` and `~/.claude/skills/`).
@@ -1806,6 +1827,60 @@ pub(crate) fn discover_mcp_servers_from_json_at(
     result
 }
 
+/// Read the raw set of MCP server entry names from a JSON config file, without
+/// the proxy-stub filter that [`discover_mcp_servers_from_json`] applies.
+///
+/// The import-oriented discovery skips Automatic-generated `mcp-proxy` stubs
+/// to avoid re-slurping them back into the shared registry.  For drift/status
+/// checks we want the opposite: the stub is a valid on-disk entry and its
+/// name still needs to compare against the managed set.  This helper keeps
+/// the `automatic`/`nexus`/invalid-name skips (drift never wants to treat
+/// those as foreign) but preserves stubs.
+pub(crate) fn read_global_mcp_entry_names_json(path: &Path, root_key: &str) -> HashSet<String> {
+    read_global_mcp_entry_names_json_at(path, &[root_key])
+}
+
+/// Nested-key-path variant of [`read_global_mcp_entry_names_json`], mirroring
+/// [`discover_mcp_servers_from_json_at`].
+pub(crate) fn read_global_mcp_entry_names_json_at(
+    path: &Path,
+    key_path: &[&str],
+) -> HashSet<String> {
+    let mut names = HashSet::new();
+
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return names,
+    };
+
+    let root: Value = match serde_json::from_str::<Value>(&content) {
+        Ok(v @ Value::Object(_)) => v,
+        _ => return names,
+    };
+
+    let mut node = &root;
+    for key in key_path {
+        node = match node.get(key) {
+            Some(v) => v,
+            None => return names,
+        };
+    }
+
+    let servers_obj = match node {
+        Value::Object(s) => s,
+        _ => return names,
+    };
+
+    for name in servers_obj.keys() {
+        if name == "automatic" || name == "nexus" || !crate::core::is_valid_name(name) {
+            continue;
+        }
+        names.insert(name.clone());
+    }
+
+    names
+}
+
 /// Read a JSON config file that Automatic merges into rather than owns.
 ///
 /// An absent or empty file yields an empty object.  A file that exists, has
@@ -2864,6 +2939,41 @@ mod tests {
             discovered.contains_key("fetch"),
             "genuine local servers must still be discovered"
         );
+    }
+
+    #[test]
+    fn raw_entry_names_helper_keeps_proxy_stubs_but_still_skips_automatic() {
+        // Sibling of `discover_skips_proxy_stub_but_keeps_real_servers`: the
+        // drift/status path needs to see the stub as a present entry so that a
+        // managed remote OAuth server does not report as permanently missing,
+        // but must still skip `automatic`/`nexus`/invalid names (never
+        // "foreign" — they are reserved).
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join(".mcp.json");
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "mcpServers": {
+                    "automatic": { "command": "automatic", "args": ["mcp-serve"] },
+                    "linear": { "command": "/usr/local/bin/automatic", "args": ["mcp-proxy", "linear"] },
+                    "fetch": { "command": "npx", "args": ["-y", "fetch-mcp"] },
+                }
+            }))
+            .expect("serialize"),
+        )
+        .expect("write .mcp.json");
+
+        let names = read_global_mcp_entry_names_json(&path, "mcpServers");
+
+        assert!(
+            !names.contains("automatic"),
+            "reserved name 'automatic' must still be skipped"
+        );
+        assert!(
+            names.contains("linear"),
+            "proxy stub must count toward the on-disk name set for drift purposes"
+        );
+        assert!(names.contains("fetch"), "real servers still present");
     }
 
     #[test]

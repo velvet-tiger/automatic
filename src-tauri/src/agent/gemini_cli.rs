@@ -252,6 +252,14 @@ impl Agent for GeminiCli {
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
 
+    fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
+        let Some(home) = super::home_dir() else {
+            return std::collections::HashSet::new();
+        };
+        let path = home.join(".gemini").join("settings.json");
+        super::read_global_mcp_entry_names_json(&path, "mcpServers")
+    }
+
     fn agents_dir(&self, dir: &Path) -> Option<PathBuf> {
         Some(dir.join(".gemini").join("agents"))
     }

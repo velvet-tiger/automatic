@@ -147,6 +147,13 @@ impl Agent for Cline {
             None => Map::new(),
         }
     }
+
+    fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
+        match self.global_mcp_settings_path() {
+            Some(path) => super::read_global_mcp_entry_names_json(&path, "mcpServers"),
+            None => std::collections::HashSet::new(),
+        }
+    }
 }
 
 impl Cline {

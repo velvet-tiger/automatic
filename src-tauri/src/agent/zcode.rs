@@ -231,6 +231,17 @@ impl Agent for ZCode {
         servers
     }
 
+    fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
+        // Drift compares against the file Automatic actually writes
+        // (`global_mcp_target` -> `~/.zcode/config.json`, `mcpServers` key),
+        // not the multi-source discovery list used for imports.
+        let Some(home) = super::home_dir() else {
+            return std::collections::HashSet::new();
+        };
+        let path = home.join(".zcode").join("config.json");
+        super::read_global_mcp_entry_names_json(&path, "mcpServers")
+    }
+
     // ── Cleanup ─────────────────────────────────────────────────────────
 
     /// Z Code merges into `.zcode/config.json`, which the user's own settings

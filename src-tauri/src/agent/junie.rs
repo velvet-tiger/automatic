@@ -194,6 +194,14 @@ impl Agent for Junie {
         let path = home.join(".junie").join("mcp").join("mcp.json");
         discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
+
+    fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
+        let Some(home) = super::home_dir() else {
+            return std::collections::HashSet::new();
+        };
+        let path = home.join(".junie").join("mcp").join("mcp.json");
+        super::read_global_mcp_entry_names_json(&path, "mcpServers")
+    }
 }
 
 /// Pass-through normaliser: Junie's format is already canonical.
