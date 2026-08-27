@@ -102,6 +102,37 @@ pub fn delete_instruction(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Rename an instruction file on disk. Library instructions are not
+/// referenced by name from projects, so nothing else needs updating.
+///
+/// Refuses to overwrite an existing instruction under `new_name`. If
+/// `old_name == new_name` this is a no-op.
+pub fn rename_instruction(old_name: &str, new_name: &str) -> Result<(), String> {
+    if !is_valid_name(old_name) || !is_valid_name(new_name) {
+        return Err("Invalid instruction name".into());
+    }
+    if old_name == new_name {
+        return Ok(());
+    }
+
+    let dir = get_instructions_dir()?;
+    let old_path = dir.join(format!("{}.md", old_name));
+    let new_path = dir.join(format!("{}.md", new_name));
+
+    if !old_path.exists() {
+        return Err(format!("Instruction '{}' not found", old_name));
+    }
+    if new_path.exists() {
+        return Err(format!("Instruction '{}' already exists", new_name));
+    }
+
+    fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+
+    remove_recently_added("instructions", old_name);
+
+    Ok(())
+}
+
 /// Load one default instruction as `(name, content)` from the bundled
 /// library. `name` is the filename stem (spaces allowed); `content` is the
 /// markdown body.
@@ -205,6 +236,49 @@ mod tests {
             assert!(home
                 .join(".automatic-dev/library/instructions/Session Context.md")
                 .exists());
+        });
+    }
+
+    #[test]
+    fn rename_moves_instruction_file_and_preserves_body() {
+        with_temp_home(|_| {
+            save_instruction("original", "Body text.").expect("save");
+
+            rename_instruction("original", "renamed").expect("rename");
+
+            assert!(read_instruction("original").is_err());
+            assert_eq!(read_instruction("renamed").expect("read"), "Body text.");
+        });
+    }
+
+    #[test]
+    fn rename_is_a_noop_when_names_match() {
+        with_temp_home(|_| {
+            save_instruction("same", "Body.").expect("save");
+            rename_instruction("same", "same").expect("noop");
+            assert_eq!(read_instruction("same").expect("read"), "Body.");
+        });
+    }
+
+    #[test]
+    fn rename_refuses_when_target_exists() {
+        with_temp_home(|_| {
+            save_instruction("a", "a body").expect("save a");
+            save_instruction("b", "b body").expect("save b");
+
+            let err = rename_instruction("a", "b").expect_err("should refuse");
+            assert!(err.contains("already exists"), "unexpected error: {err}");
+
+            assert_eq!(read_instruction("a").expect("read a"), "a body");
+            assert_eq!(read_instruction("b").expect("read b"), "b body");
+        });
+    }
+
+    #[test]
+    fn rename_returns_error_for_missing_source() {
+        with_temp_home(|_| {
+            let err = rename_instruction("ghost", "phantom").expect_err("should error");
+            assert!(err.contains("not found"), "unexpected error: {err}");
         });
     }
 }

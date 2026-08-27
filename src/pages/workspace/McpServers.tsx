@@ -525,6 +525,9 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
   const [dirty, setDirty] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  // Editable name for existing (non-creating) servers. When it differs from
+  // `selectedName` on save, the backend rename op runs before save_mcp_server_config.
+  const [editName, setEditName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [opencodeWarning, setOpencodeWarning] = useState<string[]>([]);
   const [importOpen, setImportOpen] = useState(false);
@@ -587,6 +590,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       const raw: string = await invoke("read_mcp_server_config", { name });
       const data = JSON.parse(raw);
       setSelectedName(name);
+      setEditName(name);
       setConfig(normalizeConfig(data));
       setDirty(false);
       setIsCreating(false);
@@ -607,6 +611,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     setDirty(false);
     setIsCreating(false);
     setNewName("");
+    setEditName("");
     resetInlineState();
   };
 
@@ -618,9 +623,20 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
   const handleSave = async () => {
     if (!config) return;
-    const name = isCreating ? newName.trim() : selectedName;
+    const trimmedEdit = editName.trim();
+    const name = isCreating ? newName.trim() : trimmedEdit;
     if (!name) return;
     try {
+      // Rename first when the user changed the name of an existing server.
+      // The backend rewrites project + template references and re-syncs, so
+      // we only need to save the config under the new name afterwards.
+      if (!isCreating && selectedName && name !== selectedName) {
+        await invoke("rename_mcp_server_config", {
+          oldName: selectedName,
+          newName: name,
+        });
+      }
+
       await invoke("save_mcp_server_config", {
         name,
         data: JSON.stringify(cleanConfig(config)),
@@ -632,10 +648,14 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
       }
       setDirty(false);
       setSelectedName(name);
+      setEditName(name);
       if (isCreating) {
         setIsCreating(false);
         await loadServers();
         setRecentRefresh(prev => prev + 1);
+      } else if (name !== (selectedName ?? "")) {
+        // Rename path: refresh the list so the sidebar reflects the new name.
+        await loadServers();
       }
       setError(null);
     } catch (err: any) {
@@ -705,6 +725,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     setDirty(true);
     setIsCreating(true);
     setNewName("");
+    setEditName("");
     resetInlineState();
   };
 
@@ -966,8 +987,22 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                     autoFocus
                     className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-64"
                   />
-                ) : (
+                ) : isBuiltin ? (
                   <h3 className="text-[14px] font-medium text-text-base">{selectedName}</h3>
+                ) : (
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => {
+                      setEditName(e.target.value);
+                      setDirty(true);
+                    }}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    aria-label="MCP server name"
+                    className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-64"
+                  />
                 )}
               </div>
 
@@ -976,7 +1011,10 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                 {dirty && !isBuiltin && (
                   <button
                     onClick={handleSave}
-                    disabled={isCreating && !newName.trim()}
+                    disabled={
+                      (isCreating && !newName.trim()) ||
+                      (!isCreating && !editName.trim())
+                    }
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   >
                     <Check size={12} /> Save

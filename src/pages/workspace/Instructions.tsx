@@ -34,6 +34,9 @@ export default function Instructions() {
   const [isEditing, setIsEditing] = useState(false);
   const [newInstructionName, setNewInstructionName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  // Editable name for the selected instruction, mirrors the Rules pattern.
+  // When it differs from `selectedInstruction` on save, rename runs first.
+  const [editName, setEditName] = useState("");
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
@@ -60,6 +63,7 @@ export default function Instructions() {
       const content: string = await invoke("read_instruction", { name });
       const scan = await scanAssetContent("template", content);
       setSelectedInstruction(name);
+      setEditName(name);
       setInstructionContent(content);
       setIsEditing(false);
       setIsCreating(false);
@@ -79,7 +83,8 @@ export default function Instructions() {
 
   const handleSave = async () => {
     if (!selectedInstruction && !isCreating) return;
-    const name = isCreating ? newInstructionName.trim() : selectedInstruction!;
+    const trimmedEdit = editName.trim();
+    const name = isCreating ? newInstructionName.trim() : trimmedEdit;
     if (!name) return;
     try {
       const scan = await scanAssetContent("template", instructionContent);
@@ -89,13 +94,29 @@ export default function Instructions() {
         return;
       }
       const warnings = warningFindings(scan);
+
+      // Rename first when the user changed an existing instruction's name.
+      // Library instructions are not referenced by name from projects, so
+      // the backend only needs to move the file on disk.
+      const renamed =
+        !isCreating && selectedInstruction && name !== selectedInstruction;
+      if (renamed) {
+        await invoke("rename_instruction", {
+          oldName: selectedInstruction,
+          newName: name,
+        });
+      }
+
       await invoke("save_instruction", { name, content: instructionContent });
       setIsEditing(false);
       setSelectedInstruction(name);
+      setEditName(name);
       if (isCreating) {
         setIsCreating(false);
         await loadInstructions();
         setRecentRefresh(prev => prev + 1);
+      } else if (renamed) {
+        await loadInstructions();
       }
       setError(null);
       setCurrentScan(toAssetSecurityScanRecord(scan));
@@ -111,6 +132,7 @@ export default function Instructions() {
     setSelectedInstruction(null);
     setInstructionContent("");
     setNewInstructionName("");
+    setEditName("");
     setSecurityNotice(null);
     setCurrentScan(null);
   };
@@ -175,6 +197,7 @@ export default function Instructions() {
     setIsCreating(true);
     setIsEditing(true);
     setNewInstructionName("");
+    setEditName("");
     setSecurityNotice(null);
     setCurrentScan(null);
   };
@@ -396,6 +419,17 @@ export default function Instructions() {
                   autoFocus
                   className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-64"
                 />
+              ) : isEditing ? (
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  aria-label="Instruction name"
+                  className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-64"
+                />
               ) : (
                 <h3 className="text-[14px] font-medium text-text-base truncate">{selectedInstruction}</h3>
               )}
@@ -425,7 +459,11 @@ export default function Instructions() {
                   )}
                   <button
                     onClick={handleSave}
-                    disabled={isCreating && !newInstructionName.trim()}
+                    disabled={
+                      isCreating
+                        ? !newInstructionName.trim()
+                        : !editName.trim()
+                    }
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   >
                     <Check size={12} /> Save

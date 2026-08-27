@@ -1527,6 +1527,106 @@ pub(crate) fn prune_mcp_server_from_projects(server_name: &str) {
     });
 }
 
+/// Rewrite every project's `mcp_servers` and `disabled_mcp_servers` entries
+/// from `old_name` to `new_name`. Persists changed projects and re-syncs
+/// them so on-disk agent config matches the renamed server.
+pub(crate) fn rename_mcp_server_in_projects(old_name: &str, new_name: &str) {
+    if old_name == new_name {
+        return;
+    }
+    with_each_project_mut(|project_name, project| {
+        let mut changed = false;
+        for server in project.mcp_servers.iter_mut() {
+            if server == old_name {
+                *server = new_name.to_string();
+                changed = true;
+            }
+        }
+        for server in project.disabled_mcp_servers.iter_mut() {
+            if server == old_name {
+                *server = new_name.to_string();
+                changed = true;
+            }
+        }
+
+        if changed {
+            project.updated_at = chrono::Utc::now().to_rfc3339();
+            match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
+                Ok(data) => {
+                    if let Err(e) = core::save_project(project_name, &data) {
+                        eprintln!("Failed to update project '{}': {}", project_name, e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to serialize project '{}': {}", project_name, e);
+                }
+            }
+            sync_project_if_configured(project_name, project);
+        }
+    });
+}
+
+/// Rewrite every template's `mcp_servers` entries from `old_name` to
+/// `new_name` and persist the ones that changed. Failures are logged and
+/// skipped, matching the pattern used by the other propagation helpers.
+pub(crate) fn rename_mcp_server_in_templates(old_name: &str, new_name: &str) {
+    if old_name == new_name {
+        return;
+    }
+    let template_names = match core::list_templates() {
+        Ok(names) => names,
+        Err(e) => {
+            eprintln!("Failed to list templates for MCP-server rename: {}", e);
+            return;
+        }
+    };
+
+    for template_name in template_names {
+        let raw = match core::read_template(&template_name) {
+            Ok(raw) => raw,
+            Err(e) => {
+                eprintln!("Failed to read template '{}': {}", template_name, e);
+                continue;
+            }
+        };
+
+        let mut template: core::ProjectTemplate = match serde_json::from_str(&raw) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("Failed to parse template '{}': {}", template_name, e);
+                continue;
+            }
+        };
+
+        let mut changed = false;
+        for server in template.mcp_servers.iter_mut() {
+            if server == old_name {
+                *server = new_name.to_string();
+                changed = true;
+            }
+        }
+
+        if changed {
+            match serde_json::to_string_pretty(&template).map_err(|e| e.to_string()) {
+                Ok(data) => {
+                    if let Err(e) = core::save_template(&template_name, &data) {
+                        eprintln!(
+                            "Failed to save template '{}' after MCP-server rename: {}",
+                            template_name, e
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Failed to serialise template '{}' after MCP-server rename: {}",
+                        template_name, e
+                    );
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn prune_rule_from_projects(rule_name: &str) {
     with_each_project_mut(|project_name, project| {
         let mut changed = false;

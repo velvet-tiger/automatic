@@ -24,3 +24,8 @@ pub fn save_instruction(name: &str, content: &str) -> Result<(), String> {
 pub fn delete_instruction(name: &str) -> Result<(), String> {
     core::delete_instruction(name)
 }
+
+#[tauri::command]
+pub fn rename_instruction(old_name: &str, new_name: &str) -> Result<(), String> {
+    core::rename_instruction(old_name, new_name)
+}

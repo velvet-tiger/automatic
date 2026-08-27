@@ -1,6 +1,9 @@
 use crate::core;
 
-use super::projects::{prune_mcp_server_from_projects, sync_projects_referencing_mcp_server};
+use super::projects::{
+    prune_mcp_server_from_projects, rename_mcp_server_in_projects,
+    rename_mcp_server_in_templates, sync_projects_referencing_mcp_server,
+};
 
 // ── MCP Servers ──────────────────────────────────────────────────────────────
 
@@ -28,6 +31,31 @@ pub fn save_mcp_server_config(name: &str, data: &str) -> Result<(), String> {
     // assigned globally too.  Best-effort — individual failures are logged
     // in the orchestrator, not propagated (mirrors the projects path).
     crate::sync::global_mcp::reapply_agents_referencing(name);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), String> {
+    if old_name == new_name {
+        return Ok(());
+    }
+    if core::is_builtin_mcp_server(old_name) {
+        return Err(format!("Cannot rename built-in MCP server '{}'", old_name));
+    }
+    core::rename_mcp_server_config(old_name, new_name)?;
+
+    // Rewrite every project and template that referenced the old name so no
+    // dangling references remain. Projects are re-synced from within the
+    // project helper so on-disk agent config reflects the new name.
+    rename_mcp_server_in_projects(old_name, new_name);
+    rename_mcp_server_in_templates(old_name, new_name);
+
+    // Rewrite global-MCP selections and re-apply for every agent that had
+    // this server assigned globally, then reapply for the new name in case
+    // any downstream renderer needs the freshly-named entry propagated.
+    crate::sync::global_mcp::rename_server_in_global(old_name, new_name);
+    crate::sync::global_mcp::reapply_agents_referencing(new_name);
+
     Ok(())
 }
 

@@ -436,7 +436,7 @@ pub fn get_provenance_author(
 }
 
 /// Remove provenance for a resource.
-fn remove_provenance(resource_type: &str, name: &str) -> Result<(), String> {
+pub fn remove_provenance(resource_type: &str, name: &str) -> Result<(), String> {
     let mut prov = read_provenance()?;
     let key = format!("{}:{}", resource_type, name);
     prov.remove(&key);

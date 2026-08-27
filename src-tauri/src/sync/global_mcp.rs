@@ -209,6 +209,44 @@ pub fn reapply_agents_referencing(server_name: &str) {
     }
 }
 
+/// Registry rename: rewrite every agent's selection so `old_name` becomes
+/// `new_name`, then re-apply so the change lands in whatever file each agent
+/// manages the entry in. Best-effort, matches `prune_server_from_global`.
+pub fn rename_server_in_global(old_name: &str, new_name: &str) {
+    if old_name == new_name {
+        return;
+    }
+    let state = match load_global_mcp_state() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("global_mcp: load state failed during rename: {}", e);
+            return;
+        }
+    };
+    for (agent_id, agent_state) in &state.agents {
+        if !agent_state.selected.iter().any(|n| n == old_name) {
+            continue;
+        }
+        let next: Vec<String> = agent_state
+            .selected
+            .iter()
+            .map(|n| {
+                if n == old_name {
+                    new_name.to_string()
+                } else {
+                    n.clone()
+                }
+            })
+            .collect();
+        if let Err(e) = apply_global_mcp(agent_id, next) {
+            eprintln!(
+                "global_mcp: rename of '{}' to '{}' in {} failed: {}",
+                old_name, new_name, agent_id, e
+            );
+        }
+    }
+}
+
 /// Registry deletion: drop `server_name` from every agent's selection and
 /// re-apply so the entry disappears from any file where it is managed.
 pub fn prune_server_from_global(server_name: &str) {

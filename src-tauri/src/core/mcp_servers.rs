@@ -129,6 +129,48 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Rename a local MCP server config on disk. Callers are responsible for
+/// updating any project or template that referenced the old name.
+///
+/// Refuses built-in server names and refuses to overwrite an existing config
+/// under `new_name`. If `old_name == new_name` this is a no-op.
+///
+/// Any provenance entry recorded against `old_name` is moved to `new_name` so
+/// the GitHub author badge continues to show.
+pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), String> {
+    if !is_valid_name(old_name) || !is_valid_name(new_name) {
+        return Err("Invalid server name".into());
+    }
+    if old_name == new_name {
+        return Ok(());
+    }
+    if is_builtin_mcp_server(old_name) {
+        return Err("Built-in servers cannot be renamed".into());
+    }
+
+    let dir = get_mcp_servers_dir()?;
+    let old_path = dir.join(format!("{}.json", old_name));
+    let new_path = dir.join(format!("{}.json", new_name));
+
+    if !old_path.exists() {
+        return Err(format!("MCP server '{}' not found", old_name));
+    }
+    if new_path.exists() {
+        return Err(format!("MCP server '{}' already exists", new_name));
+    }
+
+    fs::rename(&old_path, &new_path).map_err(|e| e.to_string())?;
+
+    remove_recently_added("mcp_servers", old_name);
+
+    if let Ok(Some(source)) = super::remote_sources::get_provenance("mcp_server", old_name) {
+        let _ = super::remote_sources::record_provenance("mcp_server", new_name, &source);
+        let _ = super::remote_sources::remove_provenance("mcp_server", old_name);
+    }
+
+    Ok(())
+}
+
 /// Reported availability of a configured MCP server, shown as a status
 /// indicator on the project's MCP tab.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -973,5 +1015,86 @@ mod tests {
         let raw = read_at(&dir, "with-port").expect("read");
         let val: serde_json::Value = serde_json::from_str(&raw).expect("parse");
         assert_eq!(val["env"]["PORT"].as_str().unwrap(), "8080");
+    }
+
+    // ── rename ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn rename_moves_config_file_and_preserves_body() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("old-name", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save");
+
+            rename_mcp_server_config("old-name", "new-name").expect("rename");
+
+            assert!(read_mcp_server_config("old-name").is_err());
+            let raw = read_mcp_server_config("new-name").expect("read new");
+            let value: serde_json::Value = serde_json::from_str(&raw).expect("parse");
+            assert_eq!(value["command"].as_str(), Some("npx"));
+        });
+    }
+
+    #[test]
+    fn rename_is_a_noop_when_names_match() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("same", r#"{"type":"stdio","command":"npx"}"#).expect("save");
+            rename_mcp_server_config("same", "same").expect("noop");
+            assert!(read_mcp_server_config("same").is_ok());
+        });
+    }
+
+    #[test]
+    fn rename_refuses_when_target_exists() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("a", r#"{"type":"stdio","command":"a"}"#).expect("save a");
+            save_mcp_server_config("b", r#"{"type":"stdio","command":"b"}"#).expect("save b");
+
+            let err = rename_mcp_server_config("a", "b").expect_err("should refuse");
+            assert!(err.contains("already exists"), "unexpected error: {err}");
+
+            // Both originals still present, untouched.
+            assert!(read_mcp_server_config("a").is_ok());
+            assert!(read_mcp_server_config("b").is_ok());
+        });
+    }
+
+    #[test]
+    fn rename_returns_error_for_missing_source() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            let err = rename_mcp_server_config("ghost", "phantom").expect_err("should error");
+            assert!(err.contains("not found"), "unexpected error: {err}");
+        });
+    }
+
+    #[test]
+    fn rename_migrates_provenance_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            save_mcp_server_config("old-remote", r#"{"type":"stdio","command":"npx"}"#)
+                .expect("save");
+            super::super::remote_sources::record_provenance(
+                "mcp_server",
+                "old-remote",
+                "octocat/mcp-collection",
+            )
+            .expect("record provenance");
+
+            rename_mcp_server_config("old-remote", "new-remote").expect("rename");
+
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "old-remote")
+                    .expect("read old provenance"),
+                None
+            );
+            assert_eq!(
+                super::super::remote_sources::get_provenance("mcp_server", "new-remote")
+                    .expect("read new provenance"),
+                Some("octocat/mcp-collection".to_string())
+            );
+        });
     }
 }
