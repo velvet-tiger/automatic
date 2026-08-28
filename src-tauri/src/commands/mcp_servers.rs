@@ -50,6 +50,23 @@ pub async fn check_mcp_server_status(name: String) -> Result<core::McpServerAvai
     core::check_mcp_server_status(&name).await
 }
 
+/// Check whether a raw stdio command string resolves to an executable —
+/// used by the MCP server editor to warn the user while they type that
+/// their configured command (e.g. `npx`, `uvx`) isn't installed on the
+/// system.  Trimmed and empty-checked here so the frontend can pass the
+/// input value straight through.
+#[tauri::command]
+pub fn check_mcp_command_available(command: String) -> core::McpServerAvailability {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return core::McpServerAvailability {
+            available: false,
+            message: None,
+        };
+    }
+    core::check_mcp_command_available(trimmed)
+}
+
 // ── MCP Discover ─────────────────────────────────────────────────────────────
 
 /// Return all MCP server Discover catalogue entries matching `query` as a JSON array.

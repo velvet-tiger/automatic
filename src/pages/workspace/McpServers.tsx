@@ -215,6 +215,60 @@ function cleanConfig(config: McpServerConfig): Record<string, unknown> {
 // server's config, which the bare name list here does not carry.
 const isDeletable = (name: string) => name !== "automatic";
 
+// ── Command dependency warning ──────────────────────────────────────────────
+
+interface McpServerAvailability {
+  available: boolean;
+  message: string | null;
+}
+
+/**
+ * Warn when a configured stdio command (e.g. `npx`, `uvx`, `python`) can't be
+ * resolved on PATH.  The check is debounced against the user's typing so we
+ * don't hit the backend on every keystroke, and skipped entirely for empty
+ * input (the required-field feedback belongs to save-time validation, not
+ * this dependency warning).
+ */
+function CommandDependencyWarning({ command }: { command: string }) {
+  const [status, setStatus] = useState<McpServerAvailability | null>(null);
+  const trimmed = command.trim();
+
+  useEffect(() => {
+    if (!trimmed) {
+      setStatus(null);
+      return;
+    }
+    setStatus(null);
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      invoke<McpServerAvailability>("check_mcp_command_available", { command: trimmed })
+        .then((result) => {
+          if (!cancelled) setStatus(result);
+        })
+        .catch(() => {
+          if (!cancelled) setStatus(null);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [trimmed]);
+
+  if (!trimmed || !status || status.available) return null;
+
+  return (
+    <p className="mt-2 flex items-start gap-1.5 text-[11px] text-warning leading-relaxed">
+      <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" />
+      <span>
+        <code className="font-mono">{trimmed}</code>{" "}
+        was not found on your PATH. Install it before agents try to launch this server, or the
+        MCP client will fail to connect.
+      </span>
+    </p>
+  );
+}
+
 // ── OAuth Authentication Section ────────────────────────────────────────────
 
 function OAuthSection({ serverName, url }: { serverName: string; url: string }) {
@@ -1086,6 +1140,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
                         placeholder="e.g. npx, node, /usr/local/bin/mcp-server"
                         className={`${inputClass} ${isManaged ? "opacity-60 cursor-not-allowed" : ""}`}
                       />
+                      <CommandDependencyWarning command={config.command || ""} />
                     </section>
 
                     <section>

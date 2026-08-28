@@ -175,6 +175,15 @@ pub async fn check_mcp_server_status(name: &str) -> Result<McpServerAvailability
     }
 }
 
+/// Check whether a raw stdio command string (e.g. `npx`, `uvx`,
+/// `/usr/local/bin/mcp-server`) resolves to an executable — the same
+/// resolution `check_mcp_server_status` performs for a saved server,
+/// but exposed for the editor UI so the user is warned before saving
+/// that the dependency their MCP server relies on isn't installed.
+pub fn check_mcp_command_available(command: &str) -> McpServerAvailability {
+    check_stdio_command_available(Some(command))
+}
+
 fn check_stdio_command_available(command: Option<&str>) -> McpServerAvailability {
     let Some(command) = command.map(str::trim).filter(|c| !c.is_empty()) else {
         return McpServerAvailability {
@@ -854,6 +863,19 @@ mod tests {
     #[test]
     fn check_stdio_command_available_reports_missing_command_as_unavailable() {
         let status = check_stdio_command_available(None);
+        assert!(!status.available);
+        assert!(status.message.is_some());
+    }
+
+    #[test]
+    fn check_mcp_command_available_reports_known_command_as_available() {
+        let status = check_mcp_command_available("sh");
+        assert!(status.available);
+    }
+
+    #[test]
+    fn check_mcp_command_available_reports_unknown_command_as_unavailable() {
+        let status = check_mcp_command_available("definitely-not-a-real-command-xyz123");
         assert!(!status.available);
         assert!(status.message.is_some());
     }
