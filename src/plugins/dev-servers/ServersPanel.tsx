@@ -742,6 +742,9 @@ function ServerFormDialog({
               value={form.name}
               onChange={(e) => update({ name: e.target.value })}
               placeholder="web"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
               className="w-full text-[12px] text-text-base bg-bg-input border border-border-strong/50 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors"
             />
           </div>
@@ -771,6 +774,9 @@ function ServerFormDialog({
               value={form.script}
               onChange={(e) => update({ script: e.target.value })}
               placeholder="dev"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
               className="w-full text-[12px] text-text-base bg-bg-input border border-border-strong/50 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors"
             />
             {detectedScripts.length > 0 && (
@@ -804,6 +810,9 @@ function ServerFormDialog({
               onChange={(e) => update({ subdirectory: e.target.value })}
               onBlur={onSubdirectoryBlur}
               placeholder="apps/web"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
               className="w-full text-[12px] text-text-base bg-bg-input border border-border-strong/50 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors"
             />
           </div>
@@ -821,6 +830,9 @@ function ServerFormDialog({
               value={form.port}
               onChange={(e) => update({ port: e.target.value })}
               placeholder="5173"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
               className="w-full text-[12px] text-text-base bg-bg-input border border-border-strong/50 rounded-md px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors"
             />
           </div>
