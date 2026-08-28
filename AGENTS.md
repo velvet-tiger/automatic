@@ -445,4 +445,118 @@ The job: say it so a busy reader gets it on the first pass.
 # Thinking-effort recommendations. 
 
 When laying out next steps — in a plan or in ordinary conversation — classify them and flag where the effort level should differ from the current one. Trigger only when three or more steps are in view and at least one differs; otherwise say nothing. Recommend down for mechanical steps (running a script and reporting output, bulk edits following an already-decided pattern, file moves, regenerating derived artefacts, session-end checklists) and up for steps involving judgement about correctness, client-facing prose, or edits to a source-of-truth record. Name the step, the level, and the reason in a clause. If a step classified as mechanical turns out to need judgement, stop and say so rather than continuing at the lower effort. Recommend a model change only when the difference is large enough to matter on its own — effort is the default lever.
+
+# Working with Helix
+
+Helix is a local work board for concurrent coding agents. It runs on loopback (`127.0.0.1:3847`) and exposes an MCP server. The board UI is for humans. Agents should use the MCP tools as the primary interface.
+
+Helix is the source of truth for shared task state across agents. Do not mirror Helix tasks in issue trackers or in chat unless the user asks.
+
+## Prerequisites
+
+1. Confirm the Helix MCP server is connected. Call `automatic_list_mcp_servers` or inspect the project's MCP config. The server is usually named `helix`.
+2. Confirm the Helix process is running. Default URL: `http://127.0.0.1:3847/mcp`. If tools fail with connection errors, tell the user to start Helix.
+3. Choose a stable actor name and use it on every call. Pass `actor` explicitly in claim and heartbeat tools. Do not rely on MCP `clientInfo.name`. Every Cursor or Claude instance would collapse into one actor. Use something like `cursor-<project>-<purpose>` or the session id the harness provides.
+
+## Session start
+
+When the user assigns work or you need to pick up the next task:
+
+1. Call `projects.list` to find the project whose `workspace_path` matches this repo. Note the project `key` (e.g. `HYDRA`).
+2. Optionally call `projects.get` to see workflow states and live claims.
+3. Call `tasks.claim_next` with your `actor` and the project `key`. This returns the full task in one call, or `null` with a reason (`queue empty`, `project busy`, `blocked`).
+4. If `claim_next` returns nothing useful, call `tasks.search` with `category: "ready"` to inspect the queue before asking the user.
+
+Do not start implementation on a Helix task you have not claimed unless the user explicitly overrides the board.
+
+## While working
+
+- Move the task to an **active** state when you begin (`tasks.update` with `if_version`). State names vary per project. Categories are fixed: `backlog`, `ready`, `active`, `review`, `done`, `cancelled`.
+- Hold the claim for the whole session on that task. One agent per project by default. A second agent on the same repo will get `project_busy` until the first releases or the lease expires.
+- Call `tasks.heartbeat` before the lease expires (default 900s). Heartbeat during long edits, test runs, or subagent work.
+- Every `tasks.update` needs the current `if_version`. On `version_conflict`, call `tasks.get`, read the new version, and reapply your change.
+- Attach work artifacts with `tasks.attach`:
+  - `branch` — git branch name
+  - `pr` — pull request URL
+  - `file` — path in the repo
+  - `url` — any other link
+- Log decisions and blockers with `tasks.comment`. Comments are append-only.
+- Reference tasks by human ref (`HYDRA-14`), never by internal ids. Put refs in commit messages and summaries.
+
+## Task lifecycle
+
+| Phase | Helix action |
+|---|---|
+| Pick up | `tasks.claim_next` or `tasks.claim` |
+| Start | `tasks.update` → active state |
+| Keep alive | `tasks.heartbeat` |
+| Blocked | `tasks.comment`, link blockers with `tasks.link` (`blocks`) |
+| Ready for review | `tasks.update` → review state |
+| Done | `tasks.update` → done state |
+| Hand off | `tasks.release` |
+
+Always `tasks.release` when you stop working on a claimed task, even if you moved it to `review` or `done`. Leases expire lazily, but release makes the board accurate immediately.
+
+## Creating and discovering work
+
+- `tasks.search` returns summaries. Use filters (`project`, `category`, `state`, `text`, `workstream`). Results are paginated.
+- `tasks.get` returns full detail: body, labels, workstream, blockers, subtasks, claim, recent events. Call it before editing.
+- `tasks.create` for new work. Pass `idempotency_key` when retrying a create that may have partially succeeded. Optionally pass `workstream` (key) to group the task.
+- `tasks.update` accepts optional `workstream` (key) or `workstream: null` to clear.
+- `events.since` to catch up on board activity you missed.
+
+## Workstreams
+
+Workstreams group related tasks within a project into logically separate tracks. They are optional on tasks but first-class in Helix.
+
+- Status uses the same categories as tasks: `backlog`, `ready`, `active`, `review`, `done`, `cancelled`.
+- Each workstream has a project-scoped `key` (lowercase slug, e.g. `auth-refactor`).
+- Assign tasks with `workstream` on `tasks.create` or `tasks.update`. Filter with `workstream` on `tasks.search`.
+
+Workstream MCP tools:
+
+- `workstreams.list` — `{ project, status?, include_archived? }`
+- `workstreams.get` — `{ project, key }` (detail + linked tasks)
+- `workstreams.create` — `{ project, key, name, description?, status? }`
+- `workstreams.update` — `{ project, key, name?, description?, status? }`
+- `workstreams.archive` — `{ project, key }`
+
+Resources (read-only snapshots):
+
+- `helix://p/{project_key}` — board snapshot
+- `helix://t/{ref}` — single task detail
+- `helix://ws/{project_key}/{workstream_key}` — workstream detail
+
+## Errors
+
+Helix errors include a recovery message. Follow it.
+
+| Code | What to do |
+|---|---|
+| `version_conflict` | Re-read with `tasks.get`, then retry `tasks.update` |
+| `claim_held` | Another actor holds the claim. Pick another task or wait. |
+| `not_claimant` | You lost the claim. Re-claim or stop editing. |
+| `project_busy` | Another agent holds a live claim on this project. Wait or pick another project. |
+| `blocked` | A blocking task is not done. Finish or unlink it first. |
+| `not_found` | Check the ref and project key. |
+
+`claim_next` returning `null` is not an error. Read the `reason` field.
+
+## Conventions
+
+- **Search before ask.** Check Helix before asking the user what to work on.
+- **One claim, one focus.** Do not claim tasks you will not finish in this session.
+- **Do not fight the filesystem.** Two agents on the same `workspace_path` will conflict in git even on different tasks. Respect project `concurrency`. Separate worktrees need higher concurrency on the project.
+- **Do not duplicate Automatic features.** Automatic features track work inside one project session. Helix coordinates work across agents and repos. Use Helix when the task lives on the shared board. Use Automatic features when the user or project rules expect that instead.
+- **Leave an audit trail.** Comment when you finish, when you block, and when you hand off.
+
+## Session end
+
+Before ending the session:
+
+1. Move the task to the correct state (`review` or `done`).
+2. Attach branch or PR if they exist.
+3. Add a short `tasks.comment` summarising what changed and what is left.
+4. `tasks.release` if you will not continue on this task.
+5. If the lease is still active and you will resume soon, heartbeat instead of release.
 <!-- automatic:rules:end -->
