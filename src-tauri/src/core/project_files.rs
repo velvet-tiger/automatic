@@ -221,6 +221,15 @@ pub fn save_instruction_snapshot(
     let snap_dir = PathBuf::from(directory).join(SNAPSHOT_DIR);
     fs::create_dir_all(&snap_dir).map_err(|e| e.to_string())?;
     let path = snap_dir.join(filename);
+    // Nested filenames (e.g. `.junie/AGENTS.md`, `.clinerules/automatic.md`,
+    // `.github/copilot-instructions.md`) require the parent directory under
+    // the snapshot root to exist before writing.  Without this, the write
+    // fails silently at the caller and drift detection loses its snapshot.
+    if let Some(parent) = path.parent() {
+        if parent != snap_dir {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
     fs::write(&path, user_content).map_err(|e| e.to_string())
 }
 
@@ -616,6 +625,65 @@ mod tests {
 
         let content = resolve_instruction_snapshot_content(&project, "AGENTS.md");
         assert_eq!(content, "# Stored Instructions\n\nKeep this.");
+    }
+
+    // ── Snapshot writes must work for nested filenames (VEL-141) ────────────
+    //
+    // Agents like Junie (`.junie/AGENTS.md`), Cline (`.clinerules/automatic.md`),
+    // and Copilot (`.github/copilot-instructions.md`) place their instruction
+    // file inside a subdirectory.  The snapshot writer must create the parent
+    // directory under `.automatic/snapshots/` before writing, otherwise the
+    // caller's `let _ = save_instruction_snapshot(...)` swallows an I/O error
+    // and drift detection loses its baseline.
+
+    #[test]
+    fn save_and_read_instruction_snapshot_with_nested_filename() {
+        let dir = tmp();
+        let dir_str = dir.path().to_str().unwrap();
+
+        save_instruction_snapshot(dir_str, ".junie/AGENTS.md", "hello").expect("save snapshot");
+
+        let expected_path = dir.path().join(".automatic/snapshots/.junie/AGENTS.md");
+        assert!(
+            expected_path.is_file(),
+            "snapshot should exist at {}",
+            expected_path.display()
+        );
+        assert_eq!(
+            fs::read_to_string(&expected_path).expect("read snapshot"),
+            "hello"
+        );
+
+        let round_trip =
+            read_instruction_snapshot(dir_str, ".junie/AGENTS.md").expect("read snapshot back");
+        assert_eq!(round_trip, "hello");
+    }
+
+    #[test]
+    fn save_and_read_instruction_snapshot_with_flat_filename() {
+        let dir = tmp();
+        let dir_str = dir.path().to_str().unwrap();
+
+        save_instruction_snapshot(dir_str, "AGENTS.md", "hello").expect("save snapshot");
+
+        let expected_path = dir.path().join(".automatic/snapshots/AGENTS.md");
+        assert!(
+            expected_path.is_file(),
+            "snapshot should exist at {}",
+            expected_path.display()
+        );
+
+        let round_trip =
+            read_instruction_snapshot(dir_str, "AGENTS.md").expect("read snapshot back");
+        assert_eq!(round_trip, "hello");
+    }
+
+    #[test]
+    fn read_instruction_snapshot_returns_none_for_missing_nested_filename() {
+        let dir = tmp();
+        let dir_str = dir.path().to_str().unwrap();
+
+        assert!(read_instruction_snapshot(dir_str, ".junie/AGENTS.md").is_none());
     }
 
     #[test]
