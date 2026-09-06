@@ -2181,6 +2181,9 @@ export function ProjectEditor({
       await reloadProjects();
       setIsCreating(false);
       setSelectedName(importedName);
+      // Refresh the WorkspaceSidebar's cached project list so the newly imported
+      // project appears and can be highlighted (same pattern as create + rename).
+      window.dispatchEvent(new CustomEvent("project-added", { detail: { name: importedName } }));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setOrphanError(msg);
@@ -2225,14 +2228,15 @@ export function ProjectEditor({
       setIsRenaming(false);
       return;
     }
+    const oldName = selectedName;
     try {
-      await invoke("rename_project", { oldName: selectedName, newName: trimmed });
+      await invoke("rename_project", { oldName, newName: trimmed });
       // Update localStorage order
       const stored = localStorage.getItem(PROJECT_ORDER_KEY);
       if (stored) {
         try {
           const order: string[] = JSON.parse(stored);
-          const idx = order.indexOf(selectedName);
+          const idx = order.indexOf(oldName);
           if (idx !== -1) {
             order[idx] = trimmed;
             localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(order));
@@ -2244,6 +2248,13 @@ export function ProjectEditor({
       setIsRenaming(false);
       setError(null);
       await reloadProjects();
+      // The WorkspaceSidebar caches its own project list and only refreshes on
+      // project-added / project-removed / groups-updated. Without these dispatches
+      // the sidebar keeps showing the old name and cannot highlight the new one
+      // (activeProjectName follows selectedName correctly, but no row matches
+      // because the cached list is stale). Mirrors the create + delete flows.
+      window.dispatchEvent(new CustomEvent("project-removed", { detail: { name: oldName } }));
+      window.dispatchEvent(new CustomEvent("project-added", { detail: { name: trimmed } }));
       await selectProject(trimmed);
     } catch (err: any) {
       setError(`Failed to rename project: ${err}`);
