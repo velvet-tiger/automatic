@@ -161,11 +161,7 @@ interface PluginRowProps {
 function PluginRow({ plugin, toggling, onToggle }: PluginRowProps) {
   return (
     <div
-      className={`flex items-center justify-between gap-4 px-4 py-3 rounded-lg border transition-all ${
-        plugin.enabled
-          ? "border-border-strong/40 bg-bg-input"
-          : "border-border-strong/20 bg-bg-input-dark opacity-60"
-      }`}
+      className="flex items-center justify-between gap-4 px-4 py-3 rounded-lg border border-border-strong/40 bg-bg-input transition-all"
     >
       {/* Info */}
       <div className="flex-1 min-w-0">
