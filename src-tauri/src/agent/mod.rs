@@ -2116,17 +2116,61 @@ pub(crate) fn merge_global_mcp_entries_json(
     desired: &Map<String, Value>,
     previously_managed: &[String],
 ) -> Result<GlobalMcpWriteReport, String> {
+    merge_global_mcp_entries_json_at(path, &[servers_key], desired, previously_managed)
+}
+
+/// Nested-key-path variant of [`merge_global_mcp_entries_json`], mirroring
+/// [`discover_mcp_servers_from_json_at`] and
+/// [`read_global_mcp_entry_names_json_at`].
+///
+/// Used by dialects whose servers map lives under a nested path (e.g.
+/// `["mcp", "servers"]` for Z Code's CLI config).  The last segment names the
+/// servers map; the preceding segments name intermediate objects that are
+/// created on write and pruned on empty.
+pub(crate) fn merge_global_mcp_entries_json_at(
+    path: &Path,
+    key_path: &[&str],
+    desired: &Map<String, Value>,
+    previously_managed: &[String],
+) -> Result<GlobalMcpWriteReport, String> {
+    assert!(
+        !key_path.is_empty(),
+        "merge_global_mcp_entries_json_at requires at least one key"
+    );
+
     // Read the raw bytes for the no-op comparison as well as the parsed root.
     let original_bytes = if path.exists() {
         fs::read(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?
     } else {
         Vec::new()
     };
-    let mut root = read_mergeable_json_object(path)?;
+    let root = read_mergeable_json_object(path)?;
+
+    // Walk the key path, extracting each intermediate object by value so we can
+    // re-attach it at the end.  A present-but-not-object intermediate is an
+    // error rather than a silent clobber.
+    let mut path_stack: Vec<(String, Map<String, Value>)> = Vec::new();
+    let mut cursor = root;
+    for key in &key_path[..key_path.len() - 1] {
+        let next = match cursor.remove(*key) {
+            Some(Value::Object(m)) => m,
+            Some(_) => {
+                return Err(format!(
+                    "{} contains a non-object value under \"{}\" — refusing to overwrite",
+                    path.display(),
+                    key
+                ));
+            }
+            None => Map::new(),
+        };
+        path_stack.push(((*key).to_string(), cursor));
+        cursor = next;
+    }
+    let servers_key = key_path[key_path.len() - 1];
 
     // Extract the current servers map. Absent -> empty; present-but-not-object
     // -> error rather than clobber.
-    let mut entries: Map<String, Value> = match root.remove(servers_key) {
+    let mut entries: Map<String, Value> = match cursor.remove(servers_key) {
         Some(Value::Object(m)) => m,
         Some(_) => {
             return Err(format!(
@@ -2167,8 +2211,19 @@ pub(crate) fn merge_global_mcp_entries_json(
 
     // ── Re-attach the servers key (or drop it if now empty).
     if !entries.is_empty() {
-        root.insert(servers_key.to_string(), Value::Object(entries));
+        cursor.insert(servers_key.to_string(), Value::Object(entries));
     }
+
+    // ── Re-attach each intermediate object, pruning any that end up empty.
+    //    An empty intermediate is dropped so the file does not accumulate
+    //    stub `{"mcp": {}}` objects after every server is removed.
+    while let Some((key, mut parent)) = path_stack.pop() {
+        if !cursor.is_empty() {
+            parent.insert(key, Value::Object(cursor));
+        }
+        cursor = parent;
+    }
+    let root = cursor;
 
     // ── Serialise + skip-when-unchanged.
     let mut content = serde_json::to_string_pretty(&Value::Object(root))

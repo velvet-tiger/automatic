@@ -2,7 +2,7 @@ use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{discover_mcp_servers_from_json, Agent};
+use super::{discover_mcp_servers_from_json, discover_mcp_servers_from_json_at, Agent};
 
 /// Z Code agent — Z.ai's desktop Agentic Development Environment
 /// (<https://zcode.z.ai>).
@@ -13,10 +13,12 @@ use super::{discover_mcp_servers_from_json, Agent};
 ///   source on Z Code's side, so no legacy migration is needed here.
 /// - **Skills** — Claude-compatible `SKILL.md` folders under `.zcode/skills/`
 ///   (workspace) and `~/.zcode/skills/` (global).
-/// - **MCP** — merged into the shared `.zcode/config.json` under the
-///   `mcpServers` key.  Z Code also accepts a bare server map at the top
-///   level, but Automatic always writes and reads the wrapped shape so other
-///   config keys are never mistaken for servers.
+/// - **MCP** — merged into the shared `.zcode/config.json` under the nested
+///   `mcp.servers` key.  The vendor documents `mcp.servers` as the load-path
+///   key for `.zcode/config.json` (workspace) and `~/.zcode/cli/config.json`
+///   (user).  Z Code's Full-configuration paste box also accepts a bare
+///   server map or a top-level `mcpServers` wrapper, but the file parser only
+///   loads `mcp.servers`, so Automatic reads and writes that shape.
 /// - **Hooks / commands / sub-agents** — deliberately off.  Z Code ignores
 ///   project-level hooks for security (only `~/.zcode/cli/config.json` hooks
 ///   execute), and the workspace-level command and sub-agent paths are
@@ -87,10 +89,11 @@ impl Agent for ZCode {
 
     fn mcp_note(&self) -> Option<&'static str> {
         Some(
-            "Z Code merges MCP servers into the shared .zcode/config.json. \
-             Project-level hooks in that file are ignored by Z Code for \
-             security, and commands and sub-agents are user-level only \
-             (~/.zcode/) \u{2014} Automatic does not sync them.",
+            "Z Code merges MCP servers into the shared .zcode/config.json \
+             under the nested mcp.servers key. Project-level hooks in that \
+             file are ignored by Z Code for security, and commands and \
+             sub-agents are user-level only (~/.zcode/) \u{2014} Automatic \
+             does not sync them.",
         )
     }
 
@@ -139,7 +142,27 @@ impl Agent for ZCode {
             zcode_servers.insert(name.clone(), server);
         }
 
-        root.insert("mcpServers".to_string(), Value::Object(zcode_servers));
+        // Migrate away any legacy top-level `mcpServers` block written by an
+        // older Automatic.  Z Code's file parser never loaded that key, so
+        // dropping it now cleans up dead state; the desired servers are
+        // written at `mcp.servers` where Z Code will actually read them.
+        root.remove("mcpServers");
+
+        // Merge the desired servers into `mcp.servers` while preserving any
+        // other keys inside `mcp` (e.g. future `mcp.timeout`).  A present-
+        // but-not-object `mcp` value is an error rather than a clobber.
+        let mut mcp_obj = match root.remove("mcp") {
+            Some(Value::Object(m)) => m,
+            Some(_) => {
+                return Err(format!(
+                    "{} contains a non-object value under \"mcp\" \u{2014} refusing to overwrite",
+                    path.display()
+                ));
+            }
+            None => Map::new(),
+        };
+        mcp_obj.insert("servers".to_string(), Value::Object(zcode_servers));
+        root.insert("mcp".to_string(), Value::Object(mcp_obj));
 
         let content = serde_json::to_string_pretty(&Value::Object(root))
             .map_err(|e| format!("JSON error: {}", e))?;
@@ -152,7 +175,11 @@ impl Agent for ZCode {
     fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
         let home = super::home_dir()?;
         Some(super::GlobalMcpTarget {
-            path: home.join(".zcode").join("config.json"),
+            // Per the vendor's load-path table, the user-scope native config
+            // Z Code actually reads is `~/.zcode/cli/config.json`, under the
+            // nested `mcp.servers` key.  `~/.zcode/config.json` is not in the
+            // table at all.
+            path: home.join(".zcode").join("cli").join("config.json"),
             reload_note: Some("ZCode connects to new servers at session start."),
         })
     }
@@ -189,7 +216,12 @@ impl Agent for ZCode {
             rendered.insert(name.clone(), server);
         }
 
-        super::merge_global_mcp_entries_json(&target.path, "mcpServers", &rendered, previously_managed)
+        super::merge_global_mcp_entries_json_at(
+            &target.path,
+            &["mcp", "servers"],
+            &rendered,
+            previously_managed,
+        )
     }
 
     // ── Discovery ───────────────────────────────────────────────────────
@@ -199,33 +231,39 @@ impl Agent for ZCode {
         if !path.exists() {
             return Map::new();
         }
-        // Only the wrapped `mcpServers` shape is read.  Z Code tolerates a
-        // bare server map at the top level, but reading that shape here would
-        // misinterpret every other config key as a server definition.
-        discover_mcp_servers_from_json(&path, "mcpServers", |v| v)
+        // Primary: nested `mcp.servers`, the shape Z Code's file parser
+        // actually loads.
+        let mut servers = discover_mcp_servers_from_json_at(&path, &["mcp", "servers"], |v| v);
+        // Legacy fallback: top-level `mcpServers`, written by shipped versions
+        // of Automatic before the key was corrected.  Additive so recovery
+        // still works if a user's registry is wiped; nested entries win.
+        for (name, config) in discover_mcp_servers_from_json(&path, "mcpServers", |v| v) {
+            servers.entry(name).or_insert(config);
+        }
+        servers
     }
 
     fn discover_global_mcp_servers(&self) -> Map<String, Value> {
         let Some(home) = super::home_dir() else {
             return Map::new();
         };
-        // The desktop app and the bundled CLI keep separate config files;
-        // read both.  The helper returns an empty map for missing files.
-        let mut servers = discover_mcp_servers_from_json(
-            &home.join(".zcode").join("config.json"),
-            "mcpServers",
-            |v| v,
-        );
+        // Primary: the CLI config's native `mcp.servers` key — the write
+        // target after the key fix, and what Z Code itself loads.
         let cli_config = home.join(".zcode").join("cli").join("config.json");
+        let mut servers =
+            discover_mcp_servers_from_json_at(&cli_config, &["mcp", "servers"], |v| v);
+        // Legacy fallback: the CLI config under top-level `mcpServers`.
         for (name, config) in discover_mcp_servers_from_json(&cli_config, "mcpServers", |v| v) {
             servers.entry(name).or_insert(config);
         }
-        // Z Code's own docs describe the CLI config's native shape as a
-        // nested `mcp.servers` object rather than top-level `mcpServers`.
-        // Read it additively so either shape surfaces; existing entries win.
-        for (name, config) in
-            super::discover_mcp_servers_from_json_at(&cli_config, &["mcp", "servers"], |v| v)
-        {
+        // Legacy fallback: the desktop config file where earlier Automatic
+        // wrote the global entries.  Not in Z Code's load-path table but a
+        // user's older Automatic-managed servers may still be here.
+        for (name, config) in discover_mcp_servers_from_json(
+            &home.join(".zcode").join("config.json"),
+            "mcpServers",
+            |v| v,
+        ) {
             servers.entry(name).or_insert(config);
         }
         servers
@@ -233,21 +271,23 @@ impl Agent for ZCode {
 
     fn discover_global_mcp_entry_names(&self) -> std::collections::HashSet<String> {
         // Drift compares against the file Automatic actually writes
-        // (`global_mcp_target` -> `~/.zcode/config.json`, `mcpServers` key),
-        // not the multi-source discovery list used for imports.
+        // (`global_mcp_target` -> `~/.zcode/cli/config.json`, `mcp.servers`
+        // key), not the multi-source discovery list used for imports.
         let Some(home) = super::home_dir() else {
             return std::collections::HashSet::new();
         };
-        let path = home.join(".zcode").join("config.json");
-        super::read_global_mcp_entry_names_json(&path, "mcpServers")
+        let path = home.join(".zcode").join("cli").join("config.json");
+        super::read_global_mcp_entry_names_json_at(&path, &["mcp", "servers"])
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
     /// Z Code merges into `.zcode/config.json`, which the user's own settings
-    /// share.  Strip only the `mcpServers` key rather than deleting the whole
-    /// file.  `owned_config_paths` stays empty for the same reason — the
-    /// default cleanup deletes every path listed there.
+    /// share.  Strip only the `mcp.servers` map (pruning `mcp` if it ends up
+    /// empty) and any legacy top-level `mcpServers` block from earlier
+    /// Automatic versions, rather than deleting the whole file.
+    /// `owned_config_paths` stays empty for the same reason — the default
+    /// cleanup deletes every path listed there.
     fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
         let path = dir.join(".zcode").join("config.json");
         if !path.exists() {
@@ -261,7 +301,31 @@ impl Agent for ZCode {
             Ok(Value::Object(m)) => m,
             _ => return vec![],
         };
-        if root.remove("mcpServers").is_none() {
+
+        let mut changed = false;
+
+        // Strip a legacy top-level `mcpServers` block from earlier Automatic
+        // versions.  Z Code never loaded it, but leaving it behind would
+        // still be noise the user did not put there.
+        if root.remove("mcpServers").is_some() {
+            changed = true;
+        }
+
+        // Strip the nested `mcp.servers` map; prune `mcp` if empty.
+        if let Some(Value::Object(mut mcp_obj)) = root.remove("mcp") {
+            if mcp_obj.remove("servers").is_some() {
+                changed = true;
+            }
+            if !mcp_obj.is_empty() {
+                root.insert("mcp".to_string(), Value::Object(mcp_obj));
+            }
+        } else if let Some(other) = root.remove("mcp") {
+            // Preserve a non-object `mcp` value so cleanup never mangles
+            // unrelated user config.
+            root.insert("mcp".to_string(), other);
+        }
+
+        if !changed {
             return vec![];
         }
         if root.is_empty() {
@@ -333,7 +397,7 @@ mod tests {
 
         let written = fs::read_to_string(dir.path().join(".zcode").join("config.json")).unwrap();
         let parsed: Value = serde_json::from_str(&written).unwrap();
-        let server = &parsed["mcpServers"]["github"];
+        let server = &parsed["mcp"]["servers"]["github"];
 
         assert_eq!(server["command"], "npx");
         assert!(
@@ -347,6 +411,10 @@ mod tests {
         assert!(
             server.get("timeout").is_none(),
             "internal `timeout` field should be stripped"
+        );
+        assert!(
+            parsed.get("mcpServers").is_none(),
+            "writer must not leave a top-level `mcpServers` block behind"
         );
     }
 
@@ -367,7 +435,7 @@ mod tests {
         ZCode.write_mcp_config(dir.path(), &servers).unwrap();
         let written = fs::read_to_string(dir.path().join(".zcode").join("config.json")).unwrap();
         let parsed: Value = serde_json::from_str(&written).unwrap();
-        let server = &parsed["mcpServers"]["remote"];
+        let server = &parsed["mcp"]["servers"]["remote"];
 
         assert_eq!(server["type"], "http");
         assert_eq!(server["url"], "https://example.com/mcp");
@@ -386,10 +454,15 @@ mod tests {
 
         // The user's own settings — including any hooks config, which Z Code
         // reads only from the user scope but a user may still keep here.
+        // A pre-existing `mcp.timeout` sibling must survive the servers
+        // write; the servers map itself is Automatic-owned and replaced.
         let existing = json!({
             "hooks": { "enabled": true, "events": {} },
             "theme": "dark",
-            "mcpServers": { "old": { "command": "old" } }
+            "mcp": {
+                "timeout": 30,
+                "servers": { "old": { "command": "old" } }
+            }
         });
         fs::write(
             zcode_dir.join("config.json"),
@@ -407,9 +480,45 @@ mod tests {
         // Existing non-MCP keys preserved
         assert_eq!(parsed["theme"], "dark");
         assert_eq!(parsed["hooks"]["enabled"], true);
-        // MCP servers replaced wholesale
-        assert_eq!(parsed["mcpServers"]["github"]["command"], "npx");
-        assert!(parsed["mcpServers"]["old"].is_null());
+        // Other keys inside `mcp` survive
+        assert_eq!(parsed["mcp"]["timeout"], 30);
+        // MCP servers replaced wholesale at the nested key
+        assert_eq!(parsed["mcp"]["servers"]["github"]["command"], "npx");
+        assert!(parsed["mcp"]["servers"]["old"].is_null());
+    }
+
+    #[test]
+    fn test_write_migrates_legacy_mcpservers_block() {
+        // Shipped Automatic wrote to the wrong key.  A next write must drop
+        // that legacy block so Z Code stops carrying dead config and there is
+        // only one servers list to look at.
+        let dir = tempdir().unwrap();
+        let zcode_dir = dir.path().join(".zcode");
+        fs::create_dir_all(&zcode_dir).unwrap();
+
+        let existing = json!({
+            "theme": "dark",
+            "mcpServers": { "legacy-github": { "command": "npx" } }
+        });
+        fs::write(
+            zcode_dir.join("config.json"),
+            serde_json::to_string_pretty(&existing).unwrap(),
+        )
+        .unwrap();
+
+        let mut servers = Map::new();
+        servers.insert("github".to_string(), json!({"command": "npx"}));
+        ZCode.write_mcp_config(dir.path(), &servers).unwrap();
+
+        let content = fs::read_to_string(zcode_dir.join("config.json")).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+
+        assert!(
+            parsed.get("mcpServers").is_none(),
+            "legacy top-level mcpServers block must be dropped on next write"
+        );
+        assert_eq!(parsed["theme"], "dark");
+        assert_eq!(parsed["mcp"]["servers"]["github"]["command"], "npx");
     }
 
     #[test]
@@ -439,7 +548,7 @@ mod tests {
 
         let existing = json!({
             "theme": "dark",
-            "mcpServers": { "auto": { "command": "automatic" } }
+            "mcp": { "servers": { "auto": { "command": "automatic" } } }
         });
         fs::write(
             zcode_dir.join("config.json"),
@@ -452,7 +561,62 @@ mod tests {
 
         let content = fs::read_to_string(zcode_dir.join("config.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
-        assert!(parsed["mcpServers"].is_null());
+        assert!(
+            parsed.get("mcp").is_none(),
+            "empty `mcp` object should be pruned after stripping `servers`"
+        );
+        assert_eq!(parsed["theme"], "dark");
+    }
+
+    #[test]
+    fn test_cleanup_preserves_other_mcp_keys() {
+        let dir = tempdir().unwrap();
+        let zcode_dir = dir.path().join(".zcode");
+        fs::create_dir_all(&zcode_dir).unwrap();
+
+        let existing = json!({
+            "mcp": {
+                "timeout": 30,
+                "servers": { "auto": { "command": "automatic" } }
+            }
+        });
+        fs::write(
+            zcode_dir.join("config.json"),
+            serde_json::to_string_pretty(&existing).unwrap(),
+        )
+        .unwrap();
+
+        let removed = ZCode.cleanup_mcp_config(dir.path());
+        assert_eq!(removed.len(), 1);
+
+        let content = fs::read_to_string(zcode_dir.join("config.json")).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["mcp"]["timeout"], 30);
+        assert!(parsed["mcp"].get("servers").is_none());
+    }
+
+    #[test]
+    fn test_cleanup_strips_legacy_mcpservers_block() {
+        let dir = tempdir().unwrap();
+        let zcode_dir = dir.path().join(".zcode");
+        fs::create_dir_all(&zcode_dir).unwrap();
+
+        let existing = json!({
+            "theme": "dark",
+            "mcpServers": { "legacy": { "command": "old" } }
+        });
+        fs::write(
+            zcode_dir.join("config.json"),
+            serde_json::to_string_pretty(&existing).unwrap(),
+        )
+        .unwrap();
+
+        let removed = ZCode.cleanup_mcp_config(dir.path());
+        assert_eq!(removed.len(), 1);
+
+        let content = fs::read_to_string(zcode_dir.join("config.json")).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+        assert!(parsed.get("mcpServers").is_none());
         assert_eq!(parsed["theme"], "dark");
     }
 
@@ -463,7 +627,7 @@ mod tests {
         fs::create_dir_all(&zcode_dir).unwrap();
 
         let existing = json!({
-            "mcpServers": { "auto": { "command": "automatic" } }
+            "mcp": { "servers": { "auto": { "command": "automatic" } } }
         });
         fs::write(
             zcode_dir.join("config.json"),
@@ -491,12 +655,12 @@ mod tests {
     }
 
     #[test]
-    fn test_discover_mcp_servers_reads_mcpservers_key() {
+    fn test_discover_mcp_servers_reads_nested_key() {
         let dir = tempdir().unwrap();
         fs::create_dir(dir.path().join(".zcode")).unwrap();
         fs::write(
             dir.path().join(".zcode").join("config.json"),
-            r#"{ "mcpServers": { "github": { "command": "npx", "args": ["@modelcontextprotocol/server-github"] } } }"#,
+            r#"{ "mcp": { "servers": { "github": { "command": "npx", "args": ["@modelcontextprotocol/server-github"] } } } }"#,
         )
         .unwrap();
 
@@ -506,12 +670,46 @@ mod tests {
     }
 
     #[test]
+    fn test_discover_mcp_servers_reads_legacy_flat_key() {
+        // A user upgrading from a shipped-with-bug version may still have
+        // servers in top-level `mcpServers`.  Read them additively so the
+        // registry can be recovered from that on-disk state.
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".zcode")).unwrap();
+        fs::write(
+            dir.path().join(".zcode").join("config.json"),
+            r#"{ "mcpServers": { "legacy": { "command": "old" } } }"#,
+        )
+        .unwrap();
+
+        let servers = ZCode.discover_mcp_servers(dir.path());
+        assert!(servers.contains_key("legacy"));
+    }
+
+    #[test]
+    fn test_discover_prefers_nested_on_collision() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".zcode")).unwrap();
+        fs::write(
+            dir.path().join(".zcode").join("config.json"),
+            r#"{
+                "mcp": { "servers": { "gh": { "command": "new" } } },
+                "mcpServers": { "gh": { "command": "old" } }
+            }"#,
+        )
+        .unwrap();
+
+        let servers = ZCode.discover_mcp_servers(dir.path());
+        assert_eq!(servers["gh"]["command"], "new");
+    }
+
+    #[test]
     fn test_discover_ignores_bare_map_shape() {
         let dir = tempdir().unwrap();
         fs::create_dir(dir.path().join(".zcode")).unwrap();
-        // Z Code accepts this shape, but Automatic deliberately does not read
-        // it: without the `mcpServers` wrapper, other config keys would be
-        // indistinguishable from server definitions.
+        // Z Code's Full-configuration paste box accepts this shape, but the
+        // file parser does not, and reading it here would misinterpret other
+        // config keys as server definitions.
         fs::write(
             dir.path().join(".zcode").join("config.json"),
             r#"{ "some-server": { "command": "x" }, "theme": "dark" }"#,

@@ -435,9 +435,18 @@ fn seed_foreign_entry_for(agent_id: &str, path: &std::path::Path) {
                 }
             }
         }),
-        // ZCode (nested — mcp.servers).
-        // NOTE: ZCode's discover walks `mcp.servers` but the writer targets
-        // top-level `mcpServers` per the plan.  Test the writer's shape.
+        // ZCode: nested `mcp.servers` per its documented load-path.
+        "zcode" => json!({
+            "mcp": {
+                "servers": {
+                    "foreign-server": {
+                        "command": "foreign-command",
+                        "args": ["--flag"]
+                    }
+                }
+            }
+        }),
+        // Every other JSON dialect uses a top-level `mcpServers` key.
         _ => json!({
             "mcpServers": {
                 "foreign-server": {
@@ -464,15 +473,27 @@ fn extract_foreign_slice(_content: &str, _agent_id: &str) -> String {
 /// managed names.
 fn inject_foreign_into_json(raw: &str, agent_id: &str, name: &str) -> String {
     let mut root: Value = serde_json::from_str(raw).unwrap_or(Value::Object(Map::new()));
-    let key = match agent_id {
-        "opencode" | "kilo" => "mcp",
-        "copilot" => "servers",
-        "zed" => "context_servers",
-        _ => "mcpServers",
+    // Nested paths for dialects whose servers map is not at the root.
+    let key_path: &[&str] = match agent_id {
+        "opencode" | "kilo" => &["mcp"],
+        "copilot" => &["servers"],
+        "zed" => &["context_servers"],
+        "zcode" => &["mcp", "servers"],
+        _ => &["mcpServers"],
     };
-    if let Some(obj) = root.as_object_mut() {
-        let entries = obj
-            .entry(key.to_string())
+    if let Some(mut cursor) = root.as_object_mut() {
+        for key in &key_path[..key_path.len() - 1] {
+            let next = cursor
+                .entry((*key).to_string())
+                .or_insert_with(|| Value::Object(Map::new()));
+            cursor = match next.as_object_mut() {
+                Some(m) => m,
+                None => return raw.to_string(),
+            };
+        }
+        let leaf_key = key_path[key_path.len() - 1];
+        let entries = cursor
+            .entry(leaf_key.to_string())
             .or_insert_with(|| Value::Object(Map::new()));
         if let Some(entries_obj) = entries.as_object_mut() {
             let entry = match agent_id {
