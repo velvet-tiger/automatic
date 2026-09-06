@@ -95,6 +95,7 @@
 
   --text-base: #fafafa;
   --text-muted: #d4d4d8;
+  --text-placeholder: #a1a1aa; /* Zinc-400 — 5.2:1 on bg-input #2e2e34, meets WCAG AA */
 
   --success: #22c55e;
   --success-light: #4ade80;
@@ -165,6 +166,7 @@
 
   --text-base: #ffffff;
   --text-muted: #c8c8c8;
+  --text-placeholder: #a8a8a8; /* Mid-grey — ~5.5:1 on bg-input #2e2e34 in monochrome theme */
 
   --success: #a3a3a3;
   --success-light: #d4d4d4;
@@ -215,6 +217,7 @@
 
   --text-base: #fafafa;
   --text-muted: #d4d4d8;
+  --text-placeholder: #a1a1aa; /* Zinc-400 — high contrast on cyberpunk bg-input #18181b */
 
   --success: #00ff9d;
   --success-light: #6ee7b7;
@@ -277,6 +280,7 @@
 
   --text-base: #fff1f2;
   --text-muted: #d8b4fe;
+  --text-placeholder: #c8c8d0; /* Neutral lavender — ~6.4:1 on synthwave bg-input #4c1d95 */
 
   --success: #34d399;
   --success-light: #6ee7b7;
@@ -329,6 +333,7 @@
 
   --text-base: #fdf8f6;
   --text-muted: #b8a9a4;
+  --text-placeholder: #a89a95; /* Warm-tinted grey — meets WCAG AA on coral bg-input #2a2320 */
 
   --success: #22c55e;
   --success-light: #4ade80;
@@ -381,6 +386,7 @@
 
   --text-base: #0f172a;
   --text-muted: #475569;
+  --text-placeholder: #64748b; /* Slate-500 — 4.85:1 on white bg-input, meets WCAG AA */
 
   --success: #10b981;
   --success-light: #34d399;
@@ -439,6 +445,7 @@
 
   --text-base: #0a0a0a;
   --text-muted: #5a5a5a;
+  --text-placeholder: #6b7280; /* Gray-500 — 4.83:1 on white bg-input, meets WCAG AA */
 
   --success: #5a5a5a;
   --success-light: #8a8a8a;
@@ -492,6 +499,7 @@
 
   --text-base: #111827;    /* Gray-900 — 16:1 on white */
   --text-muted: #374151;   /* Gray-700 — 10:1 on white */
+  --text-placeholder: #6b7280; /* Gray-500 — 4.6:1 on white, meets WCAG SC 1.4.3 */
 
   /* Semantic: dark enough to read as text; distinguishable in full grayscale */
   --success: #166534;      /* Green-800 — 7.2:1 on white */
@@ -519,6 +527,16 @@
    Gray-500 (#6b7280) is 4.6:1 on white — WCAG 2.2 SC 1.4.3 ✓ */
 [data-theme="accessible"] ::placeholder {
   color: #6b7280;
+}
+
+/* Global placeholder color for every other theme. The component-level Tailwind
+   classes (`placeholder-text-muted/40..60`) render placeholders at ~1.7:1 on
+   white and ~2.7:1 on the default dark bg — well below WCAG 1.4.3 (4.5:1).
+   This unlayered rule pulls the per-theme --text-placeholder token and wins
+   over Tailwind's layered utilities on cascade at equal specificity, so no
+   sweep of per-component classes is needed. */
+::placeholder {
+  color: var(--text-placeholder);
 }
 
 [data-theme="light"] {
@@ -553,6 +571,7 @@
 
   --text-base: #09090b;
   --text-muted: #52525b;
+  --text-placeholder: #71717a; /* Zinc-500 — 4.83:1 on white bg-input, meets WCAG AA */
 
   --success: #22c55e;
   --success-light: #4ade80;
