@@ -54,10 +54,12 @@ pub struct ProjectProblemsReport {
 /// Check for known configuration problems in a project.
 ///
 /// Currently detects:
-/// - MCP server names in the project's `.mcp.json` that also exist at the
-///   Claude Code user scope (`~/.claude.json`).  Claude Code gives the
-///   user-scoped entry priority and silently ignores the project-local one,
-///   which can cause unexpected behaviour.
+/// - MCP server names in the project's managed list (`project.mcp_servers`)
+///   that also exist at the Claude Code user scope (`~/.claude.json`).  Claude
+///   Code gives the user-scoped entry priority and silently ignores the
+///   project-local one, which can cause unexpected behaviour.  Only names the
+///   project actually manages are surfaced, so removing an item from the list
+///   in the UI clears its warning.
 ///
 /// This is a read-only operation — nothing is written.
 pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport, String> {
@@ -78,17 +80,26 @@ pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport
         });
     }
 
+    // Only consider servers Automatic actually manages for this project.
+    // Reading `.mcp.json` from disk would surface legacy or user-authored
+    // entries the project's list no longer references — and in Silent mode
+    // Automatic never touches root `.mcp.json` at all, so a stale entry there
+    // could never be cleared through the UI.  Tying the check to
+    // `project.mcp_servers` keeps the warning actionable: removing the item
+    // from the list clears it.
+    let managed_server_names: HashSet<String> = project.mcp_servers.iter().cloned().collect();
+    if managed_server_names.is_empty() {
+        return Ok(ProjectProblemsReport {
+            has_problems: false,
+            problems,
+        });
+    }
+
     // Check each agent that supports project-local MCP config.
     for agent_id in &project.agents {
         let Some(agent_instance) = agent::from_id(agent_id) else {
             continue;
         };
-
-        // Read this agent's project-local MCP servers.
-        let project_servers = agent_instance.discover_mcp_servers(&dir);
-        if project_servers.is_empty() {
-            continue;
-        }
 
         // Read user-scoped (global) MCP servers for the same agent.
         let global_servers = agent_instance.discover_global_mcp_servers();
@@ -96,7 +107,7 @@ pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport
             continue;
         }
 
-        // Find names that appear in both the project-local and user-scoped configs.
+        // Find server names in the project's list that also appear at user scope.
         //
         // Entries Automatic manages at global scope are deliberately excluded —
         // they render byte-identical to the project entry (both come from the
@@ -107,12 +118,13 @@ pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport
         // (a `claude mcp add --scope user` the user ran themselves) still
         // conflict and are still surfaced.
         let managed_global = crate::sync::global_mcp::managed_entries_for(agent_id);
-        let conflicts: Vec<String> = project_servers
-            .keys()
+        let mut conflicts: Vec<String> = managed_server_names
+            .iter()
             .filter(|name| global_servers.contains_key(*name))
             .filter(|name| !managed_global.iter().any(|m| m == *name))
             .cloned()
             .collect();
+        conflicts.sort();
 
         if conflicts.is_empty() {
             continue;
@@ -2332,5 +2344,118 @@ mod tests {
                 .map(|f| format!("{} ({})", f.path, f.reason))
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// The MCP user-scope conflict check reports on names the project actually
+    /// manages, not on whatever `.mcp.json` happens to contain.
+    ///
+    /// This is the observable fix for the Silent-mode bug where removing a
+    /// server from the list did not clear the warning: in Silent mode Automatic
+    /// never writes `.mcp.json`, so a legacy entry on disk would flag forever.
+    /// Anchoring the check to `project.mcp_servers` makes removal from the list
+    /// clear the warning in every mode.
+    #[test]
+    fn check_project_problems_ignores_disk_entries_not_in_managed_list() {
+        use crate::core::{with_test_home, Project};
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+
+        // Legacy `.mcp.json` on disk still references `github` — but the
+        // project's managed list no longer does (the user removed it).
+        let legacy_mcp = serde_json::json!({
+            "mcpServers": {
+                "automatic": {
+                    "command": "/tmp/automatic",
+                    "args": ["mcp-serve"]
+                },
+                "github": {
+                    "command": "docker",
+                    "args": ["run", "ghcr.io/github/github-mcp-server:0.31.0"]
+                }
+            }
+        });
+        fs::write(
+            project_dir.path().join(".mcp.json"),
+            serde_json::to_string_pretty(&legacy_mcp).unwrap(),
+        )
+        .unwrap();
+
+        // User-scope `~/.claude.json` also has a `github` entry.
+        let user_claude = serde_json::json!({
+            "mcpServers": {
+                "github": {
+                    "command": "docker",
+                    "args": ["run", "ghcr.io/github/github-mcp-server:0.31.0"]
+                }
+            }
+        });
+        fs::write(
+            home.path().join(".claude.json"),
+            serde_json::to_string_pretty(&user_claude).unwrap(),
+        )
+        .unwrap();
+
+        let project = Project {
+            name: "test-a".to_string(),
+            directory: project_dir.path().to_string_lossy().to_string(),
+            agents: vec!["claude".to_string()],
+            mcp_servers: vec!["automatic".to_string()],
+            ..Default::default()
+        };
+
+        let report = with_test_home(home.path().to_path_buf(), || {
+            check_project_problems(&project).expect("problems check should succeed")
+        });
+
+        assert!(
+            !report.has_problems,
+            "removing `github` from the managed list must clear the warning, \
+             but the check still reported: {:?}",
+            report
+                .problems
+                .iter()
+                .map(|p| p.title.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Sanity check for the positive case: when the project's managed list
+    /// still names a server, and that server also exists at user scope, the
+    /// check reports it.  Guards against a filter that quietly hides every
+    /// conflict.
+    #[test]
+    fn check_project_problems_flags_managed_server_that_conflicts_with_user_scope() {
+        use crate::core::{with_test_home, Project};
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+
+        let user_claude = serde_json::json!({
+            "mcpServers": {
+                "github": { "command": "docker", "args": ["run", "x"] }
+            }
+        });
+        fs::write(
+            home.path().join(".claude.json"),
+            serde_json::to_string_pretty(&user_claude).unwrap(),
+        )
+        .unwrap();
+
+        let project = Project {
+            name: "test-a".to_string(),
+            directory: project_dir.path().to_string_lossy().to_string(),
+            agents: vec!["claude".to_string()],
+            mcp_servers: vec!["automatic".to_string(), "github".to_string()],
+            ..Default::default()
+        };
+
+        let report = with_test_home(home.path().to_path_buf(), || {
+            check_project_problems(&project).expect("problems check should succeed")
+        });
+
+        assert!(report.has_problems, "expected a user-scope conflict for github");
+        assert_eq!(report.problems.len(), 1);
+        assert_eq!(report.problems[0].resources, vec!["github".to_string()]);
     }
 }

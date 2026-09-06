@@ -800,6 +800,19 @@ export function ProjectEditor({
     return () => clearInterval(interval);
   }, [selectedName, project?.directory, project?.agents.length, isCreating]);
 
+  // Re-fetch just the problems report for the given project name, so
+  // mutations that change what would appear in the banner (adding, removing,
+  // or toggling MCP servers) update the UI immediately rather than waiting
+  // for the next 15-second polling tick.
+  const refreshProblemsReport = async (name: string) => {
+    try {
+      const raw = await invoke<string>("check_project_problems", { name });
+      setProblemsReport(JSON.parse(raw) as ProjectProblemsReport);
+    } catch {
+      // Same silent policy as the polling loop.
+    }
+  };
+
   // Clean up any in-progress wizard stub when the component unmounts (e.g. user
   // navigates to a different top-level section via the sidebar).
   useEffect(() => {
@@ -2312,7 +2325,9 @@ export function ProjectEditor({
         disabled_mcp_servers: (project.disabled_mcp_servers || []).filter((name) => name !== item.trim()),
       };
       setProject(nextProject);
-      return await saveProjectSnapshot(nextProject);
+      const ok = await saveProjectSnapshot(nextProject);
+      if (pName) refreshProblemsReport(pName);
+      return ok;
     }
     return true;
   };
@@ -2336,7 +2351,9 @@ export function ProjectEditor({
           disabled_mcp_servers: (project.disabled_mcp_servers || []).filter((name) => name !== removed),
         };
         setProject(nextProject);
-        saveProjectSnapshot(nextProject);
+        saveProjectSnapshot(nextProject).then(() => {
+          if (pName) refreshProblemsReport(pName);
+        });
       }
     }
   };
@@ -2357,6 +2374,7 @@ export function ProjectEditor({
     setProject(nextProject);
     setDirty(true);
     await saveProjectSnapshot(nextProject);
+    if (selectedName) refreshProblemsReport(selectedName);
   };
 
   const handleDismissRecommendation = async (id: number) => {
