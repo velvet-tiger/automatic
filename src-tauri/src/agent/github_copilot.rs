@@ -8,8 +8,10 @@ use super::{discover_mcp_servers_from_json, Agent, ManagedPath};
 /// `<project>/.agents/skills/<name>/SKILL.md`.
 ///
 /// GitHub Copilot uses VS Code's MCP configuration format, which stores
-/// servers under the `"servers"` key (not `"mcpServers"`).  stdio entries
-/// omit the `"type"` field; http entries include `"type": "http"`.
+/// servers under the `"servers"` key (not `"mcpServers"`).  VS Code's
+/// configuration reference lists `"type"` as required, so every entry
+/// carries it: stdio entries write `"type": "stdio"`, http entries
+/// `"type": "http"`.
 pub struct GitHubCopilot;
 
 impl Agent for GitHubCopilot {
@@ -142,8 +144,9 @@ impl Agent for GitHubCopilot {
         // editor config, and writing over it would destroy the lot.
         let mut root = super::read_mergeable_json_object(&path)?;
 
-        // Build the servers object — VS Code format uses "servers" key,
-        // stdio entries omit "type", http entries keep "type": "http".
+        // Build the servers object — VS Code format uses "servers" key.
+        // Every entry keeps "type" (VS Code's reference lists it as
+        // required); stdio entries additionally strip "enabled"/"timeout".
         let mut copilot_servers = Map::new();
 
         for (name, config) in servers {
@@ -155,7 +158,8 @@ impl Agent for GitHubCopilot {
             let mut server = config.clone();
             if let Some(obj) = server.as_object_mut() {
                 if transport == "stdio" {
-                    obj.remove("type");
+                    // VS Code's MCP configuration reference lists `type` as required.
+                    obj.insert("type".to_string(), Value::String("stdio".to_string()));
                     obj.remove("enabled");
                     obj.remove("timeout");
                 }
@@ -192,9 +196,10 @@ impl Agent for GitHubCopilot {
             );
         };
 
-        // Mirror the project writer's VS Code dialect: strip type/enabled/timeout
-        // for stdio entries; leave http entries otherwise alone.  The servers
-        // map is keyed under `"servers"`, not `"mcpServers"`.
+        // Mirror the project writer's VS Code dialect: write `"type": "stdio"`
+        // and strip enabled/timeout for stdio entries; leave http entries
+        // otherwise alone.  The servers map is keyed under `"servers"`, not
+        // `"mcpServers"`.
         let mut rendered = Map::new();
         for (name, config) in desired {
             let transport = config
@@ -205,7 +210,8 @@ impl Agent for GitHubCopilot {
             let mut server = config.clone();
             if let Some(obj) = server.as_object_mut() {
                 if transport == "stdio" {
-                    obj.remove("type");
+                    // VS Code's MCP configuration reference lists `type` as required.
+                    obj.insert("type".to_string(), Value::String("stdio".to_string()));
                     obj.remove("enabled");
                     obj.remove("timeout");
                 }
@@ -445,8 +451,12 @@ mod tests {
         let content = fs::read_to_string(dir.path().join(".vscode/mcp.json")).unwrap();
         let parsed: Value = serde_json::from_str(&content).unwrap();
 
-        // Uses "servers" key, not "mcpServers"
-        assert!(parsed["servers"]["automatic"]["type"].is_null());
+        // Uses "servers" key, not "mcpServers".  VS Code's MCP configuration
+        // reference lists `type` as required, so stdio entries carry it too.
+        assert_eq!(
+            parsed["servers"]["automatic"]["type"].as_str().unwrap(),
+            "stdio"
+        );
         assert!(parsed["servers"]["automatic"]["command"]
             .as_str()
             .unwrap()
