@@ -2,12 +2,12 @@
 //!
 //! Every agent writes MCP servers in its own dialect: `mcpServers` in a
 //! dedicated file (Claude Code, Cursor, Junie, Kiro, Droid, Pi, Kimi Code,
-//! Antigravity), `mcpServers` merged into a shared settings file (Gemini
-//! CLI, Z Code), `servers` in `.vscode/mcp.json` (GitHub Copilot),
+//! Antigravity, Warp), `mcpServers` merged into a shared settings file
+//! (Gemini CLI, Z Code), `servers` in `.vscode/mcp.json` (GitHub Copilot),
 //! `context_servers` in `.zed/settings.json` (Zed), the OpenCode `mcp`
 //! dialect (OpenCode's `opencode.json`, Kilo's `kilo.json`), TOML for Codex
 //! CLI, and nothing at all for the agents that keep MCP config outside the
-//! project (Cline, Goose, Warp).
+//! project (Cline, Goose).
 //!
 //! The table-driven tests pin the invariants that must hold for *every*
 //! dialect, so a new agent cannot be registered in [`all()`] without
@@ -704,11 +704,7 @@ fn a_malformed_target_config_is_an_error_not_a_clobber() {
 fn agents_without_project_level_mcp_config_write_nothing() {
     // These agents keep MCP config in global CLI state or app settings; a sync
     // must not scatter stray files into the project for them.
-    for agent in [
-        &Cline as &dyn Agent,
-        &Goose as &dyn Agent,
-        &Warp as &dyn Agent,
-    ] {
+    for agent in [&Cline as &dyn Agent, &Goose as &dyn Agent] {
         let dir = tempdir().unwrap();
         let prepared = prepare_mcp_servers(agent, &canonical_servers(), dir.path());
         let path = agent

@@ -342,7 +342,7 @@ kimi | Kimi Code | AGENTS.md | skills,instructions,mcp_servers,global_mcp_server
 kiro | Kiro (Beta) | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers,agents | .kiro/agents | - | .kiro/skills
 opencode | OpenCode | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers,agents,commands | .opencode/agents | .opencode/commands | .agents/skills
 pi | Pi (Beta) | AGENTS.md | skills,instructions,mcp_servers,agents | .pi/agents | - | .pi/skills
-warp | Warp (Beta) | AGENTS.md | skills,instructions,global_mcp_servers | - | - | .agents/skills
+warp | Warp (Beta) | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers | - | - | .agents/skills
 zcode | Z Code (Beta) | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers | - | - | .zcode/skills
 zed | Zed (Beta) | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers | - | - | .agents/skills";
 

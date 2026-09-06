@@ -1,4 +1,5 @@
 use serde_json::{Map, Value};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{discover_mcp_servers_from_json, Agent, AgentCapabilities};
@@ -17,9 +18,19 @@ use super::{discover_mcp_servers_from_json, Agent, AgentCapabilities};
 /// key), and also auto-discovers Claude Code's `~/.claude.json` and Codex's
 /// `~/.codex/config.toml`.  File-based servers need one-time approval inside
 /// Warp before they start.  UI-added servers live in Warp Drive
-/// (account-scoped, no local file).  Automatic does not yet write Warp's
-/// files — it only discovers the global one.
+/// (account-scoped, no local file).
+///
+/// Both files use the Claude-compatible dialect: stdio entries are
+/// `{command, args, env}` (no `type`), HTTP/SSE entries carry `type` plus
+/// `url` and optional `headers`.  Warp additionally understands a
+/// `working_directory` field; it is left alone on write and imported
+/// unchanged on discovery.
 pub struct Warp;
+
+/// Project-scope MCP config file: `<project>/.warp/.mcp.json`.
+fn project_mcp_config_path(dir: &Path) -> PathBuf {
+    dir.join(".warp").join(".mcp.json")
+}
 
 impl Agent for Warp {
     // ── Identity ────────────────────────────────────────────────────────
@@ -71,7 +82,6 @@ impl Agent for Warp {
 
     fn capabilities(&self) -> AgentCapabilities {
         AgentCapabilities {
-            mcp_servers: false,
             agents: false,
             global_mcp_servers: true,
             ..Default::default()
@@ -82,35 +92,78 @@ impl Agent for Warp {
 
     fn mcp_note(&self) -> Option<&'static str> {
         Some(
-            "Warp manages project MCP through its own UI. Automatic can write global MCP config \
-             to ~/.warp/.mcp.json (requires one-time approval in Warp). Note: Warp also \
-             auto-ingests ~/.claude.json and ~/.codex/config.toml, so servers already assigned \
-             to Claude Code or Codex may already appear.",
+            "Warp reads MCP servers from .warp/.mcp.json (project) and ~/.warp/.mcp.json \
+             (global); both files need one-time approval inside Warp (Settings \u{203a} AI \u{203a} \
+             MCP servers) before a server starts. Warp also auto-discovers Claude Code and \
+             Codex configs, so servers Automatic writes for those agents may already appear \
+             in Warp.",
         )
     }
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
-    /// Only `WARP.md` is Warp's alone.  `AGENTS.md` is deliberately absent:
-    /// it is shared with Codex, Cursor, OpenCode and four others, and the
-    /// default `cleanup_mcp_config` deletes every path listed here — so
-    /// removing Warp from a project used to delete the instruction file every
-    /// other agent still reads.
+    /// `WARP.md` and `.warp/.mcp.json` are Warp's alone.  `AGENTS.md` is
+    /// deliberately absent: it is shared with Codex, Cursor, OpenCode and four
+    /// others, and the default `cleanup_mcp_config` deletes every path listed
+    /// here — so removing Warp from a project used to delete the instruction
+    /// file every other agent still reads.
     fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
-        vec![dir.join("WARP.md")]
+        vec![dir.join("WARP.md"), project_mcp_config_path(dir)]
     }
 
     // ── Config writing ──────────────────────────────────────────────────
 
-    /// Warp does not expose a writable project-level MCP config file.
-    /// This is intentionally a no-op; MCP servers must be added manually
-    /// inside the Warp app.
-    fn write_mcp_config(
-        &self,
-        _dir: &Path,
-        _servers: &Map<String, Value>,
-    ) -> Result<String, String> {
-        Ok(String::new())
+    fn mcp_merge_inputs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![project_mcp_config_path(dir)]
+    }
+
+    fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
+        // Warp reads .warp/.mcp.json in the Claude-compatible dialect (root
+        // key `mcpServers`, stdio entries without a `type`).  The file is
+        // dedicated to MCP config today, but the writer merges rather than
+        // clobbers so any top-level key a user adds later survives.
+        let path = project_mcp_config_path(dir);
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create {}: {}", parent.display(), e))?;
+            }
+        }
+
+        // A file that exists but does not parse is an error rather than an
+        // empty starting point: overwriting it would destroy every key the
+        // user has in there.
+        let mut root = super::read_mergeable_json_object(&path)?;
+
+        // Claude-compatible dialect: strip `type`/`enabled`/`timeout` from
+        // stdio entries; leave HTTP/SSE entries otherwise untouched (the
+        // Warp-specific `working_directory` field is harmless).
+        let mut warp_servers = Map::new();
+        for (name, config) in servers {
+            let transport = config
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdio");
+
+            let mut server = config.clone();
+            if let Some(obj) = server.as_object_mut() {
+                if transport == "stdio" {
+                    obj.remove("type");
+                    obj.remove("enabled");
+                    obj.remove("timeout");
+                }
+            }
+            warp_servers.insert(name.clone(), server);
+        }
+
+        root.insert("mcpServers".to_string(), Value::Object(warp_servers));
+
+        let content = serde_json::to_string_pretty(&Value::Object(root))
+            .map_err(|e| format!("JSON error: {}", e))?;
+        fs::write(&path, content)
+            .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+
+        Ok(path.display().to_string())
     }
 
     fn global_mcp_target(&self) -> Option<super::GlobalMcpTarget> {
@@ -150,11 +203,14 @@ impl Agent for Warp {
 
     // ── Discovery ───────────────────────────────────────────────────────
 
-    /// Automatic does not sync a project-level Warp MCP file, so project
-    /// discovery is empty.  (Warp itself reads `.warp/.mcp.json`, but writing
-    /// it is future work — see the MCP note above.)
-    fn discover_mcp_servers(&self, _dir: &Path) -> Map<String, Value> {
-        Map::new()
+    /// Read `<project>/.warp/.mcp.json` in the Claude-compatible dialect.
+    /// Absent file returns an empty map.
+    fn discover_mcp_servers(&self, dir: &Path) -> Map<String, Value> {
+        let path = project_mcp_config_path(dir);
+        if !path.exists() {
+            return Map::new();
+        }
+        discover_mcp_servers_from_json(&path, "mcpServers", identity)
     }
 
     fn discover_global_mcp_servers(&self) -> Map<String, Value> {
@@ -208,21 +264,8 @@ mod tests {
     }
 
     #[test]
-    fn test_write_mcp_config_is_noop() {
-        let dir = tempdir().unwrap();
-        let mut servers = Map::new();
-        servers.insert(
-            "github".to_string(),
-            serde_json::json!({"command": "npx", "args": ["@modelcontextprotocol/server-github"]}),
-        );
-
-        let result = Warp.write_mcp_config(dir.path(), &servers);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "");
-
-        // No files should have been written
-        let entries: Vec<_> = fs::read_dir(dir.path()).unwrap().collect();
-        assert!(entries.is_empty());
+    fn test_mcp_capability_enabled() {
+        assert!(Warp.capabilities().mcp_servers);
     }
 
     #[test]
@@ -231,14 +274,162 @@ mod tests {
     }
 
     #[test]
-    fn test_owned_config_paths_covers_only_the_warp_specific_file() {
+    fn test_owned_config_paths_includes_warp_md_and_project_mcp_file() {
         let dir = tempdir().unwrap();
         let paths = Warp.owned_config_paths(dir.path());
         assert!(paths.contains(&dir.path().join("WARP.md")));
+        assert!(paths.contains(&dir.path().join(".warp/.mcp.json")));
         assert!(
             !paths.contains(&dir.path().join("AGENTS.md")),
             "AGENTS.md is shared with seven other agents and is not Warp's to own"
         );
+        assert!(
+            !paths.contains(&dir.path().join(".warp")),
+            ".warp/ may hold other Warp state \u{2014} cleanup must never delete the directory"
+        );
+    }
+
+    #[test]
+    fn test_write_creates_warp_dir_and_writes_mcp_json() {
+        let dir = tempdir().unwrap();
+        let mut servers = Map::new();
+        servers.insert(
+            "github".to_string(),
+            serde_json::json!({"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}),
+        );
+
+        let path = Warp.write_mcp_config(dir.path(), &servers).expect("write");
+        assert_eq!(path, dir.path().join(".warp/.mcp.json").display().to_string());
+
+        let content = fs::read_to_string(dir.path().join(".warp/.mcp.json")).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["github"]["command"].as_str().unwrap(),
+            "npx"
+        );
+    }
+
+    #[test]
+    fn test_write_stdio_strips_type_enabled_timeout() {
+        let dir = tempdir().unwrap();
+        let mut servers = Map::new();
+        servers.insert(
+            "srv".to_string(),
+            serde_json::json!({
+                "type": "stdio",
+                "command": "/usr/local/bin/srv",
+                "args": ["--flag"],
+                "enabled": true,
+                "timeout": 30
+            }),
+        );
+
+        Warp.write_mcp_config(dir.path(), &servers).unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".warp/.mcp.json")).unwrap();
+        let entry = &serde_json::from_str::<Value>(&content).unwrap()["mcpServers"]["srv"];
+
+        assert!(
+            entry.get("type").is_none(),
+            "stdio has no `type` in the Claude-compatible dialect"
+        );
+        assert!(entry.get("enabled").is_none());
+        assert!(entry.get("timeout").is_none());
+        assert_eq!(entry["command"].as_str().unwrap(), "/usr/local/bin/srv");
+    }
+
+    #[test]
+    fn test_write_remote_keeps_type_and_url() {
+        let dir = tempdir().unwrap();
+        let mut servers = Map::new();
+        servers.insert(
+            "linear".to_string(),
+            serde_json::json!({
+                "type": "http",
+                "url": "https://mcp.linear.app/mcp",
+                "headers": { "X-Client": "automatic" }
+            }),
+        );
+
+        Warp.write_mcp_config(dir.path(), &servers).unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".warp/.mcp.json")).unwrap();
+        let entry = &serde_json::from_str::<Value>(&content).unwrap()["mcpServers"]["linear"];
+
+        assert_eq!(entry["type"].as_str().unwrap(), "http");
+        assert_eq!(entry["url"].as_str().unwrap(), "https://mcp.linear.app/mcp");
+        assert_eq!(entry["headers"]["X-Client"].as_str().unwrap(), "automatic");
+    }
+
+    #[test]
+    fn test_write_preserves_unrelated_top_level_keys() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".warp")).unwrap();
+        fs::write(
+            dir.path().join(".warp/.mcp.json"),
+            r#"{ "_userKey": "keep", "mcpServers": { "old": { "command": "x" } } }"#,
+        )
+        .unwrap();
+
+        let mut servers = Map::new();
+        servers.insert(
+            "new".to_string(),
+            serde_json::json!({"command": "n"}),
+        );
+        Warp.write_mcp_config(dir.path(), &servers).unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".warp/.mcp.json")).unwrap();
+        let parsed: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["_userKey"].as_str().unwrap(), "keep");
+        assert!(parsed["mcpServers"].get("old").is_none());
+        assert_eq!(parsed["mcpServers"]["new"]["command"].as_str().unwrap(), "n");
+    }
+
+    #[test]
+    fn test_write_errors_on_malformed_existing_file() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".warp")).unwrap();
+        fs::write(dir.path().join(".warp/.mcp.json"), "{ not json").unwrap();
+
+        let mut servers = Map::new();
+        servers.insert("srv".to_string(), serde_json::json!({"command": "x"}));
+
+        let result = Warp.write_mcp_config(dir.path(), &servers);
+        assert!(
+            result.is_err(),
+            "must not silently overwrite an unparseable existing file"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join(".warp/.mcp.json")).unwrap(),
+            "{ not json",
+            "the unparseable file must be left exactly as the user left it"
+        );
+    }
+
+    #[test]
+    fn test_discover_reads_project_mcp_file() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".warp")).unwrap();
+        fs::write(
+            dir.path().join(".warp/.mcp.json"),
+            r#"{
+              "mcpServers": {
+                "local":  { "command": "srv", "args": ["--x"] },
+                "remote": { "type": "http", "url": "https://example/mcp" }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let servers = Warp.discover_mcp_servers(dir.path());
+        assert_eq!(servers["local"]["command"].as_str().unwrap(), "srv");
+        assert_eq!(servers["remote"]["url"].as_str().unwrap(), "https://example/mcp");
+    }
+
+    #[test]
+    fn test_discover_returns_empty_when_file_absent() {
+        let dir = tempdir().unwrap();
+        assert!(Warp.discover_mcp_servers(dir.path()).is_empty());
     }
 
     #[test]
