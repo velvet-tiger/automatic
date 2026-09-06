@@ -2865,8 +2865,9 @@ export function ProjectEditor({
                         <button
                           key={groupName}
                           type="button"
-                          onClick={() => selectTab("groups")}
+                          onClick={() => onNavigateToGroup?.(groupName)}
                           className="text-[11px] text-text-muted/55 transition-colors hover:text-text-base"
+                          title={`View "${groupName}" group`}
                         >
                           {groupName}
                         </button>
