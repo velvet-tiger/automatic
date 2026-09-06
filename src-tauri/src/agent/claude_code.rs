@@ -313,10 +313,13 @@ const CLAUDE_CODE_EVENTS: &[&str] = &[
     "TaskCompleted",
     "FileChanged",
     "CwdChanged",
+    "DirectoryAdded",
     "ConfigChange",
     "InstructionsLoaded",
     "PreCompact",
     "PostCompact",
+    "PreModelSwitch",
+    "PostModelSwitch",
     "Elicitation",
     "ElicitationResult",
     "Notification",
@@ -378,17 +381,29 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn hook_events_declares_all_thirty_events_including_message_display() {
+    fn hook_events_declares_all_thirty_three_events_including_message_display_and_model_switch() {
         let events = ClaudeCode.hook_events();
         assert_eq!(
             events.len(),
-            30,
-            "expected 30 documented Claude Code hook events, found {}",
+            33,
+            "expected 33 documented Claude Code hook events, found {}",
             events.len()
         );
         assert!(
             events.contains(&"MessageDisplay"),
             "MessageDisplay is documented but missing from CLAUDE_CODE_EVENTS"
+        );
+        assert!(
+            events.contains(&"DirectoryAdded"),
+            "DirectoryAdded is documented but missing from CLAUDE_CODE_EVENTS"
+        );
+        assert!(
+            events.contains(&"PreModelSwitch"),
+            "PreModelSwitch is documented but missing from CLAUDE_CODE_EVENTS"
+        );
+        assert!(
+            events.contains(&"PostModelSwitch"),
+            "PostModelSwitch is documented but missing from CLAUDE_CODE_EVENTS"
         );
     }
 
