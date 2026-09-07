@@ -89,22 +89,84 @@ pub fn delete_config(project: &str, id: &str) -> Result<(), String> {
 
 /// Names of every project that has at least one dev server configured.
 /// Used to build the cross-project view in the global Tools section.
+///
+/// Orphaned files — dev-server configs whose project name is no longer in
+/// `crate::core::list_projects()` because the project was renamed or
+/// deleted before this plugin's registry was updated — are removed from
+/// disk as a side effect. Without that guard the global "Servers" view
+/// keeps showing rows the user cannot delete from the UI: the per-project
+/// delete path lives inside the project editor, and an orphan has no
+/// editor to open.
 pub fn list_projects_with_configs() -> Result<Vec<String>, String> {
     let dir = dev_servers_dir()?;
     if !dir.exists() {
         return Ok(Vec::new());
     }
+    let live: std::collections::HashSet<String> = crate::core::list_projects()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     let mut names = Vec::new();
     for entry in fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
         let path = entry.path();
-        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("json") {
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                names.push(stem.to_string());
-            }
+        if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if live.contains(stem) {
+            names.push(stem.to_string());
+        } else {
+            // Orphan: the project no longer exists. Best-effort delete —
+            // an IO error here just means the row survives until next
+            // refresh, not a broken UI.
+            let _ = fs::remove_file(&path);
         }
     }
     names.sort();
     Ok(names)
+}
+
+/// Rename this project's dev-server registry file from `old` to `new`.
+/// No-op when the source file does not exist (the common case — most
+/// projects never configure a dev server). Called from the project
+/// rename command so the global "Servers" view stays anchored to the
+/// live project name.
+pub fn rename_project(old: &str, new: &str) -> Result<(), String> {
+    if old == new {
+        return Ok(());
+    }
+    if !crate::core::is_valid_name(old) || !crate::core::is_valid_name(new) {
+        return Err("Invalid project name".into());
+    }
+    let dir = dev_servers_dir()?;
+    let old_path = dir.join(format!("{}.json", old));
+    if !old_path.exists() {
+        return Ok(());
+    }
+    let new_path = dir.join(format!("{}.json", new));
+    if new_path.exists() {
+        return Err(format!(
+            "Dev server config for '{}' already exists",
+            new
+        ));
+    }
+    fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
+}
+
+/// Remove this project's dev-server registry file. No-op if not present.
+/// Called from the project delete command so no orphan is left behind.
+pub fn remove_project(project: &str) -> Result<(), String> {
+    if !crate::core::is_valid_name(project) {
+        return Err("Invalid project name".into());
+    }
+    let dir = dev_servers_dir()?;
+    let path = dir.join(format!("{}.json", project));
+    if !path.exists() {
+        return Ok(());
+    }
+    fs::remove_file(&path).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -180,15 +242,105 @@ mod tests {
         });
     }
 
+    /// Register `name` as a project so `crate::core::list_projects` sees
+    /// it. Empty-directory registry entries are the simplest possible
+    /// project record and match how a wizard-in-progress project looks
+    /// on disk before its directory is picked.
+    fn register_project(name: &str) {
+        let raw = format!("{{\"name\":\"{}\"}}", name);
+        crate::core::save_project(name, &raw).expect("register project");
+    }
+
     #[test]
     fn list_projects_with_configs_reflects_saved_projects() {
         let tmp = tmp();
         with_test_home(tmp.path().to_path_buf(), || {
+            register_project("demo-a");
+            register_project("demo-b");
             save_config("demo-a", sample()).unwrap();
             save_config("demo-b", sample()).unwrap();
 
             let names = list_projects_with_configs().unwrap();
             assert_eq!(names, vec!["demo-a".to_string(), "demo-b".to_string()]);
+        });
+    }
+
+    #[test]
+    fn list_projects_with_configs_prunes_orphaned_files() {
+        // VEL-160: a project renamed or deleted before this plugin's
+        // registry was cleaned up would leave a JSON file behind, and the
+        // global Tools > Servers view would keep showing rows the user
+        // could not delete without hand-editing config.
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            register_project("live-project");
+            save_config("live-project", sample()).unwrap();
+            save_config("ghost-project", sample()).unwrap();
+
+            let names = list_projects_with_configs().unwrap();
+            assert_eq!(names, vec!["live-project".to_string()]);
+
+            // Orphaned file was pruned from disk, not just filtered.
+            let dir = dev_servers_dir().unwrap();
+            assert!(!dir.join("ghost-project.json").exists());
+            assert!(dir.join("live-project.json").exists());
+        });
+    }
+
+    #[test]
+    fn rename_project_moves_config_file() {
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            save_config("old", sample()).unwrap();
+            rename_project("old", "renamed").unwrap();
+
+            let dir = dev_servers_dir().unwrap();
+            assert!(!dir.join("old.json").exists());
+            assert!(dir.join("renamed.json").exists());
+
+            let listed = list_configs("renamed").unwrap();
+            assert_eq!(listed.len(), 1);
+        });
+    }
+
+    #[test]
+    fn rename_project_is_noop_when_source_missing() {
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            // Most projects never touch this plugin. A rename must still
+            // succeed for them or the whole rename_project command fails.
+            rename_project("never-configured", "renamed").unwrap();
+        });
+    }
+
+    #[test]
+    fn rename_project_refuses_to_overwrite_existing_target() {
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            save_config("a", sample()).unwrap();
+            save_config("b", sample()).unwrap();
+            let err = rename_project("a", "b").unwrap_err();
+            assert!(err.contains("already exists"), "unexpected error: {err}");
+        });
+    }
+
+    #[test]
+    fn remove_project_deletes_config_file() {
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            save_config("goner", sample()).unwrap();
+            remove_project("goner").unwrap();
+
+            let dir = dev_servers_dir().unwrap();
+            assert!(!dir.join("goner.json").exists());
+        });
+    }
+
+    #[test]
+    fn remove_project_is_noop_when_file_missing() {
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            remove_project("never-configured").unwrap();
         });
     }
 }

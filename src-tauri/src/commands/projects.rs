@@ -380,6 +380,18 @@ pub fn delete_project_config(directory: &str) -> Result<(), String> {
 pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     core::rename_project(old_name, new_name)?;
 
+    // Keep the dev-servers plugin's per-project registry file aligned with
+    // the new name. Without this, `~/.automatic/dev-servers/<old>.json`
+    // would keep showing rows in the global Tools > Servers view attached
+    // to a project that no longer exists (VEL-160). Best-effort — the
+    // rename has already succeeded and this cleanup should not block it.
+    if let Err(e) = crate::plugins::dev_servers::registry::rename_project(old_name, new_name) {
+        eprintln!(
+            "rename_project: could not rename dev-server config '{}' -> '{}': {}",
+            old_name, new_name, e
+        );
+    }
+
     // Re-sync agent configs so AUTOMATIC_PROJECT reflects the new name.
     let raw = core::read_project(new_name)?;
     let project: core::Project =
@@ -415,7 +427,19 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn delete_project(name: &str) -> Result<(), String> {
-    core::delete_project(name)
+    core::delete_project(name)?;
+
+    // Drop the dev-servers plugin's per-project registry file so no
+    // orphan is left in the global Tools > Servers view (VEL-160).
+    // Best-effort — the project delete has already succeeded.
+    if let Err(e) = crate::plugins::dev_servers::registry::remove_project(name) {
+        eprintln!(
+            "delete_project: could not remove dev-server config for '{}': {}",
+            name, e
+        );
+    }
+
+    Ok(())
 }
 
 // ── Project Context ───────────────────────────────────────────────────────────

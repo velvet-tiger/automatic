@@ -1,7 +1,7 @@
 pub mod commands;
 mod detect;
 mod process;
-mod registry;
+pub(crate) mod registry;
 mod types;
 
 pub use types::{DevServerStatus, LogLine, LogStream, NpmScriptEntry, PackageManager, ServerConfig};
