@@ -4,6 +4,28 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-09-08
+
+### Added
+
+- Library MCP servers and instructions can be renamed in place. The on-disk config file moves with the name, provenance follows, and built-in servers stay locked. ([1b39f6f](https://github.com/velvet-tiger/automatic/commit/1b39f6f))
+- Antigravity project MCP now writes to `.agents/mcp_config.json`, the path Antigravity actually reads. ([27f0757](https://github.com/velvet-tiger/automatic/commit/27f0757))
+- Claude Code's hook event picker includes `DirectoryAdded`, `PreModelSwitch`, and `PostModelSwitch`. ([e09d375](https://github.com/velvet-tiger/automatic/commit/e09d375))
+- Warp project MCP now writes to `.warp/.mcp.json`. ([a49aa28](https://github.com/velvet-tiger/automatic/commit/a49aa28))
+
+### Fixed
+
+- Managed remote servers in the global MCP set no longer show as "Out of sync". ([97eee2d](https://github.com/velvet-tiger/automatic/commit/97eee2d))
+- Dev-server form fields no longer auto-capitalise names and commands. ([5d557be](https://github.com/velvet-tiger/automatic/commit/5d557be))
+- ⚠️ Z Code MCP config is written under the nested `mcp.servers` key. The previous top-level `mcpServers` shape is what the settings paste box accepts, not what the file parser loads. Existing `.zcode/config.json` and `~/.zcode/cli/config.json` files are rewritten on the next sync. ([bbf964c](https://github.com/velvet-tiger/automatic/commit/bbf964c))
+- GitHub Copilot `.vscode/mcp.json` stdio entries now include `"type": "stdio"`, which VS Code's schema requires. ([581f41f](https://github.com/velvet-tiger/automatic/commit/581f41f))
+- The group chip in the project title bar navigates to that group. ([0dc7db0](https://github.com/velvet-tiger/automatic/commit/0dc7db0))
+- Placeholder text contrast meets WCAG AA in every theme. ([90c0b50](https://github.com/velvet-tiger/automatic/commit/90c0b50))
+- Sidebar selection stays on the open project after a rename and after importing an orphan. ([7174f1d](https://github.com/velvet-tiger/automatic/commit/7174f1d))
+- Disabled plugin rows keep the same styling as enabled ones. ([1ed2cee](https://github.com/velvet-tiger/automatic/commit/1ed2cee))
+- Sync creates parent directories before writing nested instruction snapshots, so split instruction files no longer fail when the folder is missing. ([812a751](https://github.com/velvet-tiger/automatic/commit/812a751))
+- The "MCP also configured at user scope" warning clears when the server is removed from the project's managed list. Silent mode never writes root `.mcp.json`, so a leftover file on disk can no longer keep the banner alive. ([8d0c4e1](https://github.com/velvet-tiger/automatic/commit/8d0c4e1))
+
 ## [1.23.1] - 2026-08-26
 
 ### Fixed
