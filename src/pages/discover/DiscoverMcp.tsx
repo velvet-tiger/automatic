@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AuthorSection } from "../../components/AuthorPanel";
 import { handleExternalLinkClick } from "../../lib/externalLinks";
+import { smallInputClass } from "../../components/KvField";
+import { nextAvailableName } from "../../lib/uniqueName";
 import {
   Search,
   Server,
@@ -214,6 +216,24 @@ function configName(server: McpServer): string {
   return server.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+/**
+ * Validate a user-typed name for an extra copy of a catalogue server.
+ * Mirrors `is_valid_name` in `core/paths.rs` (no slashes, not `.` or `..`)
+ * and adds a case-insensitive collision check, because
+ * `save_mcp_server_config` overwrites silently when the name already exists.
+ */
+function copyNameProblem(name: string, installed: Set<string>): string | null {
+  if (!name) return "Enter a name for the copy.";
+  if (name.includes("/") || name.includes("\\") || name === "." || name === "..") {
+    return "Names cannot contain slashes.";
+  }
+  const lower = name.toLowerCase();
+  for (const existing of installed) {
+    if (existing.toLowerCase() === lower) return `"${name}" already exists in MCP Servers.`;
+  }
+  return null;
+}
+
 type LocalConfig = NonNullable<McpServer["local"]>;
 
 /** Resolve a Discover `local` block into a runnable {command, args}.
@@ -306,6 +326,11 @@ export default function DiscoverMcp({
   const [installedServers, setInstalledServers] = useState<Set<string>>(new Set());
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
+  // "Add another copy" prompt for a catalogue server that is already added.
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyName, setCopyName] = useState("");
+  const [copying, setCopying] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const [installedSkills, setInstalledSkills] = useState<Set<string>>(new Set());
   const [installingSkill, setInstallingSkill] = useState(false);
   const [skillInstallError, setSkillInstallError] = useState<string | null>(null);
@@ -389,6 +414,9 @@ export default function DiscoverMcp({
       setClassification("all");
       setTransportFilter(null);
       setInstallError(null);
+      setCopyOpen(false);
+      setCopyName("");
+      setCopyError(null);
       setSkillInstallError(null);
       setSkillInstallNotice(null);
     }
@@ -409,6 +437,43 @@ export default function DiscoverMcp({
       setInstalling(false);
     }
   }, []);
+
+  const openCopyPrompt = useCallback((server: McpServer) => {
+    setCopyName(nextAvailableName(configName(server), installedServers, { startAt: 2 }));
+    setCopyError(null);
+    setCopyOpen(true);
+  }, [installedServers]);
+
+  const closeCopyPrompt = useCallback(() => {
+    setCopyOpen(false);
+    setCopyName("");
+    setCopyError(null);
+  }, []);
+
+  // Save a further copy of a catalogue server under a user-chosen name, then
+  // jump to it in the library so the user can authorise it straight away.
+  // OAuth tokens are keyed by server name, so each copy signs in separately.
+  const handleInstallCopy = useCallback(async (server: McpServer) => {
+    const name = copyName.trim();
+    const problem = copyNameProblem(name, installedServers);
+    if (problem) {
+      setCopyError(problem);
+      return;
+    }
+    setCopying(true);
+    setCopyError(null);
+    try {
+      await invoke("save_mcp_server_config", { name, data: JSON.stringify(buildConfig(server)) });
+    } catch (err: unknown) {
+      setCopying(false);
+      setCopyError(`Failed to add copy: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    setCopying(false);
+    setInstalledServers((prev) => new Set([...prev, name]));
+    closeCopyPrompt();
+    onNavigateToMcpServer?.(name);
+  }, [copyName, installedServers, closeCopyPrompt, onNavigateToMcpServer]);
 
   // Base list after applying the search query only (used for cross-filter counts)
   const queryFiltered = useMemo(() => {
@@ -465,6 +530,9 @@ export default function DiscoverMcp({
   // When selecting a server, pick the best default tab
   const handleSelect = useCallback((server: McpServer) => {
     setSelected(server);
+    setCopyOpen(false);
+    setCopyName("");
+    setCopyError(null);
     if (hasRemote(server)) {
       setSetupTab("remote");
     } else if (hasLocal(server)) {
@@ -536,25 +604,86 @@ export default function DiscoverMcp({
               return (
                 <div className="mb-6">
                   {isInstalled ? (
-                    <button
-                      onClick={() => onNavigateToMcpServer?.(name)}
-                      disabled={!onNavigateToMcpServer}
-                      className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-success/10 border border-success/20 hover:border-success/40 transition-colors text-left group disabled:cursor-default"
-                    >
-                      <CheckCircle2 size={15} className="text-success" />
-                      <span className="text-[13px] text-success font-medium">
-                        Added to MCP Servers
-                      </span>
-                      <span className="text-[11px] text-text-muted ml-1">
-                        as "{name}"
-                      </span>
-                      {onNavigateToMcpServer && (
-                        <span className="ml-auto flex items-center gap-1 text-[11px] text-text-muted group-hover:text-success transition-colors">
-                          View in library
-                          <ArrowRight size={11} />
+                    <>
+                      <button
+                        onClick={() => onNavigateToMcpServer?.(name)}
+                        disabled={!onNavigateToMcpServer}
+                        className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-success/10 border border-success/20 hover:border-success/40 transition-colors text-left group disabled:cursor-default"
+                      >
+                        <CheckCircle2 size={15} className="text-success" />
+                        <span className="text-[13px] text-success font-medium">
+                          Added to MCP Servers
                         </span>
+                        <span className="text-[11px] text-text-muted ml-1">
+                          as "{name}"
+                        </span>
+                        {onNavigateToMcpServer && (
+                          <span className="ml-auto flex items-center gap-1 text-[11px] text-text-muted group-hover:text-success transition-colors">
+                            View in library
+                            <ArrowRight size={11} />
+                          </span>
+                        )}
+                      </button>
+                      {copyOpen ? (
+                        <div className="mt-3 rounded-lg border border-border-strong/40 bg-bg-input/40 p-3">
+                          <p className="text-[12px] text-text-muted leading-relaxed mb-2">
+                            Add this server again under a different name. Each copy keeps its own
+                            credentials, so a second copy can connect to a second account.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={copyName}
+                              onChange={(e) => {
+                                setCopyName(e.target.value);
+                                setCopyError(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleInstallCopy(selected);
+                                if (e.key === "Escape") closeCopyPrompt();
+                              }}
+                              placeholder="server-name (no spaces/slashes)"
+                              autoCapitalize="none"
+                              autoCorrect="off"
+                              spellCheck={false}
+                              autoFocus
+                              aria-label="Name for the new copy"
+                              className={smallInputClass}
+                            />
+                            <button
+                              onClick={() => handleInstallCopy(selected)}
+                              disabled={copying || !copyName.trim()}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-icon-mcp hover:bg-icon-mcp-hover text-white text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {copying ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <Download size={12} />
+                              )}
+                              Add
+                            </button>
+                            <button
+                              onClick={closeCopyPrompt}
+                              disabled={copying}
+                              className="px-2 py-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                          {copyError && (
+                            <p className="mt-2 text-[12px] text-danger">{copyError}</p>
+                          )}
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => openCopyPrompt(selected)}
+                          className="mt-2 flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-base transition-colors"
+                          title="Add this server again under a different name, for example to connect a second account."
+                        >
+                          <Copy size={12} /> Add another copy…
+                        </button>
                       )}
-                    </button>
+                    </>
                   ) : (
                     <button
                       onClick={() => handleInstall(selected)}
