@@ -76,8 +76,16 @@ export function McpAddButton({
     // Derive the config key — same as DiscoverMcp.configName.
     const configKey = server.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
+    // save_mcp_server_config overwrites silently — if a config with this key
+    // already exists on disk (e.g. installed via Discover with env values
+    // filled in), reuse it rather than clobbering the user's edits. A fresh
+    // copy is available via Discover's "Add another copy" flow.
     try {
-      await invoke("save_mcp_server_config", { name: configKey, data: JSON.stringify(config) });
+      const installed: string[] = await invoke("list_mcp_server_configs");
+      const alreadyOnDisk = installed.some((n) => n.toLowerCase() === configKey.toLowerCase());
+      if (!alreadyOnDisk) {
+        await invoke("save_mcp_server_config", { name: configKey, data: JSON.stringify(config) });
+      }
     } catch (err: any) {
       setState("error");
       setErrorMsg(`Failed to save server config: ${err}`);
