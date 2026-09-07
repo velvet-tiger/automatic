@@ -12,8 +12,10 @@ import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { BuiltInBadge, LockCell } from "../../components/ProtectionBadge";
 import { useBulkSelection } from "../../lib/useBulkSelection";
+import { nextAvailableName } from "../../lib/uniqueName";
 import {
   Plus,
+  Copy,
   ClipboardPaste,
   X,
   Server,
@@ -663,6 +665,35 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
     }
   };
 
+  /**
+   * Save the selected server again under a fresh `<name>-copy` name and open
+   * the copy. Re-reads from disk so the copy reflects the saved config, not
+   * unsaved edits. OAuth tokens are keyed by server name in the keychain, so
+   * the copy starts unauthorised and can be signed in to a different account.
+   * That is the point of the feature (VEL-161).
+   */
+  const handleDuplicate = async () => {
+    if (!selectedName || isCreating || config?._builtin) return;
+    const copyName = nextAvailableName(`${selectedName}-copy`, servers);
+    try {
+      const raw: string = await invoke("read_mcp_server_config", { name: selectedName });
+      const source = JSON.parse(raw) as Record<string, unknown>;
+      // A copy is user-owned: it must never inherit the built-in lock.
+      delete source._builtin;
+      await invoke("save_mcp_server_config", {
+        name: copyName,
+        data: JSON.stringify(source),
+      });
+      trackMcpServerCreated(copyName);
+      await loadServers();
+      setRecentRefresh(prev => prev + 1);
+      await selectServer(copyName);
+      setError(null);
+    } catch (err: any) {
+      setError(`Failed to duplicate server: ${err}`);
+    }
+  };
+
   const handleDelete = async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const confirmed = await ask(`Delete MCP server "${name}"?`, { title: "Delete Server", kind: "warning" });
@@ -1008,6 +1039,15 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
               <div className="flex items-center gap-2">
                 {isBuiltin && <BuiltInBadge />}
+                {!isCreating && !isBuiltin && !dirty && selectedName && (
+                  <button
+                    onClick={handleDuplicate}
+                    className="flex items-center gap-1.5 px-3 py-1.5 hover:bg-bg-sidebar text-text-muted hover:text-text-base rounded text-[12px] font-medium transition-colors"
+                    title="Save a copy under a new name. The copy has no OAuth token, so it can be authorised against a different account."
+                  >
+                    <Copy size={12} /> Duplicate
+                  </button>
+                )}
                 {dirty && !isBuiltin && (
                   <button
                     onClick={handleSave}
