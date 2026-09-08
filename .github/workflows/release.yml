@@ -372,6 +372,20 @@ jobs:
           win_sig     = open(win_sig_f).read().strip()
           release_notes = read_release_notes(os.environ['VERSION'], os.environ['TAG'])
 
+          # Persist notes to a file so the next step can pass them to `gh release edit`.
+          # Fall back to a pointer to CHANGELOG.md if the tag has no matching entry.
+          tag = os.environ['TAG']
+          repo = os.environ['REPO']
+          if release_notes:
+              notes_for_release = release_notes
+          else:
+              notes_for_release = (
+                  f'Release notes for `{tag}` were not found in '
+                  f'[CHANGELOG.md](https://github.com/{repo}/blob/{tag}/CHANGELOG.md). '
+                  'See the changelog for details.'
+              )
+          Path('release-notes.md').write_text(notes_for_release, encoding='utf-8')
+
           payload = {
               "version": os.environ['VERSION'],
               "notes": release_notes,
@@ -404,3 +418,24 @@ jobs:
           fi
 
           echo "latest.json successfully uploaded to release $TAG"
+
+      # Copy the changelog entry for this tag into the release body and publish
+      # the draft. Runs after every asset (including latest.json) is uploaded,
+      # so viewers never see the release before its files are ready.
+      - name: Publish release with changelog notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -s release-notes.md ]; then
+            echo "ERROR: release-notes.md is missing or empty" >&2
+            exit 1
+          fi
+
+          gh release edit "$TAG" \
+            --notes-file release-notes.md \
+            --draft=false
+
+          echo "Release $TAG published with changelog notes"
