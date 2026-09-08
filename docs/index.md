@@ -25,6 +25,7 @@ Reference and design documentation for the Automatic desktop app. Source-of-trut
 
 ## Agent Reference
 
+- [Agent Update Checks](./agent-update-checks.md) — running log of weekly vendor-source reviews, one row per agent.
 - [Upstream Audit — 2026-07-30](./agents/upstream-audit-2026-07-30.md) — every supported agent checked against its vendor's current documentation, with the resulting gap list.
 - [Agent Gap Remediation Plan](./agents/agent-gap-remediation-plan.md) — phased checklist closing the audit findings, with dependencies so the work can be split up.
 - **Per-agent format reference** — lives in the sibling `automatic-meta` repo at `general/agents/`. Start at that repo's `INDEX.md` → "Agent reference"; the index there lists every supported agent (Claude Code, Codex CLI, Cursor, Gemini CLI, GitHub Copilot, Cline, Kilo, Kiro, Junie, Goose, Warp, Antigravity, OpenCode, Droid, Pi, Z Code, Zed). The code in `src-tauri/src/agent/*.rs` is the source of truth; the meta reference is kept in sync with it.
