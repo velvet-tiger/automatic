@@ -23,6 +23,7 @@ import Providers from "./pages/workspace/Providers";
 import LibraryTools from "./pages/workspace/Tools";
 import ToolsHome from "./pages/tools/ToolsHome";
 import LibraryGenerator from "./pages/tools/LibraryGenerator";
+import McpSetup from "./pages/tools/McpSetup";
 import TokenEstimator from "./pages/utilities/TokenEstimator";
 import AiPlayground from "./pages/utilities/AiPlayground";
 import Recommendations from "./pages/Recommendations";
@@ -58,7 +59,7 @@ const SECTION_TABS: Record<Section, string[]> = {
   workspace: ["projects", "project-groups"],
   library: ["library-home", "templates", "instructions", "rules", "subagents", "commands", "hooks", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "community-featured", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
-  tools: ["tools-home", "library-generator", "token-estimator", "ai-playground", "recommendations", "dev-servers", "maildev"],
+  tools: ["tools-home", "library-generator", "token-estimator", "ai-playground", "recommendations", "mcp-setup", "dev-servers", "maildev"],
 };
 
 const DEFAULT_TAB: Record<Section, string> = {
@@ -646,6 +647,7 @@ function App() {
                 <NavItem id="ai-playground" icon={FlaskConical} label="AI Playground" />
               )}
               <NavItem id="recommendations" icon={Lightbulb} label="Insights" />
+              <NavItem id="mcp-setup" icon={Puzzle} label="MCP Setup" />
               {devServersEnabled && (
                 <NavItem id="dev-servers" icon={ServerCog} label="Servers" />
               )}
@@ -805,6 +807,11 @@ function App() {
           {activeTab === "token-estimator" && (
             <div className="flex-1 h-full">
               <TokenEstimator />
+            </div>
+          )}
+          {activeTab === "mcp-setup" && (
+            <div className="flex-1 h-full">
+              <McpSetup />
             </div>
           )}
           {flag("ai_playground") && activeTab === "ai-playground" && (

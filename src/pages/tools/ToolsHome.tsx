@@ -1,4 +1,4 @@
-import { ArrowRight, FlaskConical, Hash, Lightbulb, Mail, ServerCog, Sparkles, Wrench } from "lucide-react";
+import { ArrowRight, FlaskConical, Hash, Lightbulb, Mail, ServerCog, Sparkles, Wrench, Puzzle } from "lucide-react";
 import { flag } from "../../lib/flags";
 import { usePlugin } from "../../plugins/usePlugin";
 
@@ -65,6 +65,21 @@ const BASE_CARDS: ToolCard[] = [
       iconBorder: "border-icon-rule/20",
       iconText: "text-icon-rule",
       ctaText: "text-icon-rule",
+    },
+  },
+  {
+    tab: "mcp-setup",
+    title: "MCP Setup",
+    description:
+      "Install Automatic's MCP server in Claude Code, Claude Desktop, Cursor, Codex, OpenCode, and other MCP-compatible tools.",
+    icon: Puzzle,
+    classes: {
+      cardHover: "hover:border-icon-mcp/50",
+      iconBg: "bg-icon-mcp/10",
+      iconBgHover: "group-hover:bg-icon-mcp/20",
+      iconBorder: "border-icon-mcp/20",
+      iconText: "text-icon-mcp",
+      ctaText: "text-icon-mcp",
     },
   },
 ];
