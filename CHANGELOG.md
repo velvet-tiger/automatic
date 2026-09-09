@@ -4,6 +4,10 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- New MCP tool `automatic_register_project`, so an agent can register a new project in Automatic without opening the app. Takes a unique project name and an absolute path to an existing directory, plus an optional description and agent tool ids (e.g. `claude`, `cursor`, `codex`). When agents are passed, their config files are synced into the directory immediately, mirroring the Add Project wizard. Duplicate names, directories already registered to another project, and unregistered on-disk `.automatic/project.json` configs are all refused before any state is written, so a rejected call never leaves a half-registered project; orphan configs are left untouched for import via the app. Covered by nine new unit tests, and documented in the bundled `automatic` skill and service rule.
+
 ## [1.24.0] - 2026-09-08
 
 ### Added

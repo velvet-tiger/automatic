@@ -15,6 +15,7 @@ This project is managed by Automatic, a desktop hub that provides skills, rules,
 - **Skill Discovery** — Call `automatic_search_skills` to find community skills on skills.sh when you need specialised guidance not covered by installed skills.
 - **Related Projects** — Before searching the filesystem or asking the user for sibling projects, call `automatic_get_related_projects` with this project's name. It returns peer projects (name, description, directory, and the relative path from this project) for every Project Group this project belongs to. This is the authoritative source — related projects are intentionally not written into the instruction file.
 - **Other Projects** — Call `automatic_list_projects` to see every project name registered in Automatic.
+- **Registering Projects** — Call `automatic_register_project` with a unique name and an absolute directory path to bring a new project under Automatic management. Optionally pass agent ids (e.g. `claude`) to sync their config files immediately. The call is refused when the directory already belongs to a registered project or holds an unregistered Automatic config — ask the user how to proceed in those cases.
 - **Project Context** — Call `automatic_get_project_context` for a project's commands, entry points, architecture concepts, conventions, gotchas, a merged documentation index, and the rules currently attached to each instruction file.
 
 ## Rules

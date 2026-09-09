@@ -17,7 +17,7 @@ Use the Automatic MCP tools when you need to:
 - Load a skill's instructions and discover its companion resources
 - Search the community skills.sh registry for relevant skills
 - Find MCP server configurations to suggest or apply
-- Inspect or list the user's registered projects
+- Inspect, list, or register the user's projects
 - Check which Claude Code sessions are currently active
 - Sync a project's configurations to its directory
 - **Store, retrieve, or search long-term memory across sessions for a specific project**
@@ -83,6 +83,21 @@ name: string  — the project name as registered in Automatic
 ```
 
 **When to use:** When you need to understand a project's configured context (e.g. which skills and MCP servers apply, or where the project directory is) before performing work in it.
+
+---
+
+### `automatic_register_project`
+
+Register a new project in Automatic.
+
+```
+name: string               — unique name for the new project
+directory: string          — absolute path to the project's working directory (must already exist on disk)
+description: string        — optional short description
+agents: string[]           — optional agent tool ids, e.g. ["claude", "cursor", "codex"]
+```
+
+**When to use:** When the user wants to bring a new project under Automatic management. The call fails when the name is already taken, the directory is already registered to another project, or the directory holds an unregistered Automatic config — in the last case ask the user to import it from the Automatic app instead. When `agents` is provided, agent configuration files are synced into the directory immediately.
 
 ---
 

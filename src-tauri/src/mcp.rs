@@ -34,6 +34,22 @@ pub struct ReadProjectParams {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RegisterProjectParams {
+    /// The name for the new project. Must be unique — the call fails when a
+    /// project with this name is already registered.
+    pub name: String,
+    /// Absolute path to the project's working directory. The directory must
+    /// already exist on disk.
+    pub directory: String,
+    /// Optional short description of the project.
+    pub description: Option<String>,
+    /// Optional list of agent tool ids to configure for the project (e.g.
+    /// "claude", "cursor", "codex"). When provided, agent configuration
+    /// files are synced into the directory immediately.
+    pub agents: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SearchSkillsParams {
     /// Search query (skill name, topic, or keyword)
     pub query: String,
@@ -426,6 +442,150 @@ fn resolve_file_rules_key(
     }
 }
 
+/// Register a new project in Automatic. Shared body of the
+/// `automatic_register_project` MCP tool, kept as a free function so tests
+/// can exercise it without an MCP runtime.
+///
+/// Mirrors the GUI's Add Project flow: validate name, directory, and agent
+/// ids; refuse directories that already belong to a registered project or
+/// hold an unregistered on-disk config; persist via `core::save_project`;
+/// log a `ProjectCreated` activity; and, when agents were provided, run a
+/// best-effort sync so agent config files appear in the directory at once.
+fn register_project_impl(params: &RegisterProjectParams) -> Result<String, String> {
+    let name = params.name.trim();
+    let directory = params.directory.trim();
+
+    if !crate::core::is_valid_name(name) {
+        return Err(
+            "Invalid project name — it must be non-empty and must not contain '/' or '\\'."
+                .to_string(),
+        );
+    }
+
+    if directory.is_empty() {
+        return Err("A project directory is required.".to_string());
+    }
+    let dir_path = std::path::PathBuf::from(directory);
+    if !dir_path.is_absolute() {
+        return Err(format!(
+            "The directory must be an absolute path (got '{}').",
+            directory
+        ));
+    }
+    if !dir_path.is_dir() {
+        return Err(format!("Directory '{}' does not exist.", directory));
+    }
+
+    // Validate agent ids before touching any state so a typo cannot leave a
+    // half-registered project behind. Empty entries are skipped; duplicates
+    // are collapsed.
+    let mut agents: Vec<String> = Vec::new();
+    for id in params.agents.iter().flatten() {
+        let id = id.trim();
+        if id.is_empty() {
+            continue;
+        }
+        if crate::agent::from_id(id).is_none() {
+            let valid: Vec<String> = crate::agent::all()
+                .iter()
+                .map(|a| a.id().to_string())
+                .collect();
+            return Err(format!(
+                "Unknown agent '{}'. Valid agent ids are: {}.",
+                id,
+                valid.join(", ")
+            ));
+        }
+        if !agents.iter().any(|a| a == id) {
+            agents.push(id.to_string());
+        }
+    }
+
+    // Refuse directories that already belong to a registered project or hold
+    // an unregistered on-disk config — both need a human decision in the UI
+    // (open the existing project, or import/discard the orphan).
+    match crate::core::inspect_project_directory(directory)? {
+        crate::core::DirectoryStatus::Available => {}
+        crate::core::DirectoryStatus::RegisteredHere { name: existing } => {
+            return Err(format!(
+                "This directory is already registered as project '{}'. Open that project \
+                 instead of creating it again.",
+                existing
+            ));
+        }
+        crate::core::DirectoryStatus::OrphanConfig { name: orphan } => {
+            return Err(format!(
+                "Directory '{}' contains an Automatic config (.automatic/project.json) that is \
+                 not registered (project name '{}'). Ask the user to import it from the \
+                 Automatic app, or remove it, before registering a new project here.",
+                directory, orphan
+            ));
+        }
+    }
+
+    // Belt-and-suspenders with inspect_project_directory: refuse duplicate names.
+    crate::core::assert_can_create_project(name, directory)?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let project = crate::core::Project {
+        name: name.to_string(),
+        description: params
+            .description
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+        directory: directory.to_string(),
+        agents: agents.clone(),
+        created_at: now.clone(),
+        updated_at: now,
+        ..Default::default()
+    };
+    let data = serde_json::to_string(&project)
+        .map_err(|e| format!("Failed to serialise project: {}", e))?;
+    crate::core::save_project(name, &data)?;
+
+    crate::activity::log(
+        name,
+        crate::activity::ActivityEvent::ProjectCreated,
+        "Project created",
+        name,
+    );
+
+    // Sync agent configs when agents were requested. Registration has already
+    // succeeded at this point, so a sync failure is reported as a warning
+    // instead of failing the whole call (mirrors the GUI's new-project flow,
+    // where partial success beats a hard error).
+    let mut report = format!("Registered project '{}'.\nDirectory: {}\n", name, directory);
+    if !agents.is_empty() {
+        report.push_str(&format!("Agents: {}\n", agents.join(", ")));
+        match crate::sync::sync_project(&project) {
+            Ok(files) => {
+                report.push_str(&format!(
+                    "Synced {} agent config file{} to the directory.\n",
+                    files.len(),
+                    if files.len() == 1 { "" } else { "s" }
+                ));
+            }
+            Err(e) => {
+                report.push_str(&format!(
+                    "Warning: the initial agent-config sync failed: {}. The project is \
+                     registered; call automatic_sync_project to retry.\n",
+                    e
+                ));
+            }
+        }
+    } else {
+        report.push_str(
+            "No agent tools configured yet — add agents in the Automatic app, then call \
+             automatic_sync_project to write their config files.\n",
+        );
+    }
+    report.push_str("Call automatic_read_project to inspect the saved configuration.");
+
+    Ok(report)
+}
+
 // ── MCP Server Handler ──────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -591,6 +751,29 @@ impl AutomaticMcpServer {
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to read project '{}': {}",
                 params.0.name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_register_project",
+        description = "Register a new project in Automatic. Requires a unique project name and \
+                       an absolute path to an existing directory on disk. Optionally provide a \
+                       description and a list of agent tool ids (e.g. claude, cursor, codex) — \
+                       when agents are given, their configuration files are synced into the \
+                       directory immediately. Fails when the name is already taken, the \
+                       directory is already registered to another project, or the directory \
+                       holds an unregistered Automatic config."
+    )]
+    async fn register_project(
+        &self,
+        params: Parameters<RegisterProjectParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match register_project_impl(&params.0) {
+            Ok(report) => Ok(CallToolResult::success(vec![Content::text(report)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to register project: {}",
+                e
             ))])),
         }
     }
@@ -2068,4 +2251,251 @@ pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
     service.waiting().await?;
 
     Ok(())
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::with_test_home;
+
+    fn params(name: &str, directory: &str, agents: Option<Vec<&str>>) -> RegisterProjectParams {
+        RegisterProjectParams {
+            name: name.to_string(),
+            directory: directory.to_string(),
+            description: None,
+            agents: agents.map(|a| a.into_iter().map(String::from).collect()),
+        }
+    }
+
+    #[test]
+    fn register_creates_registry_entry_and_project_config() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let project_dir = home.path().join("workspace");
+        std::fs::create_dir_all(&project_dir).expect("mkdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = project_dir.to_str().unwrap().to_string();
+            let report =
+                register_project_impl(&params("fresh", &dir, None)).expect("register succeeds");
+            assert!(
+                report.contains("Registered project 'fresh'"),
+                "unexpected report: {report}"
+            );
+
+            let names = crate::core::list_projects().expect("list");
+            assert!(
+                names.iter().any(|n| n == "fresh"),
+                "project missing from registry: {names:?}"
+            );
+
+            let config = project_dir.join(".automatic").join("project.json");
+            assert!(
+                config.exists(),
+                "project config missing at {}",
+                config.display()
+            );
+
+            let raw = crate::core::read_project("fresh").expect("read back");
+            let project: crate::core::Project =
+                serde_json::from_str(&raw).expect("parse roundtrip");
+            assert_eq!(project.name, "fresh");
+            assert_eq!(project.directory, dir);
+        });
+    }
+
+    #[test]
+    fn register_rejects_duplicate_name() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let ws1 = home.path().join("ws1");
+        let ws2 = home.path().join("ws2");
+        std::fs::create_dir_all(&ws1).expect("mkdir");
+        std::fs::create_dir_all(&ws2).expect("mkdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            register_project_impl(&params("alpha", ws1.to_str().unwrap(), None))
+                .expect("first registration");
+
+            let err = register_project_impl(&params("alpha", ws2.to_str().unwrap(), None))
+                .expect_err("duplicate name must be rejected");
+            assert!(
+                err.contains("already exists"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn register_rejects_directory_already_registered() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let ws = home.path().join("ws");
+        std::fs::create_dir_all(&ws).expect("mkdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            register_project_impl(&params("alpha", ws.to_str().unwrap(), None))
+                .expect("first registration");
+
+            let err = register_project_impl(&params("beta", ws.to_str().unwrap(), None))
+                .expect_err("directory claimed by another project must be rejected");
+            assert!(
+                err.contains("already registered as project 'alpha'"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn register_rejects_missing_directory() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let missing = home.path().join("does-not-exist");
+
+        with_test_home(home.path().to_path_buf(), || {
+            let err = register_project_impl(&params("ghost", missing.to_str().unwrap(), None))
+                .expect_err("missing directory must be rejected");
+            assert!(
+                err.contains("does not exist"),
+                "unexpected error: {err}"
+            );
+
+            let names = crate::core::list_projects().expect("list");
+            assert!(
+                !names.iter().any(|n| n == "ghost"),
+                "nothing should have been registered: {names:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn register_rejects_relative_directory() {
+        let home = tempfile::tempdir().expect("tempdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            let err = register_project_impl(&params("rel", "some/relative/path", None))
+                .expect_err("relative directory must be rejected");
+            assert!(
+                err.contains("absolute path"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn register_rejects_invalid_name() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let ws = home.path().join("ws");
+        std::fs::create_dir_all(&ws).expect("mkdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            let err = register_project_impl(&params("../escape", ws.to_str().unwrap(), None))
+                .expect_err("path traversal name must be rejected");
+            assert!(
+                err.contains("Invalid project name"),
+                "unexpected error: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn register_rejects_unknown_agent_without_registering() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let ws = home.path().join("ws");
+        std::fs::create_dir_all(&ws).expect("mkdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            let err = register_project_impl(&params(
+                "bad-agent",
+                ws.to_str().unwrap(),
+                Some(vec!["claude", "not-an-agent"]),
+            ))
+            .expect_err("unknown agent id must be rejected");
+            assert!(
+                err.contains("Unknown agent 'not-an-agent'"),
+                "unexpected error: {err}"
+            );
+            assert!(
+                err.contains("claude"),
+                "error should list valid agent ids: {err}"
+            );
+
+            let names = crate::core::list_projects().expect("list");
+            assert!(
+                !names.iter().any(|n| n == "bad-agent"),
+                "nothing should have been registered: {names:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn register_refuses_orphan_config_and_leaves_it_untouched() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let ws = home.path().join("orphan-ws");
+        let automatic_dir = ws.join(".automatic");
+        std::fs::create_dir_all(&automatic_dir).expect("mkdir");
+        let orphan_raw = r#"{"name":"orphan","directory":"x"}"#;
+        std::fs::write(automatic_dir.join("project.json"), orphan_raw).expect("write orphan");
+
+        with_test_home(home.path().to_path_buf(), || {
+            let err = register_project_impl(&params("fresh", ws.to_str().unwrap(), None))
+                .expect_err("orphan on-disk config must be refused");
+            assert!(
+                err.contains("not registered"),
+                "unexpected error: {err}"
+            );
+
+            // The orphan config must be left exactly as it was.
+            let on_disk =
+                std::fs::read_to_string(automatic_dir.join("project.json")).expect("reread");
+            assert_eq!(on_disk, orphan_raw);
+
+            let names = crate::core::list_projects().expect("list");
+            assert!(
+                !names.iter().any(|n| n == "fresh"),
+                "nothing should have been registered: {names:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn register_with_agents_syncs_agent_configs() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let ws = home.path().join("ws");
+        std::fs::create_dir_all(&ws).expect("mkdir");
+
+        with_test_home(home.path().to_path_buf(), || {
+            let report = register_project_impl(&params(
+                "with-agents",
+                ws.to_str().unwrap(),
+                Some(vec!["claude"]),
+            ))
+            .expect("register with agents");
+            assert!(
+                report.contains("Agents: claude"),
+                "unexpected report: {report}"
+            );
+            assert!(
+                !report.contains("Warning"),
+                "sync should not have failed: {report}"
+            );
+
+            // Claude Code owns .mcp.json and CLAUDE.md in the project root.
+            let mcp = ws.join(".mcp.json");
+            assert!(mcp.exists(), ".mcp.json missing at {}", mcp.display());
+            let mcp_content = std::fs::read_to_string(&mcp).expect("read .mcp.json");
+            assert!(
+                mcp_content.contains("automatic"),
+                "the automatic server should be injected into .mcp.json: {mcp_content}"
+            );
+            assert!(ws.join("CLAUDE.md").exists(), "CLAUDE.md missing");
+
+            let raw = crate::core::read_project("with-agents").expect("read back");
+            let project: crate::core::Project =
+                serde_json::from_str(&raw).expect("parse roundtrip");
+            assert!(
+                project.agents.iter().any(|a| a == "claude"),
+                "agent missing from saved project: {:?}",
+                project.agents
+            );
+        });
+    }
 }
