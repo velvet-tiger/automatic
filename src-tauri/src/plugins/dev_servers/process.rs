@@ -40,6 +40,19 @@ static ANSI_ESCAPE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\x1b\[[0-9;]*m").
 /// (`http://localhost:5173/`, `https://192.168.1.5:3000`).
 static URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"https?://[^\s]+").expect("url regex"));
 
+/// Matches output lines that mean the server itself died even though its
+/// supervisor (`tsx watch`, nodemon, vite, ...) is still alive waiting for a
+/// file change — the case `Child::try_wait` alone cannot see. Kept short and
+/// specific: each entry is a phrase a crash reliably prints. Bare `EACCES` is
+/// deliberately not here because file watchers print it as a non-fatal
+/// warning; `listen EACCES` is the fatal form.
+static FATAL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)address already in use|EADDRINUSE|listen EACCES|app crashed|Unhandled 'error' event|Emitted 'error' event",
+    )
+    .expect("fatal pattern regex")
+});
+
 struct RunningServer {
     project: String,
     /// Snapshot of the config at the moment `start` was called, so a running
@@ -53,6 +66,10 @@ struct RunningServer {
     /// URLs the server has printed to stdout/stderr that point at this
     /// machine, in first-seen order. See `detect_local_urls`.
     urls: Arc<Mutex<Vec<String>>>,
+    /// Most recent output line matching `FATAL_RE`. Held until the server
+    /// prints a local URL again, which only happens once it has actually
+    /// bound its port. See `record_line`.
+    last_error: Arc<Mutex<Option<String>>>,
 }
 
 /// Extracts URLs from a line of dev-server output, keeping only ones that
@@ -84,6 +101,21 @@ fn normalize_local_url(raw: &str) -> Option<String> {
         parsed.set_host(Some("localhost")).ok()?;
     }
     Some(parsed.to_string())
+}
+
+fn is_fatal_line(line: &str) -> bool {
+    FATAL_RE.is_match(&ANSI_ESCAPE_RE.replace_all(line, ""))
+}
+
+/// True if something on this machine accepts TCP connections on `port`.
+/// A connect probe is used rather than a trial bind: std's listener sets
+/// SO_REUSEADDR, which lets a trial bind on 127.0.0.1 succeed alongside a
+/// wildcard-bound (0.0.0.0) listener, so a bind would miss the common case.
+/// A timeout is treated as "free" so a misbehaving firewall cannot block
+/// starting servers.
+fn port_accepts_connections(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(200)).is_ok()
 }
 
 fn is_local_host(host: &str) -> bool {
@@ -127,6 +159,7 @@ fn spawn_log_reader<R: std::io::Read + Send + 'static>(
     kind: LogStream,
     log: Arc<Mutex<VecDeque<LogLine>>>,
     urls: Arc<Mutex<Vec<String>>>,
+    last_error: Arc<Mutex<Option<String>>>,
 ) {
     // Piped stdout/stderr must be drained continuously — once the OS pipe
     // buffer fills, the child blocks on its next write() and appears to hang.
@@ -134,19 +167,44 @@ fn spawn_log_reader<R: std::io::Read + Send + 'static>(
         let reader = BufReader::new(stream);
         for line in reader.lines() {
             let Ok(text) = line else { break };
-            for found in detect_local_urls(&text) {
-                let mut list = urls.lock().unwrap();
-                if !list.contains(&found) {
-                    list.push(found);
-                }
-            }
-            let mut buf = log.lock().unwrap();
-            if buf.len() >= MAX_LOG_LINES {
-                buf.pop_front();
-            }
-            buf.push_back(LogLine { stream: kind, text });
+            record_line(text, kind, &log, &urls, &last_error);
         }
     });
+}
+
+/// Folds one line of output into the captured state. A fatal line marks the
+/// server as crashed even while the supervisor process is still alive; a
+/// later line carrying a local URL clears that, because a server only prints
+/// its URL once it has actually bound the port. URLs on a fatal line are not
+/// recorded — an "Open" link to a port the server failed to bind is exactly
+/// the misleading state this exists to prevent.
+fn record_line(
+    text: String,
+    kind: LogStream,
+    log: &Mutex<VecDeque<LogLine>>,
+    urls: &Mutex<Vec<String>>,
+    last_error: &Mutex<Option<String>>,
+) {
+    if is_fatal_line(&text) {
+        let cleaned = ANSI_ESCAPE_RE.replace_all(&text, "").trim().to_string();
+        *last_error.lock().unwrap() = Some(cleaned);
+    } else {
+        let found = detect_local_urls(&text);
+        if !found.is_empty() {
+            *last_error.lock().unwrap() = None;
+            let mut list = urls.lock().unwrap();
+            for url in found {
+                if !list.contains(&url) {
+                    list.push(url);
+                }
+            }
+        }
+    }
+    let mut buf = log.lock().unwrap();
+    if buf.len() >= MAX_LOG_LINES {
+        buf.pop_front();
+    }
+    buf.push_back(LogLine { stream: kind, text });
 }
 
 fn status_from_config(project: &str, config: &ServerConfig) -> DevServerStatus {
@@ -163,6 +221,7 @@ fn status_from_config(project: &str, config: &ServerConfig) -> DevServerStatus {
         started_at: None,
         exit_code: None,
         urls: Vec::new(),
+        last_error: None,
     }
 }
 
@@ -185,12 +244,15 @@ fn status_from_running(id: &str, running: &mut RunningServer) -> DevServerStatus
         started_at: Some(running.started_at.clone()),
         exit_code: exit_status.and_then(|s| s.code()),
         urls: running.urls.lock().unwrap().clone(),
+        last_error: running.last_error.lock().unwrap().clone(),
     }
 }
 
 /// Start a configured server. Fails if it is already running, if the
-/// package manager binary cannot be found on `$PATH`, or if the resolved
-/// working directory does not exist.
+/// package manager binary cannot be found on `$PATH`, if the resolved
+/// working directory does not exist, or if a port is configured and
+/// something already answers on it (the server would only die with
+/// EADDRINUSE inside its supervisor, which `running` cannot see).
 pub fn start(project: &str, project_dir: &str, config: &ServerConfig) -> Result<DevServerStatus, String> {
     if project_dir.trim().is_empty() {
         return Err("This project has no directory set".into());
@@ -217,6 +279,19 @@ pub fn start(project: &str, project_dir: &str, config: &ServerConfig) -> Result<
         }
     }
 
+    // Checked after the already-running test so our own live instance
+    // reports as such rather than as an anonymous port conflict. Runs under
+    // the registry lock (at most the 200ms probe timeout), which is in line
+    // with `stop` holding it through a kill.
+    if let Some(port) = config.port {
+        if port_accepts_connections(port) {
+            return Err(format!(
+                "Port {} is already in use. Stop whatever is listening on it before starting '{}'.",
+                port, config.name
+            ));
+        }
+    }
+
     let mut command = build_command(config.package_manager, &config.script);
     command
         .current_dir(&working_dir)
@@ -235,11 +310,24 @@ pub fn start(project: &str, project_dir: &str, config: &ServerConfig) -> Result<
 
     let log: Arc<Mutex<VecDeque<LogLine>>> = Arc::new(Mutex::new(VecDeque::new()));
     let urls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     if let Some(stdout) = child.stdout.take() {
-        spawn_log_reader(stdout, LogStream::Stdout, Arc::clone(&log), Arc::clone(&urls));
+        spawn_log_reader(
+            stdout,
+            LogStream::Stdout,
+            Arc::clone(&log),
+            Arc::clone(&urls),
+            Arc::clone(&last_error),
+        );
     }
     if let Some(stderr) = child.stderr.take() {
-        spawn_log_reader(stderr, LogStream::Stderr, Arc::clone(&log), Arc::clone(&urls));
+        spawn_log_reader(
+            stderr,
+            LogStream::Stderr,
+            Arc::clone(&log),
+            Arc::clone(&urls),
+            Arc::clone(&last_error),
+        );
     }
 
     let mut running = RunningServer {
@@ -250,6 +338,7 @@ pub fn start(project: &str, project_dir: &str, config: &ServerConfig) -> Result<
         started_at: chrono::Utc::now().to_rfc3339(),
         log,
         urls,
+        last_error,
     };
     let status = status_from_running(&config.id, &mut running);
     map.insert(config.id.clone(), running);
@@ -378,6 +467,71 @@ mod tests {
         assert_eq!(found, vec!["http://localhost:8080/"]);
     }
 
+    #[test]
+    fn recognises_crash_lines_but_not_watcher_warnings() {
+        assert!(is_fatal_line(
+            "Error: listen EADDRINUSE: address already in use 127.0.0.1:3900"
+        ));
+        assert!(is_fatal_line(
+            "[nodemon] app crashed - waiting for file changes before starting..."
+        ));
+        assert!(is_fatal_line(
+            "\u{1b}[31mError: listen EACCES: permission denied 0.0.0.0:80\u{1b}[39m"
+        ));
+        assert!(is_fatal_line("Emitted 'error' event on Server instance at:"));
+        assert!(!is_fatal_line("  ➜  Local:   http://localhost:5173/"));
+        // chokidar/vite print this for unreadable directories without dying.
+        assert!(!is_fatal_line("EACCES: permission denied, watch '/private/var'"));
+    }
+
+    #[test]
+    fn fatal_line_sets_last_error_and_a_later_url_clears_it() {
+        let log = Mutex::new(VecDeque::new());
+        let urls = Mutex::new(Vec::new());
+        let last_error = Mutex::new(None);
+
+        record_line(
+            "Error: listen EADDRINUSE: address already in use 127.0.0.1:3900".to_string(),
+            LogStream::Stderr,
+            &log,
+            &urls,
+            &last_error,
+        );
+        assert_eq!(
+            last_error.lock().unwrap().as_deref(),
+            Some("Error: listen EADDRINUSE: address already in use 127.0.0.1:3900")
+        );
+        assert!(urls.lock().unwrap().is_empty());
+
+        record_line(
+            "[waiforge] http://127.0.0.1:3900".to_string(),
+            LogStream::Stdout,
+            &log,
+            &urls,
+            &last_error,
+        );
+        assert!(last_error.lock().unwrap().is_none());
+        assert_eq!(*urls.lock().unwrap(), vec!["http://127.0.0.1:3900/".to_string()]);
+        assert_eq!(log.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn port_probe_sees_a_live_listener_and_not_a_closed_port() {
+        let live = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        assert!(port_accepts_connections(live.local_addr().unwrap().port()));
+
+        // A separate listener that never had a connection queued. Closing a
+        // listener with an un-accepted connection in its backlog is not
+        // instantaneous on macOS: under load the port can still complete a
+        // handshake a few milliseconds later, so reusing `live` here made
+        // this test flaky when run alongside the spawn tests.
+        let closed_port = {
+            let never_connected = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            never_connected.local_addr().unwrap().port()
+        };
+        assert!(!port_accepts_connections(closed_port));
+    }
+
     /// Exercises the real spawn/kill path end to end against actual npm and
     /// node binaries — this is the property the whole module exists to get
     /// right, and it is not meaningfully testable any other way: `stop` must
@@ -484,6 +638,92 @@ mod tests {
 
         stop(&config.id).expect("stop should succeed");
         assert_eq!(captured, vec!["http://localhost:4321/".to_string()]);
+    }
+
+    /// The reported bug: a watch-mode supervisor keeps the tree alive after
+    /// the real server dies, so `running` stays true. The crash line must
+    /// surface as `last_error` alongside it. The node script stands in for
+    /// `tsx watch`: it prints the crash and then idles.
+    #[cfg(unix)]
+    #[test]
+    fn start_reports_crash_while_supervisor_stays_alive() {
+        if crate::core::tools::find_binary_on_path("npm").is_none()
+            || crate::core::tools::find_binary_on_path("node").is_none()
+        {
+            eprintln!("skipping: npm/node not found on $PATH");
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let marker = "automatic_dev_server_test_marker_crash_7b1e";
+        let package_json = format!(
+            r#"{{"name":"fixture","scripts":{{"dev":"node -e \"/*{marker}*/ console.error('Error: listen EADDRINUSE: address already in use 127.0.0.1:3900'); setInterval(function(){{}}, 1000)\""}}}}"#
+        );
+        std::fs::write(tmp.path().join("package.json"), package_json).unwrap();
+
+        let config = ServerConfig {
+            id: format!("test-{}", marker),
+            name: "test".to_string(),
+            package_manager: PackageManager::Npm,
+            script: "dev".to_string(),
+            subdirectory: String::new(),
+            port: None,
+            created_at: String::new(),
+        };
+
+        start("test-project", tmp.path().to_str().unwrap(), &config).expect("server should start");
+
+        let mut observed: Option<DevServerStatus> = None;
+        for _ in 0..25 {
+            let statuses = list_statuses("test-project", std::slice::from_ref(&config));
+            if let Some(status) = statuses.into_iter().next() {
+                if status.last_error.is_some() {
+                    observed = Some(status);
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+
+        stop(&config.id).expect("stop should succeed");
+
+        let observed = observed.expect("crash line should surface as last_error");
+        assert!(observed.running, "supervisor tree is still alive, so running stays true");
+        assert!(observed.last_error.unwrap().contains("EADDRINUSE"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn start_refuses_when_configured_port_is_already_in_use() {
+        if crate::core::tools::find_binary_on_path("npm").is_none() {
+            eprintln!("skipping: npm not found on $PATH");
+            return;
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("package.json"),
+            r#"{"name":"fixture","scripts":{"dev":"node -e \"setInterval(function(){}, 1000)\""}}"#,
+        )
+        .unwrap();
+
+        let config = ServerConfig {
+            id: "test-automatic_dev_server_test_marker_port_2d9c".to_string(),
+            name: "test".to_string(),
+            package_manager: PackageManager::Npm,
+            script: "dev".to_string(),
+            subdirectory: String::new(),
+            port: Some(port),
+            created_at: String::new(),
+        };
+
+        let err = start("test-project", tmp.path().to_str().unwrap(), &config)
+            .expect_err("start should refuse while the port is held");
+        assert!(err.contains(&format!("Port {} is already in use", port)), "got: {}", err);
+        drop(listener);
     }
 
     #[cfg(unix)]

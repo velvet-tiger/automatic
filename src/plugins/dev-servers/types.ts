@@ -29,6 +29,12 @@ export interface DevServerStatus {
   exit_code?: number | null;
   /** URLs detected in the server's own output, in first-seen order. */
   urls?: string[];
+  /**
+   * Most recent output line that looks like a crash. Present while a
+   * watch-mode supervisor keeps the tree alive after the real server died,
+   * so `running` alone would misreport it. Cleared when a URL is printed.
+   */
+  last_error?: string | null;
 }
 
 /** Strips the protocol and any trailing slash for compact display. */

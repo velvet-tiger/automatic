@@ -492,6 +492,11 @@ function ServerRow({
   onDelete,
 }: ServerRowProps) {
   const running = status?.running ?? false;
+  const lastError = status?.last_error ?? null;
+  // A watch-mode supervisor (tsx watch, nodemon, vite) keeps the process
+  // tree alive after the real server dies, so `running` alone would show
+  // green. The backend reports the crash line separately.
+  const crashed = running && lastError !== null;
   const logScrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const [copied, setCopied] = useState(false);
@@ -547,7 +552,9 @@ function ServerRow({
         </button>
 
         <span
-          className={`w-2 h-2 rounded-full shrink-0 ${running ? "bg-green-400" : "bg-text-muted/40"}`}
+          className={`w-2 h-2 rounded-full shrink-0 ${
+            crashed ? "bg-warning" : running ? "bg-green-400" : "bg-text-muted/40"
+          }`}
           aria-hidden="true"
         />
 
@@ -563,10 +570,19 @@ function ServerRow({
             {config.subdirectory ? ` — ${config.subdirectory}` : ""}
             {running && status?.pid ? ` — pid ${status.pid}` : ""}
           </p>
+          {lastError && (
+            <p className="text-[11px] text-warning truncate mt-0.5" title={lastError}>
+              {lastError}
+            </p>
+          )}
         </div>
 
-        <span className={`text-[11px] shrink-0 ${running ? "text-success" : "text-text-muted"}`}>
-          {running ? "Running" : "Stopped"}
+        <span
+          className={`text-[11px] shrink-0 ${
+            crashed ? "text-warning" : running ? "text-success" : "text-text-muted"
+          }`}
+        >
+          {crashed ? "Crashed" : running ? "Running" : "Stopped"}
         </span>
 
         <div className="flex items-center gap-1 shrink-0">
@@ -614,7 +630,7 @@ function ServerRow({
         </div>
       </div>
 
-      {running && (() => {
+      {running && !crashed && (() => {
         const detected = status?.urls ?? [];
         const urls =
           detected.length > 0

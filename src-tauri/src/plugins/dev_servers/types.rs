@@ -93,6 +93,12 @@ pub struct DevServerStatus {
     /// server actually bound to even if that differs from `port`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub urls: Vec<String>,
+    /// Most recent line of output that looks like a crash (e.g. an
+    /// `EADDRINUSE` listen failure). Set while a watch-mode supervisor keeps
+    /// the process tree alive after the real server died, so `running` alone
+    /// would misreport it. Cleared once the server prints a local URL again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
 }
 
 /// A single script found in a project's `package.json`.

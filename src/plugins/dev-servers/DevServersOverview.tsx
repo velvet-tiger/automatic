@@ -20,6 +20,12 @@ function groupByProject(statuses: DevServerStatus[]): Map<string, DevServerStatu
   return groups;
 }
 
+// A watch-mode supervisor keeps the tree alive after the real server dies,
+// so `running` alone would show green. The backend reports the crash line.
+function isCrashed(status: DevServerStatus): boolean {
+  return status.running && Boolean(status.last_error);
+}
+
 export default function DevServersOverview({ onNavigateToProject }: DevServersOverviewProps) {
   const [statuses, setStatuses] = useState<DevServerStatus[]>([]);
   const [loading, setLoading] = useState(true);
@@ -137,7 +143,9 @@ export default function DevServersOverview({ onNavigateToProject }: DevServersOv
                   {servers.map((status) => (
                     <div key={status.id} className="flex items-center gap-3 px-4 py-2.5">
                       <span
-                        className={`w-2 h-2 rounded-full shrink-0 ${status.running ? "bg-green-400" : "bg-text-muted/40"}`}
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          isCrashed(status) ? "bg-warning" : status.running ? "bg-green-400" : "bg-text-muted/40"
+                        }`}
                         aria-hidden="true"
                       />
                       <div className="min-w-0 flex-1">
@@ -151,11 +159,20 @@ export default function DevServersOverview({ onNavigateToProject }: DevServersOv
                           {status.package_manager} run {status.script}
                           {status.subdirectory ? ` — ${status.subdirectory}` : ""}
                         </p>
+                        {status.last_error && (
+                          <p className="text-[11px] text-warning truncate mt-0.5" title={status.last_error}>
+                            {status.last_error}
+                          </p>
+                        )}
                       </div>
-                      <span className={`text-[11px] shrink-0 ${status.running ? "text-success" : "text-text-muted"}`}>
-                        {status.running ? "Running" : "Stopped"}
+                      <span
+                        className={`text-[11px] shrink-0 ${
+                          isCrashed(status) ? "text-warning" : status.running ? "text-success" : "text-text-muted"
+                        }`}
+                      >
+                        {isCrashed(status) ? "Crashed" : status.running ? "Running" : "Stopped"}
                       </span>
-                      {status.running && status.urls && status.urls.length > 0 ? (
+                      {status.running && !isCrashed(status) && status.urls && status.urls.length > 0 ? (
                         <div className="flex items-center gap-1.5 shrink-0">
                           {status.urls.map((url) => (
                             <button
@@ -171,6 +188,7 @@ export default function DevServersOverview({ onNavigateToProject }: DevServersOv
                         </div>
                       ) : (
                         status.running &&
+                        !isCrashed(status) &&
                         status.port && (
                           <button
                             onClick={() => void openExternalUrl(`http://localhost:${status.port}`)}
