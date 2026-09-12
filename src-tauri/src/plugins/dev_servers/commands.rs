@@ -57,11 +57,18 @@ pub fn list_dev_server_scripts(
 
 // ── Process control ────────────────────────────────────────────────────────
 
+/// `process::start` watches the new server's output for a few seconds and
+/// blocks while it does. Tauri runs plain commands on the main thread, so
+/// the work is moved to a blocking task to keep the window responsive.
 #[tauri::command]
-pub fn start_dev_server(project: String, id: String) -> Result<DevServerStatus, String> {
-    let config = registry::find_config(&project, &id)?;
-    let directory = project_directory(&project)?;
-    process::start(&project, &directory, &config)
+pub async fn start_dev_server(project: String, id: String) -> Result<DevServerStatus, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = registry::find_config(&project, &id)?;
+        let directory = project_directory(&project)?;
+        process::start(&project, &directory, &config)
+    })
+    .await
+    .map_err(|e| format!("start_dev_server task join error: {e}"))?
 }
 
 #[tauri::command]

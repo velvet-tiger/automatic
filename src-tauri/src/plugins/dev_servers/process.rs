@@ -16,6 +16,7 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -29,6 +30,14 @@ use super::types::{DevServerStatus, LogLine, LogStream, PackageManager, ServerCo
 /// Cap on captured log lines per server, so a long-running dev server cannot
 /// grow memory usage without bound.
 const MAX_LOG_LINES: usize = 1000;
+
+/// How long `start` watches a new server's output before handing back a
+/// "running" status. Long enough for a package manager plus a TypeScript
+/// loader to boot and fail a `listen` (well under a second in practice),
+/// short enough that a server which prints neither a URL nor a crash does
+/// not leave the Start button spinning for long.
+const START_GRACE: Duration = Duration::from_secs(4);
+const START_POLL: Duration = Duration::from_millis(100);
 
 /// Matches ANSI SGR escape sequences (e.g. `\x1b[32m`), which dev server
 /// tooling commonly wraps around the URL in its startup banner for coloring.
@@ -253,7 +262,23 @@ fn status_from_running(id: &str, running: &mut RunningServer) -> DevServerStatus
 /// working directory does not exist, or if a port is configured and
 /// something already answers on it (the server would only die with
 /// EADDRINUSE inside its supervisor, which `running` cannot see).
+///
+/// Also fails, after killing the tree, if the server prints a crash line
+/// within `START_GRACE` of spawning. Blocks for up to that long when the
+/// server prints neither a crash nor a URL, so callers must not be on the
+/// UI thread.
 pub fn start(project: &str, project_dir: &str, config: &ServerConfig) -> Result<DevServerStatus, String> {
+    start_with_grace(project, project_dir, config, START_GRACE)
+}
+
+/// `start` with an explicit watch window, so tests can exercise the
+/// early-crash and late-crash paths without waiting the full default.
+fn start_with_grace(
+    project: &str,
+    project_dir: &str,
+    config: &ServerConfig,
+    grace: Duration,
+) -> Result<DevServerStatus, String> {
     if project_dir.trim().is_empty() {
         return Err("This project has no directory set".into());
     }
@@ -330,7 +355,9 @@ pub fn start(project: &str, project_dir: &str, config: &ServerConfig) -> Result<
         );
     }
 
-    let mut running = RunningServer {
+    let watched_urls = Arc::clone(&urls);
+    let watched_error = Arc::clone(&last_error);
+    let running = RunningServer {
         project: project.to_string(),
         config: config.clone(),
         child,
@@ -340,9 +367,34 @@ pub fn start(project: &str, project_dir: &str, config: &ServerConfig) -> Result<
         urls,
         last_error,
     };
-    let status = status_from_running(&config.id, &mut running);
     map.insert(config.id.clone(), running);
-    Ok(status)
+    // Released before the watch loop so status polls keep working while we
+    // wait, and so `stop` below can take it.
+    drop(map);
+
+    // Watch the first moments of output. A crash here is a failed start,
+    // not a server that is "running" with the reason buried in its log. A
+    // printed URL means the server is up, so return without waiting out
+    // the window. The entry is kept after a kill so the row can still show
+    // the crash line and the captured log.
+    let deadline = Instant::now() + grace;
+    loop {
+        let crash = watched_error.lock().unwrap().clone();
+        if let Some(line) = crash {
+            let _ = stop(&config.id);
+            return Err(format!("'{}' failed to start: {}", config.name, line));
+        }
+        if !watched_urls.lock().unwrap().is_empty() || Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(START_POLL);
+    }
+
+    let mut map = processes().lock().unwrap();
+    let running = map
+        .get_mut(&config.id)
+        .ok_or_else(|| format!("'{}' was forgotten while starting", config.name))?;
+    Ok(status_from_running(&config.id, running))
 }
 
 #[cfg(unix)]
@@ -520,16 +572,22 @@ mod tests {
         let live = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         assert!(port_accepts_connections(live.local_addr().unwrap().port()));
 
-        // A separate listener that never had a connection queued. Closing a
-        // listener with an un-accepted connection in its backlog is not
-        // instantaneous on macOS: under load the port can still complete a
-        // handshake a few milliseconds later, so reusing `live` here made
-        // this test flaky when run alongside the spawn tests.
+        // Closing a listener is not instantaneous on macOS: under load (the
+        // spawn tests in this module) the port can still complete a
+        // handshake for a few milliseconds afterwards, so the closed-port
+        // check retries briefly instead of asserting on a single probe.
         let closed_port = {
             let never_connected = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             never_connected.local_addr().unwrap().port()
         };
-        assert!(!port_accepts_connections(closed_port));
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while port_accepts_connections(closed_port) {
+            assert!(
+                Instant::now() < deadline,
+                "port {closed_port} still accepting a second after its listener closed"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// Exercises the real spawn/kill path end to end against actual npm and
@@ -565,8 +623,15 @@ mod tests {
             created_at: String::new(),
         };
 
-        let status = start("test-project", tmp.path().to_str().unwrap(), &config)
-            .expect("server should start");
+        // Short window: this script prints nothing, so the default would
+        // only add four seconds of waiting.
+        let status = start_with_grace(
+            "test-project",
+            tmp.path().to_str().unwrap(),
+            &config,
+            Duration::from_millis(300),
+        )
+        .expect("server should start");
         assert!(status.running);
 
         // npm needs a moment to fork+exec node.
@@ -641,12 +706,13 @@ mod tests {
     }
 
     /// The reported bug: a watch-mode supervisor keeps the tree alive after
-    /// the real server dies, so `running` stays true. The crash line must
-    /// surface as `last_error` alongside it. The node script stands in for
-    /// `tsx watch`: it prints the crash and then idles.
+    /// the real server dies. When that happens inside the grace window,
+    /// `start` must fail, kill the tree, and keep the crash line on the
+    /// (now stopped) entry. The node script stands in for `tsx watch`: it
+    /// prints the crash and then idles.
     #[cfg(unix)]
     #[test]
-    fn start_reports_crash_while_supervisor_stays_alive() {
+    fn start_fails_when_the_server_crashes_within_the_grace_window() {
         if crate::core::tools::find_binary_on_path("npm").is_none()
             || crate::core::tools::find_binary_on_path("node").is_none()
         {
@@ -656,8 +722,11 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let marker = "automatic_dev_server_test_marker_crash_7b1e";
+        // The crash text is assembled at runtime: npm echoes the script
+        // command to stderr before running it, so a literal here would match
+        // the echo and pass this test before node has even started.
         let package_json = format!(
-            r#"{{"name":"fixture","scripts":{{"dev":"node -e \"/*{marker}*/ console.error('Error: listen EADDRINUSE: address already in use 127.0.0.1:3900'); setInterval(function(){{}}, 1000)\""}}}}"#
+            r#"{{"name":"fixture","scripts":{{"dev":"node -e \"/*{marker}*/ console.error('Error: listen ' + 'EADDR' + 'INUSE: address already ' + 'in use 127.0.0.1:3900'); setInterval(function(){{}}, 1000)\""}}}}"#
         );
         std::fs::write(tmp.path().join("package.json"), package_json).unwrap();
 
@@ -671,10 +740,69 @@ mod tests {
             created_at: String::new(),
         };
 
-        start("test-project", tmp.path().to_str().unwrap(), &config).expect("server should start");
+        let err = start("test-project", tmp.path().to_str().unwrap(), &config)
+            .expect_err("a crash inside the window should fail the start");
+        assert!(err.contains("failed to start"), "got: {}", err);
+        assert!(err.contains("EADDRINUSE"), "got: {}", err);
+
+        let status = list_statuses("test-project", std::slice::from_ref(&config))
+            .into_iter()
+            .next()
+            .expect("entry is kept after the kill");
+        assert!(!status.running, "the tree must have been killed");
+        assert!(status.last_error.unwrap().contains("EADDRINUSE"));
+        assert!(
+            !pgrep_matches(marker),
+            "node process should be gone after the failed start killed the process group"
+        );
+    }
+
+    /// A crash after the grace window cannot fail the start any more, so it
+    /// must surface as `last_error` on a status that is still `running`,
+    /// which is what the UI renders as "Crashed".
+    #[cfg(unix)]
+    #[test]
+    fn late_crash_shows_as_crashed_while_supervisor_stays_alive() {
+        if crate::core::tools::find_binary_on_path("npm").is_none()
+            || crate::core::tools::find_binary_on_path("node").is_none()
+        {
+            eprintln!("skipping: npm/node not found on $PATH");
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let marker = "automatic_dev_server_test_marker_latecrash_4e6d";
+        // Crash text assembled at runtime for the same reason as above: the
+        // npm echo of the command must not match before the delay elapses.
+        let package_json = format!(
+            r#"{{"name":"fixture","scripts":{{"dev":"node -e \"/*{marker}*/ setTimeout(function(){{ console.error('Error: listen ' + 'EADDR' + 'INUSE: address already ' + 'in use 127.0.0.1:3900'); }}, 800); setInterval(function(){{}}, 1000)\""}}}}"#
+        );
+        std::fs::write(tmp.path().join("package.json"), package_json).unwrap();
+
+        let config = ServerConfig {
+            id: format!("test-{}", marker),
+            name: "test".to_string(),
+            package_manager: PackageManager::Npm,
+            script: "dev".to_string(),
+            subdirectory: String::new(),
+            port: None,
+            created_at: String::new(),
+        };
+
+        // A window shorter than the script's delay, so the crash lands
+        // after `start` has already returned.
+        let status = start_with_grace(
+            "test-project",
+            tmp.path().to_str().unwrap(),
+            &config,
+            Duration::from_millis(200),
+        )
+        .expect("server should start");
+        assert!(status.running);
+        assert!(status.last_error.is_none());
 
         let mut observed: Option<DevServerStatus> = None;
-        for _ in 0..25 {
+        for _ in 0..40 {
             let statuses = list_statuses("test-project", std::slice::from_ref(&config));
             if let Some(status) = statuses.into_iter().next() {
                 if status.last_error.is_some() {
@@ -682,7 +810,7 @@ mod tests {
                     break;
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(200));
         }
 
         stop(&config.id).expect("stop should succeed");
