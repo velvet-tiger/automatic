@@ -2,6 +2,12 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.26.0] - 2026-09-15
+
+### Added
+
+- Live project profiles, the live counterpart of a project template. A profile holds the same library references (skills, MCP servers, providers, agents, sub-agents, commands, hooks, rules) but stays attached: saving it brings every attached project back in step and re-syncs it. Profiles write their entries into the project's own lists in `project.json`, so save, sync, drift, autodetect and propagation paths run unchanged. Only entries a profile added are owned by it; anything a project defines itself is never blocked or removed and survives a detach. Deleting or renaming a library asset prunes it from profiles as well as projects. The Library gains a Profiles page, the project editor gains a Profiles sub-tab under Configuration, and inherited entries across the Skills, MCP, Rules, Hooks, Agents, Commands and Providers tabs carry a "Profile: name" badge with their remove and toggle controls hidden. New MCP tools `automatic_list_profiles`, `automatic_read_profile`, `automatic_attach_profile` and `automatic_detach_profile` are documented in the bundled `automatic` skill and service rule. Not yet covered: cloud sync of profile files, the automatic-cli port, and rule migrations walking profile files. ([0753ae2](https://github.com/velvet-tiger/automatic/commit/0753ae2))
+
 ## [1.25.0] - 2026-09-10
 
 ### Added
