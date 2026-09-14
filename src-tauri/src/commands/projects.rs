@@ -111,8 +111,16 @@ pub fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<(), String> {
-    let incoming: core::Project =
+    let mut incoming: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
+
+    // Profiles: bring the project's lists in step with its attached profiles
+    // before anything is persisted or synced. This one hook covers the
+    // editor, the create wizard, and attach/detach done by editing
+    // `profiles`. See `core::reconcile_project_profiles`.
+    core::reconcile_project_profiles(&mut incoming);
+    let reconciled = serde_json::to_string_pretty(&incoming).map_err(|e| e.to_string())?;
+    let data: &str = &reconciled;
 
     // Add Project wizard: refuse to overwrite an existing project/directory.
     if creating.unwrap_or(false) {
@@ -1466,11 +1474,83 @@ pub(crate) fn sync_projects_referencing_hook(machine_name: &str) {
     });
 }
 
+/// Persist a project a sweep helper has mutated. Failures are logged, never
+/// returned: every sweep is best-effort, matching the other helpers here.
+fn persist_swept_project(project_name: &str, project: &mut core::Project, what: &str) {
+    project.updated_at = chrono::Utc::now().to_rfc3339();
+    match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
+        Ok(data) => {
+            if let Err(e) = core::save_project(project_name, &data) {
+                eprintln!(
+                    "Failed to update project '{}' after {}: {}",
+                    project_name, what, e
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!(
+                "Failed to serialise project '{}' after {}: {}",
+                project_name, what, e
+            );
+        }
+    }
+}
+
+/// Bring every project that references `profile_name` back in step with the
+/// profile and re-sync the ones that changed. Called after a profile is
+/// saved, and after a library asset it references is pruned or renamed.
+pub(crate) fn reconcile_projects_referencing_profile(profile_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        let referenced = project.profiles.iter().any(|p| p == profile_name)
+            || project.profile_contributions.contains_key(profile_name);
+        if !referenced {
+            return;
+        }
+        let report = core::reconcile_project_profiles(project);
+        if !report.changed {
+            return;
+        }
+        persist_swept_project(project_name, project, "profile reconcile");
+        sync_project_if_configured(project_name, project);
+    });
+}
+
+/// Detach `profile_name` from every project, dropping only the items the
+/// profile added, then re-sync. Used before a profile is deleted.
+pub(crate) fn detach_profile_from_projects(profile_name: &str) {
+    with_each_project_mut(|project_name, project| {
+        let before = project.profiles.len();
+        project.profiles.retain(|p| p != profile_name);
+        let recorded = project.profile_contributions.contains_key(profile_name);
+        if project.profiles.len() == before && !recorded {
+            return;
+        }
+        core::reconcile_project_profiles(project);
+        persist_swept_project(project_name, project, "profile detach");
+        sync_project_if_configured(project_name, project);
+    });
+}
+
+/// Rewrite `profiles` entries and contribution keys from `old_name` to
+/// `new_name` in every project. Content is unchanged, so no sync is needed.
+pub(crate) fn rename_profile_in_projects(old_name: &str, new_name: &str) {
+    if old_name == new_name {
+        return;
+    }
+    with_each_project_mut(|project_name, project| {
+        if core::rename_profile_in_project(project, old_name, new_name) {
+            persist_swept_project(project_name, project, "profile rename");
+        }
+    });
+}
+
 pub(crate) fn prune_hook_from_projects(machine_name: &str) {
     with_each_project_mut(|project_name, project| {
         let before = project.hooks.len();
         project.hooks.retain(|name| name != machine_name);
-        if project.hooks.len() != before {
+        let stripped =
+            core::strip_contribution(project, core::ProfileResourceKind::Hook, machine_name);
+        if project.hooks.len() != before || stripped {
             project.updated_at = chrono::Utc::now().to_rfc3339();
             match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
                 Ok(data) => {
@@ -1508,8 +1588,10 @@ pub(crate) fn prune_skill_from_projects(skill_name: &str) {
     with_each_project_mut(|project_name, project| {
         let before = project.skills.len();
         project.skills.retain(|skill| skill != skill_name);
+        let stripped =
+            core::strip_contribution(project, core::ProfileResourceKind::Skill, skill_name);
 
-        if project.skills.len() != before {
+        if project.skills.len() != before || stripped {
             project.updated_at = chrono::Utc::now().to_rfc3339();
             match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
                 Ok(data) => {
@@ -1533,8 +1615,13 @@ pub(crate) fn prune_mcp_server_from_projects(server_name: &str) {
         project
             .disabled_mcp_servers
             .retain(|server| server != server_name);
+        let stripped = core::strip_contribution(
+            project,
+            core::ProfileResourceKind::McpServer,
+            server_name,
+        );
 
-        if project.mcp_servers.len() != before {
+        if project.mcp_servers.len() != before || stripped {
             project.updated_at = chrono::Utc::now().to_rfc3339();
             match serde_json::to_string_pretty(project).map_err(|e| e.to_string()) {
                 Ok(data) => {
@@ -1572,6 +1659,12 @@ pub(crate) fn rename_mcp_server_in_projects(old_name: &str, new_name: &str) {
                 changed = true;
             }
         }
+        changed |= core::rename_contribution(
+            project,
+            core::ProfileResourceKind::McpServer,
+            old_name,
+            new_name,
+        );
 
         if changed {
             project.updated_at = chrono::Utc::now().to_rfc3339();
@@ -1663,6 +1756,7 @@ pub(crate) fn prune_rule_from_projects(rule_name: &str) {
         }
         // Remove empty entries
         project.file_rules.retain(|_, rules| !rules.is_empty());
+        changed |= core::strip_contribution(project, core::ProfileResourceKind::Rule, rule_name);
 
         if changed {
             project.updated_at = chrono::Utc::now().to_rfc3339();
@@ -1749,6 +1843,105 @@ mod propagation_tests {
             assert!(
                 !dir_b.join(".claude").exists(),
                 "non-referencing project should NOT have been synced"
+            );
+        });
+    }
+
+    fn read_back(name: &str) -> core::Project {
+        serde_json::from_str(&core::read_project(name).expect("read project")).expect("parse")
+    }
+
+    fn save_profile_with_rule(profile: &str, rule: &str) {
+        core::save_rule(rule, "Profile Rule", "Profile rule body.\n").expect("save rule");
+        let data = serde_json::to_string(&core::ProjectProfile {
+            name: profile.to_string(),
+            rules: vec![rule.to_string()],
+            ..Default::default()
+        })
+        .expect("profile json");
+        core::save_project_profile(profile, &data).expect("save profile");
+    }
+
+    /// Saving a profile reconciles and re-syncs only the projects that
+    /// attach it; the rule lands in `_project` and is recorded as the
+    /// profile's contribution.
+    #[test]
+    fn reconcile_projects_referencing_profile_only_visits_attached_projects() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+
+            let (_keep_a, dir_a) = make_project("project-a", |p| {
+                p.profiles = vec!["baseline".to_string()];
+            });
+            let (_keep_b, dir_b) = make_project("project-b", |_| {});
+
+            reconcile_projects_referencing_profile("baseline");
+
+            let a = read_back("project-a");
+            assert_eq!(a.file_rules["_project"], vec!["profile-rule"]);
+            assert_eq!(
+                a.profile_contributions["baseline"].rules,
+                vec!["profile-rule"]
+            );
+            assert!(dir_a.join(".claude").exists(), "attached project synced");
+
+            let b = read_back("project-b");
+            assert!(b.file_rules.is_empty());
+            assert!(!dir_b.join(".claude").exists(), "other project untouched");
+        });
+    }
+
+    /// Detaching before delete removes only what the profile added and
+    /// leaves the project's own entries alone.
+    #[test]
+    fn detach_profile_from_projects_removes_only_contributions() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            core::save_rule("own-rule", "Own Rule", "Own rule body.\n").expect("save rule");
+
+            let (_keep, _dir) = make_project("project-a", |p| {
+                p.profiles = vec!["baseline".to_string()];
+                p.file_rules
+                    .insert("_project".to_string(), vec!["own-rule".to_string()]);
+            });
+            reconcile_projects_referencing_profile("baseline");
+            assert_eq!(
+                read_back("project-a").file_rules["_project"],
+                vec!["own-rule", "profile-rule"]
+            );
+
+            detach_profile_from_projects("baseline");
+
+            let a = read_back("project-a");
+            assert!(a.profiles.is_empty());
+            assert!(a.profile_contributions.is_empty());
+            assert_eq!(a.file_rules["_project"], vec!["own-rule"]);
+        });
+    }
+
+    /// The `save_project` command reconciles on every save, so a project
+    /// saved with a profile name attached picks the profile up immediately.
+    #[test]
+    fn save_project_command_reconciles_attached_profiles() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let project_dir = tempdir().expect("project dir");
+            let project = core::Project {
+                name: "project-a".to_string(),
+                directory: project_dir.path().display().to_string(),
+                agents: vec!["claude".to_string()],
+                profiles: vec!["baseline".to_string()],
+                ..Default::default()
+            };
+            let json = serde_json::to_string_pretty(&project).expect("json");
+
+            save_project("project-a", &json, Some(true)).expect("save");
+
+            let a = read_back("project-a");
+            assert_eq!(a.file_rules["_project"], vec!["profile-rule"]);
+            assert_eq!(
+                a.profile_contributions["baseline"].rules,
+                vec!["profile-rule"]
             );
         });
     }

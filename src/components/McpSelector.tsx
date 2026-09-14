@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { InheritedBadge } from "./ProtectionBadge";
 import {
   Plus,
   Server,
@@ -55,6 +56,10 @@ interface McpSelectorProps {
   isServerEnabled?: (serverName: string) => boolean;
   /** Optional callback to toggle whether a server is synced into agent config files. */
   onToggleEnabled?: (serverName: string, enabled: boolean) => void | Promise<void>;
+  /** Server names that cannot be removed or toggled (e.g. provided by a profile). */
+  lockedServers?: string[];
+  /** Name of the profile that provides a server, when one does. Renders a badge. */
+  lockedLabel?: (serverName: string) => string | undefined;
 }
 
 // ── Inline read-only config card ───────────────────────────────────────────
@@ -301,6 +306,8 @@ export function McpSelector({
   showRemoveButtonAlways = false,
   isServerEnabled,
   onToggleEnabled,
+  lockedServers = [],
+  lockedLabel,
 }: McpSelectorProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -409,8 +416,9 @@ export function McpSelector({
         {sortedServers.map(({ srv, idx }) => {
           const isExpanded = expandedServer === srv;
           const enabled = isServerEnabled ? isServerEnabled(srv) : true;
-          const canToggleEnabled = !!onToggleEnabled && srv !== "automatic";
-          const isLocked = srv === "automatic";
+          const inheritedFrom = lockedLabel?.(srv);
+          const isLocked = srv === "automatic" || lockedServers.includes(srv) || !!inheritedFrom;
+          const canToggleEnabled = !!onToggleEnabled && !isLocked;
           return (
             <div
               key={srv}
@@ -441,6 +449,7 @@ export function McpSelector({
                 </button>
 
                 <McpAvailabilityPill name={srv} />
+                {inheritedFrom && <InheritedBadge profile={inheritedFrom} />}
 
                 {canToggleEnabled && (
                   <button

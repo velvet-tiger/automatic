@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Bot, ChevronDown, Plus, Search, Trash2, X } from "lucide-react";
 import { AgentIcon } from "./AgentIcon";
+import { InheritedBadge } from "./ProtectionBadge";
 
 export interface AgentCapabilities {
   skills: boolean;
@@ -87,7 +88,10 @@ interface AgentSelectorProps {
   /** Current per-agent options keyed by agent id */
   agentOptions?: Record<string, AgentOptions>;
   /** Called when an option changes for a specific agent */
-  onOptionChange?: (agentId: string, patch: Partial<AgentOptions>) => void;
+  onOptionChange?: (agentId: string, patch: Partial<AgentOptions>) => void;  /** Agent ids that cannot be removed (e.g. provided by a profile). */
+  lockedAgents?: string[];
+  /** Name of the profile that provides an agent, when one does. Renders a badge. */
+  lockedLabel?: (id: string) => string | undefined;
 }
 
 /**
@@ -107,6 +111,8 @@ export function AgentSelector({
   emptyMessage = "No agents configured.",
   agentOptions,
   onOptionChange,
+  lockedAgents = [],
+  lockedLabel,
 }: AgentSelectorProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -186,6 +192,8 @@ export function AgentSelector({
             ...defaultOptions(),
             ...(agentOptions?.[id] ?? {}),
           };
+          const inheritedFrom = lockedLabel?.(id);
+          const isLocked = lockedAgents.includes(id) || !!inheritedFrom;
 
           return (
             <div
@@ -205,6 +213,8 @@ export function AgentSelector({
                   )}
                 </div>
 
+                {inheritedFrom && <InheritedBadge profile={inheritedFrom} />}
+
                 {/* Chevron indicator for agents with options */}
                 {hasOptions && (
                   <ChevronDown
@@ -215,12 +225,14 @@ export function AgentSelector({
                   />
                 )}
 
-                <button
-                  onClick={(e) => { e.stopPropagation(); onRemove(idx); }}
-                  className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded flex-shrink-0"
-                >
-                  <Trash2 size={12} />
-                </button>
+                {!isLocked && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onRemove(idx); }}
+                    className="text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all p-1 hover:bg-surface rounded flex-shrink-0"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
               </div>
 
               {/* Collapsed settings panel */}

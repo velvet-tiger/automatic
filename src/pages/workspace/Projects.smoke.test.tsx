@@ -24,6 +24,7 @@ describe("Projects (smoke)", () => {
       read_settings: {},
       check_installed_editors: [],
       get_plugin_locked_resources: { skills: [], rules: [] },
+      get_project_profiles: [],
       read_profile: null,
     });
   });

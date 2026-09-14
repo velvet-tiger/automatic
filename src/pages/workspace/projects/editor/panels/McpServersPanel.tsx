@@ -4,12 +4,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { AlertCircle, RefreshCw, Search, Sparkles, X } from "lucide-react";
 import { McpSelector } from "../../../../../components/McpSelector";
 import { McpAddButton } from "../McpAddButton";
-import type { AgentInfo, Project, ProjectRecommendation } from "../../types";
+import type { AgentInfo, ProfileLockMap, Project, ProjectRecommendation } from "../../types";
 
 interface McpServersPanelProps {
   project: Project;
   availableAgents: AgentInfo[];
   availableMcpServers: string[];
+  /** Server → providing profile, for servers an attached profile added. */
+  profileLocks: ProfileLockMap;
   addItem: (field: "skills" | "mcp_servers" | "providers" | "agents", value: string) => Promise<boolean>;
   removeItem: (field: "skills" | "mcp_servers" | "providers" | "agents", index: number) => void;
   isMcpServerEnabled: (server: string) => boolean;
@@ -26,6 +28,7 @@ export function McpServersPanel({
   project,
   availableAgents,
   availableMcpServers,
+  profileLocks,
   addItem,
   removeItem,
   isMcpServerEnabled,
@@ -85,6 +88,7 @@ export function McpServersPanel({
         onRemove={(i) => removeItem("mcp_servers", i)}
         isServerEnabled={isMcpServerEnabled}
         onToggleEnabled={toggleMcpServerEnabled}
+        lockedLabel={(s) => profileLocks.mcp_servers[s]}
         showRemoveButtonAlways
         disableAdd={allNoMcp}
         emptyMessage={allNoMcp ? "Add other agent tools to enable MCP server syncing." : "No MCP servers attached."}

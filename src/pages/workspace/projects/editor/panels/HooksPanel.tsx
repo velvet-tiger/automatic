@@ -1,7 +1,8 @@
 // Extracted verbatim from ProjectEditor.tsx (Phase 2E — behavior-preserving).
 
 import { Check, Plus, Webhook, X } from "lucide-react";
-import type { AgentInfo, HookEntry, Project } from "../../types";
+import { InheritedBadge } from "../../../../../components/ProtectionBadge";
+import type { AgentInfo, HookEntry, ProfileLockMap, Project } from "../../types";
 
 type ProjectTabId =
   | "summary" | "agents" | "commands" | "hooks" | "custom_agents" | "skills"
@@ -18,6 +19,8 @@ interface HooksPanelProps {
   handleSave: () => void | Promise<void>;
   availableAgents: AgentInfo[];
   availableHooks: HookEntry[];
+  /** Hook → providing profile, for hooks an attached profile added. */
+  profileLocks: ProfileLockMap;
   hookAdding: boolean;
   setHookAdding: (v: boolean) => void;
   hookSearch: string;
@@ -27,7 +30,7 @@ interface HooksPanelProps {
 
 export function HooksPanel({
   project, setProject, setDirty, dirty, syncStatus, handleSave,
-  availableAgents, availableHooks,
+  availableAgents, availableHooks, profileLocks,
   hookAdding, setHookAdding, hookSearch, setHookSearch,
   selectTab,
 }: HooksPanelProps) {
@@ -223,6 +226,7 @@ export function HooksPanel({
               const hook = availableHooks.find((h) => h.id === hookId);
               const missing = !hook;
               const incompatible = !!hook && !isCompatible(hook);
+              const inheritedFrom = profileLocks.hooks[hookId];
               return (
                 <div
                   key={hookId}
@@ -243,6 +247,7 @@ export function HooksPanel({
                             Skipped on sync
                           </span>
                         )}
+                        {inheritedFrom && <InheritedBadge profile={inheritedFrom} />}
                       </div>
                       <div className="text-[11px] text-text-muted truncate">
                         {hook
@@ -250,20 +255,22 @@ export function HooksPanel({
                           : "Hook was deleted or never existed — remove this entry."}
                       </div>
                     </div>
-                    <button
-                      onClick={() => {
-                        const updated = attachedHookIds.filter((id) => id !== hookId);
-                        setProject({
-                          ...project,
-                          hooks: updated.length > 0 ? updated : undefined,
-                        });
-                        setDirty(true);
-                      }}
-                      className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
-                      title="Remove"
-                    >
-                      <X size={12} />
-                    </button>
+                    {!inheritedFrom && (
+                      <button
+                        onClick={() => {
+                          const updated = attachedHookIds.filter((id) => id !== hookId);
+                          setProject({
+                            ...project,
+                            hooks: updated.length > 0 ? updated : undefined,
+                          });
+                          setDirty(true);
+                        }}
+                        className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                        title="Remove"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
                   </div>
                 </div>
               );

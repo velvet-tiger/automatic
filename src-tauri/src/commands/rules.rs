@@ -33,6 +33,7 @@ pub fn save_rule(machine_name: &str, name: &str, content: &str) -> Result<(), St
 #[tauri::command]
 pub fn delete_rule(machine_name: &str) -> Result<(), String> {
     core::delete_rule(machine_name)?;
+    core::prune_asset_from_profiles(core::ProfileResourceKind::Rule, machine_name);
     prune_rule_from_projects(machine_name);
     Ok(())
 }

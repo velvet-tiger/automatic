@@ -38,6 +38,15 @@ Hooks are event-triggered handlers (e.g. on session start, before a tool call) s
 - `automatic_delete_hook` — remove a hook from the library. Plugin-provided hooks cannot be deleted. Projects referencing a deleted hook silently skip it on next sync.
 - `automatic_attach_hook` / `automatic_detach_hook` — wire a hook into a project (the target agent is inferred from the hook's library record). Neither call syncs to disk on its own — call `automatic_sync_project` afterwards.
 
+## Profiles
+
+Profiles are live bundles of library references (skills, MCP servers, providers, agents, sub-agents, commands, hooks, rules) shared across projects. Saving a profile brings every attached project back in step. A project keeps its own entries alongside a profile's; only the entries a profile added are owned by it.
+
+- `automatic_list_profiles` — list every profile in the library (name, description).
+- `automatic_read_profile` — read a profile's full contents by name.
+- `automatic_attach_profile` / `automatic_detach_profile` — attach or detach a profile. Detaching removes only what the profile added. Neither call syncs to disk on its own — call `automatic_sync_project` afterwards.
+- `automatic_read_project` reports `profiles` and `profile_contributions`. An entry listed under `profile_contributions` belongs to that profile: detaching it with `automatic_detach_rule` or `automatic_detach_hook` is undone on the project's next save. Edit or detach the profile instead.
+
 ## Memory
 
 Use the memory tools to persist and retrieve project-specific context across sessions:

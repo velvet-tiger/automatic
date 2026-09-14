@@ -76,13 +76,44 @@ List all project names registered in Automatic.
 
 ### `automatic_read_project`
 
-Read the full configuration for a named project: description, directory path, assigned skills, MCP servers, providers, and configured agent tools.
+Read the full configuration for a named project: description, directory path, assigned skills, MCP servers, providers, configured agent tools, attached `profiles`, and `profile_contributions` (which entries each profile added).
 
 ```
 name: string  — the project name as registered in Automatic
 ```
 
 **When to use:** When you need to understand a project's configured context (e.g. which skills and MCP servers apply, or where the project directory is) before performing work in it.
+
+---
+
+### `automatic_list_profiles`
+
+List every profile in the library. A profile is a live bundle of library references (skills, MCP servers, providers, agents, sub-agents, commands, hooks, rules). Saving a profile keeps every attached project in step.
+
+**When to use:** When the user wants a shared baseline applied to several projects, or asks which profiles exist.
+
+---
+
+### `automatic_read_profile`
+
+Read a profile's full contents.
+
+```
+name: string  — the profile name
+```
+
+---
+
+### `automatic_attach_profile` / `automatic_detach_profile`
+
+Attach a profile to a project, or detach it. Attaching adds the profile's entries to the project and records them as the profile's contribution; entries the project already had stay the project's own. Detaching removes only what the profile added.
+
+```
+project: string  — the project name as registered in Automatic
+profile: string  — the profile name
+```
+
+**When to use:** After the user asks for a project to follow a profile. Neither call syncs to disk — call `automatic_sync_project` afterwards. Do not remove a profile-owned rule or hook with `automatic_detach_rule` / `automatic_detach_hook`; it is re-attached on the next save.
 
 ---
 

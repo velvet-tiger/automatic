@@ -2,18 +2,20 @@
 
 import { AgentSelector } from "../../../../../components/AgentSelector";
 import type { AgentOptions } from "../../../../../components/AgentSelector";
-import type { AgentInfo, Project } from "../../types";
+import type { AgentInfo, ProfileLockMap, Project } from "../../types";
 
 interface AgentsPanelProps {
   project: Project;
   setProject: (next: Project) => void;
   setDirty: (v: boolean) => void;
   availableAgents: AgentInfo[];
+  /** Agent → providing profile, for agents an attached profile added. */
+  profileLocks: ProfileLockMap;
   addItem: (field: "skills" | "mcp_servers" | "providers" | "agents", value: string) => Promise<boolean>;
   handleRemoveAgent: (idx: number) => void | Promise<void>;
 }
 
-export function AgentsPanel({ project, setProject, setDirty, availableAgents, addItem, handleRemoveAgent }: AgentsPanelProps) {
+export function AgentsPanel({ project, setProject, setDirty, availableAgents, profileLocks, addItem, handleRemoveAgent }: AgentsPanelProps) {
   return (
     <section>
       <AgentSelector
@@ -21,6 +23,7 @@ export function AgentsPanel({ project, setProject, setDirty, availableAgents, ad
         availableAgents={availableAgents}
         onAdd={(id) => addItem("agents", id)}
         onRemove={(i) => handleRemoveAgent(i)}
+        lockedLabel={(id) => profileLocks.agents[id]}
         emptyMessage="No agent tools selected. Add tools to enable config sync."
         agentOptions={project.agent_options}
         onOptionChange={(agentId, patch) => {

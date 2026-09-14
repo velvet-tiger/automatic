@@ -5,7 +5,7 @@ import { Check, Code, Edit2, Plus, RefreshCw, Search, Sparkles, Trash2, Upload, 
 import { SkillSelector } from "../../../../../components/SkillSelector";
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { SkillAddButton } from "../SkillAddButton";
-import type { CustomSkill, DriftReport, Project, ProjectRecommendation } from "../../types";
+import type { CustomSkill, DriftReport, ProfileLockMap, Project, ProjectRecommendation } from "../../types";
 
 interface SkillsPanelProps {
   project: Project;
@@ -25,6 +25,8 @@ interface SkillsPanelProps {
   setCustomSkillEditContent: (v: string) => void;
   availableSkills: string[];
   pluginLockedSkills: string[];
+  /** Skill → providing profile, for skills an attached profile added. */
+  profileLocks: ProfileLockMap;
   addItem: (field: "skills" | "mcp_servers" | "providers" | "agents", value: string) => Promise<boolean>;
   removeItem: (field: "skills" | "mcp_servers" | "providers" | "agents", index: number) => void;
   loadAvailableSkills: () => Promise<void>;
@@ -45,7 +47,7 @@ export function SkillsPanel(props: SkillsPanelProps) {
     customSkillEditingIdx, setCustomSkillEditingIdx,
     customSkillEditName, setCustomSkillEditName,
     customSkillEditContent, setCustomSkillEditContent,
-    availableSkills, pluginLockedSkills,
+    availableSkills, pluginLockedSkills, profileLocks,
     addItem, removeItem, loadAvailableSkills, notifyProjectUpdated,
     aiSkillsSuggestions, aiSkillsLoading, handleSuggestSkills,
     removeRecommendation,
@@ -271,6 +273,7 @@ export function SkillsPanel(props: SkillsPanelProps) {
           onRemove={(i) => removeItem("skills", i)}
           showRemoveButtonAlways
           lockedSkills={pluginLockedSkills}
+          lockedLabel={(s) => profileLocks.skills[s]}
           emptyMessage="No skills attached."
           onReadSkill={async (skillName) => {
             const content: string = await invoke("read_skill", { name: skillName });

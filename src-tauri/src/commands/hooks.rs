@@ -53,6 +53,7 @@ pub fn save_hook(
 #[tauri::command]
 pub fn delete_hook(machine_name: &str) -> Result<(), String> {
     core::delete_hook(machine_name)?;
+    core::prune_asset_from_profiles(core::ProfileResourceKind::Hook, machine_name);
     prune_hook_from_projects(machine_name);
     Ok(())
 }

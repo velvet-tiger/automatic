@@ -269,6 +269,30 @@ pub struct DetachHookParams {
     pub machine_name: String,
 }
 
+// ── Profile Tool Parameter Types ─────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ReadProfileParams {
+    /// The profile name (lowercase letters, digits, and hyphens).
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct AttachProfileParams {
+    /// The project name as registered in Automatic.
+    pub project: String,
+    /// The profile name. Must already exist in the library.
+    pub profile: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct DetachProfileParams {
+    /// The project name as registered in Automatic.
+    pub project: String,
+    /// The profile name.
+    pub profile: String,
+}
+
 // ── Feature Tool Parameter Types ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -386,6 +410,23 @@ pub struct AddFeatureUpdateParams {
 /// Verify that `project` is a registered project name.
 /// Returns `Ok(())` on success, or an `Err` with a helpful message listing
 /// the valid project names so the agent can self-correct immediately.
+/// Read and parse a registered project, with error text ready for a tool
+/// result.
+fn load_project(project_name: &str) -> Result<crate::core::Project, String> {
+    let raw = crate::core::read_project(project_name)
+        .map_err(|e| format!("Failed to read project '{}': {}", project_name, e))?;
+    serde_json::from_str(&raw)
+        .map_err(|e| format!("Failed to parse project '{}': {}", project_name, e))
+}
+
+/// Serialise and save a project, with error text ready for a tool result.
+fn persist_project(project_name: &str, project: &crate::core::Project) -> Result<(), String> {
+    let json = serde_json::to_string(project)
+        .map_err(|e| format!("Failed to serialise project '{}': {}", project_name, e))?;
+    crate::core::save_project(project_name, &json)
+        .map_err(|e| format!("Failed to save project '{}': {}", project_name, e))
+}
+
 fn validate_project(project: &str) -> Result<(), String> {
     let known = crate::core::list_projects().unwrap_or_default();
     if known.iter().any(|p| p == project) {
@@ -740,7 +781,11 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_read_project",
-        description = "Read the full configuration for a project (skills, MCP servers, agents, directory, description)"
+        description = "Read the full configuration for a project (skills, MCP servers, agents, \
+                       directory, description). `profiles` lists the attached profiles and \
+                       `profile_contributions` records which entries each profile added; \
+                       those entries are owned by the profile and are re-attached on the \
+                       next save if removed directly."
     )]
     async fn read_project(
         &self,
@@ -1208,7 +1253,10 @@ impl AutomaticMcpServer {
         description = "Detach a rule from a project's instruction file. \
                        Mandatory rules (e.g. `automatic-service`) cannot be \
                        detached. Idempotent — detaching a rule that is not \
-                       attached reports success. Does not trigger a sync."
+                       attached reports success. Does not trigger a sync. \
+                       A rule provided by an attached profile is re-attached \
+                       on the project's next save; detach the profile with \
+                       automatic_detach_profile instead."
     )]
     async fn detach_rule(
         &self,
@@ -1595,7 +1643,9 @@ impl AutomaticMcpServer {
     #[tool(
         name = "automatic_detach_hook",
         description = "Detach a hook from a project. Idempotent. Does not \
-                       trigger a sync."
+                       trigger a sync. A hook provided by an attached profile \
+                       is re-attached on the project's next save; detach the \
+                       profile with automatic_detach_profile instead."
     )]
     async fn detach_hook(
         &self,
@@ -1655,6 +1705,158 @@ impl AutomaticMcpServer {
                 "Failed to save project '{}': {}",
                 project_name, e
             ))])),
+        }
+    }
+
+    // ── Profile tools ────────────────────────────────────────────────────
+
+    #[tool(
+        name = "automatic_list_profiles",
+        description = "List every profile in the Automatic library. A profile \
+                       is a live bundle of library references (skills, MCP \
+                       servers, providers, agents, sub-agents, commands, hooks, \
+                       rules) that keeps every attached project in step. \
+                       Returns an array of objects with `name` and \
+                       `description`; call automatic_read_profile for contents."
+    )]
+    async fn list_profiles(&self) -> Result<CallToolResult, McpError> {
+        let names = match crate::core::list_project_profiles() {
+            Ok(names) => names,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to list profiles: {}",
+                    e
+                ))]));
+            }
+        };
+        let entries: Vec<serde_json::Value> = names
+            .iter()
+            .filter_map(|name| crate::core::read_project_profile_parsed(name).ok())
+            .map(|profile| {
+                serde_json::json!({
+                    "name": profile.name,
+                    "description": profile.description,
+                })
+            })
+            .collect();
+        let json = serde_json::to_string_pretty(&entries).unwrap_or_else(|_| "[]".to_string());
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        name = "automatic_read_profile",
+        description = "Read a profile by name. Returns the full profile JSON \
+                       (`name`, `description`, `skills`, `mcp_servers`, \
+                       `providers`, `agents`, `user_agents`, `user_commands`, \
+                       `hooks`, `rules`)."
+    )]
+    async fn read_profile(
+        &self,
+        params: Parameters<ReadProfileParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::core::read_project_profile(&params.0.name) {
+            Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to read profile '{}': {}",
+                params.0.name, e
+            ))])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_attach_profile",
+        description = "Attach a profile to a project. The profile's skills, \
+                       MCP servers, providers, agents, sub-agents, commands, \
+                       hooks and rules are added to the project and recorded \
+                       as the profile's contribution, so later edits to the \
+                       profile keep the project in step. Entries the project \
+                       already had stay the project's own. Idempotent. Does \
+                       not trigger a sync — call automatic_sync_project to \
+                       write the change to disk."
+    )]
+    async fn attach_profile(
+        &self,
+        params: Parameters<AttachProfileParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let project_name = &params.0.project;
+        let profile_name = &params.0.profile;
+
+        if let Err(e) = validate_project(project_name) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+        if crate::core::read_project_profile_parsed(profile_name).is_err() {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Profile '{}' does not exist in the library. Call \
+                 automatic_list_profiles to see available profiles.",
+                profile_name
+            ))]));
+        }
+
+        let mut project = match load_project(project_name) {
+            Ok(p) => p,
+            Err(e) => return Ok(CallToolResult::error(vec![Content::text(e)])),
+        };
+
+        if project.profiles.iter().any(|p| p == profile_name) {
+            return Ok(CallToolResult::success(vec![Content::text(format!(
+                "Profile '{}' is already attached to project '{}'.",
+                profile_name, project_name
+            ))]));
+        }
+        project.profiles.push(profile_name.to_string());
+        crate::core::reconcile_project_profiles(&mut project);
+
+        match persist_project(project_name, &project) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Attached profile '{}' to project '{}'. Call \
+                 automatic_sync_project to write the change to disk.",
+                profile_name, project_name
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(e)])),
+        }
+    }
+
+    #[tool(
+        name = "automatic_detach_profile",
+        description = "Detach a profile from a project. Removes only the \
+                       entries the profile added; anything the project defined \
+                       itself stays. Idempotent. Does not trigger a sync — call \
+                       automatic_sync_project to write the change to disk."
+    )]
+    async fn detach_profile(
+        &self,
+        params: Parameters<DetachProfileParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let project_name = &params.0.project;
+        let profile_name = &params.0.profile;
+
+        if let Err(e) = validate_project(project_name) {
+            return Ok(CallToolResult::error(vec![Content::text(e)]));
+        }
+
+        let mut project = match load_project(project_name) {
+            Ok(p) => p,
+            Err(e) => return Ok(CallToolResult::error(vec![Content::text(e)])),
+        };
+
+        let before = project.profiles.len();
+        project.profiles.retain(|p| p != profile_name);
+        let recorded = project.profile_contributions.contains_key(profile_name);
+        if project.profiles.len() == before && !recorded {
+            return Ok(CallToolResult::success(vec![Content::text(format!(
+                "Profile '{}' was not attached to project '{}'.",
+                profile_name, project_name
+            ))]));
+        }
+        crate::core::reconcile_project_profiles(&mut project);
+
+        match persist_project(project_name, &project) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Detached profile '{}' from project '{}'. Call \
+                 automatic_sync_project to write the change to disk.",
+                profile_name, project_name
+            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(e)])),
         }
     }
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Code, Plus, Trash2, X, ExternalLink, GitFork, ChevronRight } from "lucide-react";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { TokenPill } from "./TokenPill";
+import { InheritedBadge } from "./ProtectionBadge";
 
 interface SkillSelectorProps {
   /** Currently selected skills */
@@ -26,6 +27,8 @@ interface SkillSelectorProps {
   showRemoveButtonAlways?: boolean;
   /** Skill names that cannot be removed (e.g. provided by a plugin). */
   lockedSkills?: string[];
+  /** Name of the profile that provides a skill, when one does. Renders a badge. */
+  lockedLabel?: (skill: string) => string | undefined;
 }
 
 /**
@@ -48,6 +51,7 @@ export function SkillSelector({
   onForkSkill,
   showRemoveButtonAlways = false,
   lockedSkills = [],
+  lockedLabel,
 }: SkillSelectorProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -232,7 +236,8 @@ export function SkillSelector({
         {sortedSkills.map(({ skill, idx }) => {
           const isExpanded = expandedSkill === skill;
           const isClickable = !!onReadSkill;
-          const isLocked = lockedSkills.includes(skill) || skill === "automatic";
+          const inheritedFrom = lockedLabel?.(skill);
+          const isLocked = lockedSkills.includes(skill) || skill === "automatic" || !!inheritedFrom;
 
           return (
             <div
@@ -266,6 +271,7 @@ export function SkillSelector({
                 )}
 
                 <TokenPill text={skillContentCache[skill] ?? ""} />
+                {inheritedFrom && <InheritedBadge profile={inheritedFrom} />}
 
                 {!isLocked && (
                   <button

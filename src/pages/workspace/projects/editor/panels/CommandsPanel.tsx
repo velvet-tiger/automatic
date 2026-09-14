@@ -5,7 +5,8 @@ import { Check, ChevronRight, Edit2, ExternalLink, Globe, Plus, Terminal, Trash2
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { MarkdownPreview } from "../../../../../components/MarkdownPreview";
 import { TokenPill } from "../../../../../components/TokenPill";
-import type { CustomCommand, Project, UserCommandEntry } from "../../types";
+import { InheritedBadge } from "../../../../../components/ProtectionBadge";
+import type { CustomCommand, ProfileLockMap, Project, UserCommandEntry } from "../../types";
 
 interface CommandsPanelProps {
   project: Project;
@@ -21,6 +22,8 @@ interface CommandsPanelProps {
   customCommandEditContent: string;
   setCustomCommandEditContent: (v: string) => void;
   availableUserCommands: UserCommandEntry[];
+  /** Command → providing profile, for commands an attached profile added. */
+  profileLocks: ProfileLockMap;
   userCommandAdding: boolean;
   setUserCommandAdding: (v: boolean) => void;
   userCommandSearch: string;
@@ -42,7 +45,7 @@ export function CommandsPanel(props: CommandsPanelProps) {
     customCommandEditingIdx, setCustomCommandEditingIdx,
     customCommandEditName, setCustomCommandEditName,
     customCommandEditContent, setCustomCommandEditContent,
-    availableUserCommands,
+    availableUserCommands, profileLocks,
     userCommandAdding, setUserCommandAdding,
     userCommandSearch, setUserCommandSearch,
     expandedCommandId, setExpandedCommandId,
@@ -315,6 +318,7 @@ export function CommandsPanel(props: CommandsPanelProps) {
             {project.user_commands?.map((commandId) => {
               const command = availableUserCommands.find((entry) => entry.id === commandId);
               const isExpanded = expandedCommandId === commandId;
+              const inheritedFrom = profileLocks.user_commands[commandId];
 
               const handleToggleExpandCommand = async () => {
                 if (isExpanded) {
@@ -368,21 +372,24 @@ export function CommandsPanel(props: CommandsPanelProps) {
                         className={`text-text-muted flex-shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
                       />
                     </button>
-                    <button
-                      onClick={() => {
-                        const updated = (project.user_commands ?? []).filter((id) => id !== commandId);
-                        setProject({ ...project, user_commands: updated.length > 0 ? updated : undefined });
-                        setDirty(true);
-                        if (isExpanded) {
-                          setExpandedCommandId(null);
-                          setExpandedCommandContent("");
-                        }
-                      }}
-                      className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
-                      title="Remove"
-                    >
-                      <X size={12} />
-                    </button>
+                    {inheritedFrom && <InheritedBadge profile={inheritedFrom} />}
+                    {!inheritedFrom && (
+                      <button
+                        onClick={() => {
+                          const updated = (project.user_commands ?? []).filter((id) => id !== commandId);
+                          setProject({ ...project, user_commands: updated.length > 0 ? updated : undefined });
+                          setDirty(true);
+                          if (isExpanded) {
+                            setExpandedCommandId(null);
+                            setExpandedCommandContent("");
+                          }
+                        }}
+                        className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                        title="Remove"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
                   </div>
 
                   {isExpanded && (

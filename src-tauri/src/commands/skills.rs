@@ -49,6 +49,7 @@ pub fn delete_skill(name: &str) -> Result<(), String> {
         ));
     }
     core::delete_skill(name)?;
+    core::prune_asset_from_profiles(core::ProfileResourceKind::Skill, name);
     super::projects::prune_skill_from_projects(name);
     Ok(())
 }

@@ -3,7 +3,8 @@
 import { Check, Edit2, Globe, Plus, ScrollText, Trash2, X } from "lucide-react";
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { TokenPill } from "../../../../../components/TokenPill";
-import type { CustomRule, Project } from "../../types";
+import { InheritedBadge } from "../../../../../components/ProtectionBadge";
+import type { CustomRule, ProfileLockMap, Project } from "../../types";
 
 interface RulesPanelProps {
   project: Project;
@@ -11,6 +12,8 @@ interface RulesPanelProps {
   setDirty: (v: boolean) => void;
   dirty: boolean;
   pluginLockedRules: string[];
+  /** Rule → providing profile, for rules an attached profile added. */
+  profileLocks: ProfileLockMap;
   availableRules: { id: string; name: string }[];
   customRuleEditingIdx: number | null;
   setCustomRuleEditingIdx: (v: number | null) => void;
@@ -30,7 +33,7 @@ interface RulesPanelProps {
 
 export function RulesPanel({
   project, setProject, setDirty, dirty,
-  pluginLockedRules, availableRules,
+  pluginLockedRules, profileLocks, availableRules,
   customRuleEditingIdx, setCustomRuleEditingIdx,
   customRuleEditName, setCustomRuleEditName,
   customRuleEditContent, setCustomRuleEditContent,
@@ -41,7 +44,7 @@ export function RulesPanel({
 }: RulesPanelProps) {
   const MANDATORY_RULE = "automatic-service";
   const isRuleLocked = (ruleId: string) =>
-    pluginLockedRules.includes(ruleId) || ruleId === MANDATORY_RULE;
+    pluginLockedRules.includes(ruleId) || ruleId === MANDATORY_RULE || !!profileLocks.rules[ruleId];
 
   const configuredRules = (project.file_rules || {})["_project"] || [];
   const projectRules = configuredRules.includes(MANDATORY_RULE)
@@ -346,6 +349,7 @@ export function RulesPanel({
                     <div className="text-[11px] text-text-muted truncate">{ruleId}</div>
                   </div>
                   <TokenPill text={globalRuleContentCache[ruleId] ?? ""} />
+                  {profileLocks.rules[ruleId] && <InheritedBadge profile={profileLocks.rules[ruleId]!} />}
                   {!isRuleLocked(ruleId) && (
                   <button
                     onClick={() => handleToggleProjectRule(ruleId)}

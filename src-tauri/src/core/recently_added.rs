@@ -43,7 +43,7 @@ fn write_registry(registry: &RecentlyAddedRegistry) -> Result<(), String> {
 /// Record that an asset was newly added to the library.
 ///
 /// `asset_type` is one of: "skills", "rules", "templates", "user_agents",
-/// "commands", "mcp_servers", "project_templates".
+/// "commands", "mcp_servers", "project_templates", "profiles".
 ///
 /// Errors are swallowed — recording recently-added state must never fail
 /// an otherwise-successful save operation.

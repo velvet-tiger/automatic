@@ -5,6 +5,7 @@ import {
   Bot,
   ClipboardList,
   Code,
+  Layers,
   LayoutTemplate,
   Library as LibraryIcon,
   MessagesSquare,
@@ -47,6 +48,7 @@ interface AssetCard {
 
 type Counts = {
   projectTemplates: number | null;
+  profiles: number | null;
   templates: number | null;
   rules: number | null;
   userAgents: number | null;
@@ -117,6 +119,17 @@ const ASSET_CARDS: AssetCard[] = [
     countKey: "projectTemplates",
     countLabel: "templates saved",
     ctaLabel: "Manage templates",
+  },
+  {
+    tab: "profiles",
+    title: "Profiles",
+    description:
+      "Live bundles of skills, MCP servers, rules, hooks, sub-agents, commands and agents. Save a profile and every project that attaches it is kept in step.",
+    icon: Layers,
+    classes: STYLE_FILE_TEMPLATE,
+    countKey: "profiles",
+    countLabel: "profiles saved",
+    ctaLabel: "Manage profiles",
   },
   {
     tab: "instructions",
@@ -222,6 +235,7 @@ const ASSET_CARDS: AssetCard[] = [
 export default function Library({ onNavigate }: LibraryProps) {
   const [counts, setCounts] = useState<Counts>({
     projectTemplates: null,
+    profiles: null,
     templates: null,
     rules: null,
     userAgents: null,
@@ -237,6 +251,7 @@ export default function Library({ onNavigate }: LibraryProps) {
     async function loadCounts() {
       const [
         projectTemplates,
+        profiles,
         templates,
         rules,
         userAgents,
@@ -248,6 +263,7 @@ export default function Library({ onNavigate }: LibraryProps) {
         tools,
       ] = await Promise.all([
         safeArrayLength(() => invoke<string[]>("get_templates")),
+        safeArrayLength(() => invoke<string[]>("get_project_profiles")),
         safeArrayLength(() => invoke<string[]>("get_instructions")),
         safeArrayLength(() => invoke<unknown[]>("get_rules")),
         safeArrayLength(() => invoke<unknown[]>("get_subagents")),
@@ -260,6 +276,7 @@ export default function Library({ onNavigate }: LibraryProps) {
       ]);
       setCounts({
         projectTemplates,
+        profiles,
         templates,
         rules,
         userAgents,

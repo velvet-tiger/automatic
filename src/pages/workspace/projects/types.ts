@@ -67,6 +67,14 @@ export interface Project {
   hooks?: string[];
   /** Inline custom commands stored directly in this project. */
   custom_commands?: CustomCommand[];
+  /** Profiles attached to this project, in attach order. */
+  profiles?: string[];
+  /**
+   * What each attached profile added to this project, keyed by profile name.
+   * Entries listed here belong to the profile: the editor shows a badge and
+   * hides their remove controls. Anything not listed is the project's own.
+   */
+  profile_contributions?: Record<string, ProfileContribution>;
   /** Inline custom skills stored directly in this project. Written to skill directories on sync. */
   custom_skills?: CustomSkill[];
   /** When true, rules are written to .automatic/instructions/ and the instruction file becomes an index. */
@@ -246,6 +254,52 @@ export interface ProjectTemplate {
   unified_instruction?: string;
   unified_rules?: string[];
 }
+
+/** The resource kinds a profile can carry. Each names a list on `Project`. */
+export type ProfileResourceKind =
+  | "skills"
+  | "mcp_servers"
+  | "providers"
+  | "agents"
+  | "user_agents"
+  | "user_commands"
+  | "hooks"
+  | "rules";
+
+export const PROFILE_RESOURCE_KINDS: ProfileResourceKind[] = [
+  "skills",
+  "mcp_servers",
+  "providers",
+  "agents",
+  "user_agents",
+  "user_commands",
+  "hooks",
+  "rules",
+];
+
+/** The items one attached profile added to a project (mirrors the Rust struct). */
+export type ProfileContribution = Partial<Record<ProfileResourceKind, string[]>>;
+
+/**
+ * A profile: a live bundle of library references. Saving it brings every
+ * attached project back in step. Mirrors `core::ProjectProfile`.
+ */
+export interface ProjectProfile {
+  name: string;
+  description: string;
+  skills: string[];
+  mcp_servers: string[];
+  providers: string[];
+  agents: string[];
+  user_agents: string[];
+  user_commands: string[];
+  hooks: string[];
+  rules: string[];
+  _author?: unknown;
+}
+
+/** Per kind, resource name → the profile that provides it. */
+export type ProfileLockMap = Record<ProfileResourceKind, Record<string, string>>;
 
 export interface ActivityEntry {
   id: number;

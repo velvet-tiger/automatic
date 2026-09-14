@@ -13,6 +13,7 @@ import SkillStore from "./pages/discover/SkillStore";
 import Projects from "./pages/workspace/Projects";
 import ProjectGroups from "./pages/workspace/ProjectGroups";
 import Templates from "./pages/workspace/Templates";
+import Profiles from "./pages/workspace/Profiles";
 import McpServers from "./pages/workspace/McpServers";
 import Instructions from "./pages/workspace/Instructions";
 import Rules from "./pages/workspace/Rules";
@@ -57,7 +58,7 @@ type Section = "start" | "workspace" | "library" | "discover" | "tools";
 const SECTION_TABS: Record<Section, string[]> = {
   start: ["getting-started"],
   workspace: ["projects", "project-groups"],
-  library: ["library-home", "templates", "instructions", "rules", "subagents", "commands", "hooks", "skills", "mcp", "providers", "tools"],
+  library: ["library-home", "templates", "profiles", "instructions", "rules", "subagents", "commands", "hooks", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "community-featured", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
   tools: ["tools-home", "library-generator", "token-estimator", "ai-playground", "recommendations", "mcp-setup", "dev-servers", "maildev"],
 };
@@ -611,6 +612,7 @@ function App() {
                 <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">My Library</p>
                 <ul className="space-y-0.5">
                   <NavItem id="templates" icon={LayoutTemplate} label="Templates" />
+                  <NavItem id="profiles" icon={Layers} label="Profiles" />
                   <NavItem id="instructions" icon={ClipboardList} label="Instructions" />
                   <NavItem id="rules" icon={ScrollText} label="Rules" />
                   <NavItem id="subagents" icon={MessagesSquare} label="Sub-Agents" />
@@ -771,6 +773,11 @@ function App() {
                 onCreateProjectFromTemplate={navigateToCreateWithTemplate}
                 onNavigateToProject={navigateToProject}
               />
+            </div>
+          )}
+          {activeTab === "profiles" && (
+            <div className="flex-1 h-full">
+              <Profiles onNavigateToProject={navigateToProject} />
             </div>
           )}
           {activeTab === "recommendations" && (

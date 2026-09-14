@@ -12,7 +12,8 @@ import {
   RefreshCw,
   History,
 } from "lucide-react";
-import type { Project, ProjectToolEntry } from "./types";
+import type { Project, ProjectToolEntry, ProfileLockMap } from "./types";
+import { PROFILE_RESOURCE_KINDS } from "./types";
 
 export function parseInvokeResult<T>(value: unknown): T {
   if (typeof value === "string") {
@@ -100,7 +101,30 @@ export function emptyProject(name: string): Project {
     file_rules: {},
     instruction_mode: "per-agent",
     custom_commands: [],
+    profiles: [],
+    profile_contributions: {},
   };
+}
+
+/**
+ * Invert `profile_contributions` into "resource name → providing profile"
+ * per kind, so panels can lock and badge inherited entries with one lookup.
+ */
+export function profileLockMap(
+  project: Pick<Project, "profile_contributions"> | null | undefined,
+): ProfileLockMap {
+  const map = Object.fromEntries(
+    PROFILE_RESOURCE_KINDS.map((kind) => [kind, {} as Record<string, string>]),
+  ) as ProfileLockMap;
+  const contributions = project?.profile_contributions ?? {};
+  for (const [profile, contribution] of Object.entries(contributions)) {
+    for (const kind of PROFILE_RESOURCE_KINDS) {
+      for (const name of contribution[kind] ?? []) {
+        if (!(name in map[kind])) map[kind][name] = profile;
+      }
+    }
+  }
+  return map;
 }
 
 export function isHttpDocPath(path: string): boolean {

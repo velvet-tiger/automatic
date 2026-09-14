@@ -12,6 +12,7 @@ Reference and design documentation for the Automatic desktop app. Source-of-trut
 - **Assets** — bundled skills, rules, templates, and how they are loaded. Reference lives in the sibling `automatic-meta` repo at `general/assets.md`.
 - [Content Library](./library.md) — the external `automatic-library` repository, how the app extracts and refreshes it, manifest schema, retired assets, and the signing model.
 - [Remote Sources](./remote-sources.md) — loading resources from git repositories via `automatic.json` manifests.
+- [Profiles](./profiles.md) — live bundles of library references that keep attached projects in step; storage, reconcile rules, and how the editor marks inherited entries.
 - **Sub-Agents Feature** — Automatic's sub-agent model and storage. Reference lives in the sibling `automatic-meta` repo at `general/sub-agents/sub-agents.md`.
 - [Session Tracking](./session-tracking.md) — design for tracking agent sessions across projects.
 - **Cloud Library Sync** — bidirectional sync of `~/.automatic/` to `tryautomatic.app`. Design docs (webapp contract, client state, multi-library plan, and the archived v1 plan) live in the sibling `automatic-meta` repo under `general/plans/cloud-sync/` and `general/archive/cloud-sync/`.

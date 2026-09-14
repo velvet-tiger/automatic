@@ -33,6 +33,8 @@ function emptyProject(name: string) {
     custom_commands: [],
     user_commands: [],
     hooks: [],
+    profiles: [],
+    profile_contributions: {},
     custom_skills: [],
     mode: "normal",
     directory_missing: false,
@@ -65,6 +67,8 @@ function baselineRoutes(overrides: Record<string, unknown> = {}) {
     agent_features_enabled: false,
     check_installed_editors: [],
     get_plugin_locked_resources: { skills: [], rules: [] },
+    get_project_profiles: [],
+    get_projects_referencing_profile: [],
     // Profile (no auth)
     read_profile: null,
     // Editor secondary loads (defaults: empty)

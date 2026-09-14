@@ -1,6 +1,6 @@
 use crate::core;
 
-use super::projects::sync_projects_referencing_subagent;
+use super::projects::{reconcile_projects_referencing_profile, sync_projects_referencing_subagent};
 
 // ── Sub-Agents (global registry) ─────────────────────────────────────────────
 
@@ -44,7 +44,15 @@ pub fn delete_subagent(machine_name: String) -> Result<(), String> {
         return Err("Cannot delete Codex OpenAI agents.".into());
     }
 
-    core::delete_subagent(&machine_name)
+    core::delete_subagent(&machine_name)?;
+    // Projects are not pruned for sub-agents (sync skips a missing one), but
+    // profiles must stop listing it or the next reconcile would re-add it.
+    for profile in
+        core::prune_asset_from_profiles(core::ProfileResourceKind::UserAgent, &machine_name)
+    {
+        reconcile_projects_referencing_profile(&profile);
+    }
+    Ok(())
 }
 
 /// Return all projects that reference a sub-agent. For project-local sub-agents

@@ -47,6 +47,7 @@ import {
   emptyProject,
   isHttpDocPath,
   isManagedDocNotePath,
+  profileLockMap,
 } from "../helpers";
 import { EditorIcon } from "../EditorIcon";
 import { DriftDiffModal } from "../modals/DriftDiffModal";
@@ -59,6 +60,7 @@ import { ApplyProjectTemplateModal } from "./ApplyProjectTemplateModal";
 import { SettingsPanel } from "./panels/SettingsPanel";
 import { MemoryPanel } from "./panels/MemoryPanel";
 import { GroupsPanel } from "./panels/GroupsPanel";
+import { ProfilesPanel } from "./panels/ProfilesPanel";
 import { ActivityPanel } from "./panels/ActivityPanel";
 import { RecommendationsPanel } from "./panels/RecommendationsPanel";
 import { DocsFilesPanel } from "./panels/DocsFilesPanel";
@@ -186,6 +188,19 @@ export function ProjectEditor({
   const [pluginLockedSkills, setPluginLockedSkills] = useState<string[]>([]);
   const [pluginLockedRules, setPluginLockedRules] = useState<string[]>([]);
 
+  // Profile-provided resources — entries an attached profile added. They
+  // carry a badge and lose their remove controls; the profile owns them.
+  const profileLocks = useMemo(() => profileLockMap(project), [project?.profile_contributions]);
+  const [availableProfiles, setAvailableProfiles] = useState<string[]>([]);
+  const loadAvailableProfiles = async () => {
+    try {
+      const names: string[] = await invoke("get_project_profiles");
+      setAvailableProfiles([...names].sort((a, b) => a.localeCompare(b)));
+    } catch {
+      setAvailableProfiles([]);
+    }
+  };
+
   // Inline add state
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
@@ -271,7 +286,7 @@ export function ProjectEditor({
   const navLayout = useProjectNavLayout();
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "commands" | "hooks" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools" | "settings";
+  type ProjectTab = "summary" | "agents" | "commands" | "hooks" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "profiles" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools" | "settings";
   type ProjectGroup = "summary" | "project_file" | "rules" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "hooks" | "configuration" | "instructions" | "documentation" | "memory" | "activity" | "insights";
 
   const PROJECT_GROUPS: {
@@ -318,6 +333,7 @@ export function ProjectEditor({
         { id: "agents", label: "Providers" },
         { id: "tools", label: "Tools" },
         { id: "groups", label: "Groups" },
+        { id: "profiles", label: "Profiles" },
         { id: "settings", label: "Settings" },
       ],
     },
@@ -674,7 +690,7 @@ export function ProjectEditor({
   // After a project is selected via the router, switch to the requested tab.
   useEffect(() => {
     if (!initialProjectTab) return;
-    const validTabs = ["summary", "agents", "skills", "mcp_servers", "commands", "hooks", "custom_agents", "groups", "project_file", "rules", "context", "memory", "activity", "recommendations", "settings"] as const;
+    const validTabs = ["summary", "agents", "skills", "mcp_servers", "commands", "hooks", "custom_agents", "groups", "profiles", "project_file", "rules", "context", "memory", "activity", "recommendations", "settings"] as const;
     type ProjectTab = typeof validTabs[number];
     if (validTabs.includes(initialProjectTab as ProjectTab)) {
       selectTab(initialProjectTab as ProjectTab);
@@ -717,6 +733,19 @@ export function ProjectEditor({
     window.addEventListener("plugins-updated", handler);
     return () => window.removeEventListener("plugins-updated", handler);
   }, [selectedName]);
+
+  // Profiles are edited on their own library page. Saving one rewrites every
+  // attached project's config behind this editor, so reload the open project
+  // (unless it has unsaved edits) and refresh the attach picker.
+  useEffect(() => {
+    loadAvailableProfiles();
+    const handler = () => {
+      loadAvailableProfiles();
+      if (selectedName && !isCreating && !dirty) reloadProject(selectedName);
+    };
+    window.addEventListener("profiles-updated", handler);
+    return () => window.removeEventListener("profiles-updated", handler);
+  }, [selectedName, isCreating, dirty]);
 
   // Fetch plugin-locked skills/rules whenever the project's tools change.
   useEffect(() => {
@@ -1720,6 +1749,8 @@ export function ProjectEditor({
         custom_commands: stored.custom_commands || [],
         user_commands: stored.user_commands || [],
         hooks: stored.hooks || [],
+        profiles: stored.profiles || [],
+        profile_contributions: stored.profile_contributions || {},
         custom_skills: [...storedCustomSkills, ...newCustomSkills],
         mode: stored.mode === 'silent' ? 'silent' : 'normal',
         manage_gitignore: stored.manage_gitignore === true,
@@ -1798,6 +1829,8 @@ export function ProjectEditor({
         custom_commands: parsed.custom_commands || [],
         user_commands: parsed.user_commands || [],
         hooks: parsed.hooks || [],
+        profiles: parsed.profiles || [],
+        profile_contributions: parsed.profile_contributions || {},
         custom_skills: parsed.custom_skills || [],
         tools: parsed.tools || [],
         instructions_index_mode: parsed.instructions_index_mode || false,
@@ -3663,6 +3696,7 @@ export function ProjectEditor({
                     setDirty={setDirty}
                     dirty={dirty}
                     pluginLockedRules={pluginLockedRules}
+                    profileLocks={profileLocks}
                     availableRules={availableRules}
                     customRuleEditingIdx={customRuleEditingIdx}
                     setCustomRuleEditingIdx={setCustomRuleEditingIdx}
@@ -3697,6 +3731,7 @@ export function ProjectEditor({
                     customCommandEditContent={customCommandEditContent}
                     setCustomCommandEditContent={setCustomCommandEditContent}
                     availableUserCommands={availableUserCommands}
+                    profileLocks={profileLocks}
                     userCommandAdding={userCommandAdding}
                     setUserCommandAdding={setUserCommandAdding}
                     userCommandSearch={userCommandSearch}
@@ -3724,6 +3759,7 @@ export function ProjectEditor({
                     handleSave={handleSave}
                     availableAgents={availableAgents}
                     availableHooks={availableHooks}
+                    profileLocks={profileLocks}
                     hookAdding={hookAdding}
                     setHookAdding={setHookAdding}
                     hookSearch={hookSearch}
@@ -3748,6 +3784,7 @@ export function ProjectEditor({
                     customAgentEditContent={customAgentEditContent}
                     setCustomAgentEditContent={setCustomAgentEditContent}
                     availableUserAgents={availableUserAgents}
+                    profileLocks={profileLocks}
                     userAgentAdding={userAgentAdding}
                     setUserAgentAdding={setUserAgentAdding}
                     userAgentSearch={userAgentSearch}
@@ -3782,6 +3819,7 @@ export function ProjectEditor({
                     setProject={setProject}
                     setDirty={setDirty}
                     availableAgents={availableAgents}
+                    profileLocks={profileLocks}
                     addItem={addItem}
                     handleRemoveAgent={handleRemoveAgent}
                   />
@@ -3807,6 +3845,7 @@ export function ProjectEditor({
                     setCustomSkillEditContent={setCustomSkillEditContent}
                     availableSkills={availableSkills}
                     pluginLockedSkills={pluginLockedSkills}
+                    profileLocks={profileLocks}
                     addItem={addItem}
                     removeItem={removeItem}
                     loadAvailableSkills={loadAvailableSkills}
@@ -3827,6 +3866,7 @@ export function ProjectEditor({
                     project={project}
                     availableAgents={availableAgents}
                     availableMcpServers={availableMcpServers}
+                    profileLocks={profileLocks}
                     addItem={addItem}
                     removeItem={removeItem}
                     isMcpServerEnabled={isMcpServerEnabled}
@@ -3955,6 +3995,19 @@ export function ProjectEditor({
                     onRemoveFromGroup={handleRemoveFromGroup}
                     onRemoveFromAllGroups={handleRemoveFromAllGroups}
                     onNavigateToGroup={onNavigateToGroup}
+                  />
+                )}
+
+                {/* ── Profiles tab ─────────────────────────────────── */}
+                {projectTab === "profiles" && project && (
+                  <ProfilesPanel
+                    project={project}
+                    setProject={setProject}
+                    setDirty={setDirty}
+                    isCreating={isCreating}
+                    selectedName={selectedName}
+                    availableProfiles={availableProfiles}
+                    reloadProject={reloadProject}
                   />
                 )}
 

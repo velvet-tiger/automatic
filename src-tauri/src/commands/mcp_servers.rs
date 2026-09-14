@@ -47,6 +47,7 @@ pub fn rename_mcp_server_config(old_name: &str, new_name: &str) -> Result<(), St
     // Rewrite every project and template that referenced the old name so no
     // dangling references remain. Projects are re-synced from within the
     // project helper so on-disk agent config reflects the new name.
+    core::rename_asset_in_profiles(core::ProfileResourceKind::McpServer, old_name, new_name);
     rename_mcp_server_in_projects(old_name, new_name);
     rename_mcp_server_in_templates(old_name, new_name);
 
@@ -65,6 +66,7 @@ pub fn delete_mcp_server_config(name: &str) -> Result<(), String> {
         return Err(format!("Cannot delete built-in MCP server '{}'", name));
     }
     core::delete_mcp_server_config(name)?;
+    core::prune_asset_from_profiles(core::ProfileResourceKind::McpServer, name);
     prune_mcp_server_from_projects(name);
     // Drop the server from every agent's global selection and rewrite the
     // affected files so the entry disappears from any place Automatic

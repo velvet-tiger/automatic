@@ -359,6 +359,19 @@ pub struct Project {
     /// `Agent` impl's `sync_hooks` method.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<String>,
+    /// Profiles attached to this project, in attach order. Each name
+    /// references `~/.automatic/library/profiles/{name}.json`. A profile is a
+    /// live bundle of library references: saving it brings every attached
+    /// project back in step (see `core::reconcile_project_profiles`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<String>,
+    /// What each attached profile added to this project's lists, keyed by
+    /// profile name. Only entries the profile itself added are recorded;
+    /// items the project already had stay the project's own. Drives the
+    /// "Profile: X" badge and lock in the editor, and lets a later reconcile
+    /// remove exactly what a profile no longer provides.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub profile_contributions: HashMap<String, ProfileContribution>,
     /// Inline custom sub-agents stored directly in the project configuration.
     /// These are written to each agent's sub-agent directory (e.g.
     /// `.claude/agents/`) during sync. Unlike workspace user_agents, custom
@@ -532,6 +545,43 @@ pub struct CustomSkill {
     pub name: String,
     /// Full Markdown content (SKILL.md) including optional YAML frontmatter.
     pub content: String,
+}
+
+/// The items one attached profile added to a project. Stored on
+/// `Project::profile_contributions` under the profile's name. Every field
+/// holds machine names; `rules` are the entries the profile added to
+/// `file_rules["_project"]`.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+pub struct ProfileContribution {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub providers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_agents: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_commands: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<String>,
+}
+
+impl ProfileContribution {
+    pub fn is_empty(&self) -> bool {
+        self.skills.is_empty()
+            && self.mcp_servers.is_empty()
+            && self.providers.is_empty()
+            && self.agents.is_empty()
+            && self.user_agents.is_empty()
+            && self.user_commands.is_empty()
+            && self.hooks.is_empty()
+            && self.rules.is_empty()
+    }
 }
 
 /// A lightweight reference to a project: name + directory.

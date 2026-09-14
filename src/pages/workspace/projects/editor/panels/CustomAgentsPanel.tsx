@@ -4,7 +4,8 @@ import type { RefObject } from "react";
 import { Check, Edit2, Globe, MessagesSquare, Plus, Trash2, X } from "lucide-react";
 import { LineNumberedTextarea } from "../../../../../components/LineNumberedTextarea";
 import { TokenPill } from "../../../../../components/TokenPill";
-import type { CustomAgent, Project, SubagentEntry } from "../../types";
+import { InheritedBadge } from "../../../../../components/ProtectionBadge";
+import type { CustomAgent, ProfileLockMap, Project, SubagentEntry } from "../../types";
 
 interface CustomAgentsPanelProps {
   project: Project;
@@ -20,6 +21,8 @@ interface CustomAgentsPanelProps {
   customAgentEditContent: string;
   setCustomAgentEditContent: (v: string) => void;
   availableUserAgents: SubagentEntry[];
+  /** Sub-agent → providing profile, for sub-agents an attached profile added. */
+  profileLocks: ProfileLockMap;
   userAgentAdding: boolean;
   setUserAgentAdding: (v: boolean) => void;
   userAgentSearch: string;
@@ -33,7 +36,7 @@ export function CustomAgentsPanel(props: CustomAgentsPanelProps) {
     customAgentEditingIdx, setCustomAgentEditingIdx,
     customAgentEditName, setCustomAgentEditName,
     customAgentEditContent, setCustomAgentEditContent,
-    availableUserAgents,
+    availableUserAgents, profileLocks,
     userAgentAdding, setUserAgentAdding,
     userAgentSearch, setUserAgentSearch,
     userAgentDropdownRef,
@@ -304,6 +307,7 @@ export function CustomAgentsPanel(props: CustomAgentsPanelProps) {
           <div className="space-y-1">
             {project.user_agents?.map((agentId) => {
               const agent = availableUserAgents.find((a) => a.id === agentId);
+              const inheritedFrom = profileLocks.user_agents[agentId];
               return (
                 <div
                   key={agentId}
@@ -318,17 +322,20 @@ export function CustomAgentsPanel(props: CustomAgentsPanelProps) {
                       {agentId}
                     </div>
                   </div>
-                  <button
-                    onClick={() => {
-                      const updated = (project.user_agents ?? []).filter((id) => id !== agentId);
-                      setProject({ ...project, user_agents: updated.length > 0 ? updated : undefined });
-                      setDirty(true);
-                    }}
-                    className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0"
-                    title="Remove"
-                  >
-                    <X size={12} />
-                  </button>
+                  {inheritedFrom && <InheritedBadge profile={inheritedFrom} />}
+                  {!inheritedFrom && (
+                    <button
+                      onClick={() => {
+                        const updated = (project.user_agents ?? []).filter((id) => id !== agentId);
+                        setProject({ ...project, user_agents: updated.length > 0 ? updated : undefined });
+                        setDirty(true);
+                      }}
+                      className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0"
+                      title="Remove"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
                 </div>
               );
             })}
