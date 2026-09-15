@@ -329,7 +329,7 @@ fn the_capability_matrix_is_unchanged() {
     let expected = "\
 antigravity | Antigravity (Beta) | GEMINI.md | skills,instructions,mcp_servers,global_mcp_servers | - | - | .agents/skills
 claude | Claude Code | CLAUDE.md | skills,instructions,mcp_servers,global_mcp_servers,agents,commands,hooks | .claude/agents | .claude/commands | .claude/skills
-cline | Cline (Beta) | .clinerules/automatic.md | skills,instructions,global_mcp_servers | - | - | .cline/skills
+cline | Cline | .clinerules/automatic.md | skills,instructions,global_mcp_servers,agents,hooks | .cline/agents | - | .cline/skills
 codex | Codex CLI | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers,agents,hooks | .codex/agents | - | .agents/skills
 cursor | Cursor | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers,agents,commands,hooks | .cursor/agents | .cursor/commands | .agents/skills
 droid | Droid (Beta) | AGENTS.md | skills,instructions,mcp_servers,global_mcp_servers,agents,hooks | .factory/droids | - | .agents/skills
