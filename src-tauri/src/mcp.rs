@@ -783,7 +783,8 @@ impl AutomaticMcpServer {
         name = "automatic_read_project",
         description = "Read the full configuration for a project (skills, MCP servers, agents, \
                        directory, description). `profiles` lists the attached profiles and \
-                       `profile_contributions` records which entries each profile added; \
+                       `profile_contributions` records which entries each profile provides, \
+                       including entries the project had before the profile was attached; \
                        those entries are owned by the profile and are re-attached on the \
                        next save if removed directly."
     )]
@@ -1765,14 +1766,14 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_attach_profile",
-        description = "Attach a profile to a project. The profile's skills, \
-                       MCP servers, providers, agents, sub-agents, commands, \
-                       hooks and rules are added to the project and recorded \
-                       as the profile's contribution, so later edits to the \
-                       profile keep the project in step. Entries the project \
-                       already had stay the project's own. Idempotent. Does \
-                       not trigger a sync — call automatic_sync_project to \
-                       write the change to disk."
+        description = "Attach a profile to a project. Every skill, MCP server, \
+                       provider, agent, sub-agent, command, hook and rule the \
+                       profile lists is recorded as the profile's contribution, \
+                       so later edits to the profile keep the project in step. \
+                       Missing entries are added; entries the project already \
+                       had are adopted by the profile. Idempotent. Does not \
+                       trigger a sync — call automatic_sync_project to write \
+                       the change to disk."
     )]
     async fn attach_profile(
         &self,
@@ -1818,9 +1819,10 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_detach_profile",
-        description = "Detach a profile from a project. Removes only the \
-                       entries the profile added; anything the project defined \
-                       itself stays. Idempotent. Does not trigger a sync — call \
+        description = "Detach a profile from a project. Removes every entry \
+                       the profile provides, including entries the project had \
+                       before it was attached; entries no attached profile \
+                       lists stay. Idempotent. Does not trigger a sync — call \
                        automatic_sync_project to write the change to disk."
     )]
     async fn detach_profile(

@@ -15,9 +15,10 @@ use super::*;
 // Profiles write their references into a project's own lists in
 // `project.json`, so every existing mechanism (save → sync, drift detection,
 // the `sync_projects_referencing_*` sweeps, autodetect) keeps working
-// unchanged. `Project::profile_contributions` records what each profile added
-// so a later reconcile can remove exactly that and nothing the project
-// defined itself.
+// unchanged. `Project::profile_contributions` records every entry each
+// profile provides, whether the profile added it or adopted an entry the
+// project already had, so a later reconcile can remove exactly that. Entries
+// no attached profile lists are the project's own and are never touched.
 
 /// The canonical `file_rules` key. Profile rules are attached here, the same
 /// key the Rules tab and `apply_templates_to_project` use.
@@ -309,11 +310,12 @@ pub struct ProfileReconcileReport {
 ///
 /// - Profiles whose record is still present but which are no longer in
 ///   `project.profiles` are detached: the items they added are removed.
-/// - For each attached profile, items it no longer lists are removed, items
-///   it lists but the project lacks are added and recorded, and items the
-///   project already had on its own are left alone and stay unrecorded.
-/// - An item another attached profile still lists is never removed; its
-///   record is handed to that profile instead.
+/// - For each attached profile, items it no longer lists are removed and
+///   every item it lists is recorded as its contribution: added to the
+///   project when missing, adopted in place when the project already had it.
+/// - An item another attached profile already records stays with that
+///   profile. An item another attached profile still lists is never removed;
+///   its record is handed to that profile instead.
 ///
 /// Only touches the in-memory project. Callers persist and sync.
 pub fn reconcile_project_profiles(project: &mut Project) -> ProfileReconcileReport {
@@ -375,15 +377,22 @@ pub fn reconcile_project_profiles(project: &mut Project) -> ProfileReconcileRepo
 
             for item in wanted {
                 let list = kind.project_list_mut(project);
-                if !kind.contains(list, item) {
+                let Some(existing) = list.iter().find(|x| kind.same(x, item)).cloned() else {
                     list.push(item.clone());
                     kind.contribution_mut(&mut next).push(item.clone());
                     report.changed = true;
-                } else if kind.contains(kind.contribution(&prev), item) {
-                    kind.contribution_mut(&mut next).push(item.clone());
+                    continue;
+                };
+                // The project already has it. Adopt it unless another profile
+                // (attached earlier, or missing on disk) already records it.
+                // Recording the project's own spelling keeps the record equal
+                // to the list entry, which the editor matches by exact name.
+                let owned_elsewhere = project.profile_contributions.iter().any(|(name, c)| {
+                    name != &profile.name && kind.contains(kind.contribution(c), item)
+                });
+                if !owned_elsewhere {
+                    kind.contribution_mut(&mut next).push(existing);
                 }
-                // Otherwise the project defined it itself: leave it unrecorded
-                // so it survives a later detach.
             }
         }
 
@@ -692,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_leaves_project_own_items_unrecorded() {
+    fn reconcile_adopts_items_the_project_already_had() {
         let temp = tempfile::tempdir().expect("tempdir");
         with_test_home(temp.path().to_path_buf(), || {
             let mut p = profile("baseline");
@@ -700,12 +709,20 @@ mod tests {
             write_profile(&p);
 
             let mut project = empty_project();
-            project.skills = vec!["react".into()];
+            project.skills = vec!["own-skill".into(), "react".into()];
             project.profiles = vec!["baseline".into()];
-            reconcile_project_profiles(&mut project);
+            let report = reconcile_project_profiles(&mut project);
 
-            assert_eq!(project.skills, vec!["react", "vitest"]);
-            assert_eq!(project.profile_contributions["baseline"].skills, vec!["vitest"]);
+            assert!(report.changed);
+            assert_eq!(project.skills, vec!["own-skill", "react", "vitest"]);
+            assert_eq!(
+                project.profile_contributions["baseline"].skills,
+                vec!["react", "vitest"]
+            );
+
+            // Adoption settles in one pass.
+            let second = reconcile_project_profiles(&mut project);
+            assert!(!second.changed);
         });
     }
 
@@ -738,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn detach_removes_only_what_the_profile_added() {
+    fn detach_removes_everything_the_profile_provides() {
         let temp = tempfile::tempdir().expect("tempdir");
         with_test_home(temp.path().to_path_buf(), || {
             let mut p = profile("baseline");
@@ -746,17 +763,19 @@ mod tests {
             p.rules = vec!["automatic-process".into()];
             write_profile(&p);
 
+            // `react` predates the profile; `own-skill` is not in the profile.
             let mut project = empty_project();
-            project.skills = vec!["react".into()];
+            project.skills = vec!["react".into(), "own-skill".into()];
             project.profiles = vec!["baseline".into()];
             reconcile_project_profiles(&mut project);
+            assert_eq!(project.skills, vec!["react", "own-skill", "vitest"]);
             assert_eq!(rules(&project), vec!["automatic-process"]);
 
             project.profiles.clear();
             let report = reconcile_project_profiles(&mut project);
 
             assert!(report.changed);
-            assert_eq!(project.skills, vec!["react"]);
+            assert_eq!(project.skills, vec!["own-skill"]);
             assert!(rules(&project).is_empty());
             assert!(!project.file_rules.contains_key(PROJECT_RULES_KEY));
             assert!(project.profile_contributions.is_empty());
@@ -803,6 +822,42 @@ mod tests {
     }
 
     #[test]
+    fn pre_existing_item_is_adopted_by_the_first_profile_that_lists_it() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        with_test_home(temp.path().to_path_buf(), || {
+            let mut first = profile("first");
+            first.skills = vec!["react".into()];
+            write_profile(&first);
+            let mut second = profile("second");
+            second.skills = vec!["react".into()];
+            write_profile(&second);
+
+            let mut project = empty_project();
+            project.skills = vec!["react".into()];
+            project.profiles = vec!["first".into(), "second".into()];
+            reconcile_project_profiles(&mut project);
+            assert_eq!(project.profile_contributions["first"].skills, vec!["react"]);
+            assert!(!project.profile_contributions.contains_key("second"));
+
+            // Detach the owner: the skill stays and `second` takes the record.
+            project.profiles = vec!["second".into()];
+            reconcile_project_profiles(&mut project);
+            assert_eq!(project.skills, vec!["react"]);
+            assert_eq!(
+                project.profile_contributions["second"].skills,
+                vec!["react"]
+            );
+
+            // Detach the last profile that lists it: the skill goes too, even
+            // though the project had it before either profile was attached.
+            project.profiles.clear();
+            reconcile_project_profiles(&mut project);
+            assert!(project.skills.is_empty());
+            assert!(project.profile_contributions.is_empty());
+        });
+    }
+
+    #[test]
     fn missing_profile_is_reported_and_leaves_state_alone() {
         let temp = tempfile::tempdir().expect("tempdir");
         with_test_home(temp.path().to_path_buf(), || {
@@ -837,8 +892,13 @@ mod tests {
             project.profiles = vec!["baseline".into()];
             reconcile_project_profiles(&mut project);
 
+            // The project's spelling is kept in both the list and the record.
             assert_eq!(project.mcp_servers, vec!["sentry"]);
-            assert!(!project.profile_contributions.contains_key("baseline"));
+            assert_eq!(
+                project.profile_contributions["baseline"].mcp_servers,
+                vec!["sentry"]
+            );
+            assert!(!reconcile_project_profiles(&mut project).changed);
         });
     }
 

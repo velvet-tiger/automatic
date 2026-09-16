@@ -22,7 +22,7 @@ interface CommandsPanelProps {
   customCommandEditContent: string;
   setCustomCommandEditContent: (v: string) => void;
   availableUserCommands: UserCommandEntry[];
-  /** Command → providing profile, for commands an attached profile added. */
+  /** Command → providing profile, for commands an attached profile provides. */
   profileLocks: ProfileLockMap;
   userCommandAdding: boolean;
   setUserCommandAdding: (v: boolean) => void;

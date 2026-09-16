@@ -26,7 +26,7 @@ const KIND_LABELS: Record<(typeof PROFILE_RESOURCE_KINDS)[number], [string, stri
   rules: ["rule", "rules"],
 };
 
-/** "2 skills · 1 rule", or an explanation when the profile added nothing. */
+/** "2 skills · 1 rule", or an explanation when the profile provides nothing. */
 function summariseContribution(contribution: ProfileContribution | undefined): string {
   const parts: string[] = [];
   for (const kind of PROFILE_RESOURCE_KINDS) {
@@ -168,7 +168,7 @@ export function ProfilesPanel({
 
         <p className="text-[12px] text-text-muted">
           A profile keeps its skills, MCP servers, rules, hooks, sub-agents, commands and agents in step across every project that attaches it.
-          Entries a profile adds carry a badge in the other tabs and are managed from the profile.
+          Entries a profile provides carry a badge in the other tabs and are managed from the profile.
         </p>
 
         {error && (
@@ -229,7 +229,7 @@ export function ProfilesPanel({
             <p className="font-medium text-text-base text-[12px]">How profiles work</p>
             <p className="leading-relaxed mt-1">
               Save a profile and every attached project is updated and re-synced.
-              Detaching removes only what the profile added. Anything this project defined itself stays.
+              Detaching removes every entry the profile provides, including any this project had before attaching it. Entries no profile lists stay.
             </p>
           </div>
         </div>

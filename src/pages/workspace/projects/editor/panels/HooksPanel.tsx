@@ -19,7 +19,7 @@ interface HooksPanelProps {
   handleSave: () => void | Promise<void>;
   availableAgents: AgentInfo[];
   availableHooks: HookEntry[];
-  /** Hook → providing profile, for hooks an attached profile added. */
+  /** Hook → providing profile, for hooks an attached profile provides. */
   profileLocks: ProfileLockMap;
   hookAdding: boolean;
   setHookAdding: (v: boolean) => void;

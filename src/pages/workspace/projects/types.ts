@@ -70,7 +70,7 @@ export interface Project {
   /** Profiles attached to this project, in attach order. */
   profiles?: string[];
   /**
-   * What each attached profile added to this project, keyed by profile name.
+   * What each attached profile provides to this project, keyed by profile name.
    * Entries listed here belong to the profile: the editor shows a badge and
    * hides their remove controls. Anything not listed is the project's own.
    */
@@ -277,7 +277,7 @@ export const PROFILE_RESOURCE_KINDS: ProfileResourceKind[] = [
   "rules",
 ];
 
-/** The items one attached profile added to a project (mirrors the Rust struct). */
+/** The items one attached profile provides to a project (mirrors the Rust struct). */
 export type ProfileContribution = Partial<Record<ProfileResourceKind, string[]>>;
 
 /**

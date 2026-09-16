@@ -32,7 +32,7 @@ export function LockCell({ tooltip }: { tooltip: string }) {
 }
 
 /**
- * In-row pill for an entry a profile added to a project. The profile owns
+ * In-row pill for an entry a profile provides to a project. The profile owns
  * the entry, so the row that renders this badge hides its remove control.
  */
 export function InheritedBadge({ profile }: { profile: string }) {

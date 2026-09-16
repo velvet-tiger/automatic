@@ -10,7 +10,7 @@ interface McpServersPanelProps {
   project: Project;
   availableAgents: AgentInfo[];
   availableMcpServers: string[];
-  /** Server → providing profile, for servers an attached profile added. */
+  /** Server → providing profile, for servers an attached profile provides. */
   profileLocks: ProfileLockMap;
   addItem: (field: "skills" | "mcp_servers" | "providers" | "agents", value: string) => Promise<boolean>;
   removeItem: (field: "skills" | "mcp_servers" | "providers" | "agents", index: number) => void;

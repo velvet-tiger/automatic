@@ -15,20 +15,20 @@ Profiles write their references into the project's own lists in `.automatic/proj
 Two fields on `Project` carry the link:
 
 - `profiles`: attached profile names, in attach order.
-- `profile_contributions`: per profile, the entries that profile added. Only entries the profile itself added are recorded. Entries the project already had stay the project's own.
+- `profile_contributions`: per profile, the entries that profile provides. Every entry the profile lists is recorded, whether the profile added it or the project already had it. Entries no attached profile lists stay the project's own.
 
 `core::reconcile_project_profiles` is the one operation. It runs on every `save_project` command, on attach and detach, and in the sweep that follows a profile save, delete, or rename:
 
 1. Profiles recorded in `profile_contributions` but no longer in `profiles` are detached. Their recorded entries are removed.
-2. For each attached profile: entries it no longer lists are removed; entries it lists but the project lacks are added and recorded; entries the project already had are left alone and stay unrecorded.
-3. An entry another attached profile still lists is never removed. Its record moves to that profile.
+2. For each attached profile: entries it no longer lists are removed; every entry it lists is recorded as its contribution. Missing entries are added to the project. Entries the project already had are adopted in place, keeping their position and spelling.
+3. An entry another attached profile already records stays with that profile. An entry another attached profile still lists is never removed. Its record moves to that profile.
 4. `rules` go to `file_rules["_project"]`. MCP server names match without case.
 
 A profile whose file is missing is reported and otherwise ignored, so nothing disappears because a file went missing.
 
 ## What this means in practice
 
-- A project can add any resource it likes, including one a profile also provides. That entry belongs to the project and survives a detach.
+- A profile owns every entry it lists on an attached project, including entries the project had before the profile was attached. Detaching the profile removes all of them. Entries no attached profile lists are the project's own and are never touched.
 - Removing a profile-owned entry through a path that does not lock it (an MCP tool, a hand edit of `project.json`) is undone on the next save. Edit or detach the profile instead.
 - Deleting a library asset prunes it from every profile as well as every project. Renaming an MCP server or command renames it in profiles too.
 - Per-project disabling of a profile-provided MCP server is not available. The editor hides the toggle on inherited servers.
@@ -37,7 +37,7 @@ A profile whose file is missing is reported and otherwise ignored, so nothing di
 
 - Library, Profiles: create and edit profiles, see which projects use one, attach one to a project.
 - Project editor, Configuration, Profiles: attach and detach profiles for one project.
-- Entries a profile added carry a `Profile: name` badge and have no remove, edit, or toggle control in the Skills, MCP, Rules, Hooks, Agents, Commands, and Providers tabs.
+- Entries a profile provides carry a `Profile: name` badge and have no remove, edit, or toggle control in the Skills, MCP, Rules, Hooks, Agents, Commands, and Providers tabs.
 
 ## MCP tools
 

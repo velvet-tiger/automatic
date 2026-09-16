@@ -365,9 +365,10 @@ pub struct Project {
     /// project back in step (see `core::reconcile_project_profiles`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<String>,
-    /// What each attached profile added to this project's lists, keyed by
-    /// profile name. Only entries the profile itself added are recorded;
-    /// items the project already had stay the project's own. Drives the
+    /// What each attached profile provides to this project's lists, keyed by
+    /// profile name. Every entry a profile lists is recorded, whether the
+    /// profile added it or adopted an entry the project already had; entries
+    /// no attached profile lists stay the project's own. Drives the
     /// "Profile: X" badge and lock in the editor, and lets a later reconcile
     /// remove exactly what a profile no longer provides.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -547,9 +548,10 @@ pub struct CustomSkill {
     pub content: String,
 }
 
-/// The items one attached profile added to a project. Stored on
+/// The items one attached profile provides to a project, whether it added
+/// them or adopted entries the project already had. Stored on
 /// `Project::profile_contributions` under the profile's name. Every field
-/// holds machine names; `rules` are the entries the profile added to
+/// holds machine names; `rules` are the entries the profile provides in
 /// `file_rules["_project"]`.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct ProfileContribution {

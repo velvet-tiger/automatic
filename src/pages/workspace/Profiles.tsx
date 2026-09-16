@@ -313,7 +313,7 @@ export default function Profiles({
 
   const attachedCountWarning = (count: number) =>
     count > 0
-      ? `\n\nIt is attached to ${count} project${count === 1 ? "" : "s"}. Each one will lose what this profile added and be re-synced.`
+      ? `\n\nIt is attached to ${count} project${count === 1 ? "" : "s"}. Each one will lose every entry this profile provides and be re-synced.`
       : "";
 
   const handleDelete = async (name: string) => {
@@ -346,7 +346,7 @@ export default function Profiles({
 
     const preview = targets.slice(0, 10).map((t) => `• ${t}`).join("\n");
     const overflow = targets.length > 10 ? `\n…and ${targets.length - 10} more.` : "";
-    const message = `Delete ${targets.length} profile${targets.length === 1 ? "" : "s"}?\n\n${preview}${overflow}\n\nAttached projects lose what each profile added and are re-synced. This cannot be undone.`;
+    const message = `Delete ${targets.length} profile${targets.length === 1 ? "" : "s"}?\n\n${preview}${overflow}\n\nAttached projects lose every entry each profile provides and are re-synced. This cannot be undone.`;
     const confirmed = await ask(message, { title: "Delete Profiles", kind: "warning" });
     if (!confirmed) return;
 

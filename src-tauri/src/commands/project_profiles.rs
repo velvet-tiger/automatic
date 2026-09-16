@@ -30,8 +30,8 @@ pub fn save_project_profile(name: &str, data: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Detach the profile from every project first so each one loses only what
-/// the profile added, then remove the file.
+/// Detach the profile from every project first so each one loses every entry
+/// the profile provides, then remove the file.
 #[tauri::command]
 pub fn delete_project_profile(name: &str) -> Result<(), String> {
     detach_profile_from_projects(name);

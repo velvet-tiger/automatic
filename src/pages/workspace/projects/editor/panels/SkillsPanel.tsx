@@ -25,7 +25,7 @@ interface SkillsPanelProps {
   setCustomSkillEditContent: (v: string) => void;
   availableSkills: string[];
   pluginLockedSkills: string[];
-  /** Skill → providing profile, for skills an attached profile added. */
+  /** Skill → providing profile, for skills an attached profile provides. */
   profileLocks: ProfileLockMap;
   addItem: (field: "skills" | "mcp_servers" | "providers" | "agents", value: string) => Promise<boolean>;
   removeItem: (field: "skills" | "mcp_servers" | "providers" | "agents", index: number) => void;

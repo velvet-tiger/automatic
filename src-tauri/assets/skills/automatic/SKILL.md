@@ -76,7 +76,7 @@ List all project names registered in Automatic.
 
 ### `automatic_read_project`
 
-Read the full configuration for a named project: description, directory path, assigned skills, MCP servers, providers, configured agent tools, attached `profiles`, and `profile_contributions` (which entries each profile added).
+Read the full configuration for a named project: description, directory path, assigned skills, MCP servers, providers, configured agent tools, attached `profiles`, and `profile_contributions` (which entries each profile provides, including entries the project had before it was attached).
 
 ```
 name: string  — the project name as registered in Automatic
@@ -106,7 +106,7 @@ name: string  — the profile name
 
 ### `automatic_attach_profile` / `automatic_detach_profile`
 
-Attach a profile to a project, or detach it. Attaching adds the profile's entries to the project and records them as the profile's contribution; entries the project already had stay the project's own. Detaching removes only what the profile added.
+Attach a profile to a project, or detach it. Attaching records every entry the profile lists as the profile's contribution: missing entries are added to the project and entries the project already had are adopted. Detaching removes every entry the profile provides, including entries the project had before it was attached.
 
 ```
 project: string  — the project name as registered in Automatic

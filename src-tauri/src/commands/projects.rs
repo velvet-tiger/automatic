@@ -1515,8 +1515,8 @@ pub(crate) fn reconcile_projects_referencing_profile(profile_name: &str) {
     });
 }
 
-/// Detach `profile_name` from every project, dropping only the items the
-/// profile added, then re-sync. Used before a profile is deleted.
+/// Detach `profile_name` from every project, dropping every item the profile
+/// provides, then re-sync. Used before a profile is deleted.
 pub(crate) fn detach_profile_from_projects(profile_name: &str) {
     with_each_project_mut(|project_name, project| {
         let before = project.profiles.len();
@@ -1891,10 +1891,10 @@ mod propagation_tests {
         });
     }
 
-    /// Detaching before delete removes only what the profile added and
-    /// leaves the project's own entries alone.
-    #[test]
-    fn detach_profile_from_projects_removes_only_contributions() {
+/// Detaching before delete removes the profile's entries and preserves
+/// project entries that the profile does not provide.
+#[test]
+fn detach_profile_from_projects_removes_provided_entries() {
         with_temp_home(|_| {
             save_profile_with_rule("baseline", "profile-rule");
             core::save_rule("own-rule", "Own Rule", "Own rule body.\n").expect("save rule");

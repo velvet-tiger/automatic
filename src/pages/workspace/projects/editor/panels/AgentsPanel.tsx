@@ -9,7 +9,7 @@ interface AgentsPanelProps {
   setProject: (next: Project) => void;
   setDirty: (v: boolean) => void;
   availableAgents: AgentInfo[];
-  /** Agent → providing profile, for agents an attached profile added. */
+  /** Agent → providing profile, for agents an attached profile provides. */
   profileLocks: ProfileLockMap;
   addItem: (field: "skills" | "mcp_servers" | "providers" | "agents", value: string) => Promise<boolean>;
   handleRemoveAgent: (idx: number) => void | Promise<void>;

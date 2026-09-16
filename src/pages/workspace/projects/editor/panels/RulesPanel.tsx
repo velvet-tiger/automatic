@@ -12,7 +12,7 @@ interface RulesPanelProps {
   setDirty: (v: boolean) => void;
   dirty: boolean;
   pluginLockedRules: string[];
-  /** Rule → providing profile, for rules an attached profile added. */
+  /** Rule → providing profile, for rules an attached profile provides. */
   profileLocks: ProfileLockMap;
   availableRules: { id: string; name: string }[];
   customRuleEditingIdx: number | null;

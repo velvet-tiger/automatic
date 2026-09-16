@@ -21,7 +21,7 @@ interface CustomAgentsPanelProps {
   customAgentEditContent: string;
   setCustomAgentEditContent: (v: string) => void;
   availableUserAgents: SubagentEntry[];
-  /** Sub-agent → providing profile, for sub-agents an attached profile added. */
+  /** Sub-agent → providing profile, for sub-agents an attached profile provides. */
   profileLocks: ProfileLockMap;
   userAgentAdding: boolean;
   setUserAgentAdding: (v: boolean) => void;
