@@ -2,6 +2,14 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.27.0] - 2026-09-16
+
+### Added
+
+- Sync Cline subagents and file hooks. (603578e)
+- Add an attach-profile toolbar button. (e615c8e)
+- Adopt existing project resources for profiles. (9c0742d)
+
 ## [1.26.0] - 2026-09-15
 
 ### Added
