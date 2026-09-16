@@ -37,6 +37,7 @@ import type {
   ProjectProblemsReport,
   ProjectFileInfo,
   ProjectTemplate,
+  ProjectProfile,
   ActivityEntry,
   ProjectRecommendation,
   ProjectToolEntry,
@@ -57,6 +58,7 @@ import { SwitchToUnifiedModal } from "./SwitchToUnifiedModal";
 import { RebuildConfirmationModal } from "./RebuildConfirmationModal";
 import { OrphanConfigDialog } from "./OrphanConfigDialog";
 import { ApplyProjectTemplateModal } from "./ApplyProjectTemplateModal";
+import { AttachProfileModal } from "./AttachProfileModal";
 import { SettingsPanel } from "./panels/SettingsPanel";
 import { MemoryPanel } from "./panels/MemoryPanel";
 import { GroupsPanel } from "./panels/GroupsPanel";
@@ -89,6 +91,7 @@ import {
   Bot,
   RefreshCw,
   LayoutTemplate,
+  Layers,
   AlertCircle,
   ArrowRight,
   RotateCcw,
@@ -188,16 +191,28 @@ export function ProjectEditor({
   const [pluginLockedSkills, setPluginLockedSkills] = useState<string[]>([]);
   const [pluginLockedRules, setPluginLockedRules] = useState<string[]>([]);
 
-  // Profile-provided resources — entries an attached profile added. They
+  // Profile-provided resources — entries an attached profile provides. They
   // carry a badge and lose their remove controls; the profile owns them.
   const profileLocks = useMemo(() => profileLockMap(project), [project?.profile_contributions]);
   const [availableProfiles, setAvailableProfiles] = useState<string[]>([]);
+  const [availableProfileData, setAvailableProfileData] = useState<ProjectProfile[]>([]);
+  const [showAttachProfilePicker, setShowAttachProfilePicker] = useState(false);
+  const [profileAttachSelection, setProfileAttachSelection] = useState<string | null>(null);
   const loadAvailableProfiles = async () => {
     try {
       const names: string[] = await invoke("get_project_profiles");
-      setAvailableProfiles([...names].sort((a, b) => a.localeCompare(b)));
+      const sorted = [...names].sort((a, b) => a.localeCompare(b));
+      setAvailableProfiles(sorted);
+      const loaded: ProjectProfile[] = await Promise.all(
+        sorted.map(async (name) => {
+          const raw: string = await invoke("read_project_profile", { name });
+          return JSON.parse(raw) as ProjectProfile;
+        })
+      );
+      setAvailableProfileData(loaded);
     } catch {
       setAvailableProfiles([]);
+      setAvailableProfileData([]);
     }
   };
 
@@ -2738,6 +2753,24 @@ export function ProjectEditor({
                     </span>
                   </span>
                 )}
+                {/* Attach Profile button */}
+                {!isCreating && selectedName && (
+                  <span className="relative group/keytip">
+                    <button
+                      onClick={() => {
+                        setProfileAttachSelection(null);
+                        setShowAttachProfilePicker(true);
+                      }}
+                      aria-label="Attach Profile"
+                      className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-brand/10 text-text-muted hover:text-brand rounded transition-colors"
+                    >
+                      <Layers size={12} />
+                    </button>
+                    <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 whitespace-nowrap rounded bg-bg-input-dark border border-border-strong/40 px-2 py-1 text-[11px] text-text-base shadow-md opacity-0 group-hover/keytip:opacity-100 transition-opacity z-10">
+                      Attach Profile
+                    </span>
+                  </span>
+                )}
                 {/* Open in editor dropdown — only shown when a directory is set */}
                 {!isCreating && project.directory && (
                   <div className="relative group/keytip" ref={openInDropdownRef}>
@@ -4220,6 +4253,35 @@ export function ProjectEditor({
           setShowProjectTemplatePicker(false);
           setTemplateApplySelection(null);
           setTemplateApplyResult(null);
+        }}
+      />
+    )}
+
+    {/* Attach-profile modal */}
+    {showAttachProfilePicker && project && !isCreating && selectedName && (
+      <AttachProfileModal
+        profiles={[...availableProfileData].sort((a, b) => a.name.localeCompare(b.name))}
+        attached={project.profiles ?? []}
+        selected={profileAttachSelection}
+        onSelect={setProfileAttachSelection}
+        onCancel={() => {
+          setShowAttachProfilePicker(false);
+          setProfileAttachSelection(null);
+        }}
+        onConfirm={async () => {
+          if (!profileAttachSelection || !selectedName) return;
+          try {
+            await invoke("attach_profile_to_project", {
+              projectName: selectedName,
+              profileName: profileAttachSelection,
+            });
+            await reloadProject(selectedName);
+          } catch (err) {
+            setError(`Failed to attach profile "${profileAttachSelection}": ${err}`);
+          } finally {
+            setShowAttachProfilePicker(false);
+            setProfileAttachSelection(null);
+          }
         }}
       />
     )}
