@@ -48,6 +48,7 @@ import {
   emptyProject,
   isHttpDocPath,
   isManagedDocNotePath,
+  normaliseProfile,
   profileLockMap,
 } from "../helpers";
 import { EditorIcon } from "../EditorIcon";
@@ -206,7 +207,7 @@ export function ProjectEditor({
       const loaded: ProjectProfile[] = await Promise.all(
         sorted.map(async (name) => {
           const raw: string = await invoke("read_project_profile", { name });
-          return JSON.parse(raw) as ProjectProfile;
+          return normaliseProfile(name, JSON.parse(raw) as Partial<ProjectProfile>);
         })
       );
       setAvailableProfileData(loaded);

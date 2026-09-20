@@ -89,14 +89,14 @@ export function AttachProfileModal({
               {visible.map((p) => {
                 const isSelected = selected === p.name;
                 const counts: { label: string; n: number }[] = [
-                  { label: "skills", n: p.skills.length },
-                  { label: "MCP", n: p.mcp_servers.length },
-                  { label: "rules", n: p.rules.length },
-                  { label: "hooks", n: p.hooks.length },
-                  { label: "agents", n: p.agents.length },
-                  { label: "sub-agents", n: p.user_agents.length },
-                  { label: "commands", n: p.user_commands.length },
-                  { label: "providers", n: p.providers.length },
+                  { label: "skills", n: p.skills?.length ?? 0 },
+                  { label: "MCP", n: p.mcp_servers?.length ?? 0 },
+                  { label: "rules", n: p.rules?.length ?? 0 },
+                  { label: "hooks", n: p.hooks?.length ?? 0 },
+                  { label: "agents", n: p.agents?.length ?? 0 },
+                  { label: "sub-agents", n: p.user_agents?.length ?? 0 },
+                  { label: "commands", n: p.user_commands?.length ?? 0 },
+                  { label: "providers", n: p.providers?.length ?? 0 },
                 ].filter((c) => c.n > 0);
                 return (
                   <li key={p.name}>

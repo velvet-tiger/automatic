@@ -12,7 +12,7 @@ import {
   RefreshCw,
   History,
 } from "lucide-react";
-import type { Project, ProjectToolEntry, ProfileLockMap } from "./types";
+import type { Project, ProjectProfile, ProjectToolEntry, ProfileLockMap } from "./types";
 import { PROFILE_RESOURCE_KINDS } from "./types";
 
 export function parseInvokeResult<T>(value: unknown): T {
@@ -103,6 +103,27 @@ export function emptyProject(name: string): Project {
     custom_commands: [],
     profiles: [],
     profile_contributions: {},
+  };
+}
+
+/**
+ * Fill in array fields the Rust serializer omits when empty
+ * (`skip_serializing_if = "Vec::is_empty"` on hooks, rules, user_agents,
+ * user_commands). Call this after `JSON.parse` of `read_project_profile`.
+ */
+export function normaliseProfile(name: string, parsed: Partial<ProjectProfile>): ProjectProfile {
+  return {
+    name: parsed.name || name,
+    description: parsed.description || "",
+    skills: parsed.skills || [],
+    mcp_servers: parsed.mcp_servers || [],
+    providers: parsed.providers || [],
+    agents: parsed.agents || [],
+    user_agents: parsed.user_agents || [],
+    user_commands: parsed.user_commands || [],
+    hooks: parsed.hooks || [],
+    rules: parsed.rules || [],
+    _author: parsed._author,
   };
 }
 

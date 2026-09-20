@@ -25,6 +25,7 @@ import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { useBulkSelection } from "../../lib/useBulkSelection";
 import type { HookEntry, ProjectProfile, UserCommandEntry } from "./projects/types";
+import { normaliseProfile } from "./projects/helpers";
 
 // ── Profiles ──────────────────────────────────────────────────────────────────
 //
@@ -55,22 +56,6 @@ function emptyProfile(name: string): ProjectProfile {
     user_commands: [],
     hooks: [],
     rules: ["automatic-service"],
-  };
-}
-
-function normaliseProfile(name: string, parsed: Partial<ProjectProfile>): ProjectProfile {
-  return {
-    name: parsed.name || name,
-    description: parsed.description || "",
-    skills: parsed.skills || [],
-    mcp_servers: parsed.mcp_servers || [],
-    providers: parsed.providers || [],
-    agents: parsed.agents || [],
-    user_agents: parsed.user_agents || [],
-    user_commands: parsed.user_commands || [],
-    hooks: parsed.hooks || [],
-    rules: parsed.rules || [],
-    _author: parsed._author,
   };
 }
 
