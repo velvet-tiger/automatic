@@ -14,6 +14,17 @@
 //! The fix (the same one Electron/Tauri apps commonly use, e.g. the
 //! `fix-path-env` package): ask the user's own login shell what its `PATH`
 //! is, once, and adopt it for the rest of this process's lifetime.
+//!
+//! # Tty safety
+//!
+//! The probe subprocess is built through [`crate::spawn_safe`], which
+//! guarantees stdin is `/dev/null` and — on unix — that the child calls
+//! `setsid(2)` before exec. Without those guarantees, an interactive login
+//! shell spawned from inside a Claude Code MCP subprocess would inherit
+//! Claude's real controlling terminal, call `tcsetpgrp` during its own
+//! interactive setup, and take foreground group ownership away from the
+//! host process — which then stops on `SIGTTIN` the next time it reads
+//! stdin. See [`crate::spawn_safe`] for the full mechanism.
 
 #[cfg(unix)]
 pub fn fix_path_env() {
@@ -24,16 +35,32 @@ pub fn fix_path_env() {
 
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let result = std::process::Command::new(&shell)
-            .args(["-ilc", "echo -n $PATH"])
-            .output();
-        // The receiver may already be gone if we timed out — ignore.
+        // The probe uses the tty-safe helper: stdin=/dev/null, stderr=/dev/null,
+        // and the child runs in its own session via `setsid`. This is what
+        // stops an interactive login shell from grabbing the parent's tty
+        // and stalling MCP hosts like Claude Code with `SIGTTIN`.
+        let mut cmd = crate::spawn_safe::safe_command_captured(&shell);
+        cmd.args(["-ilc", "echo -n $PATH"]);
+        let child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(_) => {
+                let _ = tx.send(Err(()));
+                return;
+            }
+        };
+        // `wait_with_output` reaps the child and drains its piped stdout,
+        // avoiding the "abandoned process holding fds" problem the previous
+        // `.output()` version was prone to when the outer `recv_timeout`
+        // fired first.
+        let result = child.wait_with_output().map_err(|_| ());
         let _ = tx.send(result);
     });
 
-    // Bounded wait: a broken shell profile (e.g. one that hangs waiting on
-    // input) must never block app startup indefinitely. On timeout the
-    // probe thread is abandoned and the existing PATH is left untouched.
+    // Bounded wait: a broken shell profile must never block app startup
+    // indefinitely. On timeout the probe thread's child is left to be
+    // reaped by the kernel — but because the child ran under `setsid` and
+    // with `/dev/null` for stdin/stderr, it cannot interact with the host's
+    // tty regardless of when it finishes.
     let Ok(Ok(output)) = rx.recv_timeout(Duration::from_secs(3)) else {
         return;
     };

@@ -2,12 +2,25 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    // Must run before anything spawns a subprocess or resolves a binary on
-    // $PATH — a Finder/Dock-launched GUI app otherwise inherits a minimal
-    // PATH that hides nvm/Homebrew/volta-installed tools like npm.
-    automatic_lib::path_env::fix_path_env();
-
     let args: Vec<String> = std::env::args().collect();
+
+    // Stdio-only subcommands never need the login-shell PATH probe: the
+    // proxy relays JSON-RPC over reqwest and spawns nothing; `mcp-serve`
+    // spawns its own children lazily and can invoke the probe on demand if
+    // it ever needs to. Skipping it here also removes the shell probe from
+    // the proxy's code path entirely — a second layer of defence against
+    // the `SIGTTIN` failure `spawn_safe` is designed to prevent.
+    let is_stdio_subcommand = args
+        .get(1)
+        .map(|verb| verb == "mcp-serve" || verb == "mcp-proxy")
+        .unwrap_or(false);
+    if !is_stdio_subcommand {
+        // Must run before anything spawns a subprocess or resolves a binary
+        // on $PATH — a Finder/Dock-launched GUI app otherwise inherits a
+        // minimal PATH that hides nvm/Homebrew/volta-installed tools like
+        // npm.
+        automatic_lib::path_env::fix_path_env();
+    }
 
     if args.len() > 1 && args[1] == "mcp-serve" {
         // Run the same startup housekeeping the GUI runs on launch —

@@ -34,6 +34,7 @@ pub mod oauth;
 pub mod path_env;
 pub mod plugins;
 pub mod proxy;
+pub mod spawn_safe;
 // Re-export the build plugin's features module under its previous top-level
 // path so that mcp.rs and other crates can continue to use `crate::features::`.
 pub use plugins::build::features;
