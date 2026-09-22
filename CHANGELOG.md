@@ -2,6 +2,12 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.27.2] - 2026-09-23
+
+### Fixed
+
+- Changing analytics, sync mode, or default agents on the App settings page no longer resets your other settings. The page used to write only those three fields, so the backend filled everything else with defaults. That wiped wizard completion, agent models, gateways, default agent options, and the library version. The page now reads the stored settings and merges its edits before saving, as the other settings pages do. ([29923b6](https://github.com/velvet-tiger/automatic/commit/29923b6))
+
 ## [1.27.1] - 2026-09-22
 
 ### Fixed
