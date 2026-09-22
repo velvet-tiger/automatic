@@ -66,5 +66,8 @@ export default defineConfig(async () => ({
     setupFiles: ["./src/test/setup.ts"],
     css: false,
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    // Node 25 defines a global localStorage with no methods unless given
+    // --localstorage-file. Vitest keeps Node's global, which hides happy-dom's.
+    execArgv: ["--no-webstorage"],
   },
 }));
