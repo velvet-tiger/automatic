@@ -254,9 +254,13 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
     }
   }
 
+  // `AppSettings` holds only the fields this page edits. Merge them into the
+  // stored settings so fields owned by other pages (wizard state, agent
+  // models, library version, …) are not reset to their defaults.
   async function persistSettings(updated: AppSettings) {
     try {
-      await invoke("write_settings", { settings: updated });
+      const current: Record<string, unknown> = await invoke("read_settings");
+      await invoke("write_settings", { settings: { ...current, ...updated } });
     } catch (e) {
       console.error("Failed to write settings", e);
     }
