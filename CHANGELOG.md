@@ -2,6 +2,13 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.27.1] - 2026-09-22
+
+### Fixed
+
+- Attaching a profile with no hooks no longer crashes the project. Profiles now normalise omitted empty arrays returned by `read_project_profile`, and the Attach Profile count renderer no longer trips on undefined hook lists. ([7a85d07](https://github.com/velvet-tiger/automatic/commit/7a85d07))
+- Running Automatic in `mcp-proxy` or `mcp-serve` mode no longer steals the parent client's controlling tty. The startup PATH probe used to spawn `zsh -ilc` with the parent's stdin inherited; inside a Claude Code MCP subprocess that interactive shell called `tcsetpgrp` on Claude's real terminal and Claude's next stdin read stopped on SIGTTIN. Subprocess spawns now go through a `safe_command` helper that pins stdin, stdout, and stderr to `/dev/null` and calls `setsid` in a `pre_exec` hook so the child has no controlling terminal, and the PATH probe is skipped entirely on the `mcp-proxy` and `mcp-serve` code paths. ([587b209](https://github.com/velvet-tiger/automatic/commit/587b209))
+
 ## [1.27.0] - 2026-09-16
 
 ### Added
