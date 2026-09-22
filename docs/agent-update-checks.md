@@ -12,24 +12,47 @@ Global MCP discovery paths were corrected 2026-08-26.
 
 | Agent | Last checked | Findings |
 |---|---|---|
-| Claude Code | 2026-09-13 | No relevant changes. 2.1.265–2.1.270 (Sep 8–12) are bug fixes: `http`+legacy-SSE MCP connect fix (2.1.266), CLAUDE.md/memory attribution rules now win over the attribution reminder (2.1.269), `effort:` frontmatter fix on commands/skills/subagents (2.1.267), `claude plugin eval` and `--json` plugin flags (2.1.268/269). No instruction-file, skills-schema, `.mcp.json`, or hook-event change. |
-| Codex CLI | 2026-09-13 | No dated, documented config-relevant change. In-window releases are `0.155.0-alpha.2`–`0.155.0-alpha.3.10` (Sep 10–11, no note bodies) plus Python SDK 0.154.0 (`max`/`ultra` effort, `ExternalMessage`). Alphas ship without notes, so a silent config change cannot be fully ruled out. VEL-154 stays unconfirmed. |
-| Cursor | 2026-09-13 | No relevant changes. "Cursor Projects" (Sep 10) is a cloud multi-agent capability with no config-file impact. `.cursor/mcp.json` / `mcpServers` unchanged. |
-| Kiro | 2026-09-13 | No relevant changes. IDE unchanged (1.0.437). CLI 2.21.2 (Sep 8), 2.21.3 (Sep 10), 2.21.4 (Sep 11) are patches; 2.21.2/2.21.3 have no published notes. 2.21.4 is session-search / harness-flag work. `.kiro/skills/` unchanged. |
-| Gemini CLI | 2026-09-13 | No relevant changes. v0.59.0 stable and v0.60.0-preview.0 (Sep 8) are MCP OAuth security hardening (SSRF prevention, RFC 9207 issuer ID) and restricted-mode `mcpServers` filtering. No config-shape or instruction-file change. |
-| GitHub Copilot | 2026-09-13 | **Gap.** VS Code 1.137 (Sep 9) adds optional `sandbox` / `sandboxEnabled` fields on `.vscode/mcp.json` server entries (macOS/Linux) — VEL-163. `servers` key and required `type` unchanged. The Agent Host user path `~/.copilot/mcp-config.json` is already discovered by Automatic (`github_copilot.rs:351`), so it is not a new gap. |
-| Cline | 2026-09-13 | No relevant changes. Desktop v0.0.24–v0.0.26 (Sep 9–11) are Customize-view / sidebar / provider-picker UI work. No config path, key, transport, or env change. |
-| Kilo Code | 2026-09-13 | No relevant changes to write targets. v7.6.0 (Sep 10) adds an opt-in one-time import of Claude Code instructions, simple skills, and disabled MCP defs *into* Kilo. Import direction only; imported MCP arrives disabled. AGENTS.md / `.kilo/kilo.json` / `.agents/skills/` unchanged. |
-| Junie | 2026-09-13 | No relevant changes. 26.9.7 (Sep 7) adds response streaming and the built-in `/branch` command. Docs pages restamped 11 Sep but describe existing behaviour. `.junie/mcp/mcp.json` / `mcpServers` and skills paths intact. |
-| Kimi Code | 2026-09-13 | No relevant changes. Latest changelog entry is 0.41.0 (Sep 4), before the window. `.kimi-code/mcp.json`, `mcpServers`, and transport inference all stand. |
-| Warp | 2026-09-13 | No relevant changes. Changelog through 2026.09.09 (Grok support, remappable keybindings, shell completions). Nothing touching AGENTS.md, MCP paths/keys, skills, or credentials. Gap unchanged, VEL-151. |
-| Goose | 2026-09-13 | No config-shape change. v1.50.0 (Sep 8) adds "Prefer latest MCP version" (protocol negotiation) and "Enforce subagent platform guards" (runtime guard) — neither changes the global YAML schema or subagent file format. `hooks: false` gap unchanged. |
-| OpenCode | 2026-09-13 | No relevant changes. v1.18.30 (Sep 9) is model/provider only (GPT-6 Astra prompts, Bedrock model IDs, SDK bumps). `opencode.json` / `mcp` key unchanged. Prior optional-field gaps carry over. |
-| Droid | 2026-09-13 | No relevant changes. No release in the window; latest is CLI v0.209.0 (Sep 1). `.factory/mcp.json` / `mcpServers` and the field list unchanged. |
-| Antigravity | 2026-09-13 | **Gap (surface grown).** `google-antigravity/antigravity-cli` 1.1.28–1.2.2 (Sep 9–12): custom-agent `excludeDefaultComponents` frontmatter (1.2.1), plugin MCP auto-namespacing `<plugin>_<server>` in `mcp_config.json` (1.2.2), URL-fetch permission default flipped (1.1.28). Custom agents (`agents: false`), hooks, and `rules.json` are unsupported — VEL-164. The `mcp_config.json` / `serverUrl` writer is current. **`antigravity.google/docs/changelog` still 404s; used the GitHub releases API.** |
-| Z Code | 2026-09-13 | No dated primary source — the vendor publishes no changelog or release notes. The MCP services doc is unchanged; the VEL-157 breaking state (`mcp.servers` vs written `mcpServers`) stands. |
-| Pi | 2026-09-13 | No relevant changes. No `pi-mcp-adapter` release in the window; latest is 2.32.1 (Sep 1). `.pi/mcp.json` precedence and `~/.pi/agent/mcp.json` global unchanged. |
-| Zed | 2026-09-13 | No relevant changes. v1.19.2 stable (Sep 9) adds an `ask_user` agent tool (runtime capability). No `context_servers` / `.zed/settings.json`, instruction-file, skills, or subagent change. |
+| Claude Code | 2026-09-20 | **Behavioral + gap** — VEL-165. 2.1.271–2.1.278 (changelog carries no per-entry dates; treated as in-window above the 2.1.270 ceiling). AGENTS.md read as fallback when no CLAUDE.md (2.1.277); `omitClaudeMd` agent frontmatter (2.1.271); claude.ai account skill/plugin sync into terminal sessions (2.1.275); `CLAUDE_CODE_MCP_STARTUP_WAIT_MS` (2.1.274). Automatic writes CLAUDE.md and handles none of these — nothing broken. |
+| Codex CLI | 2026-09-20 | No confirmed config-relevant change. `rust-v0.155.1` (Sep 18) is a TUI reasoning-summary bugfix. `0.156.0-alpha.2`–`alpha.9` (Sep 18–20) ship without note bodies, so a silent config change cannot be fully ruled out. VEL-154 stays unconfirmed. Docs base is now `learn.chatgpt.com/docs`. |
+| Cursor | 2026-09-20 | No relevant changes. Newest main-changelog entry is Sep 10 ("Cursor Projects"); CLI changelog newest is Aug 26. Nothing dated in window. `.cursor/mcp.json` / `mcpServers` unchanged. |
+| Kiro | 2026-09-20 | No write-target change. IDE 1.1 (Sep 14) surfaces MCP failures more clearly and makes hooks "more reliable" (both behavioral); CLI 2.22.0 (Sep 16) is fullscreen chat / V3 dashboard. `.kiro/settings/mcp.json` shape and hook format unchanged. |
+| Gemini CLI | 2026-09-20 | Behavioral, no config-shape change. v0.60.0 stable (Sep 15) enforces RFC 9207 issuer ID in MCP OAuth and hardens system-config path permissions. `.gemini/settings.json` / `mcpServers` unchanged. OAuth servers not returning `iss` may now fail. |
+| GitHub Copilot | 2026-09-20 | No new change. Changelog's first in-window entry is Sep 18 (code-review UX, weekly-release recap, mid-Oct model deprecation). VS Code MCP doc (updated Sep 16) still matches baseline: `servers` key, `type` required; `sandbox`/`sandboxEnabled` already VEL-163. No new field this window. |
+| Cline | 2026-09-20 | Gap (already tracked). Desktop v0.0.27–v0.0.32 (Sep 13–18) UI-only. CLI v3.0.62 / SDK v0.0.83 (Sep 15) load `~/.agents/plugins` Agent Plugins (skills + MCP) without touching `cline_mcp_settings.json` — same format as VEL-159; comment added there. Global MCP writer unaffected. |
+| Kilo Code | 2026-09-20 | No write-target change. v7.7.0–v7.7.5 (Sep 15–18): `@provider/model` subagent mentions, leading-slash `skills.paths` root fallback (v7.7.2), KiloClaw removed. `.kilo/kilo.json` / `mcp` key unchanged. (Baseline's `skill.paths` is actually `skills.paths`.) |
+| Junie | 2026-09-20 | No relevant changes. 26.9.14 / build 3196.4 (Sep 14) adds a `/review` Apply-suggestion UI and `/goal` improvements. `.junie/AGENTS.md`, `.junie/mcp/mcp.json` / `mcpServers`, and skills paths intact. |
+| Kimi Code | 2026-09-20 | No relevant changes. 0.43.0/0.43.1 (Sep 14/15) are subagent runtime fixes; 2.0.0 (Sep 17) adds `/desktop` + `kimi install-app` and terminal mermaid — runtime/UI only. `.kimi-code/mcp.json` / `mcpServers` / transport inference unchanged. (Product docs at kimi.com/code are authoritative, not the `MoonshotAI/kimi-cli` 1.x line.) |
+| Warp | 2026-09-20 | No relevant changes. Changelog 2026.09.16: shell completions, `oz secret create docker-registry`, cloud-agent credential preservation, git-config fix. Nothing touching AGENTS.md, MCP paths/keys, or skills. Gap unchanged, VEL-151. |
+| Goose | 2026-09-20 | No config-shape change. v1.51.0 (Sep 17): MCP preferred-version / HTTP retries, app-tool owner binding, Toolshim scoping — all runtime. Global YAML schema and (absent) subagent/hook support unchanged. |
+| OpenCode | 2026-09-20 | No relevant changes. v1.18.31 (Sep 14) is ACP session restoration + Copilot adaptive-thinking only. `opencode.json` / `mcp` key unchanged. Prior optional-field gaps carry over. |
+| Droid | 2026-09-20 | No write-target change. v0.220.0–v0.223.0 (Sep 16–19): org skill-disable policy (v0.222.0), hook risk-level setting + credential notices (v0.223.0), legacy custom-model migration (not MCP). `.factory/mcp.json` explicit `type:stdio`, AGENTS.md, `.factory/droids/` unchanged. |
+| Antigravity | 2026-09-20 | **Behavioral/gap — reinforces VEL-164.** `antigravity-cli` 1.2.3–1.2.7 (Sep 15–19): subagent MCP inheritance / auto-guidance, `/skills reload`, `/hooks` plugin listing, legacy tool retirement, 20k-token rule budget. Custom agents / hooks still `agents:false`. Global `mcp_config.json` / `serverUrl` unchanged. **`antigravity.google/docs/changelog` still 404s; used GitHub releases API.** |
+| Z Code | 2026-09-20 | **Gap — VEL-166.** v3.14.0 (Sep 19) adds dynamic workflows / `/workflow` multi-subagent orchestration (sync-mappability unverified). A vendor changelog now EXISTS (`zcode.z.ai/en/changelog`) — the prior "no changelog" note is retired. VEL-157 (`mcp.servers`) is Done and `zcode.rs` writes the nested key; the task's baseline table row (`mcpServers`) is stale. |
+| Pi | 2026-09-20 | Gap/behavioral, opt-in only. `pi-mcp-adapter` v2.34.0 (Sep 14): encrypted-file OAuth store (`oauthCredentialStore`, env-gated) and bounded ancestor `.mcp.json` discovery (`ancestorConfigRoots`, default-off). `.pi/mcp.json` path/key/entry shape unchanged; no action forced. |
+| Zed | 2026-09-20 | Behavioral only. v1.20.1 (Sep 16) fixes multibyte Agent Skill descriptions being wrongly rejected and a settings.json key-escaping corruption; v1.20.2 (Sep 17) follows. `context_servers` / `.zed/settings.json` shape unchanged. |
+## Tickets raised, 2026-09-20
+
+| Ticket | Agent | Classification |
+|---|---|---|
+| VEL-165 | Claude Code | Behavioral + gap — AGENTS.md fallback when no CLAUDE.md (2.1.277), `omitClaudeMd` agent frontmatter (2.1.271), claude.ai account skill/plugin sync (2.1.275), `CLAUDE_CODE_MCP_STARTUP_WAIT_MS` (2.1.274). Nothing Automatic writes is broken |
+| VEL-166 | Z Code | Gap — v3.14.0 dynamic workflows / `/workflow` multi-subagent orchestration (sync-mappability unverified); vendor changelog now exists; skills doc references sub-agents vs baseline |
+
+Comment added to VEL-159: Cline CLI v3.0.62 / SDK v0.0.83 (Sep 15) now also load `~/.agents/plugins` Agent Plugins, extending the tracked surface beyond Desktop v0.0.23.
+
+## Spec corrections needed, 2026-09-20
+
+- `automatic-meta/general/agents/claude-code.md` should record: AGENTS.md fallback precedence (read when no CLAUDE.md), the `omitClaudeMd` agent-frontmatter key, and claude.ai account skill/plugin sync. Tracked in VEL-165.
+- `automatic-meta/general/agents/zcode.md` should record that a vendor changelog now exists (`zcode.z.ai/en/changelog`) and reconcile the skills doc's sub-agent references against the "no sub-agents" baseline. Tracked in VEL-166.
+- The `check-agents-for-updates` task skill source list should add `https://zcode.z.ai/en/changelog` for Z Code (previously recorded as having no changelog).
+- The task skill's current-baseline table is stale in two rows: Z Code project MCP is now written under nested `mcp.servers` (VEL-157 shipped), not `mcpServers`; and the Kilo Code skills setting is `skills.paths`, not `skill.paths`.
+
+## Sources unreachable, 2026-09-20
+
+- `antigravity.google/docs/changelog` still returned 404 (as in prior runs). The Antigravity CLI was checked via the `google-antigravity/antigravity-cli` GitHub releases API (dated, with bodies).
+- Codex CLI in-window releases are `0.156.0-alpha.*` prereleases whose individual tag pages returned errors / carried no note bodies; a silent config change cannot be fully ruled out from the release feed alone.
+- Z Code: one fetch attributed a "v3.12.3 MCP protocol-version" changelog entry that a verbatim re-fetch did not reproduce; treated as unconfirmed.
+- Kilo `CHANGELOG.md` blob on github.com rendered without text; the equally-primary Releases page and MCP docs covered the window.
+
 ## Tickets raised, 2026-08-28
 
 | Ticket | Agent | Classification |
