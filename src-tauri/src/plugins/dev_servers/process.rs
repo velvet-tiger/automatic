@@ -11,6 +11,7 @@
 //! via `forget`, which the delete-config command path calls.
 
 use std::collections::{HashMap, VecDeque};
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -25,6 +26,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 use super::registry;
+use crate::node_runtime::NodeSelection;
 use super::types::{DevServerStatus, LogLine, LogStream, PackageManager, ServerConfig};
 
 /// Cap on captured log lines per server, so a long-running dev server cannot
@@ -163,6 +165,13 @@ fn build_command(pm: PackageManager, script: &str) -> Command {
     cmd
 }
 
+/// The app's `PATH` with `dir` placed first.
+fn path_with_prefix(dir: &std::path::Path) -> Result<OsString, String> {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let dirs = std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&inherited));
+    std::env::join_paths(dirs).map_err(|e| format!("Could not add '{}' to PATH: {}", dir.display(), e))
+}
+
 fn spawn_log_reader<R: std::io::Read + Send + 'static>(
     stream: R,
     kind: LogStream,
@@ -257,7 +266,8 @@ fn status_from_running(id: &str, running: &mut RunningServer) -> DevServerStatus
     }
 }
 
-/// Start a configured server. Fails if it is already running, if the
+/// Start a configured server, using the Node chosen in `node` (see
+/// `node_runtime`). Fails if it is already running, if the
 /// package manager binary cannot be found on `$PATH`, if the resolved
 /// working directory does not exist, or if a port is configured and
 /// something already answers on it (the server would only die with
@@ -267,8 +277,13 @@ fn status_from_running(id: &str, running: &mut RunningServer) -> DevServerStatus
 /// within `START_GRACE` of spawning. Blocks for up to that long when the
 /// server prints neither a crash nor a URL, so callers must not be on the
 /// UI thread.
-pub fn start(project: &str, project_dir: &str, config: &ServerConfig) -> Result<DevServerStatus, String> {
-    start_with_grace(project, project_dir, config, START_GRACE)
+pub fn start(
+    project: &str,
+    project_dir: &str,
+    config: &ServerConfig,
+    node: &NodeSelection,
+) -> Result<DevServerStatus, String> {
+    start_with_grace(project, project_dir, config, node, START_GRACE)
 }
 
 /// `start` with an explicit watch window, so tests can exercise the
@@ -277,6 +292,7 @@ fn start_with_grace(
     project: &str,
     project_dir: &str,
     config: &ServerConfig,
+    node: &NodeSelection,
     grace: Duration,
 ) -> Result<DevServerStatus, String> {
     if project_dir.trim().is_empty() {
@@ -293,7 +309,12 @@ fn start_with_grace(
     }
 
     let binary = config.package_manager.binary();
-    if crate::core::tools::find_binary_on_path(binary).is_none() {
+    let nvm_bin = match node {
+        NodeSelection::Nvm(selected) => Some(selected.bin_dir.as_path()),
+        NodeSelection::NotRequested | NodeSelection::System(_) => None,
+    };
+    let in_nvm_bin = nvm_bin.is_some_and(|dir| dir.join(binary).is_file());
+    if !in_nvm_bin && crate::core::tools::find_binary_on_path(binary).is_none() {
         return Err(format!("'{}' was not found on $PATH", binary));
     }
 
@@ -327,6 +348,11 @@ fn start_with_grace(
     // spawn the actual dev server as a child process, not exec into it).
     #[cfg(unix)]
     command.process_group(0);
+    // `Command` searches the child's PATH when one is set, so the package
+    // manager itself also resolves from the selected Node's bin folder.
+    if let Some(dir) = nvm_bin {
+        command.env("PATH", path_with_prefix(dir)?);
+    }
 
     let mut child = command
         .spawn()
@@ -334,6 +360,12 @@ fn start_with_grace(
     let pid = child.id();
 
     let log: Arc<Mutex<VecDeque<LogLine>>> = Arc::new(Mutex::new(VecDeque::new()));
+    if let Some(text) = node.describe() {
+        log.lock().unwrap().push_back(LogLine {
+            stream: LogStream::Stdout,
+            text,
+        });
+    }
     let urls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     if let Some(stdout) = child.stdout.take() {
@@ -629,6 +661,7 @@ mod tests {
             "test-project",
             tmp.path().to_str().unwrap(),
             &config,
+            &NodeSelection::NotRequested,
             Duration::from_millis(300),
         )
         .expect("server should start");
@@ -687,7 +720,7 @@ mod tests {
             created_at: String::new(),
         };
 
-        start("test-project", tmp.path().to_str().unwrap(), &config).expect("server should start");
+        start("test-project", tmp.path().to_str().unwrap(), &config, &NodeSelection::NotRequested).expect("server should start");
 
         let mut captured = Vec::new();
         for _ in 0..25 {
@@ -740,7 +773,7 @@ mod tests {
             created_at: String::new(),
         };
 
-        let err = start("test-project", tmp.path().to_str().unwrap(), &config)
+        let err = start("test-project", tmp.path().to_str().unwrap(), &config, &NodeSelection::NotRequested)
             .expect_err("a crash inside the window should fail the start");
         assert!(err.contains("failed to start"), "got: {}", err);
         assert!(err.contains("EADDRINUSE"), "got: {}", err);
@@ -795,6 +828,7 @@ mod tests {
             "test-project",
             tmp.path().to_str().unwrap(),
             &config,
+            &NodeSelection::NotRequested,
             Duration::from_millis(200),
         )
         .expect("server should start");
@@ -848,10 +882,65 @@ mod tests {
             created_at: String::new(),
         };
 
-        let err = start("test-project", tmp.path().to_str().unwrap(), &config)
+        let err = start("test-project", tmp.path().to_str().unwrap(), &config, &NodeSelection::NotRequested)
             .expect_err("start should refuse while the port is held");
         assert!(err.contains(&format!("Port {} is already in use", port)), "got: {}", err);
         drop(listener);
+    }
+
+    /// With an nvm selection, the package manager must come from the
+    /// selected version's bin folder, ahead of anything on the app's PATH.
+    /// A fake `npm` script stands in for the real one, so this needs no
+    /// Node install.
+    #[cfg(unix)]
+    #[test]
+    fn start_runs_the_package_manager_from_the_selected_nvm_bin() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nvm = TempDir::new().unwrap();
+        let bin_dir = nvm.path().join("versions/node/v99.0.0/bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let fake_npm = bin_dir.join("npm");
+        std::fs::write(
+            &fake_npm,
+            "#!/bin/sh\necho \"fake-npm-from-nvm Local: http://localhost:4999/\"\nexec sleep 30\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let project = TempDir::new().unwrap();
+        std::fs::write(project.path().join(".nvmrc"), "99\n").unwrap();
+        let node = crate::node_runtime::select_node(project.path(), project.path(), nvm.path())
+            .expect("fake nvm install should resolve");
+
+        let config = ServerConfig {
+            id: "test-automatic_dev_server_nvm_bin_7c41".to_string(),
+            name: "test".to_string(),
+            package_manager: PackageManager::Npm,
+            script: "dev".to_string(),
+            subdirectory: String::new(),
+            port: None,
+            created_at: String::new(),
+        };
+
+        let status = start_with_grace(
+            "test-project",
+            project.path().to_str().unwrap(),
+            &config,
+            &node,
+            Duration::from_secs(3),
+        )
+        .expect("server should start");
+        let log = get_log(&config.id);
+        stop(&config.id).expect("stop should succeed");
+
+        assert_eq!(status.urls, vec!["http://localhost:4999/".to_string()]);
+        assert_eq!(log[0].text, "Using Node v99.0.0 from nvm (.nvmrc)");
+        assert!(
+            log.iter().any(|line| line.text.contains("fake-npm-from-nvm")),
+            "log should show the fake npm ran: {:?}",
+            log
+        );
     }
 
     #[cfg(unix)]

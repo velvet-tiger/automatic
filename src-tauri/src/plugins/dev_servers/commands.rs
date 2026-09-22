@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use super::types::{DevServerStatus, LogLine, NpmScriptEntry, PackageManager, ServerConfig};
 use super::{detect, process, registry};
+use crate::node_runtime::{self, NodeSelection};
 
 fn resolve_dir(project_dir: &str, subdirectory: Option<&str>) -> PathBuf {
     match subdirectory {
@@ -65,10 +66,24 @@ pub async fn start_dev_server(project: String, id: String) -> Result<DevServerSt
     tokio::task::spawn_blocking(move || {
         let config = registry::find_config(&project, &id)?;
         let directory = project_directory(&project)?;
-        process::start(&project, &directory, &config)
+        let node = select_node(&directory, &config)?;
+        process::start(&project, &directory, &config, &node)
     })
     .await
     .map_err(|e| format!("start_dev_server task join error: {e}"))?
+}
+
+/// The Node to run a server with. Only consults nvm when the user has turned
+/// on Settings → App → "Use nvm for Dev Servers".
+fn select_node(project_dir: &str, config: &ServerConfig) -> Result<NodeSelection, String> {
+    let settings = crate::core::read_settings()?;
+    if !settings.nvm_enabled || project_dir.trim().is_empty() {
+        return Ok(NodeSelection::NotRequested);
+    }
+    let nvm_dir = node_runtime::default_nvm_dir()
+        .ok_or("Could not find the home directory to locate nvm. Set NVM_DIR before starting Automatic.")?;
+    let working_dir = resolve_dir(project_dir, Some(&config.subdirectory));
+    node_runtime::select_node(&working_dir, Path::new(project_dir), &nvm_dir)
 }
 
 #[tauri::command]

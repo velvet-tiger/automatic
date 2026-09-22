@@ -114,6 +114,11 @@ pub struct Settings {
     /// an agent, the hardcoded default from `agents::default_model` is used.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub agent_models: HashMap<String, String>,
+    /// When true, Dev Servers run with the nvm-installed Node version named
+    /// by the project's `.nvmrc` or `.node-version` (see `node_runtime`).
+    /// Off by default: projects then use the Node on the app's `PATH`.
+    #[serde(default)]
+    pub nvm_enabled: bool,
 }
 
 fn default_analytics_enabled() -> bool {
@@ -138,6 +143,7 @@ impl Default for Settings {
             active_agent: None,
             agent_gateways: HashMap::new(),
             agent_models: HashMap::new(),
+            nvm_enabled: false,
         }
     }
 }
@@ -469,5 +475,23 @@ mod tests {
         let raw = serde_json::to_string(&s).expect("serialise");
         // skip_serializing_if = "Option::is_none" should keep legacy files clean.
         assert!(!raw.contains("agent_features_enabled"), "raw was: {raw}");
+    }
+
+    #[test]
+    fn nvm_enabled_defaults_to_false_for_existing_settings_files() {
+        let parsed: Settings = serde_json::from_str(r#"{"sync_mode":"copy"}"#).unwrap();
+        assert!(!parsed.nvm_enabled);
+        assert_eq!(parsed.sync_mode, "copy");
+    }
+
+    #[test]
+    fn nvm_enabled_round_trips() {
+        let dir = tmp();
+        let settings = Settings {
+            nvm_enabled: true,
+            ..Settings::default()
+        };
+        write_at(dir.path(), &settings).unwrap();
+        assert!(read_at(dir.path()).unwrap().nvm_enabled);
     }
 }

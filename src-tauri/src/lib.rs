@@ -30,6 +30,7 @@ pub mod core;
 pub mod languages;
 pub mod mcp;
 pub mod memory;
+pub mod node_runtime;
 pub mod oauth;
 pub mod path_env;
 pub mod plugins;

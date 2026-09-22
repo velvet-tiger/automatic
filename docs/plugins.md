@@ -292,3 +292,21 @@ When neither field is set, the tool is never auto-detected.
 ## Existing Plugins
 
 _No bundled plugins currently declare runtime commands via `invoke_tool_command`. See `src-tauri/src/plugins/` for the current set of bundled plugins and their manifests._
+
+## Dev Servers: Node version selection
+
+Dev Servers run `npm`, `pnpm` or `yarn` directly, with the `PATH` captured once at startup by `src-tauri/src/path_env.rs`. That `PATH` comes from the user's login shell in their home directory. It does not follow a project's `.nvmrc`.
+
+Settings → App → **Use nvm for Dev Servers** turns on per-project selection. It is off by default and stored as `nvm_enabled` in `~/.automatic/settings.json`.
+
+When it is on, `src-tauri/src/node_runtime.rs` runs before each start:
+
+1. It looks for `.nvmrc`, then `.node-version`. The search starts in the server's folder and moves up, stopping at the project root.
+2. It resolves the version against nvm's installs in `$NVM_DIR`, or `~/.nvm` when `NVM_DIR` is unset. It reads nvm's folders and alias files directly and never runs the `nvm` shell function.
+3. It puts that version's `bin` folder first on the child's `PATH`. The first log line names the version, e.g. `Using Node v24.19.0 from nvm (.nvmrc)`.
+
+Accepted values: exact (`24.19.0`, `v24.19.0`), partial (`24`, `24.19`; the highest installed match wins), `node` or `stable`, `system`, and nvm aliases such as `default` or `lts/*`.
+
+A server does not start when the file asks for a version nvm has not installed. The error names the file and the `nvm install` command to run. Projects without a version file run exactly as they do with the setting off.
+
+Only nvm is supported. Volta, mise and asdf use shims that already pick a version from the working directory. fnm is not supported yet.

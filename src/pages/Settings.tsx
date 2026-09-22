@@ -38,6 +38,7 @@ interface AppSettings {
   sync_mode: string;
   analytics_enabled: boolean;
   default_agents: string[];
+  nvm_enabled: boolean;
 }
 
 const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; description: string }[] = [
@@ -129,6 +130,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
     sync_mode: "symlink",
     analytics_enabled: true,
     default_agents: [],
+    nvm_enabled: false,
   });
   const [loading, setLoading] = useState(true);
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
@@ -192,6 +194,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
           sync_mode: raw.sync_mode ?? raw.skill_sync_mode ?? "symlink",
           analytics_enabled: raw.analytics_enabled ?? true,
           default_agents: raw.default_agents ?? [],
+          nvm_enabled: raw.nvm_enabled ?? false,
         });
         setAvailableAgents(agents);
         setNewsletterEmail(raw.onboarding?.email ?? "");
@@ -283,6 +286,13 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
     await persistSettings(updated);
   }
 
+  async function updateNvmEnabled(enabled: boolean) {
+    const updated = { ...settings, nvm_enabled: enabled };
+    setSettings(updated);
+    trackSettingChanged("nvm_enabled", enabled);
+    await persistSettings(updated);
+  }
+
   async function addDefaultAgent(id: string) {
     if (settings.default_agents.includes(id)) return;
     const updated = { ...settings, default_agents: [...settings.default_agents, id] };
@@ -328,6 +338,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
         sync_mode: "symlink",
         analytics_enabled: true,
         default_agents: [],
+        nvm_enabled: false,
       };
       setSettings(defaults);
       setAnalyticsEnabled(true);
@@ -390,6 +401,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
         sync_mode: "symlink",
         analytics_enabled: true,
         default_agents: [],
+        nvm_enabled: false,
       };
       setSettings(defaults);
       setAnalyticsEnabled(true);
@@ -938,6 +950,49 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                     Events will not be sent. This is expected in local development.
                   </div>
                 )}
+              </div>
+
+              {/* Node version (nvm) */}
+              <div className="mb-8">
+                <h3 className="text-sm font-medium mb-2 text-text-base">Node Version</h3>
+                <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
+                  Run Dev Servers with the Node version named in the project's{" "}
+                  <code>.nvmrc</code> or <code>.node-version</code> file, using the
+                  versions installed by nvm. Projects without a version file are not
+                  affected. A server will not start if its version is not installed.
+                </p>
+
+                <button
+                  onClick={() => updateNvmEnabled(!settings.nvm_enabled)}
+                  className={`flex items-center justify-between w-full p-4 rounded-lg border text-left transition-all ${
+                    settings.nvm_enabled
+                      ? "border-brand bg-brand/10"
+                      : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                  }`}
+                >
+                  <div>
+                    <div className="text-[13px] font-medium text-text-base">
+                      Use nvm for Dev Servers
+                    </div>
+                    <div className="text-[12px] text-text-muted">
+                      {settings.nvm_enabled
+                        ? "Enabled. Dev Servers use the project's nvm version."
+                        : "Disabled. Dev Servers use the Node on Automatic's PATH."}
+                    </div>
+                  </div>
+
+                  <div
+                    className={`relative flex-shrink-0 w-10 h-5 rounded-full transition-colors ${
+                      settings.nvm_enabled ? "bg-brand" : "bg-surface-active"
+                    }`}
+                  >
+                    <div
+                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                        settings.nvm_enabled ? "left-5" : "left-0.5"
+                      }`}
+                    />
+                  </div>
+                </button>
               </div>
 
               {/* App Updates */}
