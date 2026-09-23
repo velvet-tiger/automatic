@@ -122,12 +122,6 @@ pub struct ReadClaudeMemoryParams {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub struct GetProjectContextParams {
-    /// The project name as registered in Automatic
-    pub project: String,
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct GetRelatedProjectsParams {
     /// The project name as registered in Automatic
     pub project: String,
@@ -911,99 +905,6 @@ impl AutomaticMcpServer {
         }
 
         Ok(CallToolResult::success(vec![Content::text(output)]))
-    }
-
-    #[tool(
-        name = "automatic_get_project_context",
-        description = "Read the project context for a registered project. Returns commands, entry points, \
-                       architecture concepts, conventions, gotchas, a documentation index merged from \
-                       .automatic/context.json and .automatic/docs.json, and the list of rules currently \
-                       attached to each instruction file. Returns an empty context (all sections present \
-                       but empty) when the source files do not exist yet."
-    )]
-    async fn get_project_context(
-        &self,
-        params: Parameters<GetProjectContextParams>,
-    ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
-
-        let project_json = match crate::core::read_project(&params.0.project) {
-            Ok(j) => j,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Failed to read project '{}': {}",
-                    params.0.project, e
-                ))]));
-            }
-        };
-
-        let project: crate::core::Project = match serde_json::from_str(&project_json) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Failed to parse project data: {}",
-                    e
-                ))]));
-            }
-        };
-
-        match crate::context::get_project_context(&project.directory) {
-            Ok(ctx) => {
-                // Build a brief plain-text summary first so the agent immediately
-                // knows what sections are populated, followed by the full JSON.
-                let mut summary = format!("# Project context for '{}'\n\n", params.0.project);
-
-                let cmd_count = ctx.commands.len();
-                let ep_count = ctx.entry_points.len();
-                let concept_count = ctx.concepts.len();
-                let conv_count = ctx.conventions.len();
-                let gotcha_count = ctx.gotchas.len();
-                let doc_count = ctx.docs.len();
-
-                if cmd_count + ep_count + concept_count + conv_count + gotcha_count + doc_count == 0
-                {
-                    summary.push_str(
-                        "No context defined yet (.automatic/context.json is absent or empty).\n\n",
-                    );
-                } else {
-                    summary.push_str(&format!(
-                        "commands: {cmd_count}, entry_points: {ep_count}, concepts: {concept_count}, \
-                         conventions: {conv_count}, gotchas: {gotcha_count}, docs: {doc_count}\n\n"
-                    ));
-                    summary.push_str("## Full context\n\n");
-                    match serde_json::to_string_pretty(&ctx) {
-                        Ok(json) => summary.push_str(&json),
-                        Err(e) => summary.push_str(&format!("(serialisation error: {})", e)),
-                    }
-                    summary.push_str("\n\n");
-                }
-
-                // Attached rules — sourced from project.file_rules so agents
-                // can discover which rules are active without an extra call.
-                summary.push_str("## Attached rules\n\n");
-                if project.file_rules.is_empty() {
-                    summary.push_str("No rules attached to this project.\n");
-                } else {
-                    let mut keys: Vec<&String> = project.file_rules.keys().collect();
-                    keys.sort();
-                    for key in keys {
-                        let rules = &project.file_rules[key];
-                        if rules.is_empty() {
-                            continue;
-                        }
-                        summary.push_str(&format!("- `{}`: {}\n", key, rules.join(", ")));
-                    }
-                }
-
-                Ok(CallToolResult::success(vec![Content::text(summary)]))
-            }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to load project context for '{}': {}",
-                params.0.project, e
-            ))])),
-        }
     }
 
     // ── Rules tools ──────────────────────────────────────────────────────

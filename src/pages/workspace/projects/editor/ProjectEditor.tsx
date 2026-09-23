@@ -79,7 +79,6 @@ import { CommandsPanel } from "./panels/CommandsPanel";
 import { HooksPanel } from "./panels/HooksPanel";
 import { CustomAgentsPanel } from "./panels/CustomAgentsPanel";
 import { ProjectFilePanel } from "./panels/ProjectFilePanel";
-import { ContextPanel } from "./panels/ContextPanel";
 
 import {
   Plus,
@@ -302,8 +301,8 @@ export function ProjectEditor({
   const navLayout = useProjectNavLayout();
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "commands" | "hooks" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "profiles" | "project_file" | "rules" | "context" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools" | "settings";
-  type ProjectGroup = "summary" | "project_file" | "rules" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "hooks" | "configuration" | "instructions" | "documentation" | "memory" | "activity" | "insights";
+  type ProjectTab = "summary" | "agents" | "commands" | "hooks" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "profiles" | "project_file" | "rules" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools" | "settings";
+  type ProjectGroup = "summary" | "project_file" | "rules" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "hooks" | "configuration" | "documentation" | "memory" | "activity" | "insights";
 
   const PROJECT_GROUPS: {
     id: ProjectGroup;
@@ -318,13 +317,6 @@ export function ProjectEditor({
     { id: "custom_agents", label: "Agents", tabs: [{ id: "custom_agents", label: "Agents" }] },
     { id: "commands", label: "Commands", tabs: [{ id: "commands", label: "Commands" }] },
     { id: "hooks", label: "Hooks", tabs: [{ id: "hooks", label: "Hooks" }] },
-    {
-      id: "instructions",
-      label: "Context",
-      tabs: [
-        { id: "context", label: "Context" },
-      ],
-    },
     {
       id: "documentation",
       label: "Documentation",
@@ -514,27 +506,8 @@ export function ProjectEditor({
   const [loadingActivityPage, setLoadingActivityPage] = useState(false);
   const ACTIVITY_PAGE_SIZE = 50;
 
-  // Context state
-  interface ProjectContextData {
-    commands: Record<string, string>;
-    entry_points: Record<string, string>;
-    concepts: Record<string, { files: string[]; summary: string }>;
-    conventions: Record<string, string>;
-    gotchas: Record<string, string>;
-    docs: Record<string, { path: string; summary: string }>;
-  }
   type ProjectDocsData = Record<string, { path: string; summary: string }>;
-  const [projectContext, setProjectContext] = useState<ProjectContextData | null>(null);
   const [projectDocs, setProjectDocs] = useState<ProjectDocsData>({});
-  const [loadingContext, setLoadingContext] = useState(false);
-  // Raw text editor state for context.json
-  const [contextRaw, setContextRaw] = useState("");
-  const [contextEditing, setContextEditing] = useState(false);
-  const [contextDirty, setContextDirty] = useState(false);
-  const [contextSaving, setContextSaving] = useState(false);
-  const [contextGenerating, setContextGenerating] = useState(false);
-  const [contextJsonError, setContextJsonError] = useState<string | null>(null);
-  const [contextFileExists, setContextFileExists] = useState(false);
 
   // Documentation tab state
   // Inline form state for adding a new file/dir path entry
@@ -706,7 +679,7 @@ export function ProjectEditor({
   // After a project is selected via the router, switch to the requested tab.
   useEffect(() => {
     if (!initialProjectTab) return;
-    const validTabs = ["summary", "agents", "skills", "mcp_servers", "commands", "hooks", "custom_agents", "groups", "profiles", "project_file", "rules", "context", "memory", "activity", "recommendations", "settings"] as const;
+    const validTabs = ["summary", "agents", "skills", "mcp_servers", "commands", "hooks", "custom_agents", "groups", "profiles", "project_file", "rules", "memory", "activity", "recommendations", "settings"] as const;
     type ProjectTab = typeof validTabs[number];
     if (validTabs.includes(initialProjectTab as ProjectTab)) {
       selectTab(initialProjectTab as ProjectTab);
@@ -1196,79 +1169,12 @@ export function ProjectEditor({
     window.dispatchEvent(new CustomEvent("groups-updated"));
   };
 
-  const loadContext = async (projectName: string) => {
+  const loadDocs = async (projectName: string) => {
     try {
-      setLoadingContext(true);
-      const [parsedRaw, rawText, docsRaw] = await Promise.all([
-        invoke<string>("get_project_context", { name: projectName }),
-        invoke<string>("read_project_context_raw", { name: projectName }),
-        invoke<string>("get_project_docs", { name: projectName }),
-      ]);
-      setProjectContext(JSON.parse(parsedRaw));
-      setProjectDocs(JSON.parse(docsRaw));
-      setContextRaw(rawText);
-      setContextFileExists(rawText.length > 0);
-      setContextEditing(false);
-      setContextDirty(false);
-      setContextJsonError(null);
-    } catch (err: any) {
-      console.error("Failed to load project context:", err);
-      setProjectContext(null);
+      setProjectDocs(JSON.parse(await invoke<string>("get_project_docs", { name: projectName })));
+    } catch (err: unknown) {
+      console.error("Failed to load project docs:", err);
       setProjectDocs({});
-      setContextRaw("");
-      setContextFileExists(false);
-    } finally {
-      setLoadingContext(false);
-    }
-  };
-
-  const handleSaveContext = async () => {
-    if (!selectedName) return;
-    try {
-      JSON.parse(contextRaw);
-    } catch (e: any) {
-      setContextJsonError(`Invalid JSON: ${e.message}`);
-      return;
-    }
-    setContextSaving(true);
-    setContextJsonError(null);
-    try {
-      await invoke("save_project_context_raw", { name: selectedName, content: contextRaw });
-      setContextDirty(false);
-      setContextEditing(false);
-      setContextFileExists(true);
-      const [parsed, docsRaw]: [string, string] = await Promise.all([
-        invoke<string>("get_project_context", { name: selectedName }),
-        invoke<string>("get_project_docs", { name: selectedName }),
-      ]);
-      setProjectContext(JSON.parse(parsed));
-      setProjectDocs(JSON.parse(docsRaw));
-      notifyProjectUpdated();
-    } catch (err: any) {
-      setContextJsonError(`${err}`);
-    } finally {
-      setContextSaving(false);
-    }
-  };
-
-  const handleGenerateContext = async () => {
-    if (!selectedName) return;
-    setContextGenerating(true);
-    setContextJsonError(null);
-    const entryId = log(`Analysing project "${selectedName}"…`, "running", activeAgentLabel);
-    try {
-      const generated: string = await invoke("ai_generate_context", { name: selectedName });
-      // Pretty-print the returned JSON before putting it in the editor.
-      const pretty = JSON.stringify(JSON.parse(generated), null, 2);
-      setContextRaw(pretty);
-      setContextEditing(true);
-      setContextDirty(true);
-      update(entryId, `Context generated for "${selectedName}" — review and save`, "success");
-    } catch (err: any) {
-      setContextJsonError(`Generation failed: ${err}`);
-      update(entryId, `Context generation failed: ${err}`, "error");
-    } finally {
-      setContextGenerating(false);
     }
   };
 
@@ -1289,7 +1195,6 @@ export function ProjectEditor({
     const updated = JSON.stringify(newDocs, null, 2);
     await invoke("save_project_docs_raw", { name: selectedName, content: updated });
     setProjectDocs(newDocs);
-    setProjectContext((prev) => (prev ? { ...prev, docs: newDocs } : prev));
   };
 
   /** Add or update a file/dir entry in the docs map. */
@@ -1794,7 +1699,7 @@ export function ProjectEditor({
       await loadGroups(name);
       await loadActivity(name);
       await loadRecommendations(name);
-      await loadContext(name);
+      await loadDocs(name);
       // Reset activity tab pagination for the newly selected project
       setActivityPage(0);
       setActivityPageEntries([]);
@@ -1866,7 +1771,7 @@ export function ProjectEditor({
       await loadMemories(name);
       await loadGroups(name);
       await loadActivity(name);
-      await loadContext(name);
+      await loadDocs(name);
       notifyProjectUpdated();
       // Reset activity tab pagination on project reload
       setActivityPage(0);
@@ -3663,31 +3568,6 @@ export function ProjectEditor({
               />
             )}
 
-            {/* ── Context tab (full-bleed, like project_file) ──────────── */}
-            {projectTab === "context" && project && (
-              <ContextPanel
-                project={project}
-                selectedName={selectedName}
-                loadingContext={loadingContext}
-                contextFileExists={contextFileExists}
-                contextEditing={contextEditing}
-                setContextEditing={setContextEditing}
-                contextRaw={contextRaw}
-                setContextRaw={setContextRaw}
-                contextDirty={contextDirty}
-                setContextDirty={setContextDirty}
-                contextSaving={contextSaving}
-                contextGenerating={contextGenerating}
-                contextJsonError={contextJsonError}
-                setContextJsonError={setContextJsonError}
-                agentFeaturesEnabled={agentFeaturesEnabled}
-                projectContext={projectContext}
-                handleGenerateContext={handleGenerateContext}
-                handleSaveContext={handleSaveContext}
-                loadContext={loadContext}
-              />
-            )}
-
             {/* ── Top-level tool tab panels ──────────────────────── */}
             {activeToolName === "build" && selectedName && (
               <div className="flex-1 overflow-hidden">
@@ -3718,7 +3598,7 @@ export function ProjectEditor({
             )}
 
             {/* Other tabs (padded container) */}
-            {activeToolName === null && projectTab !== "tools" && projectTab !== "project_file" && projectTab !== "context" && (
+            {activeToolName === null && projectTab !== "tools" && projectTab !== "project_file" && (
             <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div className="space-y-8">
 

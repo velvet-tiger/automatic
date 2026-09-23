@@ -73,8 +73,6 @@ function baselineRoutes(overrides: Record<string, unknown> = {}) {
     read_profile: null,
     // Editor secondary loads (defaults: empty)
     get_project_memories: {},
-    get_project_context: "",
-    read_project_context_raw: "",
     get_project_docs: "",
     get_project_activity: JSON.stringify([]),
     get_project_activity_paged: JSON.stringify([]),

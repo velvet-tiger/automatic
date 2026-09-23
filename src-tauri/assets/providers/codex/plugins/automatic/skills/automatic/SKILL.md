@@ -1,6 +1,6 @@
 ---
 name: automatic
-description: Use Automatic's MCP tools for project context, skills, memory, and feature tracking.
+description: Use Automatic's MCP tools for projects, skills, memory, and feature tracking.
 authors:
   - Automatic
 ---
@@ -12,7 +12,6 @@ This plugin exposes the Automatic desktop app as an MCP server named `automatic`
 Use Automatic when you need to:
 
 - list or read registered Automatic projects
-- pull structured project context before changing code
 - inspect installed skills or search community skills
 - store and retrieve project memory across sessions
 - track planned work through Automatic features
@@ -20,10 +19,9 @@ Use Automatic when you need to:
 ## Recommended workflow
 
 1. Call `automatic_list_projects` and `automatic_read_project` to confirm the project you are working in.
-2. Call `automatic_get_project_context` for commands, entry points, conventions, gotchas, and docs.
-3. Call `automatic_list_skills` and `automatic_read_skill` when the task may benefit from a project or domain skill.
-4. Call `automatic_search_memories` before making assumptions and `automatic_store_memory` before wrapping up meaningful discoveries.
-5. Call `automatic_list_features` when work should be aligned with planned tasks. Move features through `automatic_set_feature_state` and log progress with `automatic_add_feature_update`.
+2. Call `automatic_list_skills` and `automatic_read_skill` when the task may benefit from a project or domain skill.
+3. Call `automatic_search_memories` before making assumptions and `automatic_store_memory` before wrapping up meaningful discoveries.
+4. Call `automatic_list_features` when work should be aligned with planned tasks. Move features through `automatic_set_feature_state` and log progress with `automatic_add_feature_update`.
 
 ## Core tool groups
 
@@ -31,7 +29,6 @@ Use Automatic when you need to:
 
 - `automatic_list_projects`
 - `automatic_read_project`
-- `automatic_get_project_context`
 - `automatic_list_skills`
 - `automatic_read_skill`
 - `automatic_search_skills`

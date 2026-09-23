@@ -9,7 +9,7 @@ import { McpAddButton } from "../McpAddButton";
 
 type ProjectTabId =
   | "summary" | "agents" | "commands" | "hooks" | "custom_agents" | "skills"
-  | "mcp_servers" | "groups" | "project_file" | "rules" | "context"
+  | "mcp_servers" | "groups" | "project_file" | "rules"
   | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity"
   | "recommendations" | "tools" | "settings";
 

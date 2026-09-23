@@ -229,52 +229,11 @@ pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendat
         }
     }
 
-    // ── Check 3: .automatic/context.json exists ───────────────────────────────
-    // The context file gives agents structured knowledge about the project
-    // (commands, entry points, concepts, conventions, and gotchas).
-    // Only relevant when a project directory is configured.
-    if !proj.directory.is_empty() {
-        let context_path = std::path::Path::new(&proj.directory)
-            .join(".automatic")
-            .join("context.json");
-
-        if context_path.exists() {
-            crate::recommendations::clear_system_recommendations_by_kind(project, "context_file")?;
-        } else {
-            let already_dismissed = crate::recommendations::list_recommendations(
-                project,
-                crate::recommendations::ListRecommendationsFilter {
-                    status: Some(RecommendationStatus::Dismissed),
-                    kind: Some("context_file".to_string()),
-                    source: None,
-                    limit: None,
-                },
-            )?
-            .into_iter()
-            .any(|r| r.source == "automatic-system");
-
-            if !already_dismissed
-                && !crate::recommendations::has_pending_system_recommendation(
-                    project,
-                    "context_file",
-                )?
-            {
-                crate::recommendations::add_recommendation(AddRecommendationParams {
-                    project: project.to_string(),
-                    kind: "context_file".to_string(),
-                    title: "Generate a project context file".to_string(),
-                    body: "No .automatic/context.json file was found in your project directory. \
-                           The context file gives agents structured knowledge about your project \
-                           (commands, entry points, concepts, conventions, and gotchas). \
-                           Open the Context tab and use \"Generate\" to create one automatically."
-                        .to_string(),
-                    priority: RecommendationPriority::Normal,
-                    source: "automatic-system".to_string(),
-                    metadata: String::new(),
-                })?;
-            }
-        }
-    }
+    // The legacy Context feature (.automatic/context.json) was removed, taking
+    // its "generate a context file" system recommendation with it. Clear any
+    // such recommendation still pending from an earlier version — it points at
+    // a tab that no longer exists.
+    crate::recommendations::clear_system_recommendations_by_kind(project, "context_file")?;
 
     // Return all current pending recommendations for this project.
     crate::recommendations::list_recommendations(
@@ -598,27 +557,8 @@ pub async fn ai_generate_project_recommendations(
         .into_iter()
         .collect();
 
-    // Read project description and context summary.
+    // Read project description.
     let description = proj.description.clone();
-    let context_summary = if !proj.directory.is_empty() {
-        match crate::context::get_project_context(&proj.directory) {
-            Ok(ctx) => {
-                // Pull key commands and concepts to inform the AI.
-                let cmds: Vec<String> = ctx.commands.keys().cloned().collect();
-                let concepts: Vec<String> = ctx.concepts.keys().cloned().collect();
-                let conventions: Vec<String> = ctx.conventions.keys().cloned().collect();
-                format!(
-                    "Commands: {}\nConcepts: {}\nConventions: {}",
-                    cmds.join(", "),
-                    concepts.join(", "),
-                    conventions.join(", ")
-                )
-            }
-            Err(_) => String::new(),
-        }
-    } else {
-        String::new()
-    };
 
     // Read the first instruction file content (up to 2000 chars) for richer context.
     let instruction_content = if !proj.directory.is_empty() && !proj.agents.is_empty() {
@@ -652,7 +592,6 @@ Configured agents: {agents}
 Installed skills: {skills}
 MCP servers: {mcp}
 Attached rules: {rules}
-Context summary: {context}
 Instruction file excerpt:
 {instructions}
 
@@ -688,11 +627,6 @@ will have the highest impact given the project's evident tech stack and workflow
             "(none)".to_string()
         } else {
             rules.join(", ")
-        },
-        context = if context_summary.is_empty() {
-            "(not generated)".to_string()
-        } else {
-            context_summary
         },
         instructions = if instruction_content.is_empty() {
             "(no instruction file found)".to_string()
@@ -905,25 +839,6 @@ fn build_project_state(proj: &crate::core::Project) -> String {
         rules.join(", ")
     };
 
-    let context_summary = if !proj.directory.is_empty() {
-        match crate::context::get_project_context(&proj.directory) {
-            Ok(ctx) => {
-                let cmds: Vec<String> = ctx.commands.keys().cloned().collect();
-                let concepts: Vec<String> = ctx.concepts.keys().cloned().collect();
-                let langs: Vec<String> = ctx.conventions.keys().cloned().collect();
-                format!(
-                    "Commands: {}\nConcepts: {}\nConventions/languages: {}",
-                    cmds.join(", "),
-                    concepts.join(", "),
-                    langs.join(", ")
-                )
-            }
-            Err(_) => String::new(),
-        }
-    } else {
-        String::new()
-    };
-
     let instruction_excerpt = if !proj.directory.is_empty() && !proj.agents.is_empty() {
         let dir = std::path::Path::new(&proj.directory);
         proj.agents
@@ -946,14 +861,13 @@ fn build_project_state(proj: &crate::core::Project) -> String {
     };
 
     format!(
-        "Project: \"{name}\"\nDescription: {desc}\nAgents: {agents}\nSkills: {skills}\nMCP servers: {mcp}\nRules: {rules}\nContext: {ctx}\nInstruction file excerpt:\n{instr}",
+        "Project: \"{name}\"\nDescription: {desc}\nAgents: {agents}\nSkills: {skills}\nMCP servers: {mcp}\nRules: {rules}\nInstruction file excerpt:\n{instr}",
         name = proj.name,
         desc = if proj.description.is_empty() { "(none)".to_string() } else { proj.description.clone() },
         agents = agents,
         skills = skills,
         mcp = mcp,
         rules = rules_str,
-        ctx = if context_summary.is_empty() { "(not generated)".to_string() } else { context_summary },
         instr = if instruction_excerpt.is_empty() { "(no instruction file found)".to_string() } else { instruction_excerpt },
     )
 }

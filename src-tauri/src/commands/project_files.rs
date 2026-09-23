@@ -367,25 +367,9 @@ pub async fn ai_generate_instruction(name: &str, filename: &str) -> Result<Strin
         return Err("Project has no directory configured".into());
     }
 
-    // Build a project snapshot the same way context generation does so the AI
-    // has a rich, factual view of the repository without needing tool calls.
+    // Build a project snapshot (directory tree + key config/doc files) so the
+    // AI has a rich, factual view of the repository without needing tool calls.
     let snapshot = crate::context::build_project_snapshot(&project.directory)?;
-
-    // Optionally include any already-generated context.json so the AI can
-    // reference discovered commands, conventions, and concepts.
-    let context_snippet = {
-        let ctx_path = std::path::PathBuf::from(&project.directory)
-            .join(".automatic")
-            .join("context.json");
-        if ctx_path.exists() {
-            match std::fs::read_to_string(&ctx_path) {
-                Ok(s) => format!("\n\n<context_json>\n{}\n</context_json>", s),
-                Err(_) => String::new(),
-            }
-        } else {
-            String::new()
-        }
-    };
 
     // Describe which agent(s) will read this file so the AI can tailor wording.
     let agent_context = if filename == "_unified" {
@@ -441,9 +425,9 @@ pub async fn ai_generate_instruction(name: &str, filename: &str) -> Result<Strin
         "Generate a project instruction file for **{}**.\n\
          This file will be read by {}.\n\
          Project name: \"{}\"\n\n\
-         Project snapshot:\n{}{}{}\n\n\
+         Project snapshot:\n{}{}\n\n\
          Write the full Markdown content of the instruction file now.",
-        filename, agent_context, name, snapshot, context_snippet, existing_section
+        filename, agent_context, name, snapshot, existing_section
     );
 
     crate::core::ai::chat(
@@ -498,20 +482,6 @@ pub async fn ai_update_instruction(
 
     let snapshot = crate::context::build_project_snapshot(&project.directory)?;
 
-    let context_snippet = {
-        let ctx_path = std::path::PathBuf::from(&project.directory)
-            .join(".automatic")
-            .join("context.json");
-        if ctx_path.exists() {
-            match std::fs::read_to_string(&ctx_path) {
-                Ok(s) => format!("\n\n<context_json>\n{}\n</context_json>", s),
-                Err(_) => String::new(),
-            }
-        } else {
-            String::new()
-        }
-    };
-
     let agent_context = if filename == "_unified" {
         let labels: Vec<String> = project
             .agents
@@ -551,9 +521,9 @@ pub async fn ai_update_instruction(
          This file is read by {}.\n\
          Project name: \"{}\"\n\n\
          <current_content>\n{}\n</current_content>\n\n\
-         Project snapshot (latest state of the repository):\n{}{}\n\n\
+         Project snapshot (latest state of the repository):\n{}\n\n\
          Return the complete updated Markdown content of the instruction file.",
-        filename, agent_context, name, current_content, snapshot, context_snippet
+        filename, agent_context, name, current_content, snapshot
     );
 
     crate::core::ai::chat(
