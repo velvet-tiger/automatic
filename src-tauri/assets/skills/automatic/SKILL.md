@@ -21,6 +21,7 @@ Use the Automatic MCP tools when you need to:
 - Check which Claude Code sessions are currently active
 - Sync a project's configurations to its directory
 - **Store, retrieve, or search long-term memory across sessions for a specific project**
+- Read reference material from the contexts attached to a project
 
 ## Available MCP Tools
 
@@ -76,7 +77,7 @@ List all project names registered in Automatic.
 
 ### `automatic_read_project`
 
-Read the full configuration for a named project: description, directory path, assigned skills, MCP servers, providers, configured agent tools, attached `profiles`, and `profile_contributions` (which entries each profile provides, including entries the project had before it was attached).
+Read the full configuration for a named project: description, directory path, assigned skills, MCP servers, providers, configured agent tools, attached `profiles`, `profile_contributions` (which entries each profile provides, including entries the project had before it was attached), `contexts` (attached context slugs), and `group_context_contributions` (which of those contexts each project group provides).
 
 ```
 name: string  — the project name as registered in Automatic
@@ -114,6 +115,56 @@ profile: string  — the profile name
 ```
 
 **When to use:** After the user asks for a project to follow a profile. Neither call syncs to disk — call `automatic_sync_project` afterwards. Do not remove a profile-owned rule or hook with `automatic_detach_rule` / `automatic_detach_hook`; it is re-attached on the next save.
+
+---
+
+### `automatic_list_contexts`
+
+List contexts. A context is a named collection of reference material that agents read on demand: documentation pages, local files, URLs, or sources in the Automatic cloud. Nothing from a context is written into the project.
+
+```
+project?: string  — only list contexts attached to this project; each then carries `group` when a project group provides it
+```
+
+**When to use:** At the start of work in a project, pass `project` to find the reference material the user attached to it.
+
+---
+
+### `automatic_read_context`
+
+Read a context's description and its `sources` (each with an `id` and a `kind`).
+
+```
+context: string  — the context slug
+```
+
+---
+
+### `automatic_list_context_entries` / `automatic_read_context_entry`
+
+List the readable entries of one source, then read one entry's text. A URL source has a single entry named `content`.
+
+```
+context: string  — the context slug
+source: string   — the source id from automatic_read_context
+path: string     — the entry path (read only)
+```
+
+**When to use:** When the task needs the material a context points at. Read only the entries that are relevant. Cloud contexts and cloud sources need the user to be signed in to Automatic.
+
+---
+
+### `automatic_attach_context` / `automatic_detach_context`
+
+Attach a context to a project or a project group, or detach it. Give exactly one of `project` or `group`. A group's contexts reach every member project. A context a group provides cannot be detached from a member project; detach it from the group.
+
+```
+context: string   — the context slug
+project?: string  — the project name
+group?: string    — the project group name
+```
+
+**When to use:** Only when the user asks. No sync is needed.
 
 ---
 
@@ -199,15 +250,17 @@ Automatic provides project-scoped feature tracking. Features represent discrete 
 
 1. **On session start** — call `automatic_list_skills` to see what skills are available. If a skill matches the current task domain, call `automatic_read_skill` to load it and view its companion resources. Optionally call `automatic_search_memories` to retrieve past learnings for the current project.
 
-2. **For project configuration** — call `automatic_list_projects` to find the relevant project, then `automatic_read_project` to load its configured skills, MCP servers, agents, and directory.
+2. **Check the project's contexts** — call `automatic_list_contexts` with the project name, and consult relevant contexts before making project-specific decisions about conventions, architecture, product behaviour, or wording.
 
-3. **For project setup** — call `automatic_list_mcp_servers` to see registered servers, then `automatic_sync_project` to apply the configuration.
+3. **For project configuration** — call `automatic_list_projects` to find the relevant project, then `automatic_read_project` to load its configured skills, MCP servers, agents, and directory.
 
-4. **For skill discovery** — call `automatic_search_skills` to find community skills relevant to the task at hand.
+4. **For project setup** — call `automatic_list_mcp_servers` to see registered servers, then `automatic_sync_project` to apply the configuration.
 
-5. **Wrapping up a session** — Call `automatic_store_memory` to capture any new project-specific conventions, pitfalls, or setup steps discovered so they aren't lost in future sessions.
+5. **For skill discovery** — call `automatic_search_skills` to find community skills relevant to the task at hand.
 
-6. **For project features** — call `automatic_list_features` to see planned work. Use `automatic_set_feature_state` and `automatic_add_feature_update` to track progress across sessions.
+6. **Wrapping up a session** — Call `automatic_store_memory` to capture any new project-specific conventions, pitfalls, or setup steps discovered so they aren't lost in future sessions.
+
+7. **For project features** — call `automatic_list_features` to see planned work. Use `automatic_set_feature_state` and `automatic_add_feature_update` to track progress across sessions.
 
 ## Configuration
 

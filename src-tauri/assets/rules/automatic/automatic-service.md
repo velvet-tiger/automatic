@@ -7,6 +7,7 @@ This project is managed by Automatic, a desktop hub that provides skills, rules,
 1. Call `automatic_list_skills` to discover available skills. If any match the current task domain, call `automatic_read_skill` to load instructions and companion resources.
 2. Call `automatic_search_memories` with relevant keywords for this project to retrieve past learnings, conventions, and decisions.
 3. Call `automatic_read_project` with this project's name to understand the configured skills, MCP servers, agents, and directory.
+4. Call `automatic_list_contexts` with this project's name. Each context is reference material the user attached for this project, such as coding standards, product docs, or decisions. Read each description, and keep the list in mind for the rest of the session.
 
 ## During Work
 
@@ -45,6 +46,16 @@ Profiles are live bundles of library references (skills, MCP servers, providers,
 - `automatic_read_profile` — read a profile's full contents by name.
 - `automatic_attach_profile` / `automatic_detach_profile` — attach or detach a profile. Detaching removes every entry the profile provides, including entries the project had before it was attached. Neither call syncs to disk on its own — call `automatic_sync_project` afterwards.
 - `automatic_read_project` reports `profiles` and `profile_contributions`. An entry listed under `profile_contributions` belongs to that profile: detaching it with `automatic_detach_rule` or `automatic_detach_hook` is undone on the project's next save. Edit or detach the profile instead.
+
+## Contexts
+
+Contexts hold what the user wants agents to know about this project. Before you decide on conventions, architecture, product behaviour, or wording, check whether an attached context covers it. The context wins over your assumptions and over general best practice.
+
+- `automatic_list_contexts` — pass `project` to list the contexts attached to this project. Each carries `group` when a project group provides it.
+- Read on demand: `automatic_read_context` shows a context's sources. `automatic_list_context_entries` lists a source's entries. Pages can sit in folders, so paths look like `guides/setup.md`. `automatic_read_context_entry` reads one entry. Read only what the task needs.
+- If a context and the code disagree, say so to the user. Don't silently pick one.
+- If a read fails (for example, a cloud context when the user is signed out), tell the user and carry on without it.
+- `automatic_attach_context` / `automatic_detach_context` — attach or detach contexts only when the user asks. A context a group provides must be detached from the group.
 
 ## Memory
 

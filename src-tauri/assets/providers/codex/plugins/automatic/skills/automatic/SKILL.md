@@ -15,13 +15,15 @@ Use Automatic when you need to:
 - inspect installed skills or search community skills
 - store and retrieve project memory across sessions
 - track planned work through Automatic features
+- read reference material from the contexts attached to a project
 
 ## Recommended workflow
 
 1. Call `automatic_list_projects` and `automatic_read_project` to confirm the project you are working in.
-2. Call `automatic_list_skills` and `automatic_read_skill` when the task may benefit from a project or domain skill.
-3. Call `automatic_search_memories` before making assumptions and `automatic_store_memory` before wrapping up meaningful discoveries.
-4. Call `automatic_list_features` when work should be aligned with planned tasks. Move features through `automatic_set_feature_state` and log progress with `automatic_add_feature_update`.
+2. Call `automatic_list_contexts` with the project name, and consult relevant contexts before making project-specific decisions about conventions, architecture, product behaviour, or wording.
+3. Call `automatic_list_skills` and `automatic_read_skill` when the task may benefit from a project or domain skill.
+4. Call `automatic_search_memories` before making assumptions and `automatic_store_memory` before wrapping up meaningful discoveries.
+5. Call `automatic_list_features` when work should be aligned with planned tasks. Move features through `automatic_set_feature_state` and log progress with `automatic_add_feature_update`.
 
 ## Core tool groups
 
@@ -33,6 +35,14 @@ Use Automatic when you need to:
 - `automatic_read_skill`
 - `automatic_search_skills`
 - `automatic_sync_project`
+
+### Contexts
+
+- `automatic_list_contexts` (pass `project` for the contexts attached to it)
+- `automatic_read_context`
+- `automatic_list_context_entries`
+- `automatic_read_context_entry`
+- `automatic_attach_context` / `automatic_detach_context` (only when the user asks)
 
 ### Memory
 
