@@ -2,6 +2,21 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.28.0] - 2026-09-24
+
+### Added
+
+- Contexts: reference material agents read on demand through the Automatic MCP server. A context holds pages you write, organised in folders, plus linked local folders and files, web pages, and sources from the Automatic cloud. You can also link a whole context from the web app. Nothing is copied into your projects. Create contexts in Library > Contexts. The editor saves every change on its own, and each linked item has a preview of what agents will read. Attach a context to a project from the project's new Contexts menu item, or to a project group so every project in it gets the context. ([fb831d9](https://github.com/velvet-tiger/automatic/commit/fb831d9), [e68e787](https://github.com/velvet-tiger/automatic/commit/e68e787))
+- New MCP tools `automatic_list_contexts`, `automatic_read_context`, `automatic_list_context_entries`, `automatic_read_context_entry`, `automatic_attach_context` and `automatic_detach_context`. ([fb831d9](https://github.com/velvet-tiger/automatic/commit/fb831d9))
+
+### Changed
+
+- The bundled `automatic` skill and service rule now tell agents to check a project's contexts at the start of a session and to consult them before project-specific decisions. Projects pick this up on their next sync. ([ea7c07c](https://github.com/velvet-tiger/automatic/commit/ea7c07c))
+
+### Removed
+
+- The legacy per-project Context feature (`.automatic/context.json`), its project editor tab, and the `automatic_get_project_context` MCP tool. It went stale without notice and duplicated the instruction files. Existing `context.json` files are ignored, not deleted. ([d43f2c9](https://github.com/velvet-tiger/automatic/commit/d43f2c9))
+
 ## [1.27.2] - 2026-09-23
 
 ### Fixed
