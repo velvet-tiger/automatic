@@ -56,6 +56,7 @@ Contexts hold what the user wants agents to know about this project. Before you 
 - If a context and the code disagree, say so to the user. Don't silently pick one.
 - If a read fails (for example, a cloud context when the user is signed out), tell the user and carry on without it.
 - `automatic_attach_context` / `automatic_detach_context` — attach or detach contexts only when the user asks. A context a group provides must be detached from the group.
+- Writing: `automatic_create_context` creates a local context. `automatic_write_context_page` creates or replaces a page by `title` and optional `folder`, or replaces one by `path`. `automatic_move_context_page` and `automatic_delete_context_page` move and delete pages. Write only when the user asks, or to record something durable the user has agreed, such as a decision. Search the existing pages first and update one rather than adding a near-duplicate. Only the user can add linked folders, files, web pages or cloud sources, in the Automatic app.
 
 ## Memory
 

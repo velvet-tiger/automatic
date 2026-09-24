@@ -168,6 +168,24 @@ group?: string    — the project group name
 
 ---
 
+### `automatic_create_context` / `automatic_write_context_page`
+
+Create a local context, then write Markdown pages into it. Address a page by `title` and optional `folder` (the same title in the same folder replaces that page), or replace an existing page by its `path`.
+
+```
+name: string          — create: the context name
+description?: string  — create: what the context holds
+context: string       — write: the context slug
+title?: string        — write: the page title
+folder?: string       — write: e.g. "Guides" or "Guides/Troubleshooting"
+path?: string         — write: an existing page path, instead of title
+content: string       — write: the page body in Markdown
+```
+
+**When to use:** When the user asks, or to record something durable the user has agreed, such as a decision. Read the existing pages first and update one rather than adding a near-duplicate. `automatic_move_context_page` and `automatic_delete_context_page` move and delete pages. Agents cannot add linked folders, files, web pages or cloud sources; the user adds those in the Automatic app.
+
+---
+
 ### `automatic_register_project`
 
 Register a new project in Automatic.
