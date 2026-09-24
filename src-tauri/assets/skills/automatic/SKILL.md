@@ -182,7 +182,25 @@ path?: string         — write: an existing page path, instead of title
 content: string       — write: the page body in Markdown
 ```
 
-**When to use:** When the user asks, or to record something durable the user has agreed, such as a decision. Read the existing pages first and update one rather than adding a near-duplicate. `automatic_move_context_page` and `automatic_delete_context_page` move and delete pages. Agents cannot add linked folders, files, web pages or cloud sources; the user adds those in the Automatic app.
+**When to use:** When the user asks, or to record something durable the user has agreed, such as a decision. Read the existing pages first and update one rather than adding a near-duplicate. `automatic_move_context_page` and `automatic_delete_context_page` move and delete pages.
+
+---
+
+### `automatic_add_context_folder` / `automatic_add_context_web_page` / `automatic_remove_context_source`
+
+Link a local folder or file, or a web page, into a local context. Agents then read it where it is; nothing is copied. Remove a linked source by its id. The context's pages cannot be removed this way.
+
+```
+context: string       — the context slug
+path: string          — folder: an absolute path to a folder or file
+url: string           — web page: an http or https address
+name: string          — folder / web page: a short name
+description?: string  — folder / web page: when an agent should look here
+ttl_secs?: number     — web page: seconds a downloaded copy is reused (default 3600, 0 = every read)
+source: string        — remove: the source id from automatic_read_context
+```
+
+**When to use:** Only when the user asks. The user's settings decide which folders you may link: by default only folders inside registered projects, and possibly none. Hidden, credential and system folders are always refused, and only Markdown and text files are shared. Web pages you add may only reach public addresses until the user keeps them in the app. Everything you link is marked as added by an agent. Cloud sources can only be added by the user in the Automatic app.
 
 ---
 

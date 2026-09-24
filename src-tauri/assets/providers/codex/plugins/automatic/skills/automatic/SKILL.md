@@ -44,6 +44,7 @@ Use Automatic when you need to:
 - `automatic_read_context_entry`
 - `automatic_attach_context` / `automatic_detach_context` (only when the user asks)
 - `automatic_create_context`, `automatic_write_context_page`, `automatic_move_context_page`, `automatic_delete_context_page` (only when the user asks, or to record an agreed decision)
+- `automatic_add_context_folder`, `automatic_add_context_web_page`, `automatic_remove_context_source` (only when the user asks; the user's settings limit which folders may be linked)
 
 ### Memory
 
