@@ -79,9 +79,14 @@ export default function Contexts({
           {ctx.location === "cloud" ? <Cloud size={15} className="text-brand" /> : <BookMarked size={15} className="text-brand" />}
         </div>
       </td>
-      <td className="px-3 py-2 min-w-0">
+      {/* max-w-0 stops the long description from sizing the column, so truncate cuts it at the window edge. */}
+      <td className="px-3 py-2 w-full max-w-0">
         <div className="text-[13px] font-medium text-text-base truncate">{ctx.display_name || ctx.slug}</div>
-        {ctx.description && <div className="text-[11px] text-text-muted truncate">{ctx.description}</div>}
+        {ctx.description && (
+          <div className="text-[11px] text-text-muted truncate" title={ctx.description}>
+            {ctx.description}
+          </div>
+        )}
       </td>
       <td className="px-3 py-2 text-[11px] text-text-muted whitespace-nowrap">{summariseContext(ctx)}</td>
     </tr>
