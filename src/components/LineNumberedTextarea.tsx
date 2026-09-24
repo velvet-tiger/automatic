@@ -8,6 +8,8 @@ interface LineNumberedTextareaProps {
   placeholder?: string;
   spellCheck?: boolean;
   autoFocus?: boolean;
+  /** Accessible name for the textarea, since it has no visible label. */
+  ariaLabel?: string;
   /**
    * "full" (default) — fills its flex container; uses bg-bg-base with no
    *   border or border-radius. Used for full-bleed panel editors.
@@ -44,6 +46,7 @@ export function LineNumberedTextarea({
   placeholder,
   spellCheck = false,
   autoFocus = false,
+  ariaLabel,
   variant = "full",
   rows,
 }: LineNumberedTextareaProps): React.ReactElement {
@@ -119,6 +122,7 @@ export function LineNumberedTextarea({
         placeholder={placeholder}
         spellCheck={spellCheck}
         autoFocus={autoFocus}
+        aria-label={ariaLabel}
         className={textareaClass}
         style={textareaFontStyle}
       />

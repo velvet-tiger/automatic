@@ -8,10 +8,14 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  Maximize2,
+  Minimize2,
   Move,
   Plus,
   Trash2,
 } from "lucide-react";
+import { LineNumberedTextarea } from "../../../components/LineNumberedTextarea";
+import { MarkdownPreview } from "../../../components/MarkdownPreview";
 import {
   ContextDialog,
   DialogError,
@@ -52,6 +56,8 @@ interface OpenPage {
   body: string;
 }
 
+type EditorView = "write" | "preview";
+
 type DialogState =
   | { type: "new-page"; folder: string }
   | { type: "new-folder"; parent: string }
@@ -69,6 +75,23 @@ export function PagesSection({ contextSlug, sourceId, heading, ensureSource }: P
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<DialogState>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [view, setView] = useState<EditorView>("write");
+
+  // While expanded, Esc closes the open dialog, or else collapses the editor.
+  // It listens in the capture phase and stops the event, because the
+  // surrounding AssetDrawer closes the whole context on any Esc.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      if (dialog !== null) setDialog(null);
+      else setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [expanded, dialog]);
 
   const writePage = async (value: { sourceId: string; path: string; content: string }) => {
     await invoke("write_context_documentation_page", {
@@ -97,9 +120,15 @@ export function PagesSection({ contextSlug, sourceId, heading, ensureSource }: P
 
   useEffect(() => {
     setOpen(null);
+    setExpanded(false);
     void loadPages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextSlug, sourceId]);
+
+  // Deleting the last page removes the workspace, so leave the expanded view with it.
+  useEffect(() => {
+    if (pages.length === 0) setExpanded(false);
+  }, [pages.length]);
 
   const tree = useMemo(() => buildPageTree(pages), [pages]);
   const folders = useMemo(() => folderPaths(pages), [pages]);
@@ -189,6 +218,94 @@ export function PagesSection({ contextSlug, sourceId, heading, ensureSource }: P
         .map((segment) => displayName(segment))
     : [];
 
+  const errorBanner = (
+    <div className="mb-2 flex items-start gap-2 px-3 py-2 bg-danger/10 border border-danger/30 rounded-lg text-[12px] text-danger">
+      <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" />
+      <span className="flex-1 break-words">{error}</span>
+    </div>
+  );
+
+  const workspace = (
+    <div className="h-full grid grid-cols-[minmax(0,15rem)_1fr] grid-rows-[minmax(0,1fr)] border border-border-strong/40 rounded-lg bg-bg-input overflow-hidden">
+      <nav className="border-r border-border-strong/30 py-1.5 overflow-y-auto custom-scrollbar" aria-label="Pages">
+        <TreeItems
+          folder={tree}
+          depth={0}
+          openPath={open?.path ?? null}
+          collapsed={collapsed}
+          onOpen={(p) => void openPage(p)}
+          onToggle={toggleFolder}
+          onNewPageIn={(folder) => setDialog({ type: "new-page", folder })}
+        />
+      </nav>
+      {open ? (
+        <div className="flex flex-col min-w-0 min-h-0">
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-strong/30">
+            <div className="text-[12px] text-text-muted truncate">
+              {breadcrumb.map((part) => (
+                <span key={part}>{part} / </span>
+              ))}
+              <span className="text-text-base">{pageName(open.path)}</span>
+            </div>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <span className={`text-[11px] ${autosave.status.kind === "error" ? "text-danger" : "text-text-muted"}`}>
+                {describeSaveStatus(autosave.status)}
+              </span>
+              <div className="flex items-center rounded border border-border-strong/40 overflow-hidden" role="group" aria-label="Editor view">
+                {(["write", "preview"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setView(mode)}
+                    aria-pressed={view === mode}
+                    className={`px-2 py-0.5 text-[12px] transition-colors ${
+                      view === mode ? "bg-brand/15 text-text-base" : "text-text-muted hover:text-text-base"
+                    }`}
+                  >
+                    {mode === "write" ? "Write" : "Preview"}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => setDialog({ type: "move", path: open.path })} className="flex items-center gap-1 text-[12px] text-text-muted hover:text-text-base transition-colors">
+                <Move size={12} /> Move
+              </button>
+              <button onClick={() => void deletePage(open.path)} className="flex items-center gap-1 text-[12px] text-text-muted hover:text-danger transition-colors">
+                <Trash2 size={12} /> Delete
+              </button>
+              <button
+                onClick={() => setExpanded((prev) => !prev)}
+                className="flex items-center gap-1 text-[12px] text-text-muted hover:text-text-base transition-colors"
+                title={expanded ? "Back to the context (Esc)" : "Edit in the full window"}
+              >
+                {expanded ? <><Minimize2 size={12} /> Collapse</> : <><Maximize2 size={12} /> Expand</>}
+              </button>
+            </div>
+          </div>
+          {view === "write" ? (
+            <LineNumberedTextarea
+              key={open.path}
+              value={open.body}
+              onChange={editBody}
+              ariaLabel={`Content of ${pageName(open.path)}`}
+              placeholder="Write in Markdown…"
+              spellCheck
+              className="flex-1 min-h-0"
+            />
+          ) : (
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-bg-base">
+              {open.body.trim() ? (
+                <MarkdownPreview content={open.body} className="max-w-3xl px-6 py-5" />
+              ) : (
+                <p className="px-6 py-5 text-[12px] text-text-muted">Nothing to preview yet.</p>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex items-center justify-center p-6 text-[12px] text-text-muted">Select a page to read or edit it.</div>
+      )}
+    </div>
+  );
+
   return (
     <section>
       <div className="flex items-center justify-between">
@@ -204,12 +321,7 @@ export function PagesSection({ contextSlug, sourceId, heading, ensureSource }: P
       </div>
       <p className="text-[12px] text-text-muted mt-0.5 mb-2">Notes you write here for agents to read.</p>
 
-      {error && (
-        <div className="mb-2 flex items-start gap-2 px-3 py-2 bg-danger/10 border border-danger/30 rounded-lg text-[12px] text-danger">
-          <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" />
-          <span className="flex-1 break-words">{error}</span>
-        </div>
-      )}
+      {error && !expanded && errorBanner}
 
       {pages.length === 0 ? (
         <div className="px-4 py-6 bg-bg-input border border-border-strong/40 rounded-lg text-center">
@@ -221,50 +333,24 @@ export function PagesSection({ contextSlug, sourceId, heading, ensureSource }: P
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-[minmax(0,15rem)_1fr] border border-border-strong/40 rounded-lg bg-bg-input min-h-[18rem]">
-          <nav className="border-r border-border-strong/30 py-1.5 overflow-y-auto custom-scrollbar max-h-[28rem]" aria-label="Pages">
-            <TreeItems
-              folder={tree}
-              depth={0}
-              openPath={open?.path ?? null}
-              collapsed={collapsed}
-              onOpen={(p) => void openPage(p)}
-              onToggle={toggleFolder}
-              onNewPageIn={(folder) => setDialog({ type: "new-page", folder })}
-            />
-          </nav>
-          {open ? (
-            <div className="flex flex-col min-w-0">
-              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-strong/30">
-                <div className="text-[12px] text-text-muted truncate">
-                  {breadcrumb.map((part) => (
-                    <span key={part}>{part} / </span>
-                  ))}
-                  <span className="text-text-base">{pageName(open.path)}</span>
-                </div>
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <span className={`text-[11px] ${autosave.status.kind === "error" ? "text-danger" : "text-text-muted"}`}>
-                    {describeSaveStatus(autosave.status)}
-                  </span>
-                  <button onClick={() => setDialog({ type: "move", path: open.path })} className="flex items-center gap-1 text-[12px] text-text-muted hover:text-text-base transition-colors">
-                    <Move size={12} /> Move
-                  </button>
-                  <button onClick={() => void deletePage(open.path)} className="flex items-center gap-1 text-[12px] text-text-muted hover:text-danger transition-colors">
-                    <Trash2 size={12} /> Delete
-                  </button>
-                </div>
-              </div>
-              <textarea
-                value={open.body}
-                onChange={(e) => editBody(e.target.value)}
-                aria-label={`Content of ${pageName(open.path)}`}
-                placeholder="Write in Markdown…"
-                className="flex-1 min-h-[16rem] bg-transparent px-4 py-3 text-[13px] leading-relaxed text-text-base font-mono outline-none resize-none custom-scrollbar"
-              />
+        !expanded && <div className="h-[70vh] min-h-[24rem]">{workspace}</div>
+      )}
+
+      {expanded && pages.length > 0 && (
+        <div className="fixed inset-0 z-50 flex flex-col gap-3 bg-bg-base p-4" role="dialog" aria-modal="true" aria-label={`${heading}, full window`}>
+          <div className="flex items-center justify-between">
+            <h3 className="text-[14px] font-medium text-text-base">{heading}</h3>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setDialog({ type: "new-folder", parent: "" })} className={SECONDARY_BUTTON_CLASS}>
+                <FolderPlus size={12} /> New folder
+              </button>
+              <button onClick={() => setDialog({ type: "new-page", folder: "" })} className={SECONDARY_BUTTON_CLASS}>
+                <Plus size={12} /> New page
+              </button>
             </div>
-          ) : (
-            <div className="flex items-center justify-center p-6 text-[12px] text-text-muted">Select a page to read or edit it.</div>
-          )}
+          </div>
+          {error && errorBanner}
+          <div className="flex-1 min-h-0">{workspace}</div>
         </div>
       )}
 

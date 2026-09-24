@@ -174,8 +174,9 @@ export function ContextEditor({
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-        <div className="max-w-3xl space-y-8">
-          <div>
+        {/* Pages span the full width so the editor has room; everything else keeps a readable line length. */}
+        <div className="space-y-8">
+          <div className="max-w-3xl">
             <input
               value={context.display_name}
               onChange={(e) => editText({ display_name: e.target.value })}
@@ -210,17 +211,23 @@ export function ContextEditor({
                   />
                 ))
               )}
-              <LinkedMaterialSection contextSlug={context.slug} sources={context.sources} saveSources={saveSources} />
+              <div className="max-w-3xl">
+                <LinkedMaterialSection contextSlug={context.slug} sources={context.sources} saveSources={saveSources} />
+              </div>
             </>
           ) : (
-            <CloudSourcesSection contextSlug={context.slug} contextId={context.context_id} />
+            <div className="max-w-3xl">
+              <CloudSourcesSection contextSlug={context.slug} contextId={context.context_id} />
+            </div>
           )}
 
-          <UsedBySection
-            contextSlug={context.slug}
-            onNavigateToProject={onNavigateToProject}
-            onNavigateToGroup={onNavigateToGroup}
-          />
+          <div className="max-w-3xl">
+            <UsedBySection
+              contextSlug={context.slug}
+              onNavigateToProject={onNavigateToProject}
+              onNavigateToGroup={onNavigateToGroup}
+            />
+          </div>
         </div>
       </div>
 
