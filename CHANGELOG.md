@@ -2,6 +2,12 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.28.1] - 2026-09-24
+
+### Security
+
+- Context URL sources no longer follow a redirect from a public address to a private one. Before, a public page could redirect the fetch to your machine, your local network, or a cloud metadata address, and the reply was handed to an agent. Redirects are now checked hop by hop, and each request is pinned to the address that was checked. URLs you enter yourself can still point at local or private addresses, such as an intranet wiki. ([c51499e](https://github.com/velvet-tiger/automatic/commit/c51499e))
+
 ## [1.28.0] - 2026-09-24
 
 ### Added
