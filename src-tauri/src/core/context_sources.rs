@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Read;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -470,17 +471,144 @@ fn is_text_content_type(content_type: &str) -> bool {
         || mime.ends_with("+xml")
 }
 
+/// Fetch a URL source, following redirects by hand.
+///
+/// The URL itself is the user's choice, so it may point at a local or
+/// private address (an intranet wiki, a local docs server). A redirect is
+/// the remote site's choice, so it may not move from a public address to a
+/// non-public one: otherwise any page could steer the fetch at the user's
+/// machine, LAN, or a cloud metadata endpoint and hand the reply to an agent.
 async fn fetch_url(url: &str) -> Result<String, String> {
-    let client = reqwest::Client::builder()
+    fetch_url_with(url, |addr| is_public_ip(addr.ip())).await
+}
+
+/// `fetch_url` with the address classifier injected, so tests can mark a
+/// loopback test server as "public".
+async fn fetch_url_with(url: &str, is_public: impl Fn(&SocketAddr) -> bool) -> Result<String, String> {
+    let mut current = url::Url::parse(url).map_err(|e| format!("Invalid URL {}: {}", url, e))?;
+    let mut previous_was_public: Option<bool> = None;
+
+    for _ in 0..=URL_MAX_REDIRECTS {
+        let addrs = resolve_url_host(&current).await?;
+        let public = addrs.iter().all(&is_public);
+        if !redirect_allowed(previous_was_public, public) {
+            return Err(format!(
+                "{} redirected to {}, which is a private or local address. \
+                 Redirects from public pages to private addresses are blocked.",
+                url, current
+            ));
+        }
+
+        let resp = pinned_client(&current, &addrs)?
+            .get(current.clone())
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch {}: {}", url, e))?;
+
+        if resp.status().is_redirection() {
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| format!("{} sent a redirect with no usable Location header", url))?;
+            current = next_hop(&current, location)?;
+            previous_was_public = Some(public);
+            continue;
+        }
+        return read_text_response(resp, url).await;
+    }
+    Err(format!("{} redirected more than {} times", url, URL_MAX_REDIRECTS))
+}
+
+/// A redirect may not move from a public address to a non-public one. The
+/// first request (`previous` is `None`) is always allowed.
+fn redirect_allowed(previous_was_public: Option<bool>, next_is_public: bool) -> bool {
+    !(previous_was_public == Some(true) && !next_is_public)
+}
+
+/// Resolve a redirect's `Location` against the current URL. Only http and
+/// https are followed, and URLs carrying credentials are refused.
+fn next_hop(current: &url::Url, location: &str) -> Result<url::Url, String> {
+    let next = current
+        .join(location)
+        .map_err(|e| format!("{} redirected to an invalid address '{}': {}", current, location, e))?;
+    if next.scheme() != "http" && next.scheme() != "https" {
+        return Err(format!("{} redirected to a non-web address: {}", current, next));
+    }
+    if !next.username().is_empty() || next.password().is_some() {
+        return Err(format!("{} redirected to an address with embedded credentials", current));
+    }
+    Ok(next)
+}
+
+async fn resolve_url_host(url: &url::Url) -> Result<Vec<SocketAddr>, String> {
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| format!("{} has no port", url))?;
+    let addrs: Vec<SocketAddr> = match url.host() {
+        Some(url::Host::Ipv4(ip)) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
+        Some(url::Host::Ipv6(ip)) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
+        Some(url::Host::Domain(domain)) => tokio::net::lookup_host((domain, port))
+            .await
+            .map_err(|e| format!("Couldn't look up {}: {}", domain, e))?
+            .collect(),
+        None => return Err(format!("{} has no host", url)),
+    };
+    if addrs.is_empty() {
+        return Err(format!("{} did not resolve to any address", url));
+    }
+    Ok(addrs)
+}
+
+/// A client that follows no redirects and connects only to the addresses
+/// that were just checked, so a second DNS answer cannot swap them.
+fn pinned_client(url: &url::Url, addrs: &[SocketAddr]) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(URL_FETCH_TIMEOUT_SECS))
-        .redirect(reqwest::redirect::Policy::limited(URL_MAX_REDIRECTS))
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some(url::Host::Domain(domain)) = url.host() {
+        builder = builder.resolve_to_addrs(domain, addrs);
+    }
+    builder
         .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
-    let mut resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch {}: {}", url, e))?;
+        .map_err(|e| format!("failed to build HTTP client: {}", e))
+}
+
+/// True for addresses on the public internet. Loopback, private, link-local,
+/// shared (CGNAT), unspecified, multicast, broadcast, documentation,
+/// benchmarking and reserved ranges are not public.
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_documentation()
+                || a == 0
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 198 && (b == 18 || b == 19))
+                || a >= 240)
+        }
+        IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_public_ip(IpAddr::V4(mapped));
+            }
+            let first = v6.segments()[0];
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+                || (first == 0x2001 && v6.segments()[1] == 0x0db8))
+        }
+    }
+}
+
+async fn read_text_response(mut resp: reqwest::Response, url: &str) -> Result<String, String> {
     if !resp.status().is_success() {
         return Err(format!("Fetching {} returned HTTP {}", url, resp.status()));
     }
@@ -748,6 +876,114 @@ mod tests {
         assert!(is_fresh(&cached, 60, 1059));
         assert!(!is_fresh(&cached, 60, 1060));
         assert!(!is_fresh(&cached, 0, 1000), "ttl 0 always refetches");
+    }
+
+    #[test]
+    fn public_ip_classification() {
+        for public in ["93.184.216.34", "1.1.1.1", "2606:4700::1111"] {
+            assert!(is_public_ip(public.parse().unwrap()), "{public}");
+        }
+        for private in [
+            "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254",
+            "0.0.0.0", "100.64.0.1", "198.18.0.1", "255.255.255.255", "240.0.0.1",
+            "::1", "::", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "2001:db8::1",
+        ] {
+            assert!(!is_public_ip(private.parse().unwrap()), "{private}");
+        }
+    }
+
+    #[test]
+    fn redirect_policy_blocks_public_to_private_only() {
+        assert!(redirect_allowed(None, false), "the user may point at a local URL");
+        assert!(redirect_allowed(Some(false), false));
+        assert!(redirect_allowed(Some(false), true));
+        assert!(redirect_allowed(Some(true), true));
+        assert!(!redirect_allowed(Some(true), false));
+    }
+
+    #[test]
+    fn next_hop_rejects_other_schemes_and_credentials() {
+        let base = url::Url::parse("https://example.com/docs/a.md").unwrap();
+        assert_eq!(next_hop(&base, "b.md").unwrap().as_str(), "https://example.com/docs/b.md");
+        assert!(next_hop(&base, "file:///etc/passwd").is_err());
+        assert!(next_hop(&base, "https://user:pw@example.com/").is_err());
+    }
+
+    /// Serve one canned response per connection, forever.
+    async fn serve(response: String) -> SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else { return };
+                let response = response.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let _ = socket.read(&mut buf).await;
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        addr
+    }
+
+    fn redirect_to(target: SocketAddr) -> String {
+        format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://{}/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            target
+        )
+    }
+
+    const OK_BODY: &str =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecret";
+
+    #[tokio::test]
+    async fn redirect_from_public_to_private_is_refused() {
+        let private = serve(OK_BODY.to_string()).await;
+        let public = serve(redirect_to(private)).await;
+        let err = fetch_url_with(&format!("http://{}/start", public), |a| a.port() == public.port())
+            .await
+            .unwrap_err();
+        assert!(err.contains("private or local address"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn redirects_between_allowed_addresses_are_followed() {
+        let target = serve(OK_BODY.to_string()).await;
+        let start = serve(redirect_to(target)).await;
+        // Both "private": the user chose a local URL, so its redirects are fine.
+        let body = fetch_url_with(&format!("http://{}/start", start), |_| false).await.unwrap();
+        assert_eq!(body, "secret");
+        // Both "public".
+        let body = fetch_url_with(&format!("http://{}/start", start), |_| true).await.unwrap();
+        assert_eq!(body, "secret");
+    }
+
+    #[tokio::test]
+    async fn redirect_loops_stop() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let response = format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://{}/again\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            addr
+        );
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else { return };
+                let response = response.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let _ = socket.read(&mut buf).await;
+                    let _ = socket.write_all(response.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        let err = fetch_url_with(&format!("http://{}/start", addr), |_| false).await.unwrap_err();
+        assert!(err.contains("more than 5 times"), "{err}");
     }
 
     #[test]
