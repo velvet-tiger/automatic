@@ -25,6 +25,8 @@ interface SourceBase {
   id: string;
   display_name: string;
   description: string;
+  /** Set when an agent linked it over MCP, until you keep or edit it. Omitted when false. */
+  added_by_agent?: boolean;
 }
 
 export type ContextSource =

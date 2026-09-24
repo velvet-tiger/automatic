@@ -386,6 +386,44 @@ pub struct DeleteContextPageParams {
     pub path: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct AddContextFolderParams {
+    /// The context slug.
+    pub context: String,
+    /// Absolute path to a folder or file on this machine.
+    pub path: String,
+    /// A short name for the linked material, e.g. "Design notes".
+    pub name: String,
+    /// When an agent should look here.
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct AddContextWebPageParams {
+    /// The context slug.
+    pub context: String,
+    /// An http or https address on the public internet.
+    pub url: String,
+    /// A short name for the page, e.g. "Public API reference".
+    pub name: String,
+    /// When an agent should look here.
+    #[serde(default)]
+    pub description: String,
+    /// Seconds a downloaded copy is reused before the next read downloads
+    /// the page again. `0` downloads on every read. Defaults to 3600.
+    #[serde(default)]
+    pub ttl_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RemoveContextSourceParams {
+    /// The context slug.
+    pub context: String,
+    /// The source id, as returned by automatic_read_context.
+    pub source: String,
+}
+
 // ── Feature Tool Parameter Types ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -2123,9 +2161,10 @@ impl AutomaticMcpServer {
         name = "automatic_create_context",
         description = "Create a local context with a name and description, \
                        ready for pages. Only when the user asks. Returns the \
-                       new context's slug. Linked folders, files, web pages \
-                       and cloud sources can only be added by the user in \
-                       the Automatic app."
+                       new context's slug. Link folders and web pages with \
+                       automatic_add_context_folder and \
+                       automatic_add_context_web_page; cloud sources can only \
+                       be added by the user in the Automatic app."
     )]
     async fn create_context(
         &self,
@@ -2214,6 +2253,85 @@ impl AutomaticMcpServer {
                 p.path, p.context
             ))])),
             Err(e) => Ok(tool_error(format!("Failed to delete page '{}': {}", p.path, e))),
+        }
+    }
+
+    #[tool(
+        name = "automatic_add_context_folder",
+        description = "Link a local folder or file into a local context. Agents \
+                       read its Markdown and text files where they are; \
+                       nothing is copied. Only when the user asks. The user's \
+                       settings decide which folders are allowed (by default, \
+                       only folders inside registered projects); hidden, \
+                       credential and system folders are always refused. The \
+                       user sees it marked as added by an agent. Returns the \
+                       source id."
+    )]
+    async fn add_context_folder(
+        &self,
+        params: Parameters<AddContextFolderParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = &params.0;
+        match crate::core::link_folder_for_agent(&p.context, &p.path, &p.name, &p.description) {
+            Ok(id) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Linked '{}' into context '{}' as source '{}'.",
+                p.path, p.context, id
+            ))])),
+            Err(e) => Ok(tool_error(format!(
+                "Failed to link '{}' into context '{}': {}",
+                p.path, p.context, e
+            ))),
+        }
+    }
+
+    #[tool(
+        name = "automatic_add_context_web_page",
+        description = "Link a web page into a local context. It is downloaded \
+                       when an agent reads it. Only when the user asks. Pages \
+                       an agent adds may only reach public internet \
+                       addresses until the user keeps them in the Automatic \
+                       app. Returns the source id."
+    )]
+    async fn add_context_web_page(
+        &self,
+        params: Parameters<AddContextWebPageParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = &params.0;
+        match crate::core::link_web_page_for_agent(&p.context, &p.url, &p.name, &p.description, p.ttl_secs) {
+            Ok(id) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Linked '{}' into context '{}' as source '{}'.",
+                p.url.trim(),
+                p.context,
+                id
+            ))])),
+            Err(e) => Ok(tool_error(format!(
+                "Failed to link '{}' into context '{}': {}",
+                p.url, p.context, e
+            ))),
+        }
+    }
+
+    #[tool(
+        name = "automatic_remove_context_source",
+        description = "Remove a linked folder, file, web page or cloud source \
+                       from a local context. The material itself is not \
+                       touched. The context's pages cannot be removed this \
+                       way. Only when the user asks."
+    )]
+    async fn remove_context_source(
+        &self,
+        params: Parameters<RemoveContextSourceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = &params.0;
+        match crate::core::remove_linked_source(&p.context, &p.source) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Removed source '{}' from context '{}'.",
+                p.source, p.context
+            ))])),
+            Err(e) => Ok(tool_error(format!(
+                "Failed to remove source '{}' from context '{}': {}",
+                p.source, p.context, e
+            ))),
         }
     }
 

@@ -6,7 +6,7 @@ use std::cell::RefCell;
 
 // ── Path Helpers ─────────────────────────────────────────────────────────────
 
-fn home_dir() -> Result<PathBuf, String> {
+pub(crate) fn home_dir() -> Result<PathBuf, String> {
     #[cfg(test)]
     if let Some(path) = TEST_HOME_OVERRIDE.with(|override_path| override_path.borrow().clone()) {
         return Ok(path);

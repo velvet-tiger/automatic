@@ -34,11 +34,37 @@ interface AccountStatus {
   webapp_url: string;
 }
 
+/** Matches `core::AgentFolderLinks`. */
+type AgentFolderLinks = "inside_projects" | "anywhere" | "none";
+
 interface AppSettings {
   sync_mode: string;
   analytics_enabled: boolean;
   default_agents: string[];
   nvm_enabled: boolean;
+  agent_folder_links: AgentFolderLinks;
+}
+
+const AGENT_FOLDER_LINK_OPTIONS: { value: AgentFolderLinks; label: string; description: string }[] = [
+  {
+    value: "inside_projects",
+    label: "Only inside my projects (Recommended)",
+    description: "Agents can link folders and files inside a registered project's folder.",
+  },
+  {
+    value: "anywhere",
+    label: "Anywhere",
+    description: "Agents can link any folder except your home folder, system folders, app data folders and hidden folders.",
+  },
+  {
+    value: "none",
+    label: "Not allowed",
+    description: "Only you can link folders and files, from the context editor.",
+  },
+];
+
+function parseAgentFolderLinks(value: unknown): AgentFolderLinks {
+  return value === "anywhere" || value === "none" ? value : "inside_projects";
 }
 
 const PAGES: { id: SettingsPage; label: string; icon: React.ReactNode; description: string }[] = [
@@ -131,6 +157,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
     analytics_enabled: true,
     default_agents: [],
     nvm_enabled: false,
+    agent_folder_links: "inside_projects",
   });
   const [loading, setLoading] = useState(true);
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
@@ -195,6 +222,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
           analytics_enabled: raw.analytics_enabled ?? true,
           default_agents: raw.default_agents ?? [],
           nvm_enabled: raw.nvm_enabled ?? false,
+          agent_folder_links: parseAgentFolderLinks(raw.agent_folder_links),
         });
         setAvailableAgents(agents);
         setNewsletterEmail(raw.onboarding?.email ?? "");
@@ -293,6 +321,13 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
     await persistSettings(updated);
   }
 
+  async function updateAgentFolderLinks(value: AgentFolderLinks) {
+    const updated = { ...settings, agent_folder_links: value };
+    setSettings(updated);
+    trackSettingChanged("agent_folder_links", value);
+    await persistSettings(updated);
+  }
+
   async function addDefaultAgent(id: string) {
     if (settings.default_agents.includes(id)) return;
     const updated = { ...settings, default_agents: [...settings.default_agents, id] };
@@ -339,6 +374,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
         analytics_enabled: true,
         default_agents: [],
         nvm_enabled: false,
+        agent_folder_links: "inside_projects",
       };
       setSettings(defaults);
       setAnalyticsEnabled(true);
@@ -402,6 +438,7 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
         analytics_enabled: true,
         default_agents: [],
         nvm_enabled: false,
+        agent_folder_links: "inside_projects",
       };
       setSettings(defaults);
       setAnalyticsEnabled(true);
@@ -993,6 +1030,35 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                     />
                   </div>
                 </button>
+              </div>
+
+              {/* Folders agents may link into contexts */}
+              <div className="mb-8">
+                <h3 className="text-sm font-medium mb-2 text-text-base">Folders Agents Can Link</h3>
+                <p className="text-[13px] text-text-muted mb-4 leading-relaxed">
+                  Agents can link folders and files into a context when you ask them to. Every agent the
+                  context is attached to can then read the Markdown and text files in them. Choose where
+                  agents may link from. Items an agent adds are marked in the context editor.
+                </p>
+
+                <div className="flex flex-col gap-2" role="radiogroup" aria-label="Folders agents can link">
+                  {AGENT_FOLDER_LINK_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      role="radio"
+                      aria-checked={settings.agent_folder_links === option.value}
+                      onClick={() => void updateAgentFolderLinks(option.value)}
+                      className={`flex flex-col items-start gap-1 p-4 rounded-lg border text-left transition-all ${
+                        settings.agent_folder_links === option.value
+                          ? "border-brand bg-brand/10"
+                          : "border-border-strong/40 bg-bg-input-dark hover:border-border-strong hover:bg-surface-hover"
+                      }`}
+                    >
+                      <div className="text-[13px] font-medium text-text-base">{option.label}</div>
+                      <div className="text-[12px] text-text-muted">{option.description}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* App Updates */}

@@ -119,6 +119,26 @@ pub struct Settings {
     /// Off by default: projects then use the Node on the app's `PATH`.
     #[serde(default)]
     pub nvm_enabled: bool,
+    /// Where agents may link local folders and files into a context over
+    /// MCP. Users can link anything from the app regardless.
+    #[serde(default)]
+    pub agent_folder_links: AgentFolderLinks,
+}
+
+/// Which local folders an agent may link into a context. Agent-added
+/// folders are read by any agent the context is attached to, so this bounds
+/// what a prompt-injected agent could expose.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentFolderLinks {
+    /// Only folders inside a registered project's directory.
+    #[default]
+    InsideProjects,
+    /// Any folder except the home folder, its ancestors, system folders and
+    /// known credential folders.
+    Anywhere,
+    /// Agents cannot link folders.
+    None,
 }
 
 fn default_analytics_enabled() -> bool {
@@ -144,6 +164,7 @@ impl Default for Settings {
             agent_gateways: HashMap::new(),
             agent_models: HashMap::new(),
             nvm_enabled: false,
+            agent_folder_links: AgentFolderLinks::default(),
         }
     }
 }
@@ -493,5 +514,26 @@ mod tests {
         };
         write_at(dir.path(), &settings).unwrap();
         assert!(read_at(dir.path()).unwrap().nvm_enabled);
+    }
+
+    #[test]
+    fn agent_folder_links_defaults_to_inside_projects() {
+        let parsed: Settings = serde_json::from_str(r#"{"sync_mode":"copy"}"#).unwrap();
+        assert_eq!(parsed.agent_folder_links, AgentFolderLinks::InsideProjects);
+    }
+
+    #[test]
+    fn agent_folder_links_round_trips() {
+        let dir = tmp();
+        for value in [AgentFolderLinks::Anywhere, AgentFolderLinks::None] {
+            let settings = Settings {
+                agent_folder_links: value,
+                ..Settings::default()
+            };
+            write_at(dir.path(), &settings).unwrap();
+            assert_eq!(read_at(dir.path()).unwrap().agent_folder_links, value);
+        }
+        let raw = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(raw.contains(r#""agent_folder_links":"inside_projects""#), "{raw}");
     }
 }

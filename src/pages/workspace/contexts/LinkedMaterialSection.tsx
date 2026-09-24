@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { open as openDialog, ask } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, Cloud, Eye, FilePlus, FolderOpen, FolderPlus, Globe, Link, Pencil, X } from "lucide-react";
+import { Bot, Check, ChevronDown, Cloud, Eye, FilePlus, FolderOpen, FolderPlus, Globe, Link, Pencil, X } from "lucide-react";
 import {
   ContextDialog,
   DialogError,
@@ -119,9 +119,23 @@ export function LinkedMaterialSection({ contextSlug, sources, saveSources }: Lin
     }
   };
 
+  // Keeping an agent-added item accepts it as the user's own, which lifts
+  // the public-address limit on agent-added web pages.
+  const keep = async (source: LinkedSource) => {
+    try {
+      await saveSources(sources.map((s) => (s.id === source.id ? { ...s, added_by_agent: false } : s)));
+      setError(null);
+    } catch (err) {
+      setError(`Couldn't keep it: ${err}`);
+    }
+  };
+
   const submit = async (source: LinkedSource, isNew: boolean) => {
     // Ids are internal: a new entry gets one from its name, an edit keeps its own.
-    const withId: LinkedSource = isNew ? { ...source, id: uniqueSourceId(source.display_name || source.kind, sources) } : source;
+    // Saving an edit counts as reviewing it, so an agent's mark is cleared.
+    const withId: LinkedSource = isNew
+      ? { ...source, id: uniqueSourceId(source.display_name || source.kind, sources) }
+      : { ...source, added_by_agent: false };
     const next = isNew ? [...sources, withId] : sources.map((s) => (s.id === withId.id ? withId : s));
     await saveSources(next);
     setPreviewId(null);
@@ -141,9 +155,32 @@ export function LinkedMaterialSection({ contextSlug, sources, saveSources }: Lin
               <div className="group flex items-center gap-3 px-3 py-2.5">
                 <KindIcon kind={source.kind} />
                 <div className="flex-1 min-w-0">
-                  <div className="text-[13px] text-text-base truncate">{source.display_name || source.id}</div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[13px] text-text-base truncate">{source.display_name || source.id}</span>
+                    {source.added_by_agent && (
+                      <span
+                        className="flex-shrink-0 inline-flex items-center gap-1 rounded-full border border-warning/40 bg-warning/10 px-1.5 py-px text-[10px] font-medium text-warning"
+                        title={
+                          source.kind === "url"
+                            ? "An agent added this. Until you keep it, it can only reach public web addresses."
+                            : "An agent added this. Check it and keep it, or remove it."
+                        }
+                      >
+                        <Bot size={10} /> Added by an agent
+                      </span>
+                    )}
+                  </div>
                   <div className="text-[11px] text-text-muted font-mono truncate" title={describe(source)}>{describe(source)}</div>
                 </div>
+                {source.added_by_agent && (
+                  <button
+                    onClick={() => void keep(source)}
+                    className="flex items-center gap-1 text-[12px] text-brand hover:text-brand-hover transition-colors"
+                    aria-label={`Keep ${source.display_name || source.id}`}
+                  >
+                    <Check size={12} /> Keep
+                  </button>
+                )}
                 <button
                   onClick={() => setPreviewId(previewId === source.id ? null : source.id)}
                   className="flex items-center gap-1 text-[12px] text-brand hover:text-brand-hover transition-colors"

@@ -77,6 +77,11 @@ pub struct ContextSource {
     pub description: String,
     #[serde(flatten)]
     pub spec: SourceSpec,
+    /// Set when an agent linked this source over MCP, until the user keeps
+    /// or edits it in the app. Agent-added web pages may only reach public
+    /// addresses while this is set.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub added_by_agent: bool,
 }
 
 /// A source's kind and its kind-specific configuration. Serialised as
@@ -723,6 +728,7 @@ pub fn create_local_context(name: &str, description: &str) -> Result<Context, St
                 display_name: String::new(),
                 description: String::new(),
                 spec: SourceSpec::Documentation,
+                added_by_agent: false,
             }],
         },
         created_at: String::new(),
@@ -754,6 +760,7 @@ pub fn ensure_pages_source(slug: &str) -> Result<String, String> {
         display_name: String::new(),
         description: String::new(),
         spec: SourceSpec::Documentation,
+        added_by_agent: false,
     });
     save_context(context)?;
     Ok(id)
@@ -819,6 +826,281 @@ pub fn delete_context_page(slug: &str, path: &str) -> Result<(), String> {
         return Err(format!("Context '{}' has no page '{}'", slug, path));
     }
     delete_documentation_page(slug, &source_id, path)
+}
+
+// ── Linked sources added by agents ───────────────────────────────────────────
+//
+// Agents may link folders, files and web pages over MCP. Anything linked is
+// readable by every agent the context reaches, so agent-added sources are
+// bounded more tightly than the user's own:
+//   - folders follow the `agent_folder_links` setting and never cover hidden,
+//     credential or system folders, and use only the default text patterns;
+//   - web pages may only reach public addresses until the user keeps them.
+// Each carries `added_by_agent` so the app can show it for review.
+
+/// Add a linked source to a local context and return its new id, derived
+/// from `name` and unique within the context.
+pub fn add_linked_source(
+    slug: &str,
+    name: &str,
+    description: &str,
+    spec: SourceSpec,
+    added_by_agent: bool,
+) -> Result<String, String> {
+    if spec == SourceSpec::Documentation {
+        return Err("Pages are added with automatic_write_context_page".to_string());
+    }
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Give the linked material a name".to_string());
+    }
+    let mut context = read_context(slug)?;
+    let ContextBody::Local { sources } = &mut context.body else {
+        return Err(format!(
+            "Context '{}' lives in the Automatic cloud; add sources in the web app",
+            slug
+        ));
+    };
+    let derived = segment_from_title(name).replace('.', "-");
+    let base = if is_valid_context_slug(&derived) && derived != "untitled" {
+        derived
+    } else {
+        "source".to_string()
+    };
+    let mut id = base.clone();
+    let mut i = 2;
+    while sources.iter().any(|s| s.id == id) {
+        id = format!("{}-{}", base, i);
+        i += 1;
+    }
+    sources.push(ContextSource {
+        id: id.clone(),
+        display_name: name.to_string(),
+        description: description.trim().to_string(),
+        spec,
+        added_by_agent,
+    });
+    save_context(context)?;
+    Ok(id)
+}
+
+/// Remove a linked source from a local context. The pages source cannot be
+/// removed this way, and the linked material itself is never touched.
+pub fn remove_linked_source(slug: &str, source_id: &str) -> Result<(), String> {
+    let mut context = read_context(slug)?;
+    let ContextBody::Local { sources } = &mut context.body else {
+        return Err(format!(
+            "Context '{}' lives in the Automatic cloud; remove sources in the web app",
+            slug
+        ));
+    };
+    let index = sources
+        .iter()
+        .position(|s| s.id == source_id)
+        .ok_or_else(|| format!("Context '{}' has no source '{}'", slug, source_id))?;
+    if sources[index].spec == SourceSpec::Documentation {
+        return Err(format!(
+            "Source '{}' holds the context's pages and cannot be removed",
+            source_id
+        ));
+    }
+    sources.remove(index);
+    save_context(context)?;
+    Ok(())
+}
+
+/// Folders an agent may never link, even under `Anywhere`: system folders,
+/// and per-user folders holding app data, browser profiles and keychains
+/// (`~/Library` on macOS, `AppData` on Windows).
+fn protected_folders(home: &Path) -> Vec<PathBuf> {
+    let mut folders = vec![home.join("Library"), home.join("AppData")];
+    #[cfg(unix)]
+    folders.extend(
+        [
+            "/System", "/Library", "/private", "/etc", "/var", "/usr", "/bin", "/sbin", "/lib",
+            "/lib64", "/dev", "/proc", "/sys", "/run", "/boot", "/root", "/opt", "/snap",
+        ]
+        .iter()
+        .map(PathBuf::from),
+    );
+    #[cfg(windows)]
+    folders.extend(windows_system_folders());
+    folders
+        .into_iter()
+        .map(|p| fs::canonicalize(&p).unwrap_or(p))
+        // A user whose home sits under one of these (root's `/root`) can
+        // still link inside their home.
+        .filter(|p| !home.starts_with(p))
+        .collect()
+}
+
+/// Windows system folders, from the environment so a system installed on
+/// another drive is covered, with the usual `C:` locations as a fallback.
+#[cfg(windows)]
+fn windows_system_folders() -> Vec<PathBuf> {
+    let mut folders: Vec<PathBuf> = [
+        "SystemRoot",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramW6432",
+        "ProgramData",
+    ]
+    .iter()
+    .filter_map(|var| std::env::var_os(var))
+    .map(PathBuf::from)
+    .collect();
+    folders.extend(
+        [
+            "C:\\Windows",
+            "C:\\Program Files",
+            "C:\\Program Files (x86)",
+            "C:\\ProgramData",
+        ]
+        .iter()
+        .map(PathBuf::from),
+    );
+    folders
+}
+
+/// The first folder on `path` (or `path` itself) that Windows marks hidden.
+/// Windows hides with a file attribute, not a leading dot. Drive roots are
+/// skipped because Windows reports them as hidden system folders.
+#[cfg(windows)]
+fn windows_hidden_ancestor(path: &Path) -> Option<PathBuf> {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    path.ancestors()
+        .filter(|a| a.parent().is_some())
+        .find(|a| {
+            fs::metadata(a)
+                .map(|m| m.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
+                .unwrap_or(false)
+        })
+        .map(Path::to_path_buf)
+}
+
+/// Why an agent may not link `path`, or `None` when it may. `path` must be
+/// canonical so symlinks cannot step around the checks; `project_dirs` and
+/// `protected` should be canonical too.
+pub fn agent_folder_problem(
+    path: &Path,
+    policy: AgentFolderLinks,
+    home: &Path,
+    protected: &[PathBuf],
+    project_dirs: &[PathBuf],
+) -> Option<String> {
+    const SETTING: &str = "The user can change this in Settings > App.";
+    if policy == AgentFolderLinks::None {
+        return Some(format!("Agents may not link folders or files. {}", SETTING));
+    }
+    let hidden = path.components().any(|c| match c {
+        Component::Normal(part) => part.to_string_lossy().starts_with('.'),
+        _ => false,
+    });
+    if hidden {
+        return Some(format!(
+            "'{}' is or sits inside a hidden folder. Agents may not link hidden folders.",
+            path.display()
+        ));
+    }
+    if home.starts_with(path) {
+        return Some(format!(
+            "'{}' is the home folder or contains it. Link a more specific folder.",
+            path.display()
+        ));
+    }
+    if let Some(p) = protected.iter().find(|p| path.starts_with(p)) {
+        return Some(format!(
+            "'{}' is inside '{}', which agents may not link.",
+            path.display(),
+            p.display()
+        ));
+    }
+    if policy == AgentFolderLinks::InsideProjects && !project_dirs.iter().any(|d| path.starts_with(d)) {
+        return Some(format!(
+            "'{}' is not inside a registered project's folder. Agents may only link folders \
+             inside registered projects. {}",
+            path.display(),
+            SETTING
+        ));
+    }
+    None
+}
+
+/// Canonical directories of every registered project. Projects that fail to
+/// load or whose folder is missing are skipped: they cannot contain a path
+/// that exists.
+fn registered_project_dirs() -> Result<Vec<PathBuf>, String> {
+    let mut dirs = Vec::new();
+    for name in list_projects()? {
+        let Ok(raw) = read_project(&name) else { continue };
+        let Ok(project) = serde_json::from_str::<Project>(&raw) else { continue };
+        if project.directory.trim().is_empty() {
+            continue;
+        }
+        if let Ok(dir) = fs::canonicalize(&project.directory) {
+            dirs.push(dir);
+        }
+    }
+    Ok(dirs)
+}
+
+/// Link a local folder or file into a context on an agent's behalf, within
+/// the user's `agent_folder_links` setting. Only the default text patterns
+/// apply; the user can widen them in the app. Returns the new source id.
+pub fn link_folder_for_agent(
+    slug: &str,
+    path: &str,
+    name: &str,
+    description: &str,
+) -> Result<String, String> {
+    let policy = read_settings()?.agent_folder_links;
+    if !Path::new(path).is_absolute() {
+        return Err(format!("'{}' must be an absolute path", path));
+    }
+    let canonical = fs::canonicalize(path)
+        .map_err(|e| format!("'{}' is not readable: {}", path, e))?;
+    let home = home_dir()?;
+    let home = fs::canonicalize(&home).unwrap_or(home);
+    let project_dirs = match policy {
+        AgentFolderLinks::InsideProjects => registered_project_dirs()?,
+        _ => Vec::new(),
+    };
+    if let Some(problem) =
+        agent_folder_problem(&canonical, policy, &home, &protected_folders(&home), &project_dirs)
+    {
+        return Err(problem);
+    }
+    #[cfg(windows)]
+    if let Some(hidden) = windows_hidden_ancestor(&canonical) {
+        return Err(format!(
+            "'{}' is or sits inside the hidden folder '{}'. Agents may not link hidden folders.",
+            canonical.display(),
+            hidden.display()
+        ));
+    }
+    let spec = SourceSpec::Local(LocalSourceConfig {
+        path: canonical.to_string_lossy().into_owned(),
+        include: Vec::new(),
+    });
+    add_linked_source(slug, name, description, spec, true)
+}
+
+/// Link a web page into a context on an agent's behalf. Until the user keeps
+/// it, every read refuses private and local addresses. Returns the new
+/// source id.
+pub fn link_web_page_for_agent(
+    slug: &str,
+    url: &str,
+    name: &str,
+    description: &str,
+    ttl_secs: Option<u64>,
+) -> Result<String, String> {
+    let spec = SourceSpec::Url(UrlSourceConfig {
+        url: url.trim().to_string(),
+        ttl_secs: ttl_secs.unwrap_or(DEFAULT_URL_TTL_SECS),
+    });
+    add_linked_source(slug, name, description, spec, true)
 }
 
 // ── Attachment ───────────────────────────────────────────────────────────────
@@ -1265,6 +1547,7 @@ mod tests {
             display_name: String::new(),
             description: String::new(),
             spec: SourceSpec::Documentation,
+            added_by_agent: false,
         }
     }
 
@@ -1701,6 +1984,165 @@ mod tests {
             .unwrap();
             assert!(ensure_pages_source("remote").unwrap_err().contains("cloud"));
         });
+    }
+
+    // ── Agent-linked sources ─────────────────────────────────────────────────
+
+    fn folder_problem(path: &str, policy: AgentFolderLinks) -> Option<String> {
+        agent_folder_problem(
+            Path::new(path),
+            policy,
+            Path::new("/home/me"),
+            &[PathBuf::from("/home/me/Library"), PathBuf::from("/etc")],
+            &[PathBuf::from("/home/me/work/app")],
+        )
+    }
+
+    #[test]
+    fn agent_folder_policy_inside_projects() {
+        let p = AgentFolderLinks::InsideProjects;
+        assert_eq!(folder_problem("/home/me/work/app", p), None);
+        assert_eq!(folder_problem("/home/me/work/app/docs", p), None);
+        assert!(folder_problem("/home/me/work/other", p).unwrap().contains("registered project"));
+        assert!(folder_problem("/home/me/work/app-old", p).is_some(), "prefix is not containment");
+        assert!(folder_problem("/home/me/work/app/.git", p).unwrap().contains("hidden"));
+    }
+
+    #[test]
+    fn agent_folder_policy_anywhere_still_protects() {
+        let p = AgentFolderLinks::Anywhere;
+        assert_eq!(folder_problem("/home/me/notes", p), None);
+        assert_eq!(folder_problem("/srv/docs", p), None);
+        for (path, expect) in [
+            ("/home/me", "home folder"),
+            ("/home", "home folder"),
+            ("/", "home folder"),
+            ("/home/me/.ssh", "hidden"),
+            ("/home/me/.config/gh", "hidden"),
+            ("/home/me/Library/Keychains", "may not link"),
+            ("/etc/ssl", "may not link"),
+        ] {
+            let problem = folder_problem(path, p).unwrap_or_default();
+            assert!(problem.contains(expect), "{path}: {problem}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn protected_folders_cover_system_and_app_data_folders() {
+        let home = Path::new("/home/me");
+        let protected = protected_folders(home);
+        for expected in ["/home/me/Library", "/home/me/AppData", "/lib", "/lib64", "/run", "/snap", "/usr"] {
+            let expected = fs::canonicalize(expected).unwrap_or_else(|_| PathBuf::from(expected));
+            assert!(protected.contains(&expected), "{}", expected.display());
+        }
+        for allowed in ["/mnt", "/media", "/srv"] {
+            assert!(!protected.iter().any(|p| p == Path::new(allowed)), "{allowed}");
+        }
+    }
+
+    #[test]
+    fn agent_folder_policy_none_refuses_everything() {
+        let problem = folder_problem("/home/me/work/app", AgentFolderLinks::None).unwrap();
+        assert!(problem.contains("Settings"), "{problem}");
+    }
+
+    /// A test home without the hidden `.tmp` prefix `tempdir()` uses, since
+    /// agents may not link anything under a hidden folder.
+    fn with_visible_home<T>(test: impl FnOnce(&Path) -> T) -> T {
+        let tmp = tempfile::Builder::new().prefix("home").tempdir().expect("tempdir");
+        let home = fs::canonicalize(tmp.path()).unwrap();
+        let result = with_test_home(home.clone(), || test(&home));
+        drop(tmp);
+        result
+    }
+
+    #[test]
+    fn agents_link_folders_within_the_setting() {
+        with_visible_home(|home| {
+            let app_dir = home.join("work").join("app");
+            let docs = app_dir.join("docs");
+            fs::create_dir_all(&docs).unwrap();
+            let outside = home.join("notes");
+            fs::create_dir_all(&outside).unwrap();
+            write_project(
+                "app",
+                &Project {
+                    directory: app_dir.to_string_lossy().into_owned(),
+                    ..project("app", &[])
+                },
+            )
+            .unwrap();
+            create_local_context("Docs", "").unwrap();
+
+            let id = link_folder_for_agent("docs", &docs.to_string_lossy(), "App docs", "Design notes").unwrap();
+            assert_eq!(id, "app-docs");
+            let source = read_context("docs").unwrap().find_source(&id).cloned().unwrap();
+            assert!(source.added_by_agent);
+            assert_eq!(
+                source.spec,
+                SourceSpec::Local(LocalSourceConfig { path: docs.to_string_lossy().into_owned(), include: vec![] })
+            );
+
+            let err = link_folder_for_agent("docs", &outside.to_string_lossy(), "Notes", "").unwrap_err();
+            assert!(err.contains("registered project"), "{err}");
+
+            write_settings(&Settings { agent_folder_links: AgentFolderLinks::Anywhere, ..Settings::default() }).unwrap();
+            assert_eq!(link_folder_for_agent("docs", &outside.to_string_lossy(), "Notes", "").unwrap(), "notes");
+
+            write_settings(&Settings { agent_folder_links: AgentFolderLinks::None, ..Settings::default() }).unwrap();
+            assert!(link_folder_for_agent("docs", &docs.to_string_lossy(), "Again", "").is_err());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agents_cannot_step_out_of_a_project_through_a_symlink() {
+        with_visible_home(|home| {
+            let app_dir = home.join("app");
+            fs::create_dir_all(&app_dir).unwrap();
+            let secret = home.join("secret");
+            fs::create_dir_all(&secret).unwrap();
+            std::os::unix::fs::symlink(&secret, app_dir.join("link")).unwrap();
+            write_project(
+                "app",
+                &Project { directory: app_dir.to_string_lossy().into_owned(), ..project("app", &[]) },
+            )
+            .unwrap();
+            create_local_context("Docs", "").unwrap();
+            let err = link_folder_for_agent("docs", &app_dir.join("link").to_string_lossy(), "Link", "").unwrap_err();
+            assert!(err.contains("registered project"), "{err}");
+        });
+    }
+
+    #[test]
+    fn agents_link_web_pages_and_remove_sources() {
+        with_home(|| {
+            create_local_context("Docs", "").unwrap();
+            let id = link_web_page_for_agent("docs", " https://example.com/guide.md ", "Guide", "", None).unwrap();
+            let source = read_context("docs").unwrap().find_source(&id).cloned().unwrap();
+            assert!(source.added_by_agent);
+            assert_eq!(
+                source.spec,
+                SourceSpec::Url(UrlSourceConfig { url: "https://example.com/guide.md".into(), ttl_secs: DEFAULT_URL_TTL_SECS })
+            );
+            assert_eq!(link_web_page_for_agent("docs", "https://example.com/b", "Guide", "", Some(0)).unwrap(), "guide-2");
+            assert!(link_web_page_for_agent("docs", "file:///etc/passwd", "X", "", None).is_err());
+            assert!(link_web_page_for_agent("docs", "https://example.com", " ", "", None).is_err());
+
+            assert!(remove_linked_source("docs", PAGES_SOURCE_ID).unwrap_err().contains("pages"));
+            remove_linked_source("docs", &id).unwrap();
+            assert!(read_context("docs").unwrap().find_source(&id).is_none());
+            assert!(remove_linked_source("docs", &id).unwrap_err().contains("no source"));
+        });
+    }
+
+    #[test]
+    fn added_by_agent_is_omitted_when_false() {
+        let raw = serde_json::to_string(&doc_source("a")).unwrap();
+        assert!(!raw.contains("added_by_agent"), "{raw}");
+        let parsed: ContextSource = serde_json::from_str(r#"{"id":"a","kind":"documentation","added_by_agent":true}"#).unwrap();
+        assert!(parsed.added_by_agent);
     }
 
     #[test]

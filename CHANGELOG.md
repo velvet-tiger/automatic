@@ -2,6 +2,17 @@
 
 All notable changes to Automatic are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Agents can now link folders, files and web pages into a context through MCP. New tools `automatic_add_context_folder`, `automatic_add_context_web_page` and `automatic_remove_context_source`. Anything an agent links shows an "Added by an agent" label in the context editor. Choose Keep to accept it, or remove it.
+- A new setting in Settings > App decides which folders agents may link: only folders inside your projects (the default), any folder, or none. Hidden folders, your home folder, credential folders and system folders are always refused, and agents only get the default Markdown and text files.
+
+### Security
+
+- Web pages an agent links may only reach public internet addresses, on the first request and on every redirect, until you keep them. They are never served a downloaded copy of a page that was fetched for one of your own sources. Pages you add yourself can still point at local or private addresses.
+
 ## [1.29.0] - 2026-09-24
 
 ### Added

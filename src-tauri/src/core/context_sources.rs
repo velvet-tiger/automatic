@@ -113,7 +113,7 @@ pub async fn list_source_entries(context: &Context, source_id: &str) -> Result<S
             })
         }
         ResolvedSource::Local(config) => list_local_entries(&config),
-        ResolvedSource::Url(_) => Ok(SourceListing {
+        ResolvedSource::Url(..) => Ok(SourceListing {
             entries: vec![SourceEntry {
                 path: URL_ENTRY_PATH.to_string(),
                 title: None,
@@ -143,14 +143,14 @@ pub async fn read_source_entry(context: &Context, source_id: &str, path: &str) -
     match resolve_source(context, source_id).await? {
         ResolvedSource::Documentation => read_documentation_page(&context.slug, source_id, path),
         ResolvedSource::Local(config) => read_local_entry(&config, path),
-        ResolvedSource::Url(config) => {
+        ResolvedSource::Url(config, public_only) => {
             if path != URL_ENTRY_PATH {
                 return Err(format!(
                     "URL source '{}' has one entry, '{}'",
                     source_id, URL_ENTRY_PATH
                 ));
             }
-            read_url_source(&config).await
+            read_url_source(&config, public_only).await
         }
         ResolvedSource::Cloud(cloud_source_id) => {
             cloud::read_source_document(&cloud_source_id, path).await
@@ -170,7 +170,8 @@ pub fn source_kind_name(spec: &SourceSpec) -> &'static str {
 enum ResolvedSource {
     Documentation,
     Local(LocalSourceConfig),
-    Url(UrlSourceConfig),
+    /// The config, and whether only public addresses may be fetched.
+    Url(UrlSourceConfig, bool),
     /// A webapp source id.
     Cloud(String),
 }
@@ -187,7 +188,7 @@ async fn resolve_source(context: &Context, source_id: &str) -> Result<ResolvedSo
             Ok(match &source.spec {
                 SourceSpec::Documentation => ResolvedSource::Documentation,
                 SourceSpec::Local(c) => ResolvedSource::Local(c.clone()),
-                SourceSpec::Url(c) => ResolvedSource::Url(c.clone()),
+                SourceSpec::Url(c) => ResolvedSource::Url(c.clone(), source.added_by_agent),
                 SourceSpec::Cloud(c) => ResolvedSource::Cloud(c.source_id.clone()),
             })
         }
@@ -393,6 +394,12 @@ struct CachedUrl {
     /// Unix seconds.
     fetched_at: i64,
     body: String,
+    /// True when the fetch refused every private and local address. Only
+    /// such copies may be served to a `public_only` source: a copy fetched
+    /// for the user's own source may hold private content, and it outlives
+    /// that source.
+    #[serde(default)]
+    public_only: bool,
 }
 
 fn url_cache_dir() -> Result<PathBuf, String> {
@@ -421,26 +428,34 @@ fn write_url_cache(dir: &Path, cached: &CachedUrl) -> Result<(), String> {
         .map_err(|e| format!("Failed to write URL cache: {}", e))
 }
 
+/// Whether a cached copy may answer a read. A public-only read takes only a
+/// copy that was itself fetched public-only.
+fn cache_serves(cached: &CachedUrl, public_only: bool) -> bool {
+    !public_only || cached.public_only
+}
+
 fn is_fresh(cached: &CachedUrl, ttl_secs: u64, now: i64) -> bool {
     ttl_secs > 0 && now.saturating_sub(cached.fetched_at) < ttl_secs as i64
 }
 
 /// Serve a URL source from cache while fresh, otherwise fetch and cache it.
 /// A failed fetch is an error even when a stale copy exists, so an agent is
-/// never handed out-of-date content without knowing.
-async fn read_url_source(config: &UrlSourceConfig) -> Result<String, String> {
+/// never handed out-of-date content without knowing. `public_only` sources
+/// (added by an agent) may not reach private or local addresses at all.
+async fn read_url_source(config: &UrlSourceConfig, public_only: bool) -> Result<String, String> {
     let dir = url_cache_dir()?;
     let now = chrono::Utc::now().timestamp();
     if let Some(cached) = read_url_cache(&dir, &config.url) {
-        if is_fresh(&cached, config.ttl_secs, now) {
+        if is_fresh(&cached, config.ttl_secs, now) && cache_serves(&cached, public_only) {
             return Ok(cached.body);
         }
     }
-    let body = fetch_url(&config.url).await?;
+    let body = fetch_url(&config.url, public_only).await?;
     let cached = CachedUrl {
         url: config.url.clone(),
         fetched_at: now,
         body,
+        public_only,
     };
     if config.ttl_secs > 0 {
         if let Err(e) = write_url_cache(&dir, &cached) {
@@ -473,24 +488,38 @@ fn is_text_content_type(content_type: &str) -> bool {
 
 /// Fetch a URL source, following redirects by hand.
 ///
-/// The URL itself is the user's choice, so it may point at a local or
-/// private address (an intranet wiki, a local docs server). A redirect is
-/// the remote site's choice, so it may not move from a public address to a
-/// non-public one: otherwise any page could steer the fetch at the user's
-/// machine, LAN, or a cloud metadata endpoint and hand the reply to an agent.
-async fn fetch_url(url: &str) -> Result<String, String> {
-    fetch_url_with(url, |addr| is_public_ip(addr.ip())).await
+/// A URL the user chose may point at a local or private address (an
+/// intranet wiki, a local docs server). A redirect is the remote site's
+/// choice, so it may not move from a public address to a non-public one:
+/// otherwise any page could steer the fetch at the user's machine, LAN, or a
+/// cloud metadata endpoint and hand the reply to an agent. A URL an agent
+/// chose (`public_only`) gets no such trust, so every hop must be public.
+async fn fetch_url(url: &str, public_only: bool) -> Result<String, String> {
+    fetch_url_with(url, public_only, |addr| is_public_ip(addr.ip())).await
 }
 
 /// `fetch_url` with the address classifier injected, so tests can mark a
 /// loopback test server as "public".
-async fn fetch_url_with(url: &str, is_public: impl Fn(&SocketAddr) -> bool) -> Result<String, String> {
+async fn fetch_url_with(
+    url: &str,
+    public_only: bool,
+    is_public: impl Fn(&SocketAddr) -> bool,
+) -> Result<String, String> {
     let mut current = url::Url::parse(url).map_err(|e| format!("Invalid URL {}: {}", url, e))?;
-    let mut previous_was_public: Option<bool> = None;
+    // Treating the start as a public hop makes the redirect rule refuse any
+    // non-public address, the first request included.
+    let mut previous_was_public: Option<bool> = public_only.then_some(true);
 
-    for _ in 0..=URL_MAX_REDIRECTS {
+    for hop in 0..=URL_MAX_REDIRECTS {
         let addrs = resolve_url_host(&current).await?;
         let public = addrs.iter().all(&is_public);
+        if hop == 0 && !redirect_allowed(previous_was_public, public) {
+            return Err(format!(
+                "{} is a private or local address. Web pages added by an agent may only \
+                 reach public addresses until the user keeps them in the Automatic app.",
+                url
+            ));
+        }
         if !redirect_allowed(previous_was_public, public) {
             return Err(format!(
                 "{} redirected to {}, which is a private or local address. \
@@ -868,6 +897,7 @@ mod tests {
             url: "https://example.com/a".into(),
             fetched_at: 1000,
             body: "hello".into(),
+            public_only: false,
         };
         write_url_cache(tmp.path(), &cached).unwrap();
         assert_eq!(read_url_cache(tmp.path(), &cached.url), Some(cached.clone()));
@@ -876,6 +906,26 @@ mod tests {
         assert!(is_fresh(&cached, 60, 1059));
         assert!(!is_fresh(&cached, 60, 1060));
         assert!(!is_fresh(&cached, 0, 1000), "ttl 0 always refetches");
+    }
+
+    #[test]
+    fn public_only_reads_skip_copies_fetched_for_the_user() {
+        let user_copy = CachedUrl {
+            url: "http://intranet/wiki".into(),
+            fetched_at: 1000,
+            body: "private".into(),
+            public_only: false,
+        };
+        assert!(cache_serves(&user_copy, false));
+        assert!(!cache_serves(&user_copy, true), "an agent must not get the user's private copy");
+        let agent_copy = CachedUrl { public_only: true, ..user_copy.clone() };
+        assert!(cache_serves(&agent_copy, true));
+        assert!(cache_serves(&agent_copy, false));
+
+        // Copies written before the flag existed count as the user's.
+        let legacy: CachedUrl =
+            serde_json::from_str(r#"{"url":"http://intranet/wiki","fetched_at":1000,"body":"private"}"#).unwrap();
+        assert!(!cache_serves(&legacy, true));
     }
 
     #[test]
@@ -943,7 +993,7 @@ mod tests {
     async fn redirect_from_public_to_private_is_refused() {
         let private = serve(OK_BODY.to_string()).await;
         let public = serve(redirect_to(private)).await;
-        let err = fetch_url_with(&format!("http://{}/start", public), |a| a.port() == public.port())
+        let err = fetch_url_with(&format!("http://{}/start", public), false, |a| a.port() == public.port())
             .await
             .unwrap_err();
         assert!(err.contains("private or local address"), "{err}");
@@ -954,10 +1004,63 @@ mod tests {
         let target = serve(OK_BODY.to_string()).await;
         let start = serve(redirect_to(target)).await;
         // Both "private": the user chose a local URL, so its redirects are fine.
-        let body = fetch_url_with(&format!("http://{}/start", start), |_| false).await.unwrap();
+        let body = fetch_url_with(&format!("http://{}/start", start), false, |_| false).await.unwrap();
         assert_eq!(body, "secret");
         // Both "public".
-        let body = fetch_url_with(&format!("http://{}/start", start), |_| true).await.unwrap();
+        let body = fetch_url_with(&format!("http://{}/start", start), false, |_| true).await.unwrap();
+        assert_eq!(body, "secret");
+    }
+
+    #[tokio::test]
+    async fn public_only_refuses_a_private_first_address() {
+        let private = serve(OK_BODY.to_string()).await;
+        let err = fetch_url_with(&format!("http://{}/start", private), true, |_| false)
+            .await
+            .unwrap_err();
+        assert!(err.contains("added by an agent"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn public_only_refuses_a_redirect_to_private_and_allows_public() {
+        let private = serve(OK_BODY.to_string()).await;
+        let public = serve(redirect_to(private)).await;
+        let err = fetch_url_with(&format!("http://{}/start", public), true, |a| a.port() == public.port())
+            .await
+            .unwrap_err();
+        assert!(err.contains("private or local address"), "{err}");
+
+        let body = fetch_url_with(&format!("http://{}/start", public), true, |_| true).await.unwrap();
+        assert_eq!(body, "secret");
+    }
+
+    #[tokio::test]
+    async fn agent_added_url_sources_are_read_public_only() {
+        let private = serve(OK_BODY.to_string()).await;
+        let url_source = |added_by_agent: bool| ContextSource {
+            id: "page".into(),
+            display_name: String::new(),
+            description: String::new(),
+            spec: SourceSpec::Url(UrlSourceConfig {
+                url: format!("http://{}/start", private),
+                ttl_secs: 0,
+            }),
+            added_by_agent,
+        };
+        let context = |added_by_agent: bool| Context {
+            slug: "c".into(),
+            display_name: String::new(),
+            description: String::new(),
+            body: ContextBody::Local {
+                sources: vec![url_source(added_by_agent)],
+            },
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let err = read_source_entry(&context(true), "page", URL_ENTRY_PATH)
+            .await
+            .unwrap_err();
+        assert!(err.contains("added by an agent"), "{err}");
+        let body = read_source_entry(&context(false), "page", URL_ENTRY_PATH).await.unwrap();
         assert_eq!(body, "secret");
     }
 
@@ -982,7 +1085,7 @@ mod tests {
                 });
             }
         });
-        let err = fetch_url_with(&format!("http://{}/start", addr), |_| false).await.unwrap_err();
+        let err = fetch_url_with(&format!("http://{}/start", addr), false, |_| false).await.unwrap_err();
         assert!(err.contains("more than 5 times"), "{err}");
     }
 
@@ -1040,6 +1143,7 @@ mod tests {
                     display_name: String::new(),
                     description: String::new(),
                     spec: SourceSpec::Local(local(tmp.path(), &[])),
+                    added_by_agent: false,
                 }],
             },
             created_at: String::new(),
