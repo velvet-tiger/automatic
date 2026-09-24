@@ -28,6 +28,9 @@ import {
   type SourceSummary,
 } from "./types";
 
+/** "main" is Pages for a local context and Sources for a cloud one. */
+type EditorTab = "main" | "linked" | "used-by";
+
 interface ContextEditorProps {
   slug: string;
   /** Called after any saved change so the list can refresh. */
@@ -54,6 +57,7 @@ export function ContextEditor({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [changingId, setChangingId] = useState(false);
+  const [tab, setTab] = useState<EditorTab>("main");
   // Saves always write the newest context, whichever edit scheduled them.
   const latest = useRef<Context | null>(null);
 
@@ -64,6 +68,7 @@ export function ContextEditor({
   }, 600);
 
   useEffect(() => {
+    setTab("main");
     void (async () => {
       try {
         const loaded: Context = await invoke("read_context", { slug });
@@ -142,6 +147,20 @@ export function ContextEditor({
   };
 
   const docSources = context.location === "local" ? context.sources.filter(isDocumentationSource) : [];
+  const linkedCount = context.location === "local" ? context.sources.length - docSources.length : 0;
+  const tabs: { id: EditorTab; label: string }[] =
+    context.location === "local"
+      ? [
+          { id: "main", label: "Pages" },
+          { id: "linked", label: linkedCount > 0 ? `Linked material · ${linkedCount}` : "Linked material" },
+          { id: "used-by", label: "Used by" },
+        ]
+      : [
+          { id: "main", label: "Sources" },
+          { id: "used-by", label: "Used by" },
+        ];
+  // One pages collection stretches to the bottom of the drawer. Several stack at a fixed height instead.
+  const pagesFill = tab === "main" && context.location === "local" && docSources.length <= 1;
   const saveText = describeSaveStatus(autosave.status);
 
   return (
@@ -173,33 +192,49 @@ export function ContextEditor({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-        {/* Pages span the full width so the editor has room; everything else keeps a readable line length. */}
-        <div className="space-y-8">
-          <div className="max-w-3xl">
-            <input
-              value={context.display_name}
-              onChange={(e) => editText({ display_name: e.target.value })}
-              onBlur={() => void autosave.flush()}
-              placeholder="Untitled context"
-              aria-label="Name"
-              className="w-full bg-transparent text-[20px] font-semibold text-text-base placeholder-text-muted/50 outline-none border-b border-transparent hover:border-border-strong/40 focus:border-brand/60 pb-1 transition-colors"
-            />
-            <textarea
-              value={context.description}
-              onChange={(e) => editText({ description: e.target.value })}
-              onBlur={() => void autosave.flush()}
-              placeholder="What is this context about? Agents read this first."
-              aria-label="Description"
-              rows={2}
-              className="mt-2 w-full bg-transparent text-[13px] text-text-base placeholder-text-muted/50 outline-none resize-none border-b border-transparent hover:border-border-strong/40 focus:border-brand/60 transition-colors"
-            />
-          </div>
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-6 flex flex-col gap-5">
+        <div className="max-w-3xl shrink-0">
+          <input
+            value={context.display_name}
+            onChange={(e) => editText({ display_name: e.target.value })}
+            onBlur={() => void autosave.flush()}
+            placeholder="Untitled context"
+            aria-label="Name"
+            className="w-full bg-transparent text-[20px] font-semibold text-text-base placeholder-text-muted/50 outline-none border-b border-transparent hover:border-border-strong/40 focus:border-brand/60 pb-1 transition-colors"
+          />
+          <textarea
+            value={context.description}
+            onChange={(e) => editText({ description: e.target.value })}
+            onBlur={() => void autosave.flush()}
+            placeholder="What is this context about? Agents read this first."
+            aria-label="Description"
+            rows={2}
+            className="mt-2 w-full bg-transparent text-[13px] text-text-base placeholder-text-muted/50 outline-none resize-none border-b border-transparent hover:border-border-strong/40 focus:border-brand/60 transition-colors"
+          />
+        </div>
 
-          {context.location === "local" ? (
-            <>
-              {docSources.length === 0 ? (
-                <PagesSection contextSlug={context.slug} sourceId={null} heading="Pages" ensureSource={ensurePagesSource} />
+        <div role="tablist" aria-label="Context sections" className="shrink-0 self-start inline-flex gap-1 p-1 bg-bg-sidebar rounded-lg">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+                tab === t.id ? "bg-bg-base text-text-base shadow-sm" : "text-text-muted hover:text-text-base"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Pages span the full width so the editor has room; the other tabs keep a readable line length. */}
+        <div role="tabpanel" className={pagesFill ? "flex-1 min-h-[24rem] flex flex-col" : "space-y-8"}>
+          {tab === "main" &&
+            (context.location === "local" ? (
+              docSources.length === 0 ? (
+                <PagesSection contextSlug={context.slug} sourceId={null} heading="Pages" ensureSource={ensurePagesSource} fill />
               ) : (
                 docSources.map((source) => (
                   <PagesSection
@@ -208,26 +243,29 @@ export function ContextEditor({
                     sourceId={source.id}
                     heading={docSources.length === 1 ? "Pages" : source.display_name || displayName(source.id)}
                     ensureSource={async () => source.id}
+                    fill={pagesFill}
                   />
                 ))
-              )}
+              )
+            ) : (
               <div className="max-w-3xl">
-                <LinkedMaterialSection contextSlug={context.slug} sources={context.sources} saveSources={saveSources} />
+                <CloudSourcesSection contextSlug={context.slug} contextId={context.context_id} />
               </div>
-            </>
-          ) : (
+            ))}
+          {tab === "linked" && context.location === "local" && (
             <div className="max-w-3xl">
-              <CloudSourcesSection contextSlug={context.slug} contextId={context.context_id} />
+              <LinkedMaterialSection contextSlug={context.slug} sources={context.sources} saveSources={saveSources} />
             </div>
           )}
-
-          <div className="max-w-3xl">
-            <UsedBySection
-              contextSlug={context.slug}
-              onNavigateToProject={onNavigateToProject}
-              onNavigateToGroup={onNavigateToGroup}
-            />
-          </div>
+          {tab === "used-by" && (
+            <div className="max-w-3xl">
+              <UsedBySection
+                contextSlug={context.slug}
+                onNavigateToProject={onNavigateToProject}
+                onNavigateToGroup={onNavigateToGroup}
+              />
+            </div>
+          )}
         </div>
       </div>
 

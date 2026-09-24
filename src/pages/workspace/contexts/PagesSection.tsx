@@ -48,6 +48,8 @@ interface PagesSectionProps {
   heading: string;
   /** Creates the pages source when there is none yet and returns its id. */
   ensureSource: () => Promise<string>;
+  /** Stretch to the height of the parent instead of a fixed share of the window. */
+  fill?: boolean;
 }
 
 interface OpenPage {
@@ -69,7 +71,7 @@ type DialogState =
  * the webapp, so a folder exists only while it holds a page. Edits save
  * automatically after a short pause.
  */
-export function PagesSection({ contextSlug, sourceId, heading, ensureSource }: PagesSectionProps) {
+export function PagesSection({ contextSlug, sourceId, heading, ensureSource, fill = false }: PagesSectionProps) {
   const [pages, setPages] = useState<string[]>([]);
   const [open, setOpen] = useState<OpenPage | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -307,7 +309,7 @@ export function PagesSection({ contextSlug, sourceId, heading, ensureSource }: P
   );
 
   return (
-    <section>
+    <section className={fill ? "flex-1 min-h-0 flex flex-col" : undefined}>
       <div className="flex items-center justify-between">
         <h3 className="text-[14px] font-medium text-text-base">{heading}</h3>
         <div className="flex items-center gap-2">
@@ -333,7 +335,7 @@ export function PagesSection({ contextSlug, sourceId, heading, ensureSource }: P
           </button>
         </div>
       ) : (
-        !expanded && <div className="h-[70vh] min-h-[24rem]">{workspace}</div>
+        !expanded && <div className={fill ? "flex-1 min-h-0" : "h-[70vh] min-h-[24rem]"}>{workspace}</div>
       )}
 
       {expanded && pages.length > 0 && (
