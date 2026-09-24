@@ -373,6 +373,16 @@ pub struct Project {
     /// remove exactly what a profile no longer provides.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub profile_contributions: HashMap<String, ProfileContribution>,
+    /// Context slugs attached to this project. Each references
+    /// `~/.automatic/library/contexts/{slug}.json`. Agents read contexts on
+    /// demand through the MCP server; nothing is written into the project.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contexts: Vec<String>,
+    /// Which entries in `contexts` each project group provides, keyed by
+    /// group name. Entries no group records are the project's own. Lets a
+    /// later reconcile remove exactly what a group no longer provides.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub group_context_contributions: HashMap<String, Vec<String>>,
     /// Inline custom sub-agents stored directly in the project configuration.
     /// These are written to each agent's sub-agent directory (e.g.
     /// `.claude/agents/`) during sync. Unlike workspace user_agents, custom
@@ -503,6 +513,12 @@ pub struct ProjectGroup {
     /// Ordered list of project names belonging to this group.
     #[serde(default)]
     pub projects: Vec<String>,
+    /// Context slugs attached to the group. Each member project receives
+    /// them in its own `contexts` list, recorded under
+    /// `Project::group_context_contributions` (see
+    /// `core::reconcile_group_contexts`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contexts: Vec<String>,
     #[serde(default)]
     pub created_at: String,
     #[serde(default)]

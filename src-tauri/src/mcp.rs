@@ -287,6 +287,53 @@ pub struct DetachProfileParams {
     pub profile: String,
 }
 
+// ── Context Tool Parameter Types ─────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ListContextsParams {
+    /// Optional project name. When given, only the contexts attached to that
+    /// project are listed, each with the group that provides it (if any).
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ReadContextParams {
+    /// The context slug.
+    pub context: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ListContextEntriesParams {
+    /// The context slug.
+    pub context: String,
+    /// The source id, as returned by automatic_read_context.
+    pub source: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ReadContextEntryParams {
+    /// The context slug.
+    pub context: String,
+    /// The source id, as returned by automatic_read_context.
+    pub source: String,
+    /// The entry path, as returned by automatic_list_context_entries.
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct AttachContextParams {
+    /// The context slug. Must already exist in the library.
+    pub context: String,
+    /// Project name to attach to. Give exactly one of `project` or `group`.
+    #[serde(default)]
+    pub project: Option<String>,
+    /// Project group name to attach to. Every member project receives the
+    /// context. Give exactly one of `project` or `group`.
+    #[serde(default)]
+    pub group: Option<String>,
+}
+
 // ── Feature Tool Parameter Types ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -413,12 +460,54 @@ fn load_project(project_name: &str) -> Result<crate::core::Project, String> {
         .map_err(|e| format!("Failed to parse project '{}': {}", project_name, e))
 }
 
+fn describe_target(target: &crate::core::ContextTarget) -> String {
+    match target {
+        crate::core::ContextTarget::Project(name) => format!("project '{}'", name),
+        crate::core::ContextTarget::Group(name) => format!("group '{}'", name),
+    }
+}
+
 /// Serialise and save a project, with error text ready for a tool result.
 fn persist_project(project_name: &str, project: &crate::core::Project) -> Result<(), String> {
     let json = serde_json::to_string(project)
         .map_err(|e| format!("Failed to serialise project '{}': {}", project_name, e))?;
     crate::core::save_project(project_name, &json)
         .map_err(|e| format!("Failed to save project '{}': {}", project_name, e))
+}
+
+/// Resolve the `project` / `group` pair of a context attach or detach call.
+fn context_target(params: &AttachContextParams) -> Result<crate::core::ContextTarget, String> {
+    match (&params.project, &params.group) {
+        (Some(project), None) => {
+            validate_project(project)?;
+            Ok(crate::core::ContextTarget::Project(project.clone()))
+        }
+        (None, Some(group)) => {
+            if !crate::core::list_groups()?.iter().any(|g| g == group) {
+                return Err(format!(
+                    "Unknown group '{}'. Call automatic_get_related_projects or ask the \
+                     user for the group name.",
+                    group
+                ));
+            }
+            Ok(crate::core::ContextTarget::Group(group.clone()))
+        }
+        _ => Err("Give exactly one of `project` or `group`.".to_string()),
+    }
+}
+
+fn tool_json<T: Serialize>(value: &T) -> CallToolResult {
+    match serde_json::to_string_pretty(value) {
+        Ok(json) => CallToolResult::success(vec![Content::text(json)]),
+        Err(e) => CallToolResult::error(vec![Content::text(format!(
+            "Failed to serialise result: {}",
+            e
+        ))]),
+    }
+}
+
+fn tool_error(message: String) -> CallToolResult {
+    CallToolResult::error(vec![Content::text(message)])
 }
 
 fn validate_project(project: &str) -> Result<(), String> {
@@ -780,7 +869,9 @@ impl AutomaticMcpServer {
                        `profile_contributions` records which entries each profile provides, \
                        including entries the project had before the profile was attached; \
                        those entries are owned by the profile and are re-attached on the \
-                       next save if removed directly."
+                       next save if removed directly. `contexts` lists attached context \
+                       slugs and `group_context_contributions` records which of them each \
+                       project group provides."
     )]
     async fn read_project(
         &self,
@@ -1763,6 +1854,219 @@ impl AutomaticMcpServer {
         }
     }
 
+    // ── Context tools ────────────────────────────────────────────────────
+
+    #[tool(
+        name = "automatic_list_contexts",
+        description = "List contexts: named collections of reference material \
+                       (documentation pages, local files, URLs, cloud sources) \
+                       that agents read on demand. Returns `slug`, \
+                       `display_name`, `description` and `location` (`local` or \
+                       `cloud`). Pass `project` to list only the contexts \
+                       attached to that project; each then carries `group` when \
+                       a project group provides it. Call automatic_read_context \
+                       next."
+    )]
+    async fn list_contexts(
+        &self,
+        params: Parameters<ListContextsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let slugs = match &params.0.project {
+            Some(project) => {
+                if let Err(e) = validate_project(project) {
+                    return Ok(tool_error(e));
+                }
+                match load_project(project) {
+                    Ok(p) => crate::core::project_context_entries(&p),
+                    Err(e) => return Ok(tool_error(e)),
+                }
+            }
+            None => match crate::core::list_contexts() {
+                Ok(slugs) => slugs
+                    .into_iter()
+                    .map(|slug| crate::core::ProjectContextEntry { slug, group: None })
+                    .collect(),
+                Err(e) => return Ok(tool_error(format!("Failed to list contexts: {}", e))),
+            },
+        };
+        let entries: Vec<serde_json::Value> = slugs
+            .into_iter()
+            .map(|entry| match crate::core::read_context(&entry.slug) {
+                Ok(c) => serde_json::json!({
+                    "slug": c.slug,
+                    "display_name": c.display_name,
+                    "description": c.description,
+                    "location": match c.body {
+                        crate::core::ContextBody::Local { .. } => "local",
+                        crate::core::ContextBody::Cloud { .. } => "cloud",
+                    },
+                    "group": entry.group,
+                }),
+                // An attached slug whose file is gone is reported, not hidden.
+                Err(e) => serde_json::json!({
+                    "slug": entry.slug,
+                    "group": entry.group,
+                    "error": e,
+                }),
+            })
+            .collect();
+        Ok(tool_json(&entries))
+    }
+
+    #[tool(
+        name = "automatic_read_context",
+        description = "Read a context by slug. Returns its description and \
+                       `sources`: each has an `id`, a `kind` (`documentation`, \
+                       `local`, `url`, `cloud`, or a webapp kind for cloud \
+                       contexts), and a display name and description. Call \
+                       automatic_list_context_entries with a source id next. \
+                       Cloud contexts need the user to be signed in."
+    )]
+    async fn read_context(
+        &self,
+        params: Parameters<ReadContextParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let context = match crate::core::read_context(&params.0.context) {
+            Ok(c) => c,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let sources = match crate::core::list_context_sources(&context).await {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(tool_error(format!(
+                    "Failed to list sources of context '{}': {}",
+                    context.slug, e
+                )))
+            }
+        };
+        Ok(tool_json(&serde_json::json!({
+            "slug": context.slug,
+            "display_name": context.display_name,
+            "description": context.description,
+            "sources": sources,
+        })))
+    }
+
+    #[tool(
+        name = "automatic_list_context_entries",
+        description = "List the readable entries of one source in a context. \
+                       Returns `entries` (each with `path`, and `title` or \
+                       `size` when known) and `truncated` when the source holds \
+                       more than the listing limit. A URL source has one entry, \
+                       `content`. Call automatic_read_context_entry with a path."
+    )]
+    async fn list_context_entries(
+        &self,
+        params: Parameters<ListContextEntriesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let context = match crate::core::read_context(&params.0.context) {
+            Ok(c) => c,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::core::list_source_entries(&context, &params.0.source).await {
+            Ok(listing) => Ok(tool_json(&listing)),
+            Err(e) => Ok(tool_error(format!(
+                "Failed to list source '{}' of context '{}': {}",
+                params.0.source, context.slug, e
+            ))),
+        }
+    }
+
+    #[tool(
+        name = "automatic_read_context_entry",
+        description = "Read the text of one entry in a context source. Local \
+                       files are confined to the source's folder, and every \
+                       entry is capped at 512,000 bytes of UTF-8 text. URL \
+                       sources are served from cache while fresh; a failed \
+                       fetch is an error rather than stale content."
+    )]
+    async fn read_context_entry(
+        &self,
+        params: Parameters<ReadContextEntryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = &params.0;
+        let context = match crate::core::read_context(&p.context) {
+            Ok(c) => c,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::core::read_source_entry(&context, &p.source, &p.path).await {
+            Ok(text) => Ok(CallToolResult::success(vec![Content::text(text)])),
+            Err(e) => Ok(tool_error(format!(
+                "Failed to read '{}' from source '{}' of context '{}': {}",
+                p.path, p.source, context.slug, e
+            ))),
+        }
+    }
+
+    #[tool(
+        name = "automatic_attach_context",
+        description = "Attach a context to a project or to a project group. \
+                       Give exactly one of `project` or `group`. A group's \
+                       contexts are added to every member project and recorded \
+                       as provided by that group. Idempotent. Contexts are read \
+                       through MCP only, so no sync is needed."
+    )]
+    async fn attach_context(
+        &self,
+        params: Parameters<AttachContextParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let target = match context_target(&params.0) {
+            Ok(t) => t,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let slug = &params.0.context;
+        match crate::core::attach_context(&target, slug) {
+            Ok(true) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Attached context '{}' to {}.",
+                slug,
+                describe_target(&target)
+            ))])),
+            Ok(false) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Context '{}' was already attached to {}.",
+                slug,
+                describe_target(&target)
+            ))])),
+            Err(e) => Ok(tool_error(format!(
+                "Failed to attach context '{}': {}",
+                slug, e
+            ))),
+        }
+    }
+
+    #[tool(
+        name = "automatic_detach_context",
+        description = "Detach a context from a project or from a project group. \
+                       Give exactly one of `project` or `group`. A context a \
+                       group provides cannot be detached from a member project; \
+                       detach it from the group instead. Idempotent."
+    )]
+    async fn detach_context(
+        &self,
+        params: Parameters<AttachContextParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let target = match context_target(&params.0) {
+            Ok(t) => t,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        let slug = &params.0.context;
+        match crate::core::detach_context(&target, slug) {
+            Ok(true) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Detached context '{}' from {}.",
+                slug,
+                describe_target(&target)
+            ))])),
+            Ok(false) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Context '{}' was not attached to {}.",
+                slug,
+                describe_target(&target)
+            ))])),
+            Err(e) => Ok(tool_error(format!(
+                "Failed to detach context '{}': {}",
+                slug, e
+            ))),
+        }
+    }
+
     // ── Sessions tool ────────────────────────────────────────────────────
 
     #[tool(
@@ -2341,8 +2645,8 @@ impl ServerHandler for AutomaticMcpServer {
             .with_instructions(
                 "Automatic is a desktop hub for AI coding agents. \
                  Use these tools to retrieve API keys, discover and search skills, list MCP \
-                 server configs, inspect projects, track active sessions, and sync project \
-                 configurations.",
+                 server configs, inspect projects, read the contexts attached to a project, \
+                 track active sessions, and sync project configurations.",
             )
             .with_server_info(server_info)
     }

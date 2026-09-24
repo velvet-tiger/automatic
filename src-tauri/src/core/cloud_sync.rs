@@ -936,6 +936,37 @@ async fn upload_bundle(bundle: &DeltaBundle) -> Result<ServerSyncResponse, Strin
     handle_sync_response(resp).await
 }
 
+/// GET a webapp API path (e.g. `/api/contexts/ctx_1`) as the signed-in
+/// account, refreshing the access token once on 401. The response is handed
+/// back unread so the caller can map 404 and other statuses to its own
+/// errors.
+pub(crate) async fn webapp_authorized_get(path: &str) -> Result<reqwest::Response, String> {
+    let webapp = account::webapp_url();
+    let url = format!("{}{}", webapp, path);
+    let client = http_client()?;
+
+    let access = keychain_load(ACCESS_TOKEN_USER)
+        .map_err(|_| "Not signed in. Please sign in first.".to_string())?;
+
+    let resp = client
+        .get(&url)
+        .bearer_auth(&access)
+        .send()
+        .await
+        .map_err(|e| format!("request to {} failed: {}", url, e))?;
+
+    if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(resp);
+    }
+    let new_access = refresh_access_token(&client, &webapp).await?;
+    client
+        .get(&url)
+        .bearer_auth(&new_access)
+        .send()
+        .await
+        .map_err(|e| format!("retry of {} failed: {}", url, e))
+}
+
 async fn handle_sync_response(resp: reqwest::Response) -> Result<ServerSyncResponse, String> {
     let status = resp.status();
     if !status.is_success() {

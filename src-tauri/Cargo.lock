@@ -328,6 +328,7 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
+ "glob",
  "hex",
  "keyring",
  "minisign-verify",

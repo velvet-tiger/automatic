@@ -119,6 +119,9 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<()
     // editor, the create wizard, and attach/detach done by editing
     // `profiles`. See `core::reconcile_project_profiles`.
     core::reconcile_project_profiles(&mut incoming);
+    // Groups: same idea for contexts. Membership lives in the group files,
+    // so a stale editor copy cannot drop or duplicate a group's contexts.
+    core::reconcile_group_contexts(&mut incoming, &core::groups_for_project(name));
     let reconciled = serde_json::to_string_pretty(&incoming).map_err(|e| e.to_string())?;
     let data: &str = &reconciled;
 
