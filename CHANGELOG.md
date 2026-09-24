@@ -2,16 +2,22 @@
 
 All notable changes to Automatic are documented here.
 
-## [Unreleased]
+## [1.30.0] - 2026-09-25
 
 ### Added
 
-- Agents can now link folders, files and web pages into a context through MCP. New tools `automatic_add_context_folder`, `automatic_add_context_web_page` and `automatic_remove_context_source`. Anything an agent links shows an "Added by an agent" label in the context editor. Choose Keep to accept it, or remove it.
-- A new setting in Settings > App decides which folders agents may link: only folders inside your projects (the default), any folder, or none. Hidden folders, your home folder, credential folders and system folders are always refused, and agents only get the default Markdown and text files.
+- Agents can now link folders, files and web pages into a context through MCP. New tools `automatic_add_context_folder`, `automatic_add_context_web_page` and `automatic_remove_context_source`. Anything an agent links shows an "Added by an agent" label in the context editor. Choose Keep to accept it, or remove it. ([36d8c57](https://github.com/velvet-tiger/automatic/commit/36d8c57))
+- A new setting in Settings > App decides which folders agents may link: only folders inside your projects (the default), any folder, or none. Hidden folders, your home folder, credential folders and system folders are always refused, and agents only get the default Markdown and text files. ([36d8c57](https://github.com/velvet-tiger/automatic/commit/36d8c57))
+- The context editor now has tabs. Pages (or Sources for a cloud context), Linked material and Used by sit below the name and description, so they no longer fall below the fold. ([743d9d4](https://github.com/velvet-tiger/automatic/commit/743d9d4))
+- The page editor now spans the full width of the context panel and fills most of the window height. It has Write and Preview tabs, and an Expand mode that fills the context drawer. ([9e3c509](https://github.com/velvet-tiger/automatic/commit/9e3c509))
+
+### Fixed
+
+- A long context description no longer pushes the summary column off screen in the contexts list. The full text shows on hover. ([f84cbb7](https://github.com/velvet-tiger/automatic/commit/f84cbb7))
 
 ### Security
 
-- Web pages an agent links may only reach public internet addresses, on the first request and on every redirect, until you keep them. They are never served a downloaded copy of a page that was fetched for one of your own sources. Pages you add yourself can still point at local or private addresses.
+- Web pages an agent links may only reach public internet addresses, on the first request and on every redirect, until you keep them. They are never served a downloaded copy of a page that was fetched for one of your own sources. Pages you add yourself can still point at local or private addresses. ([36d8c57](https://github.com/velvet-tiger/automatic/commit/36d8c57))
 
 ## [1.29.0] - 2026-09-24
 
