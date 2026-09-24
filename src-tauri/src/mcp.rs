@@ -334,6 +334,58 @@ pub struct AttachContextParams {
     pub group: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct CreateContextParams {
+    /// A short name, e.g. "Coding standards". The id is derived from it.
+    pub name: String,
+    /// What the context holds and when an agent should read it.
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct WriteContextPageParams {
+    /// The context slug.
+    pub context: String,
+    /// Page title. The page path is derived from it and `folder`. Writing
+    /// the same title in the same folder replaces that page. Give either
+    /// `title` or `path`.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Folder for a titled page, e.g. "Guides" or "Guides/Troubleshooting".
+    /// Omit for the top level.
+    #[serde(default)]
+    pub folder: Option<String>,
+    /// Exact path of an existing page to replace, as listed by
+    /// automatic_list_context_entries (e.g. "guides/setup.md").
+    #[serde(default)]
+    pub path: Option<String>,
+    /// The page body in Markdown.
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct MoveContextPageParams {
+    /// The context slug.
+    pub context: String,
+    /// Current page path, as listed by automatic_list_context_entries.
+    pub path: String,
+    /// Destination folder. Omit to stay in the current folder; "" for the top level.
+    #[serde(default)]
+    pub folder: Option<String>,
+    /// New title. Omit to keep the current name.
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct DeleteContextPageParams {
+    /// The context slug.
+    pub context: String,
+    /// Page path, as listed by automatic_list_context_entries.
+    pub path: String,
+}
+
 // ── Feature Tool Parameter Types ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -2064,6 +2116,104 @@ impl AutomaticMcpServer {
                 "Failed to detach context '{}': {}",
                 slug, e
             ))),
+        }
+    }
+
+    #[tool(
+        name = "automatic_create_context",
+        description = "Create a local context with a name and description, \
+                       ready for pages. Only when the user asks. Returns the \
+                       new context's slug. Linked folders, files, web pages \
+                       and cloud sources can only be added by the user in \
+                       the Automatic app."
+    )]
+    async fn create_context(
+        &self,
+        params: Parameters<CreateContextParams>,
+    ) -> Result<CallToolResult, McpError> {
+        match crate::core::create_local_context(&params.0.name, &params.0.description) {
+            Ok(context) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Created context '{}' with slug '{}'. Add pages with \
+                 automatic_write_context_page, and attach it with \
+                 automatic_attach_context.",
+                context.display_name, context.slug
+            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to create context: {}", e))),
+        }
+    }
+
+    #[tool(
+        name = "automatic_write_context_page",
+        description = "Create or replace a Markdown page in a local context. \
+                       Give `title` (and optionally `folder`, e.g. \
+                       \"Guides\") for a page addressed by name; the same \
+                       title in the same folder replaces that page. Or give \
+                       `path` to replace an existing page exactly. Write \
+                       pages only when the user asks, or to record something \
+                       durable the user has agreed, such as a decision. \
+                       Returns the page path."
+    )]
+    async fn write_context_page(
+        &self,
+        params: Parameters<WriteContextPageParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = &params.0;
+        let target = match (&p.path, &p.title) {
+            (Some(path), None) => crate::core::PageTarget::Path(path),
+            (None, Some(title)) => crate::core::PageTarget::Title {
+                folder: p.folder.as_deref(),
+                title,
+            },
+            _ => return Ok(tool_error("Give exactly one of `title` or `path`.".to_string())),
+        };
+        match crate::core::write_context_page(&p.context, target, &p.content) {
+            Ok(path) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Saved page '{}' in context '{}'.",
+                path, p.context
+            ))])),
+            Err(e) => Ok(tool_error(format!(
+                "Failed to write page in context '{}': {}",
+                p.context, e
+            ))),
+        }
+    }
+
+    #[tool(
+        name = "automatic_move_context_page",
+        description = "Move a page to another folder or rename it. Refuses to \
+                       overwrite an existing page. Folders left empty are \
+                       removed. Returns the new path."
+    )]
+    async fn move_context_page(
+        &self,
+        params: Parameters<MoveContextPageParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = &params.0;
+        match crate::core::move_context_page(&p.context, &p.path, p.folder.as_deref(), p.title.as_deref()) {
+            Ok(to) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Moved '{}' to '{}' in context '{}'.",
+                p.path, to, p.context
+            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to move page '{}': {}", p.path, e))),
+        }
+    }
+
+    #[tool(
+        name = "automatic_delete_context_page",
+        description = "Delete a page from a local context. This cannot be \
+                       undone; only do it when the user asks."
+    )]
+    async fn delete_context_page(
+        &self,
+        params: Parameters<DeleteContextPageParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = &params.0;
+        match crate::core::delete_context_page(&p.context, &p.path) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Deleted page '{}' from context '{}'.",
+                p.path, p.context
+            ))])),
+            Err(e) => Ok(tool_error(format!("Failed to delete page '{}': {}", p.path, e))),
         }
     }
 

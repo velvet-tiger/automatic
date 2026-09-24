@@ -618,6 +618,209 @@ fn remove_empty_folders(root: &Path, removed: &Path) {
     }
 }
 
+// ── Agent-facing writes ──────────────────────────────────────────────────────
+//
+// Agents create contexts and write pages through MCP by title and folder,
+// the way the app's UI does. They never add linked material (folders,
+// files, URLs, cloud sources): which paths and addresses get read stays the
+// user's choice.
+
+/// The id of the pages source a new context gets.
+pub const PAGES_SOURCE_ID: &str = "pages";
+
+/// Turn a title into a page path segment (`Setup guide` → `setup-guide`).
+/// Mirrors `segmentFromTitle` in the frontend's `pageTree.ts`.
+pub fn segment_from_title(title: &str) -> String {
+    let lower = title.to_lowercase();
+    let mut out = String::new();
+    let mut in_gap = false;
+    for c in lower.chars() {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-' {
+            if in_gap && !out.is_empty() {
+                out.push('-');
+            }
+            in_gap = false;
+            out.push(c);
+        } else {
+            in_gap = true;
+        }
+    }
+    let trimmed = out.trim_start_matches(|c: char| !c.is_ascii_alphanumeric());
+    let mut segment = trimmed.trim_end_matches('-').to_string();
+    while segment.contains("..") {
+        segment = segment.replace("..", ".");
+    }
+    let segment: String = segment.chars().take(64).collect();
+    let segment = segment.trim_end_matches('-').to_string();
+    if segment.is_empty() {
+        "untitled".to_string()
+    } else {
+        segment
+    }
+}
+
+/// `folder/segment.md` for a title. `folder` may use display names
+/// ("Guides/Troubleshooting"); each part becomes a segment.
+pub fn page_path_for(folder: Option<&str>, title: &str) -> String {
+    let mut parts: Vec<String> = folder
+        .unwrap_or("")
+        .split('/')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(segment_from_title)
+        .collect();
+    parts.push(format!("{}.md", segment_from_title(title)));
+    parts.join("/")
+}
+
+/// Frontmatter the webapp expects, plus a body, for a new page.
+pub fn new_page_content(title: &str, body: &str) -> String {
+    let title = title.replace(['\r', '\n'], " ");
+    let title = title.trim();
+    let quoted = serde_json::to_string(if title.is_empty() { "Untitled" } else { title })
+        .unwrap_or_else(|_| "\"Untitled\"".to_string());
+    format!("---\ntype: page\ntitle: {}\n---\n\n{}", quoted, body)
+}
+
+/// Split `---\n...\n---\n` frontmatter from the rest of a page.
+fn split_frontmatter(content: &str) -> (&str, &str) {
+    if let Some(rest) = content.strip_prefix("---\n") {
+        if let Some(end) = rest.find("\n---\n") {
+            let split = 4 + end + 5;
+            return (&content[..split], &content[split..]);
+        }
+    }
+    ("", content)
+}
+
+/// Create a local context from a name, with a pages source ready. The slug
+/// is derived from the name and made unique.
+pub fn create_local_context(name: &str, description: &str) -> Result<Context, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Give the context a name".to_string());
+    }
+    let existing = list_contexts()?;
+    let derived = segment_from_title(name).replace('.', "-");
+    let base = if is_valid_context_slug(&derived) && derived != "untitled" {
+        derived
+    } else {
+        "context".to_string()
+    };
+    let mut slug = base.clone();
+    let mut i = 2;
+    while existing.contains(&slug) {
+        slug = format!("{}-{}", base, i);
+        i += 1;
+    }
+    save_context(Context {
+        slug,
+        display_name: name.to_string(),
+        description: description.trim().to_string(),
+        body: ContextBody::Local {
+            sources: vec![ContextSource {
+                id: PAGES_SOURCE_ID.to_string(),
+                display_name: String::new(),
+                description: String::new(),
+                spec: SourceSpec::Documentation,
+            }],
+        },
+        created_at: String::new(),
+        updated_at: String::new(),
+    })
+}
+
+/// The context's pages source, adding one when it has none. Cloud contexts
+/// have no local pages.
+pub fn ensure_pages_source(slug: &str) -> Result<String, String> {
+    let mut context = read_context(slug)?;
+    let ContextBody::Local { sources } = &mut context.body else {
+        return Err(format!(
+            "Context '{}' lives in the Automatic cloud; edit its pages in the web app",
+            slug
+        ));
+    };
+    if let Some(existing) = sources.iter().find(|s| s.spec == SourceSpec::Documentation) {
+        return Ok(existing.id.clone());
+    }
+    let mut id = PAGES_SOURCE_ID.to_string();
+    let mut i = 2;
+    while sources.iter().any(|s| s.id == id) {
+        id = format!("{}-{}", PAGES_SOURCE_ID, i);
+        i += 1;
+    }
+    sources.push(ContextSource {
+        id: id.clone(),
+        display_name: String::new(),
+        description: String::new(),
+        spec: SourceSpec::Documentation,
+    });
+    save_context(context)?;
+    Ok(id)
+}
+
+/// Where a page write goes: an existing path, or a title in a folder.
+pub enum PageTarget<'a> {
+    Path(&'a str),
+    Title { folder: Option<&'a str>, title: &'a str },
+}
+
+/// Create or replace a page and return its path. `body` is Markdown; the
+/// webapp frontmatter is added for new pages and kept for existing ones,
+/// unless `body` brings its own.
+pub fn write_context_page(slug: &str, target: PageTarget, body: &str) -> Result<String, String> {
+    let source_id = ensure_pages_source(slug)?;
+    let (path, title) = match target {
+        PageTarget::Path(path) => {
+            let stem = path.rsplit('/').next().unwrap_or(path).trim_end_matches(".md");
+            (path.to_string(), stem.replace(['-', '_'], " "))
+        }
+        PageTarget::Title { folder, title } => (page_path_for(folder, title), title.to_string()),
+    };
+    validate_document_path(&path)?;
+    let content = if body.starts_with("---\n") {
+        body.to_string()
+    } else {
+        match read_documentation_page(slug, &source_id, &path) {
+            Ok(existing) => {
+                let (frontmatter, _) = split_frontmatter(&existing);
+                if frontmatter.is_empty() {
+                    body.to_string()
+                } else {
+                    format!("{}\n{}", frontmatter, body)
+                }
+            }
+            Err(_) => new_page_content(&title, body),
+        }
+    };
+    write_documentation_page(slug, &source_id, &path, &content)?;
+    Ok(path)
+}
+
+/// Move or rename a page within the context's pages. Returns the new path.
+pub fn move_context_page(
+    slug: &str,
+    from: &str,
+    to_folder: Option<&str>,
+    to_title: Option<&str>,
+) -> Result<String, String> {
+    let source_id = ensure_pages_source(slug)?;
+    let stem = from.rsplit('/').next().unwrap_or(from).trim_end_matches(".md");
+    let current_folder = from.rsplit_once('/').map(|(f, _)| f).unwrap_or("");
+    let folder = to_folder.unwrap_or(current_folder);
+    let to = page_path_for(Some(folder), to_title.unwrap_or(stem));
+    move_documentation_page(slug, &source_id, from, &to)?;
+    Ok(to)
+}
+
+pub fn delete_context_page(slug: &str, path: &str) -> Result<(), String> {
+    let source_id = ensure_pages_source(slug)?;
+    if read_documentation_page(slug, &source_id, path).is_err() {
+        return Err(format!("Context '{}' has no page '{}'", slug, path));
+    }
+    delete_documentation_page(slug, &source_id, path)
+}
+
 // ── Attachment ───────────────────────────────────────────────────────────────
 
 /// Attach a context to a project's own list. Returns `true` when the list
@@ -1441,6 +1644,62 @@ mod tests {
 
             delete_group_reconciling_contexts("team").unwrap();
             assert!(read_project_parsed("b").unwrap().contexts.is_empty());
+        });
+    }
+
+    #[test]
+    fn titles_become_page_paths() {
+        assert_eq!(segment_from_title("Setup guide!"), "setup-guide");
+        assert_eq!(segment_from_title("  --Hello World--  "), "hello-world");
+        assert_eq!(segment_from_title("!!!"), "untitled");
+        assert_eq!(segment_from_title("v1..2"), "v1.2");
+        assert_eq!(page_path_for(Some("Guides/Trouble Shooting"), "DNS"), "guides/trouble-shooting/dns.md");
+        assert_eq!(page_path_for(None, "Overview"), "overview.md");
+        assert!(validate_document_path(&page_path_for(Some("a/b"), "c")).is_ok());
+    }
+
+    #[test]
+    fn agent_writes_create_context_and_pages() {
+        with_home(|| {
+            let ctx = create_local_context("Coding standards", "How we write code").unwrap();
+            assert_eq!(ctx.slug, "coding-standards");
+            assert_eq!(create_local_context("Coding standards", "").unwrap().slug, "coding-standards-2");
+
+            let path = write_context_page(
+                "coding-standards",
+                PageTarget::Title { folder: Some("Guides"), title: "Code review" },
+                "# Code review\nBe kind.\n",
+            )
+            .unwrap();
+            assert_eq!(path, "guides/code-review.md");
+            let content = read_documentation_page("coding-standards", PAGES_SOURCE_ID, &path).unwrap();
+            assert!(content.starts_with("---\ntype: page\ntitle: \"Code review\"\n---\n"));
+
+            // Replacing keeps the existing frontmatter.
+            write_context_page("coding-standards", PageTarget::Path(&path), "# Code review\nBe very kind.\n").unwrap();
+            let content = read_documentation_page("coding-standards", PAGES_SOURCE_ID, &path).unwrap();
+            assert!(content.contains("title: \"Code review\""));
+            assert!(content.ends_with("Be very kind.\n"));
+
+            let moved = move_context_page("coding-standards", &path, Some(""), Some("Reviews")).unwrap();
+            assert_eq!(moved, "reviews.md");
+            delete_context_page("coding-standards", &moved).unwrap();
+            assert!(delete_context_page("coding-standards", &moved).unwrap_err().contains("no page"));
+        });
+    }
+
+    #[test]
+    fn agent_writes_add_a_pages_source_and_refuse_cloud_contexts() {
+        with_home(|| {
+            save_context(local_context("bare", vec![])).unwrap();
+            assert_eq!(ensure_pages_source("bare").unwrap(), PAGES_SOURCE_ID);
+            assert_eq!(ensure_pages_source("bare").unwrap(), PAGES_SOURCE_ID, "idempotent");
+            save_context(Context {
+                body: ContextBody::Cloud { context_id: "ctx_1".into() },
+                ..local_context("remote", vec![])
+            })
+            .unwrap();
+            assert!(ensure_pages_source("remote").unwrap_err().contains("cloud"));
         });
     }
 
