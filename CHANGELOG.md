@@ -2,6 +2,16 @@
 
 All notable changes to Automatic are documented here.
 
+## [1.29.0] - 2026-09-24
+
+### Added
+
+- Agents can now create contexts and write their pages through MCP. New tools `automatic_create_context`, `automatic_write_context_page`, `automatic_move_context_page` and `automatic_delete_context_page` create a context, write a page by title and folder, and move or delete pages. Adding linked folders, files, web pages and cloud sources stays in the app, so only you decide which paths and addresses agents can read. ([9b0baf0](https://github.com/velvet-tiger/automatic/commit/9b0baf0))
+
+### Changed
+
+- The bundled `automatic` skill and service rule describe the new tools, and tell agents to write pages only when you ask or to record a decision you've agreed, and to update an existing page rather than add a near-duplicate. ([51da1a7](https://github.com/velvet-tiger/automatic/commit/51da1a7))
+
 ## [1.28.1] - 2026-09-24
 
 ### Security
