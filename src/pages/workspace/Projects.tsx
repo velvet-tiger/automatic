@@ -30,6 +30,7 @@ interface ProjectsProps {
   onNavigateToDiscoverMcp?: (slug: string) => void;
   onNavigateToGroup?: (groupName: string) => void;
   onNavigateToCommand?: (commandId: string) => void;
+  onNavigateToContexts?: () => void;
   /** When set, opens the new project wizard at step 3 with this template pre-selected. */
   initialCreateWithTemplate?: string | null;
   onInitialCreateWithTemplateConsumed?: () => void;
@@ -55,6 +56,7 @@ export default function Projects({
   onNavigateToDiscoverMcp,
   onNavigateToGroup,
   onNavigateToCommand,
+  onNavigateToContexts,
   initialCreateWithTemplate = null,
   onInitialCreateWithTemplateConsumed,
   filterGroup = null,
@@ -307,6 +309,7 @@ export default function Projects({
       onNavigateToDiscoverMcp={onNavigateToDiscoverMcp}
       onNavigateToGroup={onNavigateToGroup}
       onNavigateToCommand={onNavigateToCommand}
+      onNavigateToContexts={onNavigateToContexts}
     />
   );
 }

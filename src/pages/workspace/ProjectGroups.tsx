@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, Check, Layers, FolderOpen } from "lucide-react";
+import { GroupContextsSection } from "./contexts/GroupContextsSection";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -9,8 +10,26 @@ interface ProjectGroup {
   name: string;
   description: string;
   projects: string[];
+  /** Context slugs attached to the group. Changed only through attach/detach_context. */
+  contexts?: string[];
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Contexts change through `attach_context` / `detach_context`, possibly from
+ * an agent over MCP while this page is open. Take them from disk so a save of
+ * another field never writes back an old list.
+ */
+async function withLatestContexts(updated: ProjectGroup): Promise<ProjectGroup> {
+  try {
+    const raw: string = await invoke("read_group", { name: updated.name });
+    const latest: ProjectGroup = JSON.parse(raw);
+    return { ...updated, contexts: latest.contexts ?? [] };
+  } catch {
+    // A new group has no file yet, so there is nothing to preserve.
+    return updated;
+  }
 }
 
 interface ProjectGroupsProps {
@@ -105,11 +124,11 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
     if (!group) return;
     setIsSaving(true);
     try {
-      const updated: ProjectGroup = {
+      const updated: ProjectGroup = await withLatestContexts({
         ...group,
         description: editDescription,
         updated_at: new Date().toISOString(),
-      };
+      });
       await invoke("save_group", {
         name: group.name,
         data: JSON.stringify(updated),
@@ -217,8 +236,9 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
 
   /** Save the group then re-sync each affected project so instruction files
    *  are updated immediately without requiring a manual sync. */
-  const persistGroup = async (updated: ProjectGroup, syncProjects: string[] = []) => {
+  const persistGroup = async (changed: ProjectGroup, syncProjects: string[] = []) => {
     try {
+      const updated = await withLatestContexts(changed);
       await invoke("save_group", {
         name: updated.name,
         data: JSON.stringify(updated),
@@ -477,6 +497,13 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
                 </div>
               )}
             </div>
+
+            <GroupContextsSection
+              groupName={group.name}
+              contexts={group.contexts ?? []}
+              // The groups-updated listener reloads this group from disk.
+              onChanged={() => window.dispatchEvent(new CustomEvent("groups-updated"))}
+            />
 
             {/* Info callout */}
             <div className="rounded-md bg-bg-input border border-border-strong/30 px-3 py-2.5 text-[12px] text-text-muted space-y-1">

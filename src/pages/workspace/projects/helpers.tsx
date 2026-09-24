@@ -103,6 +103,8 @@ export function emptyProject(name: string): Project {
     custom_commands: [],
     profiles: [],
     profile_contributions: {},
+    contexts: [],
+    group_context_contributions: {},
   };
 }
 

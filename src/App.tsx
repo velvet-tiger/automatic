@@ -14,6 +14,7 @@ import Projects from "./pages/workspace/Projects";
 import ProjectGroups from "./pages/workspace/ProjectGroups";
 import Templates from "./pages/workspace/Templates";
 import Profiles from "./pages/workspace/Profiles";
+import Contexts from "./pages/workspace/Contexts";
 import McpServers from "./pages/workspace/McpServers";
 import Instructions from "./pages/workspace/Instructions";
 import Rules from "./pages/workspace/Rules";
@@ -45,7 +46,7 @@ import Featured from "./pages/community/Featured";
 import DevServersOverview from "./plugins/dev-servers/DevServersOverview";
 import MaildevOverview from "./plugins/maildev/MaildevOverview";
 import { usePlugin } from "./plugins/usePlugin";
-import { ClipboardList, Code, Server, ServerCog, ChevronDown, LayoutTemplate, Bot, Layers, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, Webhook, PanelLeft, Star, RefreshCw, Hash, FlaskConical, Mail } from "lucide-react";
+import { ClipboardList, Code, Server, ServerCog, ChevronDown, LayoutTemplate, Bot, Layers, BookMarked, Library as LibraryIcon, Store, Settings as SettingsIcon, ScrollText, Sparkles, PackageOpen, Puzzle, Lightbulb, List, Wrench, MessagesSquare, Terminal, Webhook, PanelLeft, Star, RefreshCw, Hash, FlaskConical, Mail } from "lucide-react";
 import { flag } from "./lib/flags";
 import CloudSync from "./pages/CloudSync";
 import graphLogo from "../logos/graph_5.svg";
@@ -58,7 +59,7 @@ type Section = "start" | "workspace" | "library" | "discover" | "tools";
 const SECTION_TABS: Record<Section, string[]> = {
   start: ["getting-started"],
   workspace: ["projects", "project-groups"],
-  library: ["library-home", "templates", "profiles", "instructions", "rules", "subagents", "commands", "hooks", "skills", "mcp", "providers", "tools"],
+  library: ["library-home", "templates", "profiles", "contexts", "instructions", "rules", "subagents", "commands", "hooks", "skills", "mcp", "providers", "tools"],
   discover: ["discover-home", "community-featured", "discover-collections", "discover-templates", "skill-store", "discover-mcp"],
   tools: ["tools-home", "library-generator", "token-estimator", "ai-playground", "recommendations", "mcp-setup", "dev-servers", "maildev"],
 };
@@ -613,6 +614,7 @@ function App() {
                 <ul className="space-y-0.5">
                   <NavItem id="templates" icon={LayoutTemplate} label="Templates" />
                   <NavItem id="profiles" icon={Layers} label="Profiles" />
+                  <NavItem id="contexts" icon={BookMarked} label="Contexts" />
                   <NavItem id="instructions" icon={ClipboardList} label="Instructions" />
                   <NavItem id="rules" icon={ScrollText} label="Rules" />
                   <NavItem id="subagents" icon={MessagesSquare} label="Sub-Agents" />
@@ -745,6 +747,7 @@ function App() {
                 onNavigateToDiscoverMcp={navigateToDiscoverMcp}
                 onNavigateToGroup={navigateToGroup}
                 onNavigateToCommand={navigateToCommand}
+                onNavigateToContexts={() => setActiveTabWithSection("contexts")}
                 initialCreateWithTemplate={pendingCreateWithTemplate}
                 onInitialCreateWithTemplateConsumed={() => setPendingCreateWithTemplate(null)}
                 filterGroup={activeGroupFilter}
@@ -778,6 +781,11 @@ function App() {
           {activeTab === "profiles" && (
             <div className="flex-1 h-full">
               <Profiles onNavigateToProject={navigateToProject} />
+            </div>
+          )}
+          {activeTab === "contexts" && (
+            <div className="flex-1 h-full">
+              <Contexts onNavigateToProject={navigateToProject} onNavigateToGroup={navigateToGroup} />
             </div>
           )}
           {activeTab === "recommendations" && (

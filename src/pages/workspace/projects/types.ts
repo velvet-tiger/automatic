@@ -75,6 +75,13 @@ export interface Project {
    * hides their remove controls. Anything not listed is the project's own.
    */
   profile_contributions?: Record<string, ProfileContribution>;
+  /** Context slugs attached to this project. Agents read them through MCP. */
+  contexts?: string[];
+  /**
+   * Which entries in `contexts` each project group provides, keyed by group
+   * name. Those are managed from the group; the rest are the project's own.
+   */
+  group_context_contributions?: Record<string, string[]>;
   /** Inline custom skills stored directly in this project. Written to skill directories on sync. */
   custom_skills?: CustomSkill[];
   /** When true, rules are written to .automatic/instructions/ and the instruction file becomes an index. */

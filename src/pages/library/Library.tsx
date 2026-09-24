@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowRight,
+  BookMarked,
   Bot,
   ClipboardList,
   Code,
@@ -49,6 +50,7 @@ interface AssetCard {
 type Counts = {
   projectTemplates: number | null;
   profiles: number | null;
+  contexts: number | null;
   templates: number | null;
   rules: number | null;
   userAgents: number | null;
@@ -130,6 +132,17 @@ const ASSET_CARDS: AssetCard[] = [
     countKey: "profiles",
     countLabel: "profiles saved",
     ctaLabel: "Manage profiles",
+  },
+  {
+    tab: "contexts",
+    title: "Contexts",
+    description:
+      "Reference material agents read on demand: documentation pages, local folders, URLs and cloud sources. Attach a context to a project or a group.",
+    icon: BookMarked,
+    classes: STYLE_FILE_TEMPLATE,
+    countKey: "contexts",
+    countLabel: "contexts saved",
+    ctaLabel: "Manage contexts",
   },
   {
     tab: "instructions",
@@ -236,6 +249,7 @@ export default function Library({ onNavigate }: LibraryProps) {
   const [counts, setCounts] = useState<Counts>({
     projectTemplates: null,
     profiles: null,
+    contexts: null,
     templates: null,
     rules: null,
     userAgents: null,
@@ -252,6 +266,7 @@ export default function Library({ onNavigate }: LibraryProps) {
       const [
         projectTemplates,
         profiles,
+        contexts,
         templates,
         rules,
         userAgents,
@@ -264,6 +279,7 @@ export default function Library({ onNavigate }: LibraryProps) {
       ] = await Promise.all([
         safeArrayLength(() => invoke<string[]>("get_templates")),
         safeArrayLength(() => invoke<string[]>("get_project_profiles")),
+        safeArrayLength(() => invoke<unknown[]>("list_contexts")),
         safeArrayLength(() => invoke<string[]>("get_instructions")),
         safeArrayLength(() => invoke<unknown[]>("get_rules")),
         safeArrayLength(() => invoke<unknown[]>("get_subagents")),
@@ -277,6 +293,7 @@ export default function Library({ onNavigate }: LibraryProps) {
       setCounts({
         projectTemplates,
         profiles,
+        contexts,
         templates,
         rules,
         userAgents,

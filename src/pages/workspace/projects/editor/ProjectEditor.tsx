@@ -64,6 +64,7 @@ import { SettingsPanel } from "./panels/SettingsPanel";
 import { MemoryPanel } from "./panels/MemoryPanel";
 import { GroupsPanel } from "./panels/GroupsPanel";
 import { ProfilesPanel } from "./panels/ProfilesPanel";
+import { ContextsPanel } from "./panels/ContextsPanel";
 import { ActivityPanel } from "./panels/ActivityPanel";
 import { RecommendationsPanel } from "./panels/RecommendationsPanel";
 import { DocsFilesPanel } from "./panels/DocsFilesPanel";
@@ -129,6 +130,8 @@ interface ProjectEditorProps {
   onNavigateToDiscoverMcp?: (slug: string) => void;
   onNavigateToGroup?: (groupName: string) => void;
   onNavigateToCommand?: (commandId: string) => void;
+  /** Opens Library → Contexts, where contexts are created. */
+  onNavigateToContexts?: () => void;
 }
 
 export function ProjectEditor({
@@ -152,6 +155,7 @@ export function ProjectEditor({
   onNavigateToDiscoverMcp,
   onNavigateToGroup,
   onNavigateToCommand,
+  onNavigateToContexts,
 }: ProjectEditorProps) {
   const { userId } = useCurrentUser();
   const { log, update } = useTaskLog();
@@ -301,8 +305,8 @@ export function ProjectEditor({
   const navLayout = useProjectNavLayout();
 
   // Tab navigation within a project
-  type ProjectTab = "summary" | "agents" | "commands" | "hooks" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "profiles" | "project_file" | "rules" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools" | "settings";
-  type ProjectGroup = "summary" | "project_file" | "rules" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "hooks" | "configuration" | "documentation" | "memory" | "activity" | "insights";
+  type ProjectTab = "summary" | "agents" | "commands" | "hooks" | "custom_agents" | "skills" | "mcp_servers" | "groups" | "profiles" | "contexts" | "project_file" | "rules" | "docs_files" | "docs_links" | "docs_notes" | "memory" | "activity" | "recommendations" | "tools" | "settings";
+  type ProjectGroup = "summary" | "project_file" | "rules" | "skills" | "mcp_servers" | "custom_agents" | "commands" | "hooks" | "contexts" | "configuration" | "documentation" | "memory" | "activity" | "insights";
 
   const PROJECT_GROUPS: {
     id: ProjectGroup;
@@ -317,6 +321,7 @@ export function ProjectEditor({
     { id: "custom_agents", label: "Agents", tabs: [{ id: "custom_agents", label: "Agents" }] },
     { id: "commands", label: "Commands", tabs: [{ id: "commands", label: "Commands" }] },
     { id: "hooks", label: "Hooks", tabs: [{ id: "hooks", label: "Hooks" }] },
+    { id: "contexts", label: "Contexts", tabs: [{ id: "contexts", label: "Contexts" }] },
     {
       id: "documentation",
       label: "Documentation",
@@ -679,7 +684,7 @@ export function ProjectEditor({
   // After a project is selected via the router, switch to the requested tab.
   useEffect(() => {
     if (!initialProjectTab) return;
-    const validTabs = ["summary", "agents", "skills", "mcp_servers", "commands", "hooks", "custom_agents", "groups", "profiles", "project_file", "rules", "memory", "activity", "recommendations", "settings"] as const;
+    const validTabs = ["summary", "agents", "skills", "mcp_servers", "commands", "hooks", "custom_agents", "groups", "profiles", "contexts", "project_file", "rules", "memory", "activity", "recommendations", "settings"] as const;
     type ProjectTab = typeof validTabs[number];
     if (validTabs.includes(initialProjectTab as ProjectTab)) {
       selectTab(initialProjectTab as ProjectTab);
@@ -1672,6 +1677,8 @@ export function ProjectEditor({
         hooks: stored.hooks || [],
         profiles: stored.profiles || [],
         profile_contributions: stored.profile_contributions || {},
+        contexts: stored.contexts || [],
+        group_context_contributions: stored.group_context_contributions || {},
         custom_skills: [...storedCustomSkills, ...newCustomSkills],
         mode: stored.mode === 'silent' ? 'silent' : 'normal',
         manage_gitignore: stored.manage_gitignore === true,
@@ -1752,6 +1759,8 @@ export function ProjectEditor({
         hooks: parsed.hooks || [],
         profiles: parsed.profiles || [],
         profile_contributions: parsed.profile_contributions || {},
+        contexts: parsed.contexts || [],
+        group_context_contributions: parsed.group_context_contributions || {},
         custom_skills: parsed.custom_skills || [],
         tools: parsed.tools || [],
         instructions_index_mode: parsed.instructions_index_mode || false,
@@ -3849,6 +3858,21 @@ export function ProjectEditor({
                     loadDocNote={loadDocNote}
                     saveDocNote={saveDocNote}
                     removeDocEntry={removeDocEntry}
+                  />
+                )}
+
+                {/* ── Contexts tab ─────────────────────────────────── */}
+                {projectTab === "contexts" && project && (
+                  <ContextsPanel
+                    project={project}
+                    setProject={setProject}
+                    dirty={dirty}
+                    setDirty={setDirty}
+                    isCreating={isCreating}
+                    selectedName={selectedName}
+                    reloadProject={reloadProject}
+                    onNavigateToGroup={onNavigateToGroup}
+                    onNavigateToContexts={onNavigateToContexts}
                   />
                 )}
 
