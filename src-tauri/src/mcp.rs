@@ -538,9 +538,6 @@ pub struct AddFeatureUpdateParams {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Verify that `project` is a registered project name.
-/// Returns `Ok(())` on success, or an `Err` with a helpful message listing
-/// the valid project names so the agent can self-correct immediately.
 /// Read and parse a registered project, with error text ready for a tool
 /// result.
 fn load_project(project_name: &str) -> Result<crate::core::Project, String> {
@@ -600,6 +597,9 @@ fn tool_error(message: String) -> CallToolResult {
     CallToolResult::error(vec![Content::text(message)])
 }
 
+/// Verify that `project` is a registered project name.
+/// Returns `Ok(())` on success, or an `Err` with a helpful message listing
+/// the valid project names so the agent can self-correct immediately.
 fn validate_project(project: &str) -> Result<(), String> {
     let known = crate::core::list_projects().unwrap_or_default();
     if known.iter().any(|p| p == project) {
