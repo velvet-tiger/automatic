@@ -3,13 +3,22 @@ import { invoke } from "@tauri-apps/api/core";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { Plus, X, Edit2, Check, MessagesSquare, Copy, FolderGit2, Search } from "lucide-react";
+import { Plus, X, Edit2, Check, MessagesSquare, Copy, FolderGit2, Search, ChevronDown, ChevronRight } from "lucide-react";
 import { AuthorSection } from "../../components/AuthorPanel";
 import { TokenPill } from "../../components/TokenPill";
 import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { BuiltInBadge, ReadOnlyBadge, LockCell } from "../../components/ProtectionBadge";
 import { useBulkSelection } from "../../lib/useBulkSelection";
+import { nextAvailableName } from "../../lib/uniqueName";
+import {
+  type SubagentDocument,
+  type SubagentFields,
+  conflictingExtraKeys,
+  parseSubagent,
+  serializeSubagent,
+  subagentMachineName,
+} from "../../lib/subagentDocument";
 import {
   type AssetSecurityScanRecord,
   formatAssetScanResult,
@@ -74,6 +83,222 @@ When invoked:
 3. Provide clear, actionable responses
 `;
 
+/** A new agent starts from the default template with the identity left blank. */
+function newAgentDraft(): SubagentDocument {
+  const doc = parseSubagent(DEFAULT_AGENT_CONTENT);
+  return { ...doc, fields: { ...doc.fields, name: "", description: "" } };
+}
+
+/** Surrounding whitespace is never meaningful in a front matter field. */
+function trimmedDraft(doc: SubagentDocument): SubagentDocument {
+  const fields = { ...doc.fields };
+  for (const key of Object.keys(fields) as (keyof SubagentFields)[]) {
+    fields[key] = fields[key].trim();
+  }
+  return { ...doc, fields };
+}
+
+const MODEL_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Default" },
+  { value: "inherit", label: "Same as main conversation" },
+  { value: "sonnet", label: "Sonnet" },
+  { value: "opus", label: "Opus" },
+  { value: "haiku", label: "Haiku" },
+];
+const CUSTOM_MODEL = "__custom__";
+
+const COLOR_OPTIONS = ["red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan"];
+
+const FIELD_LABEL_CLASS = "block mb-1.5 text-[11px] font-semibold text-text-muted tracking-wider uppercase";
+const FIELD_INPUT_CLASS =
+  "w-full text-[12px] text-text-base bg-bg-input border border-border-strong/50 rounded-md px-2.5 py-1 placeholder-text-muted/50 focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors";
+const FIELD_SELECT_CLASS =
+  "w-full appearance-none text-[12px] text-text-base bg-bg-input border border-border-strong/50 rounded-md px-2.5 pr-7 py-1 focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors";
+
+interface SubagentFieldsEditorProps {
+  draft: SubagentDocument;
+  onChange: (next: SubagentDocument) => void;
+}
+
+/**
+ * Form for a sub-agent's front matter and prompt. Known keys get their own
+ * fields. Any other front matter is edited as raw YAML so nothing is lost.
+ * It mounts fresh each time editing starts, which resets its local UI state.
+ */
+function SubagentFieldsEditor({ draft, onChange }: SubagentFieldsEditorProps) {
+  const { fields } = draft;
+  const modelIsCustom = fields.model !== "" && !MODEL_OPTIONS.some(o => o.value === fields.model);
+  const [customModel, setCustomModel] = useState(modelIsCustom);
+  const [showExtra, setShowExtra] = useState(draft.extraFrontmatter.trim() !== "");
+  const conflicts = conflictingExtraKeys(draft);
+  const showModelId = customModel || modelIsCustom;
+
+  const setField = (key: keyof SubagentFields, value: string) =>
+    onChange({ ...draft, fields: { ...fields, [key]: value } });
+
+  const colorOptions = fields.color !== "" && !COLOR_OPTIONS.includes(fields.color)
+    ? [...COLOR_OPTIONS, fields.color]
+    : COLOR_OPTIONS;
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      <div className="px-6 pt-5 pb-4 border-b border-border-strong/40 shrink-0 space-y-4 max-h-[55%] overflow-y-auto custom-scrollbar">
+        <div>
+          <label htmlFor="subagent-name" className={FIELD_LABEL_CLASS}>
+            Name <span className="text-danger ml-0.5">*</span>
+          </label>
+          <input
+            id="subagent-name"
+            type="text"
+            value={fields.name}
+            onChange={(e) => setField("name", e.target.value)}
+            placeholder="code-reviewer"
+            autoFocus
+            spellCheck={false}
+            className={FIELD_INPUT_CLASS}
+          />
+          <p className="mt-1 text-[11px] text-text-muted">Agents call the sub-agent by this name.</p>
+        </div>
+
+        <div>
+          <label htmlFor="subagent-description" className={FIELD_LABEL_CLASS}>
+            Description <span className="text-danger ml-0.5">*</span>
+          </label>
+          <textarea
+            id="subagent-description"
+            value={fields.description}
+            onChange={(e) => setField("description", e.target.value)}
+            placeholder="What this agent does and when to hand work to it."
+            rows={2}
+            className={`${FIELD_INPUT_CLASS} resize-none leading-relaxed`}
+          />
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,11rem)_minmax(0,8rem)] gap-3">
+          <div className="min-w-0">
+            <label htmlFor="subagent-tools" className={FIELD_LABEL_CLASS}>Tools</label>
+            <input
+              id="subagent-tools"
+              type="text"
+              value={fields.tools}
+              onChange={(e) => setField("tools", e.target.value)}
+              placeholder="All tools"
+              spellCheck={false}
+              className={FIELD_INPUT_CLASS}
+            />
+          </div>
+
+          <div className="min-w-0">
+            <label htmlFor="subagent-model" className={FIELD_LABEL_CLASS}>Model</label>
+            <div className="relative">
+              <select
+                id="subagent-model"
+                value={showModelId ? CUSTOM_MODEL : fields.model}
+                onChange={(e) => {
+                  if (e.target.value === CUSTOM_MODEL) {
+                    setCustomModel(true);
+                    return;
+                  }
+                  setCustomModel(false);
+                  setField("model", e.target.value);
+                }}
+                className={FIELD_SELECT_CLASS}
+              >
+                {MODEL_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+                <option value={CUSTOM_MODEL}>Other model ID…</option>
+              </select>
+              <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-muted" />
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <label htmlFor="subagent-color" className={FIELD_LABEL_CLASS}>Colour</label>
+            <div className="relative">
+              <select
+                id="subagent-color"
+                value={fields.color}
+                onChange={(e) => setField("color", e.target.value)}
+                className={`${FIELD_SELECT_CLASS} capitalize`}
+              >
+                <option value="">Default</option>
+                {colorOptions.map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+              <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-text-muted" />
+            </div>
+          </div>
+        </div>
+        <p className="-mt-2 text-[11px] text-text-muted">
+          Separate tools with commas, for example <code className="font-mono">Read, Grep, Bash</code>. Leave empty to allow every tool.
+        </p>
+
+        {showModelId && (
+          <div>
+            <label htmlFor="subagent-model-id" className={FIELD_LABEL_CLASS}>Model ID</label>
+            <input
+              id="subagent-model-id"
+              type="text"
+              value={fields.model}
+              onChange={(e) => setField("model", e.target.value)}
+              placeholder="claude-sonnet-4-5"
+              spellCheck={false}
+              className={`${FIELD_INPUT_CLASS} font-mono`}
+            />
+          </div>
+        )}
+
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowExtra(prev => !prev)}
+            className="flex items-center gap-1 text-[11px] font-semibold text-text-muted tracking-wider uppercase hover:text-text-base transition-colors"
+            aria-expanded={showExtra}
+          >
+            {showExtra ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            Other settings
+          </button>
+          {showExtra && (
+            <div className="mt-1.5">
+              <textarea
+                value={draft.extraFrontmatter}
+                onChange={(e) => onChange({ ...draft, extraFrontmatter: e.target.value })}
+                placeholder="permissionMode: plan"
+                rows={4}
+                spellCheck={false}
+                aria-label="Other front matter settings as YAML"
+                className={`${FIELD_INPUT_CLASS} font-mono resize-y leading-relaxed`}
+              />
+              <p className="mt-1 text-[11px] text-text-muted">
+                Extra front matter in YAML, such as hooks or permissionMode. Saved exactly as written.
+              </p>
+            </div>
+          )}
+          {conflicts.length > 0 && (
+            <p className="mt-1 text-[11px] text-danger">
+              Remove {conflicts.join(", ")} from other settings. {conflicts.length === 1 ? "It is" : "They are"} already set above.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-0 flex flex-col">
+        <div className="px-6 pt-3 pb-2 shrink-0">
+          <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">Prompt</span>
+        </div>
+        <LineNumberedTextarea
+          value={draft.body}
+          onChange={(body) => onChange({ ...draft, body })}
+          className="flex-1"
+          placeholder="Write the instructions this agent follows."
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function Subagents() {
   const [agents, setAgents] = useState<SubagentEntry[]>([]);
   const [recentRefresh, setRecentRefresh] = useState(0);
@@ -83,8 +308,8 @@ export default function Subagents() {
   const [agentContent, setAgentContent] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [newMachineName, setNewMachineName] = useState("");
-  const [newDisplayName, setNewDisplayName] = useState("");
+  // The editable form of the agent. Set whenever an agent is loaded or created.
+  const [draft, setDraft] = useState<SubagentDocument | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
   const [currentScan, setCurrentScan] = useState<AssetSecurityScanRecord | null>(null);
@@ -125,6 +350,7 @@ export default function Subagents() {
       setSelectedId(id);
       setDisplayName(agent.name);
       setAgentContent(agent.content);
+      setDraft(parseSubagent(agent.content));
       setIsEditing(false);
       setIsCreating(false);
       setError(null);
@@ -143,51 +369,44 @@ export default function Subagents() {
   };
 
   const handleSave = async () => {
-    if (isCreating) {
-      const id = newMachineName.trim();
-      const name = newDisplayName.trim();
-      if (!id || !name) return;
-      try {
-        const scan = await scanAssetContent("user_agent", agentContent);
-        if (scan.blocked) {
-          setError(formatAssetScanResult(scan, "user agent"));
-          setSecurityNotice(null);
-          return;
-        }
-        const warnings = warningFindings(scan);
-        await invoke("save_subagent", { machineName: id, name, content: agentContent });
+    if (!draft) return;
+    const finalDraft = trimmedDraft(draft);
+    const name = finalDraft.fields.name;
+    if (!name || !finalDraft.fields.description || conflictingExtraKeys(finalDraft).length > 0) return;
+    // A new agent's file name comes from its name, so the user never picks a slug.
+    const id = isCreating
+      ? nextAvailableName(subagentMachineName(name), agents.map(a => a.id))
+      : selectedId;
+    if (!id) return;
+    const content = serializeSubagent(finalDraft);
+    try {
+      const scan = await scanAssetContent("user_agent", content);
+      if (scan.blocked) {
+        setError(formatAssetScanResult(scan, "user agent"));
+        setSecurityNotice(null);
+        return;
+      }
+      const warnings = warningFindings(scan);
+      await invoke("save_subagent", { machineName: id, name, content });
+      if (isCreating) {
         const newEntry: SubagentEntry = { id, name };
-        setAgents(prev => [...prev.filter(a => a.id !== id), newEntry].sort((a, b) => a.name.localeCompare(b.name)));
-        setIsCreating(false);
-        setIsEditing(false);
+        setAgents(prev => [...prev, newEntry].sort((a, b) => a.name.localeCompare(b.name)));
         setSelectedId(id);
-        setDisplayName(name);
         setReferencingProjects([]);
-        setError(null);
-        setCurrentScan(toAssetSecurityScanRecord(scan));
-        setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "user agent") : null);
         setRecentRefresh(prev => prev + 1);
-      } catch (err: any) {
-        setError(`Failed to save agent: ${err}`);
+      } else {
+        setAgents(prev => prev.map(a => a.id === id ? { ...a, name } : a).sort((a, b) => a.name.localeCompare(b.name)));
       }
-    } else if (selectedId) {
-      try {
-        const scan = await scanAssetContent("user_agent", agentContent);
-        if (scan.blocked) {
-          setError(formatAssetScanResult(scan, "user agent"));
-          setSecurityNotice(null);
-          return;
-        }
-        const warnings = warningFindings(scan);
-        await invoke("save_subagent", { machineName: selectedId, name: displayName, content: agentContent });
-        setIsEditing(false);
-        setAgents(prev => prev.map(a => a.id === selectedId ? { ...a, name: displayName } : a).sort((a, b) => a.name.localeCompare(b.name)));
-        setError(null);
-        setCurrentScan(toAssetSecurityScanRecord(scan));
-        setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "user agent") : null);
-      } catch (err: any) {
-        setError(`Failed to save agent: ${err}`);
-      }
+      setIsCreating(false);
+      setIsEditing(false);
+      setDisplayName(name);
+      setAgentContent(content);
+      setDraft(parseSubagent(content));
+      setError(null);
+      setCurrentScan(toAssetSecurityScanRecord(scan));
+      setSecurityNotice(warnings.length > 0 ? formatAssetScanResult(scan, "user agent") : null);
+    } catch (err: unknown) {
+      setError(`Failed to save agent: ${String(err)}`);
     }
   };
 
@@ -195,6 +414,7 @@ export default function Subagents() {
     setSelectedId(null);
     setDisplayName("");
     setAgentContent("");
+    setDraft(null);
     setIsEditing(false);
     setIsCreating(false);
     setReferencingProjects([]);
@@ -262,11 +482,10 @@ export default function Subagents() {
   const startCreateNew = () => {
     setSelectedId(null);
     setDisplayName("");
-    setAgentContent(DEFAULT_AGENT_CONTENT);
+    setAgentContent("");
+    setDraft(newAgentDraft());
     setIsCreating(true);
     setIsEditing(true);
-    setNewMachineName("");
-    setNewDisplayName("");
     setReferencingProjects([]);
     setSecurityNotice(null);
     setCurrentScan(null);
@@ -298,6 +517,11 @@ export default function Subagents() {
   };
 
   const selectedEntry = agents.find(a => a.id === selectedId);
+  const editedContent = isEditing && draft ? serializeSubagent(trimmedDraft(draft)) : agentContent;
+  const canSave = !!draft
+    && draft.fields.name.trim() !== ""
+    && draft.fields.description.trim() !== ""
+    && conflictingExtraKeys(draft).length === 0;
   const { label: scanStatusLabel, className: scanStatusClass } = getAssetSecurityStatus(currentScan, {
     blockedLabel: "Danger",
   });
@@ -530,34 +754,14 @@ export default function Subagents() {
             <div className="flex items-center gap-3 min-w-0 flex-1">
               <MessagesSquare size={14} className="text-icon-agent flex-shrink-0" />
               {isCreating ? (
-                <div className="flex flex-col gap-1.5 min-w-0">
-                  <input
-                    type="text"
-                    placeholder="Display Name"
-                    value={newDisplayName}
-                    onChange={(e) => setNewDisplayName(e.target.value)}
-                    autoFocus
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-72"
-                  />
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      placeholder="machine-name (lowercase, hyphens)"
-                      value={newMachineName}
-                      onChange={(e) => setNewMachineName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-                      className="bg-transparent border-none outline-none text-[11px] text-text-muted placeholder-text-muted/40 font-mono w-72"
-                    />
-                  </div>
-                </div>
+                <h3 className="text-[14px] font-medium text-text-base truncate">
+                  {draft?.fields.name.trim() || "New agent"}
+                </h3>
               ) : isEditing ? (
                 <div className="flex flex-col gap-0.5 min-w-0">
-                  <input
-                    type="text"
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    className="bg-transparent border-none outline-none text-[14px] font-medium text-text-base placeholder-text-muted/50 w-72"
-                    placeholder="Display Name"
-                  />
+                  <h3 className="text-[14px] font-medium text-text-base truncate">
+                    {draft?.fields.name.trim() || displayName}
+                  </h3>
                   <span className="text-[10px] text-text-muted font-mono">{selectedId}</span>
                 </div>
               ) : (
@@ -569,7 +773,7 @@ export default function Subagents() {
             </div>
 
             <div className="flex items-center gap-2 flex-shrink-0">
-              <TokenPill text={agentContent} />
+              <TokenPill text={editedContent} />
               {selectedId && isBundledAgent(selectedId) && !isEditing && <BuiltInBadge />}
               {selectedId && isCodexAgent(selectedId) && !isEditing && (
                 <span className="text-[10px] font-semibold text-success tracking-wider uppercase px-2 py-1 rounded-full bg-success/10 border border-success/20">
@@ -613,7 +817,8 @@ export default function Subagents() {
                   )}
                   <button
                     onClick={handleSave}
-                    disabled={isCreating ? (!newMachineName.trim() || !newDisplayName.trim()) : false}
+                    disabled={!canSave}
+                    title={canSave ? undefined : "Add a name and description to save"}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   >
                     <Check size={12} /> Save
@@ -639,13 +844,8 @@ export default function Subagents() {
 
           {/* Body */}
           <div className="flex-1 min-h-0 flex flex-col">
-            {isEditing ? (
-              <LineNumberedTextarea
-                value={agentContent}
-                onChange={setAgentContent}
-                className="flex-1"
-                placeholder="Write your agent content here as Markdown with YAML frontmatter..."
-              />
+            {isEditing && draft ? (
+              <SubagentFieldsEditor draft={draft} onChange={setDraft} />
             ) : (
               <>
                 <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
