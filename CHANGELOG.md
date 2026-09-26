@@ -2,6 +2,23 @@
 
 All notable changes to Automatic are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Removing an agent from a project now asks what to do with its files. Remove deletes everything the agent uses in the project, including its own folders such as `.claude/` and `.junie/` and its own instruction file such as `CLAUDE.md`. Keep stops syncing the agent and leaves every file where it is. Before you confirm, the dialog lists each path it will delete and each shared file it will leave for your other agents. ([41829f2](https://github.com/velvet-tiger/automatic/commit/41829f2))
+- The library's sub-agent editor has separate fields for name, description, tools, model and colour, and its own editor for the prompt. Any other front matter goes in an Other settings box. Fields you don't touch are saved exactly as they were. The read-only view shows the same fields. ([5d9e796](https://github.com/velvet-tiger/automatic/commit/5d9e796), [029cb93](https://github.com/velvet-tiger/automatic/commit/029cb93))
+- Hold Option (Alt on Windows and Linux) while dragging a project in the sidebar to add it to another group and keep it in its current one. A plain drag still moves it. ([987cf79](https://github.com/velvet-tiger/automatic/commit/987cf79))
+
+### Changed
+
+- Syncing a project only ever touches the agents listed in Automatic. It no longer adds agents it finds on disk, and it no longer imports skills or MCP servers from agents you haven't selected. Only creating a new project from an existing folder picks up the agents already there. Rebuild from disk also keeps your agent list. Add an agent first to rebuild it. Syncing a project with no agents now says that nothing was synced. ([08f6509](https://github.com/velvet-tiger/automatic/commit/08f6509), [4de0efb](https://github.com/velvet-tiger/automatic/commit/4de0efb))
+- Sub-agent names must use lowercase letters, digits and hyphens, as skill names do. An existing sub-agent with another name can't be saved until you rename it. ([029cb93](https://github.com/velvet-tiger/automatic/commit/029cb93))
+
+### Fixed
+
+- Duplicating a sub-agent gives the copy a `-copy` name instead of the original's name. ([029cb93](https://github.com/velvet-tiger/automatic/commit/029cb93))
+
 ## [1.30.0] - 2026-09-25
 
 ### Added
