@@ -60,6 +60,15 @@ impl Agent for Junie {
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
+    /// Junie exclusively owns `.junie/mcp/mcp.json`.  Listing it keeps the
+    /// managed `.gitignore` block covering `.junie/` even if the instruction
+    /// file ever moves out of that directory (Junie also reads root
+    /// `AGENTS.md`).  Cleanup is overridden below, so this list only feeds
+    /// the gitignore paths.
+    fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".junie").join("mcp").join("mcp.json")]
+    }
+
     /// Junie owns the entire `.junie/` directory — remove it all on removal.
     fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
         let junie_dir = dir.join(".junie");
@@ -311,6 +320,31 @@ mod tests {
         assert_eq!(
             parsed["mcpServers"]["github"]["command"].as_str().unwrap(),
             "npx"
+        );
+    }
+
+    #[test]
+    fn test_owned_config_paths_names_only_mcp_json() {
+        let dir = tempdir().unwrap();
+        let owned = Junie.owned_config_paths(dir.path());
+        assert_eq!(owned, vec![dir.path().join(".junie/mcp/mcp.json")]);
+    }
+
+    #[test]
+    fn managed_gitignore_paths_collapse_to_expected_patterns() {
+        let dir = tempdir().unwrap();
+        let paths = Junie.managed_gitignore_paths(dir.path());
+        let patterns = crate::core::gitignore::build_patterns(dir.path(), &paths, false);
+
+        // .junie/AGENTS.md, .junie/skills and .junie/mcp/mcp.json all collapse
+        // to the whole directory; .agents/skills is covered by /.agents/.
+        assert_eq!(
+            patterns,
+            vec![
+                "/.agents/".to_string(),
+                "/.automatic/".to_string(),
+                "/.junie/".to_string(),
+            ]
         );
     }
 
