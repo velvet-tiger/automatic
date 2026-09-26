@@ -590,6 +590,17 @@ pub trait Agent: Send + Sync {
             .collect()
     }
 
+    /// Directories to remove at the end of agent removal, but only when they
+    /// are empty by then.  Listed deepest first, so a parent can be pruned
+    /// once its child has gone.  Pruning runs after the skill directories are
+    /// removed, which lets an agent whose skills live inside its own config
+    /// directory (Junie's `.junie/skills`) prune that directory too.
+    ///
+    /// Default: empty vec — nothing to prune.
+    fn cleanup_prune_dirs(&self, _dir: &Path) -> Vec<PathBuf> {
+        vec![]
+    }
+
     /// Every path under `dir` that Automatic writes for this agent, used to
     /// build the project's managed `.gitignore` block.
     ///
@@ -1463,6 +1474,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
 ///    [`Agent::skill_dirs`] that are NOT the shared `.agents/skills/` hub).
 /// 3. If no agents in `remaining_agent_ids` use the `.agents/skills/` hub,
 ///    remove it too, and attempt to remove the now-empty `.agents/` directory.
+/// 4. Remove each [`Agent::cleanup_prune_dirs`] entry that is now empty.
 ///
 /// Returns the list of paths that were successfully removed or modified.
 pub(crate) fn cleanup_agent_from_project(
@@ -1500,7 +1512,30 @@ pub(crate) fn cleanup_agent_from_project(
         }
     }
 
+    // 4. Prune the agent's directories that are now empty.  `remove_dir`
+    // refuses a non-empty directory, so user files keep theirs alive.
+    for prune_dir in agent_instance.cleanup_prune_dirs(dir) {
+        if prune_dir.is_dir() && fs::remove_dir(&prune_dir).is_ok() {
+            removed.push(prune_dir.display().to_string());
+        }
+    }
+
     removed
+}
+
+/// Whether `dir` would be empty once every path in `removed` is gone.
+/// Used by the preview to predict which prune directories cleanup removes.
+fn dir_empty_after_removal(dir: &Path, removed: &HashSet<PathBuf>) -> bool {
+    if !dir.is_dir() {
+        return false;
+    }
+    match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .map(|entry| entry.map(|e| removed.contains(&e.path())))
+            .all(|gone| gone.unwrap_or(false)),
+        // Cleanup would fail to inspect it too; do not promise a removal.
+        Err(_) => false,
+    }
 }
 
 /// Returns a list of file/directory paths that *would* be removed when
@@ -1532,6 +1567,15 @@ pub(crate) fn cleanup_agent_preview(
 
     if !remaining_uses_hub && hub.exists() {
         preview.push(hub.display().to_string());
+    }
+
+    // Prune directories that would be empty once everything above is gone.
+    let mut gone: HashSet<PathBuf> = preview.iter().map(PathBuf::from).collect();
+    for prune_dir in agent_instance.cleanup_prune_dirs(dir) {
+        if dir_empty_after_removal(&prune_dir, &gone) {
+            preview.push(prune_dir.display().to_string());
+            gone.insert(prune_dir);
+        }
     }
 
     preview

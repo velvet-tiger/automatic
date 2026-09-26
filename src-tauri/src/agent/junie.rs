@@ -63,30 +63,42 @@ impl Agent for Junie {
     /// Junie exclusively owns `.junie/mcp/mcp.json`.  Listing it keeps the
     /// managed `.gitignore` block covering `.junie/` even if the instruction
     /// file ever moves out of that directory (Junie also reads root
-    /// `AGENTS.md`).  Cleanup is overridden below, so this list only feeds
-    /// the gitignore paths.
+    /// `AGENTS.md`).  Cleanup also deletes the instruction file, which is
+    /// kept out of this list so the gitignore pattern stays pinned to the MCP
+    /// file.
     fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
         vec![dir.join(".junie").join("mcp").join("mcp.json")]
     }
 
-    /// Junie owns the entire `.junie/` directory — remove it all on removal.
+    /// Deletes only the files Automatic wrote into `.junie/`.  Users keep
+    /// their own files there (for example the legacy `.junie/guidelines/`),
+    /// so the directory itself is never removed wholesale.  Synced skills
+    /// under `.junie/skills` are removed by the generic skill step in
+    /// `cleanup_agent_from_project`, and the emptied directories are pruned
+    /// afterwards via [`cleanup_prune_dirs`](super::Agent::cleanup_prune_dirs).
     fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
-        let junie_dir = dir.join(".junie");
-        if junie_dir.exists() {
-            if fs::remove_dir_all(&junie_dir).is_ok() {
-                return vec![junie_dir.display().to_string()];
+        let mut removed = Vec::new();
+        for path in owned_cleanup_files(dir) {
+            if path.is_file() && fs::remove_file(&path).is_ok() {
+                removed.push(path.display().to_string());
             }
         }
-        vec![]
+        removed
     }
 
     fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
+        owned_cleanup_files(dir)
+            .into_iter()
+            .filter(|p| p.is_file())
+            .map(|p| p.display().to_string())
+            .collect()
+    }
+
+    /// `.junie/mcp/` first, then `.junie/`: each goes only when nothing but
+    /// Automatic's files lived in it.
+    fn cleanup_prune_dirs(&self, dir: &Path) -> Vec<PathBuf> {
         let junie_dir = dir.join(".junie");
-        if junie_dir.exists() {
-            vec![junie_dir.display().to_string()]
-        } else {
-            vec![]
-        }
+        vec![junie_dir.join("mcp"), junie_dir]
     }
 
     // ── Config writing ──────────────────────────────────────────────────
@@ -213,6 +225,14 @@ impl Agent for Junie {
     }
 }
 
+/// Files inside `.junie/` that Automatic writes and may delete on removal:
+/// the owned MCP config plus the instruction file.
+fn owned_cleanup_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Junie.owned_config_paths(dir);
+    files.push(dir.join(Junie.project_file_name()));
+    files
+}
+
 /// Pass-through normaliser: Junie's format is already canonical.
 fn identity(v: Value) -> Value {
     v
@@ -266,31 +286,107 @@ mod tests {
         assert!(Junie.detect_in(dir.path()));
     }
 
-    #[test]
-    fn test_cleanup_removes_junie_dir() {
-        let dir = tempdir().unwrap();
-        let junie_dir = dir.path().join(".junie");
+    /// Lays out everything Automatic writes into `.junie/`: the MCP config,
+    /// the instruction file and one synced skill.
+    fn write_owned_junie_files(root: &Path) {
+        let junie_dir = root.join(".junie");
         fs::create_dir_all(junie_dir.join("mcp")).unwrap();
         fs::write(junie_dir.join("mcp/mcp.json"), "{}").unwrap();
         fs::write(junie_dir.join("AGENTS.md"), "# Guidelines").unwrap();
+        fs::create_dir_all(junie_dir.join("skills/example")).unwrap();
+        fs::write(junie_dir.join("skills/example/SKILL.md"), "# Skill").unwrap();
+    }
 
-        let removed = Junie.cleanup_mcp_config(dir.path());
-
-        assert!(!junie_dir.exists(), ".junie/ should be deleted");
-        assert_eq!(removed, vec![junie_dir.display().to_string()]);
+    fn display(p: PathBuf) -> String {
+        p.display().to_string()
     }
 
     #[test]
-    fn test_cleanup_preview() {
+    fn test_cleanup_keeps_user_files_in_junie_dir() {
         let dir = tempdir().unwrap();
-        let junie_dir = dir.path().join(".junie");
+        let root = dir.path();
+        let junie_dir = root.join(".junie");
+        write_owned_junie_files(root);
+        fs::create_dir_all(junie_dir.join("guidelines")).unwrap();
+        let notes = junie_dir.join("guidelines/notes.md");
+        fs::write(&notes, "user notes").unwrap();
 
-        // No .junie dir — nothing to preview
+        let preview = super::super::cleanup_agent_preview(&Junie, root, &[]);
+        let removed = super::super::cleanup_agent_from_project(&Junie, root, &[]);
+
+        assert_eq!(fs::read_to_string(&notes).unwrap(), "user notes");
+        assert!(junie_dir.is_dir(), ".junie/ must survive while it holds user files");
+        assert!(!junie_dir.join("mcp").exists());
+        assert!(!junie_dir.join("AGENTS.md").exists());
+        assert!(!junie_dir.join("skills").exists());
+
+        let expected = vec![
+            display(junie_dir.join("mcp/mcp.json")),
+            display(junie_dir.join("AGENTS.md")),
+            display(junie_dir.join("skills")),
+            display(junie_dir.join("mcp")),
+        ];
+        assert_eq!(removed, expected);
+        assert_eq!(preview, expected);
+    }
+
+    #[test]
+    fn test_cleanup_removes_owned_files_and_prunes_empty_dirs() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let junie_dir = root.join(".junie");
+        write_owned_junie_files(root);
+
+        let preview = super::super::cleanup_agent_preview(&Junie, root, &[]);
+        let removed = super::super::cleanup_agent_from_project(&Junie, root, &[]);
+
+        assert!(!junie_dir.exists(), "an emptied .junie/ should be pruned");
+        let expected = vec![
+            display(junie_dir.join("mcp/mcp.json")),
+            display(junie_dir.join("AGENTS.md")),
+            display(junie_dir.join("skills")),
+            display(junie_dir.join("mcp")),
+            display(junie_dir),
+        ];
+        assert_eq!(removed, expected);
+        assert_eq!(preview, expected);
+    }
+
+    #[test]
+    fn test_cleanup_keeps_mcp_dir_holding_user_files() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let junie_dir = root.join(".junie");
+        write_owned_junie_files(root);
+        let user_mcp = junie_dir.join("mcp/other.json");
+        fs::write(&user_mcp, "{}").unwrap();
+
+        let preview = super::super::cleanup_agent_preview(&Junie, root, &[]);
+        let removed = super::super::cleanup_agent_from_project(&Junie, root, &[]);
+
+        assert!(user_mcp.exists());
+        assert!(!junie_dir.join("mcp/mcp.json").exists());
+        let expected = vec![
+            display(junie_dir.join("mcp/mcp.json")),
+            display(junie_dir.join("AGENTS.md")),
+            display(junie_dir.join("skills")),
+        ];
+        assert_eq!(removed, expected);
+        assert_eq!(preview, expected);
+    }
+
+    #[test]
+    fn test_cleanup_preview_is_empty_without_junie_files() {
+        let dir = tempdir().unwrap();
         assert!(Junie.cleanup_mcp_preview(dir.path()).is_empty());
+        assert!(super::super::cleanup_agent_preview(&Junie, dir.path(), &[]).is_empty());
 
-        fs::create_dir_all(&junie_dir).unwrap();
-        let preview = Junie.cleanup_mcp_preview(dir.path());
-        assert_eq!(preview, vec![junie_dir.display().to_string()]);
+        // A .junie/ holding only user files previews nothing either.
+        fs::create_dir_all(dir.path().join(".junie/guidelines")).unwrap();
+        fs::write(dir.path().join(".junie/guidelines/notes.md"), "x").unwrap();
+        assert!(super::super::cleanup_agent_preview(&Junie, dir.path(), &[]).is_empty());
+        assert!(super::super::cleanup_agent_from_project(&Junie, dir.path(), &[]).is_empty());
+        assert!(dir.path().join(".junie/guidelines/notes.md").exists());
     }
 
     #[test]
