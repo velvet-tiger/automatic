@@ -144,9 +144,10 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<()
         //
         // Save the initial state so the project exists in the registry even if
         // the subsequent autodetect fails for any reason.  Then run full
-        // autodetect to discover all agents, skills, and MCP servers that are
-        // already present in the directory.  The enriched project config is
-        // written back to disk by sync_project (via sync_project_without_autodetect).
+        // autodetect to discover the skills and MCP servers already present
+        // in the directory.  This is the only path that adopts agents found
+        // on disk, and only when the creator chose none.  The enriched
+        // project config is written back to the registry by the sync.
         //
         // Nothing is deleted during this step -- autodetect only adds findings.
         core::save_project(name, data)?;
@@ -157,7 +158,7 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<()
         // Errors are intentionally swallowed: partial success (project saved
         // but no agent configs written because the directory has no AI tools)
         // is better than returning a hard error to the frontend.
-        let written = sync::sync_project(&incoming);
+        let written = sync::sync_new_project_from_existing_files(&incoming);
         if let Ok(ref files) = written {
             if !files.is_empty() {
                 let detail = format!(
@@ -1724,6 +1725,54 @@ fn detach_profile_from_projects_removes_provided_entries() {
                 vec!["keep-me".to_string()],
                 "failed create must not overwrite existing project data"
             );
+        });
+    }
+
+    /// The Add Project wizard saves an agent-less stub with `creating: true`,
+    /// then reads `autodetect_project_dependencies` to show what was found.
+    /// That creation flow is the one place agents on disk are adopted.
+    #[test]
+    fn creating_a_project_from_existing_files_adopts_detected_agents() {
+        with_temp_home(|_| {
+            let project_dir = tempdir().expect("project dir");
+            std::fs::write(project_dir.path().join("CLAUDE.md"), "# Claude").expect("CLAUDE.md");
+            let stub = core::Project {
+                name: "wizard".to_string(),
+                directory: project_dir.path().display().to_string(),
+                ..Default::default()
+            };
+            let stub_json = serde_json::to_string_pretty(&stub).expect("stub json");
+
+            save_project("wizard", &stub_json, Some(true)).expect("create");
+
+            assert_eq!(read_back("wizard").agents, vec!["claude".to_string()]);
+            let detected: core::Project = serde_json::from_str(
+                &autodetect_project_dependencies("wizard").expect("autodetect"),
+            )
+            .expect("parse");
+            assert_eq!(detected.agents, vec!["claude".to_string()]);
+        });
+    }
+
+    /// An existing project whose agent list is empty (for example after the
+    /// last agent was removed with "Keep files") must stay empty when it is
+    /// synced or loaded, even though that agent's files are still on disk.
+    #[test]
+    fn existing_project_with_no_agents_never_adopts_agents_from_disk() {
+        with_temp_home(|_| {
+            let (_keep, dir) = make_project("kept-files", |p| p.agents.clear());
+            std::fs::write(dir.join("CLAUDE.md"), "# Claude").expect("CLAUDE.md");
+            std::fs::create_dir_all(dir.join(".claude").join("skills")).expect("mkdir");
+
+            let written = sync_project("kept-files").expect("sync");
+            assert_eq!(written.trim(), "[]");
+            assert!(read_back("kept-files").agents.is_empty());
+
+            let detected: core::Project = serde_json::from_str(
+                &autodetect_project_dependencies("kept-files").expect("autodetect"),
+            )
+            .expect("parse");
+            assert!(detected.agents.is_empty(), "got {:?}", detected.agents);
         });
     }
 

@@ -1,28 +1,57 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::agent;
 use crate::core::{CustomSkill, Project};
 
 use super::helpers::{add_unique, prune_shadowed_custom_skills};
 
-/// Discover dependencies already present in a project's directory and persist
-/// any new findings into the project + global registries.
-/// Pure read-only autodetection. Scans the project directory and returns an
-/// enriched [`Project`] with any newly discovered agents, skills, and MCP
-/// server names. Does not write anything to disk — callers that need to
-/// persist discoveries (e.g. `sync_project`) must do so themselves.
+/// Whether autodetection may add agents found on disk to `project.agents`.
+///
+/// Automatic only syncs agents the user listed.  The one exception is
+/// creating a project from files that already exist: there, the agents found
+/// in the directory are the starting selection.  Every caller of
+/// [`autodetect_inner`] states which case it is in, so no sync path can adopt
+/// an agent by forgetting a guard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AgentAdoption {
+    /// Leave `project.agents` exactly as it is.  Used by every sync and every
+    /// read of an existing project.
+    KeepSelected,
+    /// Fill an empty `project.agents` with every agent detected on disk.  An
+    /// agent list the creator already chose is kept as it is.  Only for
+    /// creating a project from existing files and for the user-confirmed
+    /// "Rebuild from disk" action.
+    AdoptDetected,
+}
+
+/// Skill directories that many agents read and no single agent owns.  They
+/// are scanned whatever agents are selected.
+fn shared_skill_dirs(dir: &Path) -> Vec<PathBuf> {
+    vec![dir.join(".agents").join("skills"), dir.join("skills")]
+}
+
+/// Read-only autodetection for an existing project.  Scans the project
+/// directory and returns an enriched [`Project`] with any newly discovered
+/// skills, MCP server names and tools.  Never adds an agent (see
+/// [`AgentAdoption`]).  Does not write anything to disk.
 pub fn autodetect_project_dependencies(project: &Project) -> Result<Project, String> {
-    let (updated, _) = autodetect_inner(project)?;
+    let (updated, _) = autodetect_inner(project, AgentAdoption::KeepSelected)?;
     Ok(updated)
 }
 
 /// Inner autodetection that returns both the enriched project and the
 /// discovered MCP server configs (name -> pretty-printed JSON string) so that
-/// `sync_project` can persist them without a second filesystem scan.
+/// the sync entry points can persist them without a second filesystem scan.
+///
+/// Skills and MCP servers are read only from the skill directories and config
+/// files of agents in the agent list (after any adoption), plus the shared
+/// skill directories.  Files left behind by an agent that is not listed, for
+/// example after a "Keep files" removal, must not feed back into the project.
 pub(super) fn autodetect_inner(
     project: &Project,
+    adoption: AgentAdoption,
 ) -> Result<(Project, Vec<(String, String)>), String> {
     if project.directory.is_empty() {
         return Ok((project.clone(), vec![]));
@@ -41,41 +70,33 @@ pub(super) fn autodetect_inner(
     // before the skill was promoted to the library and break drift detection.
     prune_shadowed_custom_skills(&mut updated_project);
 
-    // Detect which agents are present by asking each agent to check.
-    //
-    // If the project already has an explicit agent list (set by the user in the
-    // UI), restrict additions to agents that are both (a) detected in the
-    // directory and (b) already in the user's selection.  This prevents
-    // autodetect from silently adding agents the user never chose.
-    //
-    // For a truly blank project (agents list is empty) we fall back to adding
-    // everything that is detected, giving a useful starting point.
-    let user_agents: std::collections::HashSet<&str> =
-        project.agents.iter().map(|s| s.as_str()).collect();
-    let has_explicit_agents = !user_agents.is_empty();
-
-    for a in agent::all() {
-        if a.detect_in(&dir) {
-            // Only add if the user has no preference yet, or if this agent
-            // is already in the user's explicit selection.
-            if !has_explicit_agents || user_agents.contains(a.id()) {
+    if adoption == AgentAdoption::AdoptDetected && updated_project.agents.is_empty() {
+        for a in agent::all() {
+            if a.detect_in(&dir) {
                 add_unique(&mut updated_project.agents, a.id());
             }
         }
     }
 
-    // Discover skills from all known skill directories
-    // (includes agent-specific dirs + the generic `skills/` dir)
+    let selected_agents: Vec<&dyn agent::Agent> = updated_project
+        .agents
+        .iter()
+        .filter_map(|id| agent::from_id(id))
+        .collect();
+
     let global_skill_names: HashSet<String> = crate::core::list_skill_names()
         .unwrap_or_default()
         .into_iter()
         .collect();
 
-    let mut skill_dirs: Vec<PathBuf> = Vec::new();
-    for a in agent::all() {
-        skill_dirs.extend(a.skill_dirs(&dir));
+    let mut skill_dirs: Vec<PathBuf> = shared_skill_dirs(&dir);
+    for a in &selected_agents {
+        for skill_dir in a.skill_dirs(&dir) {
+            if !skill_dirs.contains(&skill_dir) {
+                skill_dirs.push(skill_dir);
+            }
+        }
     }
-    skill_dirs.push(dir.join("skills")); // generic fallback
 
     // Track names that are already accounted for as project-scoped custom skills,
     // so the same on-disk SKILL.md does not get imported twice if it appears in
@@ -137,10 +158,9 @@ pub(super) fn autodetect_inner(
         }
     }
 
-    // Discover MCP servers by asking each agent to scan its config files.
     // Configs are collected here and returned to the caller — we do not write
     // to the global MCP registry from this read-only function.
-    for a in agent::all() {
+    for a in &selected_agents {
         let servers = a.discover_mcp_servers(&dir);
         for (name, config) in servers {
             if let Ok(config_str) = serde_json::to_string_pretty(&config) {
@@ -202,7 +222,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn autodetect_only_adds_claude_for_projects_with_only_claude_md() {
+    fn adoption_only_adds_claude_for_projects_with_only_claude_md() {
         let dir = tempdir().expect("tempdir");
         fs::write(dir.path().join("CLAUDE.md"), "This is the claude md file")
             .expect("write CLAUDE.md");
@@ -213,7 +233,8 @@ mod tests {
             ..Default::default()
         };
 
-        let (updated, discovered_servers) = autodetect_inner(&project).expect("autodetect");
+        let (updated, discovered_servers) =
+            autodetect_inner(&project, AgentAdoption::AdoptDetected).expect("autodetect");
 
         assert_eq!(
             updated.agents,
@@ -223,6 +244,96 @@ mod tests {
         assert!(
             discovered_servers.is_empty(),
             "plain CLAUDE.md should not imply any MCP server configs"
+        );
+    }
+
+    #[test]
+    fn keep_selected_never_adds_agents_to_an_empty_project() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("CLAUDE.md"), "# Claude").expect("write CLAUDE.md");
+        fs::create_dir_all(dir.path().join(".claude").join("skills")).expect("mkdir .claude");
+
+        let project = Project {
+            name: "p".into(),
+            directory: dir.path().display().to_string(),
+            ..Default::default()
+        };
+
+        let (updated, _) =
+            autodetect_inner(&project, AgentAdoption::KeepSelected).expect("autodetect");
+        assert!(
+            updated.agents.is_empty(),
+            "KeepSelected must not adopt agents, got {:?}",
+            updated.agents
+        );
+
+        // The public read-only entry point used when an existing project is
+        // loaded behaves the same way.
+        let loaded = autodetect_project_dependencies(&project).expect("autodetect");
+        assert!(loaded.agents.is_empty(), "got {:?}", loaded.agents);
+    }
+
+    #[test]
+    fn adoption_keeps_an_agent_list_the_creator_already_chose() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("CLAUDE.md"), "# Claude").expect("write CLAUDE.md");
+
+        let project = Project {
+            name: "p".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["cursor".into()],
+            ..Default::default()
+        };
+
+        let (updated, _) =
+            autodetect_inner(&project, AgentAdoption::AdoptDetected).expect("autodetect");
+        assert_eq!(updated.agents, vec!["cursor".to_string()]);
+    }
+
+    #[test]
+    fn unselected_agent_skills_and_mcp_config_are_not_imported() {
+        // Claude's files are on disk (e.g. left behind by a "Keep files"
+        // removal) but only Cursor is selected.  Neither Claude's `.mcp.json`
+        // servers nor its `.claude/skills` entries may flow into the project.
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("CLAUDE.md"), "# Claude").expect("write CLAUDE.md");
+        fs::write(
+            dir.path().join(".mcp.json"),
+            r#"{"mcpServers":{"claude-only":{"command":"npx","args":["-y","x"]}}}"#,
+        )
+        .expect("write .mcp.json");
+        let claude_skill = dir
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("claude-skill");
+        fs::create_dir_all(&claude_skill).expect("mkdir");
+        fs::write(claude_skill.join("SKILL.md"), "# Claude skill").expect("write skill");
+
+        let project = Project {
+            name: "p".into(),
+            directory: dir.path().display().to_string(),
+            agents: vec!["cursor".into()],
+            ..Default::default()
+        };
+
+        let (updated, discovered) =
+            autodetect_inner(&project, AgentAdoption::KeepSelected).expect("autodetect");
+
+        assert_eq!(updated.agents, vec!["cursor".to_string()]);
+        assert!(
+            !updated.mcp_servers.iter().any(|s| s == "claude-only"),
+            "got {:?}",
+            updated.mcp_servers
+        );
+        assert!(discovered.is_empty(), "got {:?}", discovered);
+        assert!(
+            updated
+                .custom_skills
+                .unwrap_or_default()
+                .iter()
+                .all(|s| s.name != "claude-skill"),
+            "an unselected agent's skill dir must not be scanned"
         );
     }
 
@@ -242,7 +353,8 @@ mod tests {
             ..Default::default()
         };
 
-        let (updated, _) = autodetect_inner(&project).expect("autodetect");
+        let (updated, _) =
+            autodetect_inner(&project, AgentAdoption::KeepSelected).expect("autodetect");
 
         let custom = updated.custom_skills.expect("custom_skills populated");
         let entry = custom
@@ -283,7 +395,8 @@ mod tests {
                 ..Default::default()
             };
 
-            let (updated, _) = autodetect_inner(&project).expect("autodetect");
+            let (updated, _) =
+                autodetect_inner(&project, AgentAdoption::KeepSelected).expect("autodetect");
 
             let custom = updated
                 .custom_skills
@@ -316,11 +429,15 @@ mod tests {
         let project = Project {
             name: "p".into(),
             directory: dir.path().display().to_string(),
+            // Claude owns `.mcp.json`; it must be selected for discovery to
+            // read the file at all.
+            agents: vec!["claude".into()],
             mcp_servers: vec!["sentry".into()],
             ..Default::default()
         };
 
-        let (updated, _) = autodetect_inner(&project).expect("autodetect");
+        let (updated, _) =
+            autodetect_inner(&project, AgentAdoption::KeepSelected).expect("autodetect");
 
         let matches: Vec<&String> = updated
             .mcp_servers
@@ -351,10 +468,13 @@ mod tests {
         let project = Project {
             name: "p".into(),
             directory: dir.path().display().to_string(),
+            // Claude selected so that `.claude/skills` is scanned too.
+            agents: vec!["claude".into()],
             ..Default::default()
         };
 
-        let (updated, _) = autodetect_inner(&project).expect("autodetect");
+        let (updated, _) =
+            autodetect_inner(&project, AgentAdoption::KeepSelected).expect("autodetect");
 
         let count = updated
             .custom_skills

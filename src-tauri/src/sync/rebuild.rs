@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::agent;
 use crate::core::{self, CustomAgent, CustomCommand, Project, Subagent};
 
-use super::autodetect::autodetect_inner;
+use super::autodetect::{autodetect_inner, AgentAdoption};
 
 struct GlobalUserAgent {
     id: String,
@@ -27,7 +27,10 @@ pub fn rebuild_project_state(project: &Project) -> Result<Project, String> {
     // makes rebuild authoritatively reflect what is on disk right now.
     seed.custom_skills = None;
 
-    let (mut rebuilt, discovered_servers) = autodetect_inner(&seed)?;
+    // Rebuild re-derives the whole project from disk, agents included.  The
+    // user previews the agent changes and confirms them before they are
+    // saved, so this is treated like creating the project from its files.
+    let (mut rebuilt, discovered_servers) = autodetect_inner(&seed, AgentAdoption::AdoptDetected)?;
 
     if project.mcp_servers.iter().any(|name| name == "automatic")
         && !rebuilt.mcp_servers.iter().any(|name| name == "automatic")

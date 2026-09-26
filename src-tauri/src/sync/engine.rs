@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::agent;
 use crate::core::{self, Project, ProjectMode};
 
-use super::autodetect::autodetect_inner;
+use super::autodetect::{autodetect_inner, AgentAdoption};
 use super::helpers::{
     build_selected_servers, build_skill_contents, clean_project_file,
     collect_custom_asset_conflicts, conflicting_names, extract_agent_machine_name,
@@ -48,17 +48,40 @@ pub fn discover_new_agent_mcp_configs(
 
 /// Sync a project's configuration to its directory for all selected agent tools.
 /// Returns a list of files that were written.
+///
+/// Only the agents already in `project.agents` are synced; agent files found
+/// on disk never add an agent here.  A project with no agents is a no-op: it
+/// writes nothing and returns an empty list, the same way drift detection and
+/// the save/rename commands skip such a project.
 pub fn sync_project(project: &Project) -> Result<Vec<String>, String> {
+    check_project_directory(project)?;
+    if project.agents.is_empty() {
+        return Ok(Vec::new());
+    }
+    autodetect_and_sync(project, AgentAdoption::KeepSelected)
+}
+
+/// First sync of a project just created from an existing directory.  This is
+/// the one place where agents detected on disk are added to the project, and
+/// only when the creator chose no agents.  Writes the enriched project to the
+/// registry and syncs it, even when no agent was found.
+pub fn sync_new_project_from_existing_files(project: &Project) -> Result<Vec<String>, String> {
+    check_project_directory(project)?;
+    autodetect_and_sync(project, AgentAdoption::AdoptDetected)
+}
+
+fn check_project_directory(project: &Project) -> Result<(), String> {
     if project.directory.is_empty() {
         return Err("Project has no directory configured".into());
     }
-
-    let dir = PathBuf::from(&project.directory);
-    if !dir.exists() {
+    if !PathBuf::from(&project.directory).exists() {
         return Err(format!("Directory '{}' does not exist", project.directory));
     }
+    Ok(())
+}
 
-    let (mut updated_project, discovered_servers) = autodetect_inner(project)?;
+fn autodetect_and_sync(project: &Project, adoption: AgentAdoption) -> Result<Vec<String>, String> {
+    let (mut updated_project, discovered_servers) = autodetect_inner(project, adoption)?;
 
     // Persist newly discovered MCP server configs into the global registry.
     // This only happens during an explicit sync, not during a read-only load.
@@ -1776,5 +1799,111 @@ mod tests {
             2,
             "both conflicting unified files should still require resolution"
         );
+    }
+
+    fn write_claude_files(dir: &std::path::Path) {
+        fs::write(dir.join("CLAUDE.md"), "# Claude instructions").expect("write CLAUDE.md");
+        fs::create_dir_all(dir.join(".claude").join("skills")).expect("mkdir .claude/skills");
+        fs::write(dir.join(".claude").join("settings.json"), "{}").expect("write settings");
+    }
+
+    /// Every path under `root` with its file content, for before/after checks.
+    fn list_tree(root: &std::path::Path) -> Vec<(String, Option<String>)> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(path) = stack.pop() {
+            for entry in fs::read_dir(&path).expect("read_dir").flatten() {
+                let p = entry.path();
+                let rel = p.strip_prefix(root).expect("prefix").display().to_string();
+                if p.is_dir() {
+                    out.push((rel, None));
+                    stack.push(p);
+                } else {
+                    out.push((rel, Some(fs::read_to_string(&p).unwrap_or_default())));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    fn registry_agents(name: &str) -> Vec<String> {
+        let raw = crate::core::read_project(name).expect("project in registry");
+        let project: Project = serde_json::from_str(&raw).expect("parse project");
+        project.agents
+    }
+
+    #[test]
+    fn sync_of_project_with_no_agents_adds_none_and_writes_nothing() {
+        let home = tmp();
+        let dir = tmp();
+        write_claude_files(dir.path());
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                name: "empty-agents".into(),
+                directory: dir.path().display().to_string(),
+                ..Default::default()
+            };
+            let data = serde_json::to_string_pretty(&project).expect("serialise");
+            crate::core::save_project(&project.name, &data).expect("save");
+            let before = list_tree(dir.path());
+
+            let written = sync_project(&project).expect("sync");
+
+            assert!(
+                written.is_empty(),
+                "no files should be written: {:?}",
+                written
+            );
+            assert!(
+                registry_agents(&project.name).is_empty(),
+                "sync must not add agents detected on disk"
+            );
+            assert_eq!(
+                list_tree(dir.path()),
+                before,
+                "a no-op sync must not touch the project directory"
+            );
+        });
+    }
+
+    #[test]
+    fn sync_does_not_add_claude_to_a_cursor_project() {
+        let home = tmp();
+        let dir = tmp();
+        write_claude_files(dir.path());
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                name: "cursor-only".into(),
+                directory: dir.path().display().to_string(),
+                agents: vec!["cursor".into()],
+                ..Default::default()
+            };
+
+            sync_project(&project).expect("sync");
+
+            assert_eq!(registry_agents(&project.name), vec!["cursor".to_string()]);
+        });
+    }
+
+    #[test]
+    fn creating_a_project_from_existing_files_adopts_detected_agents() {
+        let home = tmp();
+        let dir = tmp();
+        write_claude_files(dir.path());
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                name: "from-existing".into(),
+                directory: dir.path().display().to_string(),
+                ..Default::default()
+            };
+
+            sync_new_project_from_existing_files(&project).expect("create sync");
+
+            assert_eq!(registry_agents(&project.name), vec!["claude".to_string()]);
+        });
     }
 }
