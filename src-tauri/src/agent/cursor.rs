@@ -46,6 +46,18 @@ impl Agent for Cursor {
         vec![dir.join(".agents").join("skills")]
     }
 
+    /// `.cursor/` is Cursor's alone: MCP config, hooks, `.mdc` rules,
+    /// sub-agents and commands.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".cursor")]
+    }
+
+    /// The hook manifest records what Automatic wrote into
+    /// `.cursor/hooks.json`.  It is stale once `.cursor/` is gone.
+    fn owned_extra_files(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(CURSOR_HOOKS_MANIFEST)]
+    }
+
     fn sync_instruction_rules(
         &self,
         project: &crate::core::Project,

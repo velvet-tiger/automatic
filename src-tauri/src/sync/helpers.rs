@@ -581,39 +581,6 @@ pub(crate) fn sync_custom_agents(
     Ok(written)
 }
 
-/// Clean up Automatic-managed custom agent files from an agents directory.
-/// Used when removing an agent from a project.
-///
-/// Gated on [`crate::agent::is_managed_agent_file`] rather than file
-/// extension alone: an extension-only check would delete every file sharing
-/// that extension, managed or not, which is destructive for a directory a
-/// user might place hand-authored agents into directly (`.github/agents/`)
-/// rather than one that is effectively Automatic's own (`.claude/agents/`
-/// has always worked this way, but that was never actually safe — just
-/// unexercised, since nobody hand-authors into `.claude/agents/`).
-///
-/// Returns the list of files removed.
-pub(crate) fn cleanup_custom_agents(agents_dir: &std::path::Path) -> Vec<String> {
-    let mut removed = Vec::new();
-
-    if agents_dir.exists() {
-        if let Ok(entries) = fs::read_dir(agents_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() && crate::agent::is_managed_agent_file(&path) {
-                    if fs::remove_file(&path).is_ok() {
-                        removed.push(path.display().to_string());
-                    }
-                }
-            }
-        }
-        // Remove the agents directory itself if now empty
-        let _ = fs::remove_dir(agents_dir);
-    }
-
-    removed
-}
-
 /// Sync workspace user agents (from `~/.automatic/agents/`) to a project's
 /// agents directory.
 ///
@@ -698,7 +665,7 @@ pub(crate) fn sync_user_agents(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::{Agent, ClaudeCode, GitHubCopilot};
+    use crate::agent::{ClaudeCode, GitHubCopilot};
     use crate::core::{save_subagent, CustomAgent};
     use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
@@ -855,41 +822,5 @@ mod tests {
             hand_written_path.exists(),
             "hand-written .github/agents/mine.agent.md must survive the stale sweep"
         );
-    }
-
-    /// The same file must also survive `cleanup_custom_agents`, called when
-    /// Copilot is removed from the project entirely — not just the
-    /// in-place stale sweep `sync_user_agents` runs on every sync.
-    #[test]
-    fn copilot_hand_written_agent_file_survives_agent_removal() {
-        let project = tmp();
-        let agents_dir = project.path().join("agents");
-        fs::create_dir_all(&agents_dir).expect("create agents dir");
-
-        let hand_written_path = agents_dir.join("mine.agent.md");
-        fs::write(
-            &hand_written_path,
-            "---\nname: Mine\n---\n\nI wrote this myself.\n",
-        )
-        .expect("write hand-written copilot agent");
-
-        let managed_path = agents_dir.join("reviewer-agent.agent.md");
-        fs::write(
-            &managed_path,
-            GitHubCopilot
-                .convert_agent_content("---\nname: Reviewer\n---\n\nReview.\n", "reviewer-agent"),
-        )
-        .expect("write managed copilot agent");
-
-        let removed = cleanup_custom_agents(&agents_dir);
-
-        assert!(
-            hand_written_path.exists(),
-            "hand-written .github/agents/mine.agent.md must survive removing Copilot from the project"
-        );
-        assert!(!managed_path.exists());
-        assert!(removed
-            .iter()
-            .any(|p| p.ends_with("reviewer-agent.agent.md")));
     }
 }

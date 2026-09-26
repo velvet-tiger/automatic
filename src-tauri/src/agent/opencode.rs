@@ -51,6 +51,11 @@ impl Agent for OpenCode {
         vec![dir.join(".agents").join("skills")]
     }
 
+    /// `.opencode/` is OpenCode's alone: commands and sub-agents.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".opencode")]
+    }
+
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
             commands: true,

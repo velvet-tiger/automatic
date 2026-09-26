@@ -66,6 +66,12 @@ impl Agent for Cline {
         vec![dir.join(".cline").join("skills")]
     }
 
+    /// `.cline/` and `.clinerules/` are Cline's alone: skills, sub-agents,
+    /// hooks and rules.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".cline"), dir.join(".clinerules")]
+    }
+
     // ── Capabilities ────────────────────────────────────────────────────
 
     fn capabilities(&self) -> super::AgentCapabilities {

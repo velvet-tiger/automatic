@@ -83,6 +83,11 @@ impl Agent for KiloCode {
         vec![dir.join(".agents").join("skills")]
     }
 
+    /// `.kilo/` is Kilo Code's alone.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".kilo")]
+    }
+
     // ── Capabilities ────────────────────────────────────────────────────
 
     fn capabilities(&self) -> super::AgentCapabilities {

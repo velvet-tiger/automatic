@@ -62,6 +62,11 @@ impl Agent for Pi {
         vec![dir.join(".pi").join("skills")]
     }
 
+    /// `.pi/` is Pi's alone: MCP config, skills and sub-agents.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".pi")]
+    }
+
     fn extra_global_skill_dirs(&self) -> Vec<PathBuf> {
         match super::home_dir() {
             Some(home) => vec![home.join(".pi").join("agent").join("skills")],
@@ -263,22 +268,22 @@ mod tests {
         let agents_md = dir.path().join("AGENTS.md");
         fs::write(&agents_md, "# shared\n").unwrap();
 
-        let removed = Pi.cleanup_mcp_config(dir.path());
-        assert!(removed.is_empty(), "Pi must not touch AGENTS.md on cleanup");
-        assert!(agents_md.exists());
+        let remaining = vec!["codex".to_string()];
+        let plan = super::super::plan_agent_removal(&Pi, dir.path(), &remaining).unwrap();
+        super::super::apply_removal_plan(&Pi, dir.path(), &plan).unwrap();
+        assert!(agents_md.exists(), "Pi must not delete AGENTS.md while Codex uses it");
     }
 
     #[test]
-    fn test_cleanup_removes_pi_mcp_json() {
+    fn test_cleanup_removes_pi_dir() {
         let dir = tempdir().unwrap();
         let pi_dir = dir.path().join(".pi");
         fs::create_dir(&pi_dir).unwrap();
-        let mcp = pi_dir.join("mcp.json");
-        fs::write(&mcp, "{}").unwrap();
+        fs::write(pi_dir.join("mcp.json"), "{}").unwrap();
 
-        let removed = Pi.cleanup_mcp_config(dir.path());
-        assert_eq!(removed, vec![mcp.display().to_string()]);
-        assert!(!mcp.exists());
+        let plan = super::super::plan_agent_removal(&Pi, dir.path(), &[]).unwrap();
+        super::super::apply_removal_plan(&Pi, dir.path(), &plan).unwrap();
+        assert!(!pi_dir.exists());
     }
 
     #[test]

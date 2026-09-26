@@ -55,6 +55,12 @@ import { EditorIcon } from "../EditorIcon";
 import { DriftDiffModal } from "../modals/DriftDiffModal";
 import { InstructionConflictModal } from "../modals/InstructionConflictModal";
 import { CustomAssetConflictModal } from "../modals/CustomAssetConflictModal";
+import { RemoveAgentModal } from "../modals/RemoveAgentModal";
+import {
+  parseAgentRemovalEntries,
+  type AgentRemovalEntry,
+  type AgentRemovalMode,
+} from "../../../../lib/agentRemoval";
 import { SwitchToUnifiedModal } from "./SwitchToUnifiedModal";
 import { RebuildConfirmationModal } from "./RebuildConfirmationModal";
 import { OrphanConfigDialog } from "./OrphanConfigDialog";
@@ -102,6 +108,18 @@ import {
   ExternalLink,
   EyeOff,
 } from "lucide-react";
+
+/** State of the open agent-removal dialog. */
+interface AgentRemovalDialog {
+  idx: number;
+  agentId: string;
+  agentLabel: string;
+  hasDirectory: boolean;
+  /** What Remove would do; null while loading. */
+  preview: AgentRemovalEntry[] | null;
+  previewError: string | null;
+  busy: boolean;
+}
 
 interface ProjectEditorProps {
   selectedName: string | null;
@@ -240,6 +258,8 @@ export function ProjectEditor({
   const [customAssetConflict, setCustomAssetConflict] = useState<CustomAssetConflict | null>(null);
   const [rebuildPreview, setRebuildPreview] = useState<RebuildPreview | null>(null);
   const [rebuildBusy, setRebuildBusy] = useState(false);
+  // Agent removal dialog — null when closed.
+  const [agentRemoval, setAgentRemoval] = useState<AgentRemovalDialog | null>(null);
 
   // Unified-mode source picker state — populated when the user toggles to
   // unified mode and the per-agent files have divergent user content.
@@ -2350,59 +2370,65 @@ export function ProjectEditor({
   };
 
   /**
-   * Remove an agent from the project, prompting for confirmation and cleaning
-   * up the agent's config files and skill directories from the project directory.
+   * Open the removal dialog for the agent at `idx` and load what Remove
+   * would delete. The user then picks Remove, Keep or Cancel.
    *
-   * If the project has no directory (not yet synced), falls back to an in-memory
-   * removal so the user can save later.
+   * A project with no directory yet (not synced) has no files to change, so
+   * the dialog only offers an in-memory removal the user can save later.
    */
   const handleRemoveAgent = async (idx: number) => {
     if (!project) return;
     const agentId = project.agents[idx];
     if (!agentId) return;
 
-    const agentInfo = availableAgents.find((a) => a.id === agentId);
-    const agentLabel = agentInfo?.label ?? agentId;
+    const agentLabel = availableAgents.find((a) => a.id === agentId)?.label ?? agentId;
+    const name = selectedName;
+    const hasDirectory = Boolean(project.directory) && name !== null && !isCreating;
 
-    // If no directory or project not yet persisted → in-memory removal only
-    if (!project.directory || !selectedName || isCreating) {
-      const message = `Remove ${agentLabel} from this project?\n\nNo config files will be deleted since no project directory is configured.`;
-      const confirmed = await ask(message, { title: "Remove Agent", kind: "warning" });
-      if (!confirmed) return;
-      removeItem("agents", idx);
+    setAgentRemoval({
+      idx,
+      agentId,
+      agentLabel,
+      hasDirectory,
+      preview: hasDirectory ? null : [],
+      previewError: null,
+      busy: false,
+    });
+    if (!hasDirectory || name === null) return;
+
+    const applyToOpenDialog = (patch: Partial<AgentRemovalDialog>) =>
+      setAgentRemoval((prev) => (prev && prev.agentId === agentId ? { ...prev, ...patch } : prev));
+    try {
+      const raw = await invoke<string>("get_agent_cleanup_preview", { name, agentId, mode: "remove" });
+      applyToOpenDialog({ preview: parseAgentRemovalEntries(raw) });
+    } catch (err: unknown) {
+      applyToOpenDialog({ previewError: `Could not list ${agentLabel}'s files: ${String(err)}` });
+    }
+  };
+
+  /** Carry out the choice made in the removal dialog. */
+  const confirmRemoveAgent = async (mode: AgentRemovalMode) => {
+    const removal = agentRemoval;
+    if (!removal) return;
+
+    if (!removal.hasDirectory || selectedName === null) {
+      removeItem("agents", removal.idx);
+      setAgentRemoval(null);
       return;
     }
 
-    const name = selectedName; // narrowed: guaranteed non-null from here on
-
-    // Fetch the list of files that would be cleaned up (read-only preview)
-    let preview: string[] = [];
+    const name = selectedName;
+    setAgentRemoval({ ...removal, busy: true });
     try {
-      const raw: string = await invoke("get_agent_cleanup_preview", { name, agentId });
-      preview = JSON.parse(raw);
-    } catch {
-      // Non-fatal — proceed with a generic message if the preview fails
+      await invoke("remove_agent_from_project", { name, agentId: removal.agentId, mode });
+      trackProjectAgentRemoved(name, removal.agentId);
+    } catch (err: unknown) {
+      setError(`Failed to remove ${removal.agentLabel}: ${String(err)}`);
     }
-
-    const fileList =
-      preview.length > 0
-        ? `\n\nThe following files and directories will be deleted:\n${preview.map((p) => `  • ${p}`).join("\n")}`
-        : "\n\nNo config files were found on disk for this agent.";
-
-    const confirmed = await ask(
-      `Remove ${agentLabel} from this project?${fileList}`,
-      { title: "Remove Agent", kind: "warning" }
-    );
-    if (!confirmed) return;
-
-    try {
-      await invoke("remove_agent_from_project", { name, agentId });
-      trackProjectAgentRemoved(name, agentId);
-      await reloadProject(name);
-      setDirty(false);
-    } catch (err: any) {
-      setError(`Failed to remove agent: ${err}`);
-    }
+    setAgentRemoval(null);
+    // Reload either way: a partial failure still takes the agent off the list.
+    await reloadProject(name);
+    setDirty(false);
   };
 
   // ── Instruction file conflict resolution ──────────────────────────────────
@@ -4076,6 +4102,18 @@ export function ProjectEditor({
         onAdopt={() => handleAdoptCustomAsset(customAssetConflict.kind, customAssetConflict.name)}
         onOverwrite={() => handleOverwriteCustomAsset(customAssetConflict.kind, customAssetConflict.name)}
         onClose={() => setCustomAssetConflict(null)}
+      />
+    )}
+
+    {agentRemoval && (
+      <RemoveAgentModal
+        agentLabel={agentRemoval.agentLabel}
+        hasDirectory={agentRemoval.hasDirectory}
+        preview={agentRemoval.preview}
+        previewError={agentRemoval.previewError}
+        busy={agentRemoval.busy}
+        onChoose={confirmRemoveAgent}
+        onClose={() => setAgentRemoval(null)}
       />
     )}
 

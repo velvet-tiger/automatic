@@ -37,6 +37,11 @@ impl Agent for Kiro {
         vec![dir.join(".kiro").join("skills")]
     }
 
+    /// `.kiro/` is Kiro's alone: MCP settings, skills and sub-agents.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".kiro")]
+    }
+
     // ── Capabilities ────────────────────────────────────────────────────
 
     fn capabilities(&self) -> super::AgentCapabilities {
@@ -60,30 +65,6 @@ impl Agent for Kiro {
 
     fn convert_agent_content(&self, content: &str, name: &str) -> String {
         convert_md_to_kiro_json(content, name)
-    }
-
-    // ── Cleanup ─────────────────────────────────────────────────────────
-
-    /// `detect_in` matches the `.kiro/` directory itself, so we must remove
-    /// the whole directory on cleanup — not just the `mcp.json` inside it —
-    /// otherwise the empty dir re-triggers detection on the next autodetect.
-    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
-        let kiro_dir = dir.join(".kiro");
-        if kiro_dir.exists() {
-            if fs::remove_dir_all(&kiro_dir).is_ok() {
-                return vec![kiro_dir.display().to_string()];
-            }
-        }
-        vec![]
-    }
-
-    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
-        let kiro_dir = dir.join(".kiro");
-        if kiro_dir.exists() {
-            vec![kiro_dir.display().to_string()]
-        } else {
-            vec![]
-        }
     }
 
     // ── Config writing ──────────────────────────────────────────────────
@@ -294,30 +275,6 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join(".kiro")).unwrap();
         assert!(Kiro.detect_in(dir.path()));
-    }
-
-    #[test]
-    fn test_cleanup_removes_kiro_dir() {
-        let dir = tempdir().unwrap();
-        let kiro_dir = dir.path().join(".kiro");
-        fs::create_dir_all(kiro_dir.join("settings")).unwrap();
-        fs::write(kiro_dir.join("settings/mcp.json"), "{}").unwrap();
-        assert!(kiro_dir.exists());
-
-        let removed = Kiro.cleanup_mcp_config(dir.path());
-        assert_eq!(removed, vec![kiro_dir.display().to_string()]);
-        assert!(!kiro_dir.exists(), ".kiro/ should be deleted");
-    }
-
-    #[test]
-    fn test_cleanup_preview_kiro_dir() {
-        let dir = tempdir().unwrap();
-        assert!(Kiro.cleanup_mcp_preview(dir.path()).is_empty());
-
-        let kiro_dir = dir.path().join(".kiro");
-        fs::create_dir_all(&kiro_dir).unwrap();
-        let preview = Kiro.cleanup_mcp_preview(dir.path());
-        assert_eq!(preview, vec![kiro_dir.display().to_string()]);
     }
 
     #[test]

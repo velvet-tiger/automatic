@@ -65,6 +65,11 @@ impl Agent for ZCode {
         vec![dir.join(".zcode").join("skills")]
     }
 
+    /// `.zcode/` is Z Code's alone: `config.json` and skills.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".zcode")]
+    }
+
     fn extra_global_skill_dirs(&self) -> Vec<PathBuf> {
         match super::home_dir() {
             Some(home) => vec![home.join(".zcode").join("skills")],
@@ -344,14 +349,6 @@ impl Agent for ZCode {
         vec![]
     }
 
-    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
-        let path = dir.join(".zcode").join("config.json");
-        if path.exists() {
-            vec![path.display().to_string()]
-        } else {
-            vec![]
-        }
-    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

@@ -620,27 +620,30 @@ fn custom_skill_names(project: &core::Project) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Return the list of file/directory paths that would be removed if the given
-/// agent were removed from the project.  Read-only -- used to populate the
-/// confirmation dialog before the user commits to the removal.
+/// Preview what removing an agent in `mode` (`"remove"` or `"keep"`) does to
+/// the project directory.  Read-only.  Returns a JSON array of
+/// [`crate::agent::RemovalEntry`]; Keep's preview is always empty.
 #[tauri::command]
-pub fn get_agent_cleanup_preview(name: &str, agent_id: &str) -> Result<String, String> {
+pub fn get_agent_cleanup_preview(name: &str, agent_id: &str, mode: &str) -> Result<String, String> {
+    let mode: crate::agent::RemovalMode = mode.parse()?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    let preview = sync::get_agent_cleanup_preview(&project, agent_id)?;
+    let preview = sync::get_agent_cleanup_preview(&project, agent_id, mode)?;
     serde_json::to_string(&preview).map_err(|e| e.to_string())
 }
 
-/// Remove an agent from a project and delete all files it wrote.
-/// The project config is persisted and remaining agents are re-synced.
-/// Returns a JSON array of paths that were removed or modified.
+/// Remove an agent from a project.  `mode` is `"remove"` (delete the agent's
+/// config from the project directory) or `"keep"` (stop syncing it and leave
+/// every file in place).  Returns a JSON array of
+/// [`crate::agent::RemovalEntry`] describing what changed.
 #[tauri::command]
-pub fn remove_agent_from_project(name: &str, agent_id: &str) -> Result<String, String> {
+pub fn remove_agent_from_project(name: &str, agent_id: &str, mode: &str) -> Result<String, String> {
+    let mode: crate::agent::RemovalMode = mode.parse()?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    let removed = sync::remove_agent_from_project(&mut project, agent_id)?;
+    let removed = sync::remove_agent_from_project(&mut project, agent_id, mode)?;
     activity::log(name, ActivityEvent::AgentRemoved, "Agent removed", agent_id);
     serde_json::to_string(&removed).map_err(|e| e.to_string())
 }

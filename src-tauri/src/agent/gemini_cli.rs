@@ -41,6 +41,12 @@ impl Agent for GeminiCli {
         vec![dir.join(".agents").join("skills")]
     }
 
+    /// `.gemini/` is Gemini CLI's alone: `settings.json`, hooks, commands
+    /// and sub-agents.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".gemini")]
+    }
+
     fn capabilities(&self) -> super::AgentCapabilities {
         super::AgentCapabilities {
             commands: true,
@@ -215,15 +221,6 @@ impl Agent for GeminiCli {
             }
         }
         vec![]
-    }
-
-    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
-        let path = dir.join(".gemini").join("settings.json");
-        if path.exists() {
-            vec![path.display().to_string()]
-        } else {
-            vec![]
-        }
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

@@ -54,6 +54,12 @@ impl Agent for Zed {
         vec![dir.join(".agents").join("skills")]
     }
 
+    /// `.zed/` is Zed's project settings directory.  Remove mode deletes it
+    /// whole, editor settings included, as it does `.cursor/` for Cursor.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".zed")]
+    }
+
     // ── Capabilities ────────────────────────────────────────────────────
 
     /// `agents: false` — Zed has no sub-agent discovery directory.  Automatic
@@ -202,15 +208,6 @@ impl Agent for Zed {
             }
         }
         vec![]
-    }
-
-    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
-        let path = dir.join(".zed").join("settings.json");
-        if path.exists() {
-            vec![path.display().to_string()]
-        } else {
-            vec![]
-        }
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

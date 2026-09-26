@@ -1,351 +1,220 @@
-use std::fs;
 use std::path::PathBuf;
 
-use crate::agent;
-use crate::core::AgentOptions;
+use crate::agent::{self, RemovalEntry, RemovalMode};
 use crate::core::Project;
 
 use super::engine::sync_project_without_autodetect;
-use super::helpers::cleanup_custom_agents;
 
-/// Remove an agent from a project and clean up all files it wrote.
-///
-/// Steps:
-/// 1. Compute the remaining agent list (project minus the removed agent).
-/// 2. Call [`agent::cleanup_agent_from_project`] to delete / strip the
-///    agent's config file and agent-specific skill directories.
-/// 3. For the `claude` agent, also strip the managed rules block from
-///    `CLAUDE.md`, remove any Automatic-managed `.claude/rules/*.md` files,
-///    and attempt to remove the now-empty `.claude/` directory.
-/// 4. Update `project.agents` and persist the new project config.
-/// 5. If other agents remain, re-sync them so their own configs are still
-///    accurate (e.g. no longer lists servers written for the removed agent).
-///
-/// Returns the list of paths that were removed or modified.
-pub fn remove_agent_from_project(
-    project: &mut Project,
-    agent_id: &str,
-) -> Result<Vec<String>, String> {
+/// The project directory, when it is set and exists.
+fn project_dir(project: &Project) -> Option<PathBuf> {
     if project.directory.is_empty() {
-        return Err("Project has no directory configured".into());
+        return None;
     }
-
     let dir = PathBuf::from(&project.directory);
-    if !dir.exists() {
-        return Err(format!("Directory '{}' does not exist", project.directory));
-    }
+    dir.exists().then_some(dir)
+}
 
-    // Compute the remaining agents before mutating the project
-    let remaining: Vec<String> = project
+fn remaining_agents(project: &Project, agent_id: &str) -> Vec<String> {
+    project
         .agents
         .iter()
         .filter(|id| id.as_str() != agent_id)
         .cloned()
-        .collect();
+        .collect()
+}
 
-    // Clean up the agent's resources
-    let mut removed = if let Some(agent_instance) = agent::from_id(agent_id) {
-        agent::cleanup_agent_from_project(agent_instance, &dir, &remaining)
-    } else {
-        vec![]
+/// Remove an agent from a project.
+///
+/// - [`RemovalMode::Keep`] takes the agent off `project.agents` and saves the
+///   project.  No file on disk changes, and the remaining agents are not
+///   re-synced, because a re-sync would rewrite shared files.
+/// - [`RemovalMode::Remove`] also deletes the agent's config from the project
+///   directory, as planned by [`agent::plan_agent_removal`], and then
+///   re-syncs the remaining agents so shared files stay correct for them.
+///
+/// Returns what removal did, in the same shape as
+/// [`get_agent_cleanup_preview`].  When some files could not be deleted the
+/// agent is still taken off the list, and the error names those files.
+pub fn remove_agent_from_project(
+    project: &mut Project,
+    agent_id: &str,
+    mode: RemovalMode,
+) -> Result<Vec<RemovalEntry>, String> {
+    let remaining = remaining_agents(project, agent_id);
+
+    let outcome = match mode {
+        RemovalMode::Keep => Ok(vec![]),
+        RemovalMode::Remove => {
+            let dir = project_dir(project).ok_or_else(|| {
+                format!(
+                    "Project directory '{}' is not set or does not exist",
+                    project.directory
+                )
+            })?;
+            match agent::from_id(agent_id) {
+                Some(agent_instance) => {
+                    let plan = agent::plan_agent_removal(agent_instance, &dir, &remaining)?;
+                    agent::apply_removal_plan(agent_instance, &dir, &plan)
+                }
+                None => Ok(vec![]),
+            }
+        }
     };
 
-    // Clean up custom agents directory for this agent
-    if let Some(agent_instance) = agent::from_id(agent_id) {
-        if let Some(agents_dir) = agent_instance.agents_dir(&dir) {
-            removed.extend(cleanup_custom_agents(&agents_dir));
-        }
-    }
-
-    // Claude-specific cleanup: strip managed rules from CLAUDE.md and remove
-    // any Automatic-managed .claude/rules/*.md files, then prune .claude/ if
-    // it is now empty.
-    if agent_id == "claude" {
-        let opts = project
-            .agent_options
-            .get("claude")
-            .cloned()
-            .unwrap_or_default();
-        removed.extend(cleanup_claude_project_files(&dir, &opts));
-    }
-
-    // Cursor-specific cleanup: remove Automatic-managed .cursor/rules/*.mdc
-    // files and managed hook entries, strip the AGENTS.md rules block only
-    // when no remaining agent still uses AGENTS.md, then prune .cursor/ if
-    // it is now empty.
-    if agent_id == "cursor" {
-        removed.extend(cleanup_cursor_project_files(&dir, &remaining));
-    }
-
-    // Update and persist the project
     project.agents = remaining;
     project.updated_at = chrono::Utc::now().to_rfc3339();
     let project_str =
         serde_json::to_string_pretty(&project).map_err(|e| format!("Serialise error: {}", e))?;
     crate::core::save_project(&project.name, &project_str)?;
 
-    // Re-sync remaining agents so their configs are up to date
-    if !project.agents.is_empty() {
-        let _ = sync_project_without_autodetect(project);
+    if mode == RemovalMode::Remove && !project.agents.is_empty() {
+        if let Err(e) = sync_project_without_autodetect(project) {
+            eprintln!(
+                "[automatic] Re-sync after removing '{}' from '{}' failed: {}",
+                agent_id, project.name, e
+            );
+        }
     }
 
-    Ok(removed)
+    outcome
 }
 
-/// Return the list of file/directory paths that *would* be removed if
-/// [`remove_agent_from_project`] were called for the given agent.
-///
-/// This is a read-only operation used to populate the confirmation dialog
-/// shown before the user commits to the removal.
-pub fn get_agent_cleanup_preview(project: &Project, agent_id: &str) -> Result<Vec<String>, String> {
-    if project.directory.is_empty() {
+/// What [`remove_agent_from_project`] would do in `mode`.  Read-only; feeds
+/// the confirmation dialog.  Keep changes no files, so its preview is empty,
+/// as is the preview for a project without a directory on disk.
+pub fn get_agent_cleanup_preview(
+    project: &Project,
+    agent_id: &str,
+    mode: RemovalMode,
+) -> Result<Vec<RemovalEntry>, String> {
+    if mode == RemovalMode::Keep {
         return Ok(vec![]);
     }
-
-    let dir = PathBuf::from(&project.directory);
-    if !dir.exists() {
+    let Some(dir) = project_dir(project) else {
         return Ok(vec![]);
-    }
-
-    let remaining: Vec<String> = project
-        .agents
-        .iter()
-        .filter(|id| id.as_str() != agent_id)
-        .cloned()
-        .collect();
-
-    let mut preview = if let Some(agent_instance) = agent::from_id(agent_id) {
-        agent::cleanup_agent_preview(agent_instance, &dir, &remaining)
-    } else {
-        vec![]
     };
-
-    // Include custom agents directory in the preview
-    if let Some(agent_instance) = agent::from_id(agent_id) {
-        if let Some(agents_dir) = agent_instance.agents_dir(&dir) {
-            if agents_dir.exists() {
-                if let Ok(entries) = fs::read_dir(&agents_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.extension().is_some_and(|ext| ext == "md") {
-                            preview.push(path.display().to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Include Claude-specific files in the preview
-    if agent_id == "claude" {
-        let opts = project
-            .agent_options
-            .get("claude")
-            .cloned()
-            .unwrap_or_default();
-        preview.extend(claude_cleanup_preview(&dir, &opts));
-    }
-
-    // Include Cursor-specific files in the preview
-    if agent_id == "cursor" {
-        preview.extend(cursor_cleanup_preview(&dir, &remaining));
-    }
-
-    Ok(preview)
+    let Some(agent_instance) = agent::from_id(agent_id) else {
+        return Ok(vec![]);
+    };
+    let remaining = remaining_agents(project, agent_id);
+    Ok(agent::plan_agent_removal(agent_instance, &dir, &remaining)?.entries())
 }
 
-// ── Claude-specific cleanup helpers ─────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
-/// Strip Automatic-managed content from Claude-specific project files.
-///
-/// Actions:
-/// 1. Strip the `<!-- automatic:rules:start -->…<!-- automatic:rules:end -->`
-///    block from `CLAUDE.md` if present.
-/// 2. Delete every `<!-- managed by Automatic -->` file from `.claude/rules/`.
-/// 3. Attempt to remove `.claude/rules/` if now empty, then `.claude/` if
-///    now empty (both silently ignored when non-empty or absent).
-///
-/// Returns the paths of files deleted or modified.
-fn cleanup_claude_project_files(dir: &PathBuf, opts: &AgentOptions) -> Vec<String> {
-    let mut touched: Vec<String> = Vec::new();
-
-    // 1. Strip managed rules block from CLAUDE.md.
-    let claude_md = dir.join("CLAUDE.md");
-    if claude_md.exists() {
-        if let Ok(content) = fs::read_to_string(&claude_md) {
-            let stripped = crate::core::strip_rules_section_pub(&content);
-            if stripped != content {
-                if fs::write(&claude_md, stripped).is_ok() {
-                    touched.push(claude_md.display().to_string());
-                }
-            }
-        }
+    fn with_temp_home<T>(test: impl FnOnce() -> T) -> T {
+        let home = tempdir().expect("temp home");
+        crate::core::with_test_home(home.path().to_path_buf(), test)
     }
 
-    // 2. Remove Automatic-managed .claude/rules/*.md files (both modes).
-    // Even if opts.claude_rules_in_dot_claude is false now, the files may
-    // have been written when the option was enabled — remove them anyway.
-    let _ = opts; // suppress unused-variable warning; we always clean regardless
-    let rules_dir = dir.join(".claude").join("rules");
-    if rules_dir.exists() {
-        // Re-use the sync function with an empty rule list: it removes all
-        // managed files and writes nothing new.
-        match crate::core::sync_rules_to_dot_claude_rules(&dir.display().to_string(), &[]) {
-            Ok(removed) => touched.extend(removed),
-            Err(e) => eprintln!("Failed to clean .claude/rules/ on agent removal: {}", e),
-        }
-
-        // Remove the .claude/rules/ directory itself if now empty.
-        let _ = fs::remove_dir(&rules_dir); // silently ignored when non-empty
+    fn project_in(dir: &std::path::Path, agents: &[&str]) -> Project {
+        let project = Project {
+            name: "removal-test".to_string(),
+            directory: dir.display().to_string(),
+            agents: agents.iter().map(|a| a.to_string()).collect(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string_pretty(&project).expect("project json");
+        crate::core::save_project(&project.name, &json).expect("save project");
+        project
     }
 
-    // 3. Attempt to remove .claude/ if it is now empty.
-    let dot_claude = dir.join(".claude");
-    if dot_claude.exists() {
-        let _ = fs::remove_dir(&dot_claude); // silently ignored when non-empty
-    }
-
-    touched
-}
-
-// ── Cursor-specific cleanup helpers ─────────────────────────────────────────
-
-/// Returns `true` if any of the `remaining` agent ids still uses `AGENTS.md`
-/// as its instruction file.
-fn remaining_agents_use_agents_md(remaining: &[String]) -> bool {
-    remaining
-        .iter()
-        .filter_map(|id| agent::from_id(id))
-        .any(|a| a.project_file_name() == "AGENTS.md")
-}
-
-/// Strip Automatic-managed content from Cursor-specific project files.
-///
-/// Actions:
-/// 1. Strip the managed rules block from `AGENTS.md` — but only when no
-///    remaining agent still uses `AGENTS.md` (a shared file must stay intact;
-///    the post-removal re-sync of the remaining agents refreshes it).
-/// 2. Delete every Automatic-managed `.cursor/rules/*.mdc` file.
-/// 3. Remove Automatic-managed hook entries and scripts via `sync_hooks`
-///    with an empty hook list.
-/// 4. Attempt to remove `.cursor/rules/` and `.cursor/` if now empty.
-///
-/// Returns the paths of files deleted or modified.
-fn cleanup_cursor_project_files(dir: &PathBuf, remaining: &[String]) -> Vec<String> {
-    let mut touched: Vec<String> = Vec::new();
-
-    // 1. Strip managed rules block from AGENTS.md when Cursor was its only user.
-    if !remaining_agents_use_agents_md(remaining) {
-        let agents_md = dir.join("AGENTS.md");
-        if agents_md.exists() {
-            if let Ok(content) = fs::read_to_string(&agents_md) {
-                let stripped = crate::core::strip_rules_section_pub(&content);
-                if stripped != content && fs::write(&agents_md, stripped).is_ok() {
-                    touched.push(agents_md.display().to_string());
-                }
-            }
-        }
-    }
-
-    // 2. Remove Automatic-managed .cursor/rules/*.mdc files (regardless of the
-    // current option value — they may have been written when it was enabled).
-    let rules_dir = dir.join(".cursor").join("rules");
-    if rules_dir.exists() {
-        match crate::core::sync_rules_to_cursor_mdc_rules(&dir.display().to_string(), &[]) {
-            Ok(removed) => touched.extend(removed),
-            Err(e) => eprintln!("Failed to clean .cursor/rules/ on agent removal: {}", e),
-        }
-        let _ = fs::remove_dir(&rules_dir); // silently ignored when non-empty
-    }
-
-    // 3. Remove managed hook entries and scripts.
-    if let Some(cursor) = agent::from_id("cursor") {
-        match cursor.sync_hooks(dir, &[]) {
-            Ok(removed) => touched.extend(removed),
-            Err(e) => eprintln!("Failed to clean Cursor hooks on agent removal: {}", e),
-        }
-    }
-
-    // 4. Attempt to remove .cursor/ if it is now empty.
-    let dot_cursor = dir.join(".cursor");
-    if dot_cursor.exists() {
-        let _ = fs::remove_dir(&dot_cursor); // silently ignored when non-empty
-    }
-
-    touched
-}
-
-/// Return the paths that [`cleanup_cursor_project_files`] would touch —
-/// used to populate the confirmation preview before the user commits.
-fn cursor_cleanup_preview(dir: &PathBuf, remaining: &[String]) -> Vec<String> {
-    let mut preview: Vec<String> = Vec::new();
-
-    // AGENTS.md if it contains a managed rules block and Cursor is its only user.
-    if !remaining_agents_use_agents_md(remaining) {
-        let agents_md = dir.join("AGENTS.md");
-        if agents_md.exists() {
-            if let Ok(content) = fs::read_to_string(&agents_md) {
-                if content.contains("<!-- automatic:rules:start -->") {
-                    preview.push(agents_md.display().to_string());
-                }
-            }
-        }
-    }
-
-    // Automatic-managed .cursor/rules/*.mdc files.
-    let rules_dir = dir.join(".cursor").join("rules");
-    if rules_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&rules_dir) {
-            for entry in entries.flatten() {
+    /// Every file under `root`, with its bytes, so a test can prove nothing
+    /// changed.  Skips `.automatic/project.json`: saving the project writes
+    /// Automatic's own record of the agent list there, which is the point.
+    fn snapshot(root: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let record = root.join(".automatic").join("project.json");
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in fs::read_dir(&dir).expect("read dir").flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
+                if path == record {
                     continue;
                 }
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if crate::core::is_managed_mdc_content(&content) {
-                        preview.push(path.display().to_string());
-                    }
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    out.push((path.clone(), fs::read(&path).expect("read file")));
                 }
             }
         }
+        out.sort();
+        out
     }
 
-    preview
-}
+    #[test]
+    fn keep_takes_the_agent_off_the_list_and_touches_no_file() {
+        with_temp_home(|| {
+            let project_dir = tempdir().unwrap();
+            let root = project_dir.path();
+            fs::create_dir_all(root.join(".claude/skills/demo")).unwrap();
+            fs::write(root.join(".claude/skills/demo/SKILL.md"), "# Demo").unwrap();
+            fs::write(root.join("CLAUDE.md"), "# Instructions").unwrap();
+            fs::write(root.join(".mcp.json"), "{}").unwrap();
+            fs::write(root.join("AGENTS.md"), "# Shared").unwrap();
+            let mut project = project_in(root, &["claude", "codex"]);
+            let before = snapshot(root);
 
-/// Return the paths that [`cleanup_claude_project_files`] would touch —
-/// used to populate the confirmation preview before the user commits.
-fn claude_cleanup_preview(dir: &PathBuf, _opts: &AgentOptions) -> Vec<String> {
-    let mut preview: Vec<String> = Vec::new();
+            assert!(
+                get_agent_cleanup_preview(&project, "claude", RemovalMode::Keep)
+                    .unwrap()
+                    .is_empty()
+            );
+            let result =
+                remove_agent_from_project(&mut project, "claude", RemovalMode::Keep).unwrap();
 
-    // CLAUDE.md if it contains a managed rules block.
-    let claude_md = dir.join("CLAUDE.md");
-    if claude_md.exists() {
-        if let Ok(content) = fs::read_to_string(&claude_md) {
-            if content.contains("<!-- automatic:rules:start -->") {
-                preview.push(claude_md.display().to_string());
-            }
-        }
+            assert!(result.is_empty());
+            assert_eq!(project.agents, vec!["codex".to_string()]);
+            assert_eq!(snapshot(root), before, "Keep must not change any file");
+            let saved: Project =
+                serde_json::from_str(&crate::core::read_project("removal-test").unwrap()).unwrap();
+            assert_eq!(saved.agents, vec!["codex".to_string()]);
+        });
     }
 
-    // Automatic-managed .claude/rules/*.md files.
-    const MANAGED_HEADER: &str = "<!-- managed by Automatic — do not edit by hand -->";
-    let rules_dir = dir.join(".claude").join("rules");
-    if rules_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&rules_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                    continue;
-                }
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if content.starts_with(MANAGED_HEADER) {
-                        preview.push(path.display().to_string());
-                    }
-                }
-            }
-        }
+    #[test]
+    fn remove_deletes_what_the_preview_lists() {
+        with_temp_home(|| {
+            let project_dir = tempdir().unwrap();
+            let root = project_dir.path();
+            fs::create_dir_all(root.join(".claude/notes")).unwrap();
+            fs::write(root.join(".claude/notes/mine.md"), "user file").unwrap();
+            fs::write(root.join("CLAUDE.md"), "# Instructions").unwrap();
+            fs::write(root.join(".mcp.json"), "{}").unwrap();
+            let mut project = project_in(root, &["claude"]);
+
+            let preview =
+                get_agent_cleanup_preview(&project, "claude", RemovalMode::Remove).unwrap();
+            let result =
+                remove_agent_from_project(&mut project, "claude", RemovalMode::Remove).unwrap();
+
+            assert_eq!(result, preview);
+            assert!(!root.join(".claude").exists());
+            assert!(!root.join("CLAUDE.md").exists());
+            assert!(!root.join(".mcp.json").exists());
+            assert!(project.agents.is_empty());
+        });
     }
 
-    preview
+    #[test]
+    fn remove_without_directory_is_an_error_but_keep_is_not() {
+        with_temp_home(|| {
+            let mut project = Project {
+                name: "no-dir".to_string(),
+                agents: vec!["claude".to_string()],
+                ..Default::default()
+            };
+            assert!(
+                remove_agent_from_project(&mut project.clone(), "claude", RemovalMode::Remove)
+                    .is_err()
+            );
+            assert!(remove_agent_from_project(&mut project, "claude", RemovalMode::Keep).is_ok());
+            assert!(project.agents.is_empty());
+        });
+    }
 }

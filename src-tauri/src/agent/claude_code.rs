@@ -41,6 +41,12 @@ impl Agent for ClaudeCode {
         vec![dir.join(".claude").join("skills")]
     }
 
+    /// `.claude/` is Claude Code's alone: settings, hooks, rules, skills,
+    /// sub-agents and commands.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".claude")]
+    }
+
     fn write_mcp_config(&self, dir: &Path, servers: &Map<String, Value>) -> Result<String, String> {
         // Claude Code uses Automatic's JSON format directly, with one tweak:
         // strip "type" from stdio entries for Claude Desktop backward-compat.

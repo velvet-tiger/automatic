@@ -67,6 +67,11 @@ impl Agent for KimiCode {
         vec![dir.join(".agents").join("skills")]
     }
 
+    /// `.kimi-code/` is Kimi Code's alone: MCP config and sub-agents.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".kimi-code")]
+    }
+
     fn extra_global_skill_dirs(&self) -> Vec<PathBuf> {
         match super::home_dir() {
             Some(home) => vec![home.join(".kimi-code").join("skills")],

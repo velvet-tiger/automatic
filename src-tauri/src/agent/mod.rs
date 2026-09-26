@@ -33,6 +33,7 @@ mod mcp_format_tests;
 mod global_mcp_tests;
 mod opencode;
 mod pi;
+mod removal;
 mod warp;
 mod zcode;
 mod zed;
@@ -63,6 +64,9 @@ pub use opencode::{
     OpenCode,
 };
 pub use pi::Pi;
+pub use removal::{
+    apply_removal_plan, plan_agent_removal, RemovalAction, RemovalEntry, RemovalMode, RemovalPlan,
+};
 pub use warp::Warp;
 pub use zcode::ZCode;
 pub use zed::Zed;
@@ -556,48 +560,39 @@ pub trait Agent: Send + Sync {
         vec![]
     }
 
-    /// Remove MCP configuration written by this agent from the project directory.
-    /// Called when the agent is removed from a project.
+    /// Strip Automatic's MCP entries from the files this agent merges into
+    /// but does not own (its [`mcp_merge_inputs`](Agent::mcp_merge_inputs)
+    /// minus [`owned_config_paths`](Agent::owned_config_paths)).  Called when
+    /// the agent is removed from a project in Remove mode, for files outside
+    /// the agent's [`owned_dirs`](Agent::owned_dirs).  Files the agent owns
+    /// are deleted by the removal plan, not here.
     ///
-    /// The default implementation deletes every file returned by
-    /// [`owned_config_paths`] that exists on disk.  Agents that merge into
-    /// shared config files should override this to strip only their managed
-    /// sections rather than deleting the whole file.
+    /// Returns the paths of files modified or deleted.
     ///
-    /// Returns paths of files deleted or modified.
-    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
-        let mut removed = Vec::new();
-        for path in self.owned_config_paths(dir) {
-            if path.exists() {
-                if fs::remove_file(&path).is_ok() {
-                    removed.push(path.display().to_string());
-                }
-            }
-        }
-        removed
+    /// Default: nothing to strip.
+    fn cleanup_mcp_config(&self, _dir: &Path) -> Vec<String> {
+        vec![]
     }
 
-    /// Returns the list of file/directory paths that *would* be affected when
-    /// this agent's MCP config is cleaned up.  Used to populate the
-    /// confirmation dialog shown to the user before removal.
+    /// Directories under `dir` that belong to this agent alone, such as
+    /// `.claude/` or `.cursor/`.  Removing the agent in Remove mode deletes
+    /// each one whole, including files the user added there.
     ///
-    /// Default: owned_config_paths that currently exist on disk.
-    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
-        self.owned_config_paths(dir)
-            .into_iter()
-            .filter(|p| p.exists())
-            .map(|p| p.display().to_string())
-            .collect()
+    /// Never list a directory another agent or tool writes into (`.agents/`,
+    /// `.github/`, `.vscode/`).  The contract tests reject an owned directory
+    /// that overlaps another agent's paths.
+    ///
+    /// Default: empty vec.
+    fn owned_dirs(&self, _dir: &Path) -> Vec<PathBuf> {
+        vec![]
     }
 
-    /// Directories to remove at the end of agent removal, but only when they
-    /// are empty by then.  Listed deepest first, so a parent can be pruned
-    /// once its child has gone.  Pruning runs after the skill directories are
-    /// removed, which lets an agent whose skills live inside its own config
-    /// directory (Junie's `.junie/skills`) prune that directory too.
+    /// Files Automatic writes for this agent that no other trait method
+    /// names, such as Cursor's hook manifest under `.automatic/state/`.
+    /// Remove mode deletes them.
     ///
-    /// Default: empty vec — nothing to prune.
-    fn cleanup_prune_dirs(&self, _dir: &Path) -> Vec<PathBuf> {
+    /// Default: empty vec.
+    fn owned_extra_files(&self, _dir: &Path) -> Vec<PathBuf> {
         vec![]
     }
 
@@ -1387,55 +1382,6 @@ fn cleanup_commands_index(commands_dir: &Path) -> Result<Option<std::path::PathB
     Ok(None)
 }
 
-fn cleanup_command_files(agent_instance: &dyn Agent, dir: &Path) -> Vec<String> {
-    let Some(commands_dir) = agent_instance.commands_dir(dir) else {
-        return vec![];
-    };
-    if !commands_dir.exists() {
-        return vec![];
-    }
-
-    let mut removed = Vec::new();
-    if let Ok(entries) = fs::read_dir(&commands_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && is_managed_command_file(&path) && fs::remove_file(&path).is_ok() {
-                removed.push(path.display().to_string());
-            }
-        }
-    }
-
-    let is_empty = fs::read_dir(&commands_dir)
-        .ok()
-        .and_then(|mut entries| entries.next())
-        .is_none();
-    if is_empty {
-        let _ = fs::remove_dir(&commands_dir);
-    }
-
-    removed
-}
-
-fn cleanup_command_preview(agent_instance: &dyn Agent, dir: &Path) -> Vec<String> {
-    let Some(commands_dir) = agent_instance.commands_dir(dir) else {
-        return vec![];
-    };
-    if !commands_dir.exists() {
-        return vec![];
-    }
-
-    let mut preview = Vec::new();
-    if let Ok(entries) = fs::read_dir(&commands_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && is_managed_command_file(&path) {
-                preview.push(path.display().to_string());
-            }
-        }
-    }
-    preview
-}
-
 /// Recursively copy a directory and all its contents.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     fs::create_dir_all(dst)
@@ -1462,123 +1408,6 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-/// Remove all Automatic-managed resources for a specific agent from a project
-/// directory.  Called after the user confirms removal of an agent.
-///
-/// Steps performed:
-/// 1. Call [`Agent::cleanup_mcp_config`] — removes or strips the agent's MCP
-///    config file.
-/// 2. Remove agent-specific skill directories (those returned by
-///    [`Agent::skill_dirs`] that are NOT the shared `.agents/skills/` hub).
-/// 3. If no agents in `remaining_agent_ids` use the `.agents/skills/` hub,
-///    remove it too, and attempt to remove the now-empty `.agents/` directory.
-/// 4. Remove each [`Agent::cleanup_prune_dirs`] entry that is now empty.
-///
-/// Returns the list of paths that were successfully removed or modified.
-pub(crate) fn cleanup_agent_from_project(
-    agent_instance: &dyn Agent,
-    dir: &Path,
-    remaining_agent_ids: &[String],
-) -> Vec<String> {
-    let mut removed = Vec::new();
-    let hub = dir.join(".agents").join("skills");
-
-    // 1. Clean up MCP config
-    removed.extend(agent_instance.cleanup_mcp_config(dir));
-    removed.extend(cleanup_command_files(agent_instance, dir));
-
-    // 2. Remove agent-specific skill directories (never the shared hub)
-    for skill_dir in agent_instance.skill_dirs(dir) {
-        if skill_dir != hub && skill_dir.exists() {
-            if fs::remove_dir_all(&skill_dir).is_ok() {
-                removed.push(skill_dir.display().to_string());
-            }
-        }
-    }
-
-    // 3. Remove the hub if no remaining agents use it
-    let remaining_uses_hub = remaining_agent_ids
-        .iter()
-        .any(|id| from_id(id).map_or(false, |a| a.skill_dirs(dir).iter().any(|d| d == &hub)));
-
-    if !remaining_uses_hub && hub.exists() {
-        if fs::remove_dir_all(&hub).is_ok() {
-            removed.push(hub.display().to_string());
-            // Attempt to remove the parent .agents/ dir if it is now empty
-            let agents_dir = dir.join(".agents");
-            let _ = fs::remove_dir(&agents_dir); // silently ignored if not empty
-        }
-    }
-
-    // 4. Prune the agent's directories that are now empty.  `remove_dir`
-    // refuses a non-empty directory, so user files keep theirs alive.
-    for prune_dir in agent_instance.cleanup_prune_dirs(dir) {
-        if prune_dir.is_dir() && fs::remove_dir(&prune_dir).is_ok() {
-            removed.push(prune_dir.display().to_string());
-        }
-    }
-
-    removed
-}
-
-/// Whether `dir` would be empty once every path in `removed` is gone.
-/// Used by the preview to predict which prune directories cleanup removes.
-fn dir_empty_after_removal(dir: &Path, removed: &HashSet<PathBuf>) -> bool {
-    if !dir.is_dir() {
-        return false;
-    }
-    match fs::read_dir(dir) {
-        Ok(entries) => entries
-            .map(|entry| entry.map(|e| removed.contains(&e.path())))
-            .all(|gone| gone.unwrap_or(false)),
-        // Cleanup would fail to inspect it too; do not promise a removal.
-        Err(_) => false,
-    }
-}
-
-/// Returns a list of file/directory paths that *would* be removed when
-/// [`cleanup_agent_from_project`] is called.  Used to populate the
-/// confirmation dialog before the user commits to the removal.
-pub(crate) fn cleanup_agent_preview(
-    agent_instance: &dyn Agent,
-    dir: &Path,
-    remaining_agent_ids: &[String],
-) -> Vec<String> {
-    let mut preview = Vec::new();
-    let hub = dir.join(".agents").join("skills");
-
-    // MCP config files
-    preview.extend(agent_instance.cleanup_mcp_preview(dir));
-    preview.extend(cleanup_command_preview(agent_instance, dir));
-
-    // Agent-specific skill directories
-    for skill_dir in agent_instance.skill_dirs(dir) {
-        if skill_dir != hub && skill_dir.exists() {
-            preview.push(skill_dir.display().to_string());
-        }
-    }
-
-    // Hub if no remaining agent uses it
-    let remaining_uses_hub = remaining_agent_ids
-        .iter()
-        .any(|id| from_id(id).map_or(false, |a| a.skill_dirs(dir).iter().any(|d| d == &hub)));
-
-    if !remaining_uses_hub && hub.exists() {
-        preview.push(hub.display().to_string());
-    }
-
-    // Prune directories that would be empty once everything above is gone.
-    let mut gone: HashSet<PathBuf> = preview.iter().map(PathBuf::from).collect();
-    for prune_dir in agent_instance.cleanup_prune_dirs(dir) {
-        if dir_empty_after_removal(&prune_dir, &gone) {
-            preview.push(prune_dir.display().to_string());
-            gone.insert(prune_dir);
-        }
-    }
-
-    preview
 }
 
 /// Scan the agent-specific extra global skill directories returned by

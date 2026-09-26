@@ -233,6 +233,12 @@ pub fn save_instruction_snapshot(
     fs::write(&path, user_content).map_err(|e| e.to_string())
 }
 
+/// Where the snapshot for `filename` lives inside `project_dir`.  Agent
+/// removal deletes it together with the instruction file it mirrors.
+pub fn instruction_snapshot_path(project_dir: &std::path::Path, filename: &str) -> PathBuf {
+    project_dir.join(SNAPSHOT_DIR).join(filename)
+}
+
 /// Read the snapshot for `filename` from `<project>/.automatic/snapshots/<filename>`.
 /// Returns `None` if no snapshot exists (Automatic has never written this file).
 pub fn read_instruction_snapshot(directory: &str, filename: &str) -> Option<String> {

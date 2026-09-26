@@ -56,6 +56,11 @@ impl Agent for Droid {
         vec![dir.join(".agents").join("skills")]
     }
 
+    /// `.factory/` is Droid's alone: MCP config, hooks and droids.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".factory")]
+    }
+
     // ── Capabilities ────────────────────────────────────────────────────
 
     fn capabilities(&self) -> super::AgentCapabilities {

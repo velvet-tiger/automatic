@@ -78,6 +78,11 @@ impl Agent for Warp {
         vec![dir.join(".agents").join("skills")]
     }
 
+    /// `.warp/` is Warp's alone.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".warp")]
+    }
+
     // ── Capabilities ────────────────────────────────────────────────────
 
     fn capabilities(&self) -> AgentCapabilities {
@@ -104,9 +109,8 @@ impl Agent for Warp {
 
     /// `WARP.md` and `.warp/.mcp.json` are Warp's alone.  `AGENTS.md` is
     /// deliberately absent: it is shared with Codex, Cursor, OpenCode and four
-    /// others, and the default `cleanup_mcp_config` deletes every path listed
-    /// here — so removing Warp from a project used to delete the instruction
-    /// file every other agent still reads.
+    /// others.  Agent removal deletes every path listed here outright, while
+    /// the instruction file goes only when no remaining agent uses it.
     fn owned_config_paths(&self, dir: &Path) -> Vec<PathBuf> {
         vec![dir.join("WARP.md"), project_mcp_config_path(dir)]
     }
@@ -438,12 +442,15 @@ mod tests {
         let agents_md = dir.path().join("AGENTS.md");
         fs::write(&agents_md, "# Shared instructions\n").unwrap();
 
-        use super::super::Agent as _;
-        let removed = Warp.cleanup_mcp_config(dir.path());
+        let remaining = vec!["codex".to_string()];
+        let plan = super::super::plan_agent_removal(&Warp, dir.path(), &remaining).unwrap();
+        let removed = super::super::apply_removal_plan(&Warp, dir.path(), &plan).unwrap();
 
         assert!(
-            removed.is_empty(),
-            "removing Warp must not report deleting a file it does not own: {removed:?}"
+            removed
+                .iter()
+                .all(|e| e.action != super::super::RemovalAction::Delete),
+            "removing Warp must not delete a file Codex still uses: {removed:?}"
         );
         assert!(
             agents_md.exists(),
@@ -459,9 +466,12 @@ mod tests {
         fs::write(&warp_md, "# Warp context\n").unwrap();
         assert!(warp_md.exists());
 
-        use super::super::Agent as _;
-        let removed = Warp.cleanup_mcp_config(dir.path());
-        assert_eq!(removed, vec![warp_md.display().to_string()]);
+        let plan = super::super::plan_agent_removal(&Warp, dir.path(), &[]).unwrap();
+        let removed = super::super::apply_removal_plan(&Warp, dir.path(), &plan).unwrap();
+        assert_eq!(
+            removed.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
+            vec![warp_md.display().to_string()]
+        );
         assert!(!warp_md.exists(), "WARP.md should have been deleted");
     }
 

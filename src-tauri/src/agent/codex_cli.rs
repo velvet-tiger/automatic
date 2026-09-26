@@ -38,6 +38,11 @@ impl Agent for CodexCli {
         vec![dir.join(".agents").join("skills")]
     }
 
+    /// `.codex/` is Codex's alone: `config.toml`, hooks and sub-agents.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        vec![dir.join(".codex")]
+    }
+
     // ── Config writing ──────────────────────────────────────────────────
 
     /// TOML has no variable interpolation and Codex performs none, so a
@@ -216,15 +221,6 @@ impl Agent for CodexCli {
             }
         }
         vec![]
-    }
-
-    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
-        let path = dir.join(".codex").join("config.toml");
-        if path.exists() {
-            vec![path.display().to_string()]
-        } else {
-            vec![]
-        }
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

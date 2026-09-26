@@ -45,6 +45,17 @@ impl Agent for GitHubCopilot {
         vec![dir.join(".agents").join("skills")]
     }
 
+    /// Copilot's own folders inside `.github/`.  `.github/` itself also holds
+    /// workflows and other tools' files, so it is never owned.
+    fn owned_dirs(&self, dir: &Path) -> Vec<PathBuf> {
+        let github = dir.join(".github");
+        vec![
+            github.join("agents"),
+            github.join("prompts"),
+            github.join("hooks"),
+        ]
+    }
+
     // ── Capabilities ────────────────────────────────────────────────────
 
     fn capabilities(&self) -> super::AgentCapabilities {
@@ -257,15 +268,6 @@ impl Agent for GitHubCopilot {
             }
         }
         vec![]
-    }
-
-    fn cleanup_mcp_preview(&self, dir: &Path) -> Vec<String> {
-        let path = dir.join(".vscode").join("mcp.json");
-        if path.exists() {
-            vec![path.display().to_string()]
-        } else {
-            vec![]
-        }
     }
 
     // ── Discovery ───────────────────────────────────────────────────────
