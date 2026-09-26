@@ -87,27 +87,23 @@ pub fn delete_config(project: &str, id: &str) -> Result<(), String> {
     write_configs(project, &configs)
 }
 
-/// Names of every project that has at least one dev server configured.
-/// Used to build the cross-project view in the global Tools section.
+/// Project names that own a dev-server registry file, read from the file
+/// stems in the registry directory. Read-only: this does not check whether
+/// each project still exists. Pair it with `classify_config_projects` to
+/// separate live owners from orphans.
 ///
-/// Orphaned files — dev-server configs whose project name is no longer in
-/// `crate::core::list_projects()` because the project was renamed or
-/// deleted before this plugin's registry was updated — are removed from
-/// disk as a side effect. Without that guard the global "Servers" view
-/// keeps showing rows the user cannot delete from the UI: the per-project
-/// delete path lives inside the project editor, and an orphan has no
-/// editor to open.
-pub fn list_projects_with_configs() -> Result<Vec<String>, String> {
+/// Stems that are not valid project names are skipped. No project can own
+/// them, and `config_path` would refuse to read them.
+pub fn list_config_projects() -> Result<Vec<String>, String> {
     let dir = dev_servers_dir()?;
     if !dir.exists() {
         return Ok(Vec::new());
     }
-    let live: std::collections::HashSet<String> = crate::core::list_projects()
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
     let mut names = Vec::new();
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+    for entry in fs::read_dir(&dir)
+        .map_err(|e| format!("Could not read dev-server registry '{}': {}", dir.display(), e))?
+        .flatten()
+    {
         let path = entry.path();
         if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
@@ -115,17 +111,83 @@ pub fn list_projects_with_configs() -> Result<Vec<String>, String> {
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        if live.contains(stem) {
+        if crate::core::is_valid_name(stem) {
             names.push(stem.to_string());
-        } else {
-            // Orphan: the project no longer exists. Best-effort delete —
-            // an IO error here just means the row survives until next
-            // refresh, not a broken UI.
-            let _ = fs::remove_file(&path);
         }
     }
     names.sort();
     Ok(names)
+}
+
+/// Registry file owners split by whether their project still exists.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ConfigOwners {
+    /// Owners that match a registered project, as the registered name.
+    pub live: Vec<String>,
+    /// Owners with no registered project. Their files are orphans (VEL-160).
+    pub orphans: Vec<String>,
+}
+
+/// Split registry file owners into live projects and orphans. Pure.
+///
+/// Matching ignores case. On macOS the default filesystem is
+/// case-insensitive, so `Foo.json` still serves project `foo` after a
+/// case-only rename. Treating it as an orphan would delete a live
+/// project's servers. A live match is reported under the registered name
+/// so the Servers view links rows to the right project.
+pub fn classify_config_projects(config_projects: &[String], live_projects: &[String]) -> ConfigOwners {
+    let mut owners = ConfigOwners::default();
+    for name in config_projects {
+        let registered = live_projects
+            .iter()
+            .find(|p| *p == name)
+            .or_else(|| live_projects.iter().find(|p| p.eq_ignore_ascii_case(name)));
+        match registered {
+            Some(project) => {
+                if !owners.live.contains(project) {
+                    owners.live.push(project.clone());
+                }
+            }
+            None => owners.orphans.push(name.clone()),
+        }
+    }
+    owners
+}
+
+/// Delete the registry file of each orphaned owner and log each removal.
+/// Callers must pass only names that `classify_config_projects` reported as
+/// orphans. Keeps going past a failed delete so one bad file does not block
+/// the rest. Returns the names whose files were removed.
+pub fn remove_orphaned_configs(orphans: &[String]) -> Vec<String> {
+    let mut removed = Vec::new();
+    for name in orphans {
+        let path = match config_path(name) {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("[dev-servers] skipped orphaned config '{}': {}", name, e);
+                continue;
+            }
+        };
+        if !path.exists() {
+            continue;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                eprintln!(
+                    "[dev-servers] removed orphaned config for missing project '{}': {}",
+                    name,
+                    path.display()
+                );
+                removed.push(name.clone());
+            }
+            Err(e) => eprintln!(
+                "[dev-servers] could not remove orphaned config '{}': {}",
+                path.display(),
+                e
+            ),
+        }
+    }
+    removed
 }
 
 /// Rename this project's dev-server registry file from `old` to `new`.
@@ -133,6 +195,10 @@ pub fn list_projects_with_configs() -> Result<Vec<String>, String> {
 /// projects never configure a dev server). Called from the project
 /// rename command so the global "Servers" view stays anchored to the
 /// live project name.
+///
+/// A case-only rename (`Foo` to `foo`) on a case-insensitive filesystem
+/// resolves both paths to the same file. That is not a clash, so the file
+/// is renamed in place to pick up the new casing.
 pub fn rename_project(old: &str, new: &str) -> Result<(), String> {
     if old == new {
         return Ok(());
@@ -146,13 +212,27 @@ pub fn rename_project(old: &str, new: &str) -> Result<(), String> {
         return Ok(());
     }
     let new_path = dir.join(format!("{}.json", new));
-    if new_path.exists() {
+    if new_path.exists() && !same_file(&old_path, &new_path) {
         return Err(format!(
             "Dev server config for '{}' already exists",
             new
         ));
     }
-    fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
+    fs::rename(&old_path, &new_path).map_err(|e| {
+        format!(
+            "Could not rename dev-server config '{}' to '{}': {}",
+            old_path.display(),
+            new_path.display(),
+            e
+        )
+    })
+}
+
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// Remove this project's dev-server registry file. No-op if not present.
@@ -252,35 +332,75 @@ mod tests {
     }
 
     #[test]
-    fn list_projects_with_configs_reflects_saved_projects() {
+    fn list_config_projects_reads_file_stems() {
         let tmp = tmp();
         with_test_home(tmp.path().to_path_buf(), || {
-            register_project("demo-a");
-            register_project("demo-b");
-            save_config("demo-a", sample()).unwrap();
             save_config("demo-b", sample()).unwrap();
+            save_config("demo-a", sample()).unwrap();
 
-            let names = list_projects_with_configs().unwrap();
+            let names = list_config_projects().unwrap();
             assert_eq!(names, vec!["demo-a".to_string(), "demo-b".to_string()]);
         });
     }
 
     #[test]
-    fn list_projects_with_configs_prunes_orphaned_files() {
-        // VEL-160: a project renamed or deleted before this plugin's
-        // registry was cleaned up would leave a JSON file behind, and the
-        // global Tools > Servers view would keep showing rows the user
-        // could not delete without hand-editing config.
+    fn list_config_projects_does_not_delete_anything() {
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            save_config("ghost-project", sample()).unwrap();
+            list_config_projects().unwrap();
+            assert!(dev_servers_dir().unwrap().join("ghost-project.json").exists());
+        });
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn classify_separates_live_owners_from_orphans() {
+        // VEL-160: a file left behind by a rename or delete has no project.
+        let owners = classify_config_projects(
+            &names(&["ghost-project", "live-project"]),
+            &names(&["live-project", "no-servers"]),
+        );
+        assert_eq!(owners.live, names(&["live-project"]));
+        assert_eq!(owners.orphans, names(&["ghost-project"]));
+    }
+
+    #[test]
+    fn classify_matches_a_case_only_rename_to_the_live_project() {
+        // `Demo.json` still serves project `demo` on a case-insensitive
+        // filesystem. It must not be classed as an orphan and deleted.
+        let owners = classify_config_projects(&names(&["Demo"]), &names(&["demo"]));
+        assert_eq!(owners.live, names(&["demo"]));
+        assert!(owners.orphans.is_empty());
+    }
+
+    #[test]
+    fn classify_prefers_an_exact_match_over_a_case_insensitive_one() {
+        let owners = classify_config_projects(&names(&["demo"]), &names(&["Demo", "demo"]));
+        assert_eq!(owners.live, names(&["demo"]));
+    }
+
+    #[test]
+    fn classify_treats_everything_as_orphaned_when_no_projects_exist() {
+        let owners = classify_config_projects(&names(&["a", "b"]), &[]);
+        assert!(owners.live.is_empty());
+        assert_eq!(owners.orphans, names(&["a", "b"]));
+    }
+
+    #[test]
+    fn remove_orphaned_configs_deletes_only_the_named_files() {
         let tmp = tmp();
         with_test_home(tmp.path().to_path_buf(), || {
             register_project("live-project");
             save_config("live-project", sample()).unwrap();
             save_config("ghost-project", sample()).unwrap();
 
-            let names = list_projects_with_configs().unwrap();
-            assert_eq!(names, vec!["live-project".to_string()]);
+            let removed = remove_orphaned_configs(&names(&["ghost-project", "never-existed"]));
+            assert_eq!(removed, names(&["ghost-project"]));
 
-            // Orphaned file was pruned from disk, not just filtered.
             let dir = dev_servers_dir().unwrap();
             assert!(!dir.join("ghost-project.json").exists());
             assert!(dir.join("live-project.json").exists());
@@ -321,6 +441,20 @@ mod tests {
             save_config("b", sample()).unwrap();
             let err = rename_project("a", "b").unwrap_err();
             assert!(err.contains("already exists"), "unexpected error: {err}");
+        });
+    }
+
+    #[test]
+    fn rename_project_handles_a_case_only_rename() {
+        // On macOS `Demo.json` and `demo.json` are the same file. Treating
+        // that as a clash left `Demo.json` in place under the old name.
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            save_config("Demo", sample()).unwrap();
+            rename_project("Demo", "demo").unwrap();
+
+            assert_eq!(list_config_projects().unwrap(), names(&["demo"]));
+            assert_eq!(list_configs("demo").unwrap().len(), 1);
         });
     }
 

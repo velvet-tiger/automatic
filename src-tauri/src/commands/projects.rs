@@ -391,12 +391,13 @@ pub fn delete_project_config(directory: &str) -> Result<(), String> {
 pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     core::rename_project(old_name, new_name)?;
 
-    // Keep the dev-servers plugin's per-project registry file aligned with
-    // the new name. Without this, `~/.automatic/dev-servers/<old>.json`
+    // Keep the dev-servers plugin's registry file and running processes
+    // aligned with the new name. Without this, `~/.automatic/dev-servers/<old>.json`
     // would keep showing rows in the global Tools > Servers view attached
-    // to a project that no longer exists (VEL-160). Best-effort — the
-    // rename has already succeeded and this cleanup should not block it.
-    if let Err(e) = crate::plugins::dev_servers::registry::rename_project(old_name, new_name) {
+    // to a project that no longer exists, and a running server would lose
+    // its stop control (VEL-160). Best-effort — the rename has already
+    // succeeded and this cleanup should not block it.
+    if let Err(e) = crate::plugins::dev_servers::rename_project(old_name, new_name) {
         eprintln!(
             "rename_project: could not rename dev-server config '{}' -> '{}': {}",
             old_name, new_name, e

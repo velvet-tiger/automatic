@@ -490,13 +490,38 @@ pub fn list_statuses(project: &str, configs: &[ServerConfig]) -> Vec<DevServerSt
 
 /// Statuses across every project that has at least one dev server
 /// configured. Used by the global Tools "Servers" view.
+///
+/// Registry files whose project no longer exists are deleted first
+/// (VEL-160). Those rows would otherwise stay in the view with no way to
+/// remove them, because the per-project delete control lives in the
+/// project editor. A failure to list projects is returned as an error
+/// rather than treated as "no projects", which would delete every file.
 pub fn list_all_statuses() -> Result<Vec<DevServerStatus>, String> {
+    let live_projects = crate::core::list_projects()
+        .map_err(|e| format!("Could not list projects to check dev servers: {}", e))?;
+    let owners = registry::classify_config_projects(&registry::list_config_projects()?, &live_projects);
+    registry::remove_orphaned_configs(&owners.orphans);
+
     let mut all = Vec::new();
-    for project in registry::list_projects_with_configs()? {
+    for project in owners.live {
         let configs = registry::list_configs(&project)?;
         all.extend(list_statuses(&project, &configs));
     }
     Ok(all)
+}
+
+/// Move tracked processes from project `old` to project `new` after a
+/// project rename. `list_statuses` only merges a process into a row when
+/// the project names match. Without this, a server left running across a
+/// rename shows as "Stopped", cannot be started ("already running"),
+/// cannot be stopped from the UI, and its config cannot be deleted.
+pub fn rename_project(old: &str, new: &str) {
+    let mut map = processes().lock().unwrap();
+    for running in map.values_mut() {
+        if running.project == old {
+            running.project = new.to_string();
+        }
+    }
 }
 
 /// Captured stdout/stderr lines for a server, oldest first. Empty if the
@@ -941,6 +966,69 @@ mod tests {
             "log should show the fake npm ran: {:?}",
             log
         );
+    }
+
+    fn fixture_config(id: &str) -> ServerConfig {
+        ServerConfig {
+            id: id.to_string(),
+            name: "web".to_string(),
+            package_manager: PackageManager::Npm,
+            script: "dev".to_string(),
+            subdirectory: String::new(),
+            port: None,
+            created_at: String::new(),
+        }
+    }
+
+    /// VEL-160: a server left running across a project rename must stay
+    /// attached to the project under its new name, or the Servers view
+    /// shows it as stopped with no way to stop or delete it.
+    #[cfg(unix)]
+    #[test]
+    fn rename_project_keeps_a_running_server_attached() {
+        let config = fixture_config("vel-160-rename-running");
+        // Own process group, as `start` does, so `stop` can signal it.
+        let child = Command::new("sleep").arg("30").process_group(0).spawn().expect("spawn sleep");
+        let pid = child.id();
+        processes().lock().unwrap().insert(
+            config.id.clone(),
+            RunningServer {
+                project: "vel-160-old".to_string(),
+                config: config.clone(),
+                child,
+                pid,
+                started_at: String::new(),
+                log: Arc::new(Mutex::new(VecDeque::new())),
+                urls: Arc::new(Mutex::new(Vec::new())),
+                last_error: Arc::new(Mutex::new(None)),
+            },
+        );
+
+        rename_project("vel-160-old", "vel-160-new");
+        let statuses = list_statuses("vel-160-new", std::slice::from_ref(&config));
+
+        let stopped = stop(&config.id).expect("stop should reach the renamed server");
+        forget(&config.id).expect("forget after stop");
+
+        assert!(statuses[0].running, "renamed project should see its running server");
+        assert_eq!(statuses[0].project, "vel-160-new");
+        assert!(!stopped.running);
+    }
+
+    #[test]
+    fn list_all_statuses_drops_configs_whose_project_is_gone() {
+        let tmp = TempDir::new().unwrap();
+        crate::core::with_test_home(tmp.path().to_path_buf(), || {
+            crate::core::save_project("vel-160-live", r#"{"name":"vel-160-live"}"#).expect("register project");
+            registry::save_config("vel-160-live", fixture_config("")).unwrap();
+            registry::save_config("vel-160-ghost", fixture_config("")).unwrap();
+
+            let statuses = list_all_statuses().expect("list statuses");
+
+            assert_eq!(statuses.len(), 1);
+            assert_eq!(statuses[0].project, "vel-160-live");
+            assert_eq!(registry::list_config_projects().unwrap(), vec!["vel-160-live".to_string()]);
+        });
     }
 
     #[cfg(unix)]

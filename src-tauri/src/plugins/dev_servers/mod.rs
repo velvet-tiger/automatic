@@ -9,6 +9,14 @@ pub use types::{DevServerStatus, LogLine, LogStream, NpmScriptEntry, PackageMana
 use crate::core::tools::ToolKind;
 use crate::core::{PluginCategory, PluginManifest, PluginToolDeclaration};
 
+/// Carry a project's dev servers over to its new name: running processes
+/// and the registry file. Called from the project rename command. Errors
+/// only from the registry step; the process step cannot fail.
+pub fn rename_project(old: &str, new: &str) -> Result<(), String> {
+    process::rename_project(old, new);
+    registry::rename_project(old, new)
+}
+
 /// Return the manifest that describes the Dev Servers plugin to the
 /// Automatic plugin registry. Called by `core::app_plugins::bundled_plugins()`.
 ///
