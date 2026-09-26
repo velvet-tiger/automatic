@@ -58,12 +58,16 @@ fn sync_project(name: &str, opts: OutputOptions) -> Result<(), CliError> {
     let written = sync::sync_project(&project).map_err(CliError::from)?;
 
     let count = written.len();
-    let message = format!(
-        "Synced {} file{} for project '{}'",
-        count,
-        if count == 1 { "" } else { "s" },
-        name
-    );
+    let message = if project.agents.is_empty() {
+        format!("No agents configured for project '{}', nothing synced", name)
+    } else {
+        format!(
+            "Synced {} file{} for project '{}'",
+            count,
+            if count == 1 { "" } else { "s" },
+            name
+        )
+    };
     if opts.json {
         emit(opts, &written, || message.clone()).map_err(CliError::Io)
     } else {

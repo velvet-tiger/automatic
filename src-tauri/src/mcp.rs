@@ -2378,7 +2378,7 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_sync_project",
-        description = "Sync a project's MCP server configs to its directory for all configured agent tools. The project must have a directory path and at least one agent tool configured."
+        description = "Sync a project's MCP server configs to its directory for all configured agent tools. The project must have a directory path. A project with no agent tools configured syncs nothing; agents are never added by a sync."
     )]
     async fn sync_project(
         &self,
@@ -2406,11 +2406,17 @@ impl AutomaticMcpServer {
 
         match crate::sync::sync_project(&project) {
             Ok(files) => {
-                let response = serde_json::json!({
+                let mut response = serde_json::json!({
                     "synced_files": files,
                     "agents": project.agents,
                     "directory": project.directory,
                 });
+                if project.agents.is_empty() {
+                    response["message"] = serde_json::Value::String(
+                        "No agents configured, nothing synced. Add an agent tool to the project first."
+                            .to_string(),
+                    );
+                }
                 Ok(CallToolResult::success(vec![Content::text(
                     serde_json::to_string_pretty(&response)
                         .unwrap_or_else(|_| format!("Synced {} files", files.len())),

@@ -13,8 +13,9 @@ struct GlobalUserAgent {
 }
 
 pub fn rebuild_project_state(project: &Project) -> Result<Project, String> {
+    // The agent list is kept as configured.  Rebuild re-derives what those
+    // agents have on disk; to rebuild another agent the user adds it first.
     let mut seed = project.clone();
-    seed.agents.clear();
     seed.skills.clear();
     seed.mcp_servers.clear();
     seed.tools.clear();
@@ -27,10 +28,7 @@ pub fn rebuild_project_state(project: &Project) -> Result<Project, String> {
     // makes rebuild authoritatively reflect what is on disk right now.
     seed.custom_skills = None;
 
-    // Rebuild re-derives the whole project from disk, agents included.  The
-    // user previews the agent changes and confirms them before they are
-    // saved, so this is treated like creating the project from its files.
-    let (mut rebuilt, discovered_servers) = autodetect_inner(&seed, AgentAdoption::AdoptDetected)?;
+    let (mut rebuilt, discovered_servers) = autodetect_inner(&seed, AgentAdoption::KeepSelected)?;
 
     if project.mcp_servers.iter().any(|name| name == "automatic")
         && !rebuilt.mcp_servers.iter().any(|name| name == "automatic")
@@ -540,5 +538,29 @@ Inspect the repo carefully.\n\
         assert!(markdown.contains("maxTurns: 12"));
         assert!(markdown.contains("modelReasoningEffort: high"));
         assert!(markdown.contains("Inspect the repo carefully."));
+    }
+
+    #[test]
+    fn rebuild_keeps_the_configured_agents_only() {
+        let home = tempdir().unwrap();
+        let project_dir = tempdir().unwrap();
+        fs::write(project_dir.path().join("CLAUDE.md"), "# Claude").unwrap();
+        fs::create_dir_all(project_dir.path().join(".claude")).unwrap();
+
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let cursor_only = Project {
+                agents: vec!["cursor".into()],
+                ..make_project(project_dir.path())
+            };
+            let rebuilt = rebuild_project_state(&cursor_only).unwrap();
+            assert_eq!(rebuilt.agents, vec!["cursor".to_string()]);
+
+            let no_agents = Project {
+                agents: vec![],
+                ..make_project(project_dir.path())
+            };
+            let rebuilt = rebuild_project_state(&no_agents).unwrap();
+            assert!(rebuilt.agents.is_empty(), "rebuild must not adopt detected agents");
+        });
     }
 }

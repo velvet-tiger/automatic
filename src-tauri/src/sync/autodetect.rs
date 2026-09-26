@@ -21,8 +21,8 @@ pub(super) enum AgentAdoption {
     KeepSelected,
     /// Fill an empty `project.agents` with every agent detected on disk.  An
     /// agent list the creator already chose is kept as it is.  Only for
-    /// creating a project from existing files and for the user-confirmed
-    /// "Rebuild from disk" action.
+    /// creating a project from existing files.  "Rebuild from disk" keeps the
+    /// configured agents: to rebuild another agent, the user adds it first.
     AdoptDetected,
 }
 
