@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight, Layers, LayoutGrid, Plus, Trash2 } from "lucide-react";
 import { trackProjectDeleted } from "../lib/analytics";
+import { resolveGroupDrop, UNGROUPED_DROP_TARGET } from "../lib/groupDrop";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,9 @@ interface WorkspaceSidebarProps {
   /** Name of the project currently open in the editor, if any. */
   activeProjectName: string | null;
 }
+
+/** Label for the key that adds a dragged project to a group without moving it. */
+const ADD_MODIFIER_LABEL = navigator.userAgent.includes("Mac") ? "Option" : "Alt";
 
 // ── NavItem (matches App.tsx pattern) ────────────────────────────────────────
 
@@ -76,7 +80,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   const newGroupInputRef = useRef<HTMLInputElement>(null);
 
   // ── Drag state ───────────────────────────────────────────────────────────
-  const [dragGhost, setDragGhost] = useState<{ name: string; x: number; y: number } | null>(null);
+  const [dragGhost, setDragGhost] = useState<{ name: string; x: number; y: number; fromGroup: boolean; adding: boolean } | null>(null);
   const [dragOverGroup, setDragOverGroup] = useState<string | null>(null);
 
   // ── Load data ────────────────────────────────────────────────────────────
@@ -238,10 +242,11 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
     const startX = e.clientX;
     const startY = e.clientY;
 
-    setDragGhost({ name: projectName, x: startX, y: startY });
+    const fromGroup = sourceGroup !== null;
+    setDragGhost({ name: projectName, x: startX, y: startY, fromGroup, adding: e.altKey });
 
     const onMove = (ev: PointerEvent) => {
-      setDragGhost({ name: projectName, x: ev.clientX, y: ev.clientY });
+      setDragGhost({ name: projectName, x: ev.clientX, y: ev.clientY, fromGroup, adding: ev.altKey });
 
       // Resolve drop target from DOM
       const el = document.elementFromPoint(ev.clientX, ev.clientY);
@@ -277,24 +282,16 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
       }
       setDragOverGroup(null);
 
-      // "__ungrouped__" means remove from all groups
-      if (targetGroup === "__ungrouped__") {
-        if (sourceGroup) {
-          await removeProjectFromAllGroups(projectName);
-          await loadData();
-          emitGroupsUpdated();
+      const action = resolveGroupDrop(sourceGroup, targetGroup, ev.altKey);
+      if (action.kind === "none") return;
+      if (action.kind === "remove-all") {
+        await removeProjectFromAllGroups(projectName);
+      } else {
+        if (action.kind === "move") {
+          await removeProjectFromGroup(projectName, action.from);
         }
-        return;
+        await addProjectToGroup(projectName, action.to);
       }
-
-      // No change if same group or no target
-      if (!targetGroup || targetGroup === sourceGroup) return;
-
-      // Move: remove from source, add to target
-      if (sourceGroup) {
-        await removeProjectFromGroup(projectName, sourceGroup);
-      }
-      await addProjectToGroup(projectName, targetGroup);
       await loadData();
       emitGroupsUpdated();
     };
@@ -438,7 +435,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
 
         {/* Ungrouped projects — after groups, as "Other Projects" */}
         {ungroupedProjects.length > 0 && (
-          <div className="mb-1 space-y-0.5" data-sidebar-group="__ungrouped__">
+          <div className="mb-1 space-y-0.5" data-sidebar-group={UNGROUPED_DROP_TARGET}>
             <button
               onClick={() => {
                 onFilterByGroup("__ungrouped__");
@@ -480,11 +477,18 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
           style={{ left: dragGhost.x + 12, top: dragGhost.y - 10 }}
         >
           {dragGhost.name}
+          {dragGhost.fromGroup && (
+            <div className="mt-0.5 text-[11px] text-text-muted">
+              {dragGhost.adding
+                ? "Adding to group"
+                : `Hold ${ADD_MODIFIER_LABEL} to add without moving`}
+            </div>
+          )}
         </div>
       )}
 
       {/* Drop highlight overlay on groups during drag */}
-      {dragGhost && dragOverGroup && dragOverGroup !== "__ungrouped__" && (
+      {dragGhost && dragOverGroup && dragOverGroup !== UNGROUPED_DROP_TARGET && (
         <style>{`
           [data-sidebar-group="${dragOverGroup}"] {
             background: rgba(99, 102, 241, 0.08);

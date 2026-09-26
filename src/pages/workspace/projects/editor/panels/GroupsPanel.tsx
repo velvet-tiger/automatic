@@ -147,6 +147,10 @@ export function GroupsPanel({
             files listing all related projects — with their descriptions and relative paths — so
             agents can recognise and navigate between them.
           </p>
+          <p className="leading-relaxed">
+            A project can belong to more than one group. In the sidebar, hold Option (Alt)
+            while dragging a project onto another group to add it without moving it.
+          </p>
         </div>
       </div>
     </section>
