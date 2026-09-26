@@ -14,10 +14,13 @@ All notable changes to Automatic are documented here.
 
 - Syncing a project only ever touches the agents listed in Automatic. It no longer adds agents it finds on disk, and it no longer imports skills or MCP servers from agents you haven't selected. Only creating a new project from an existing folder picks up the agents already there. Rebuild from disk also keeps your agent list. Add an agent first to rebuild it. Syncing a project with no agents now says that nothing was synced. ([08f6509](https://github.com/velvet-tiger/automatic/commit/08f6509), [4de0efb](https://github.com/velvet-tiger/automatic/commit/4de0efb))
 - Sub-agent names must use lowercase letters, digits and hyphens, as skill names do. An existing sub-agent with another name can't be saved until you rename it. ([029cb93](https://github.com/velvet-tiger/automatic/commit/029cb93))
+- Each project now keeps its settings in two files. `.automatic.json` in the project folder holds the configuration, so you can commit it and share it with your team. `.automatic/project.json` holds details that only apply to this computer, such as the folder path, timestamps and sync records, and stays out of git. Existing projects switch over the first time you open them, so each one gains a new `.automatic.json` file. The old file is kept as `.automatic/project.legacy.json`. In silent mode the configuration file goes in `.automatic/silent/` so the project folder stays untouched. ([a00eece](https://github.com/velvet-tiger/automatic/commit/a00eece))
 
 ### Fixed
 
 - Duplicating a sub-agent gives the copy a `-copy` name instead of the original's name. ([029cb93](https://github.com/velvet-tiger/automatic/commit/029cb93))
+- Saving or syncing a project writes its configuration in the same order every time, so it no longer shows changes when nothing changed. ([a00eece](https://github.com/velvet-tiger/automatic/commit/a00eece))
+- A damaged project file, such as one left with merge-conflict markers, now shows an error. Before, Automatic replaced it with incomplete data. ([a00eece](https://github.com/velvet-tiger/automatic/commit/a00eece))
 
 ## [1.30.0] - 2026-09-25
 
