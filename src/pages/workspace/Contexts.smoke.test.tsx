@@ -68,9 +68,13 @@ describe("Contexts", () => {
     expect(await screen.findByText("Guides")).toBeInTheDocument();
     expect(screen.getByText("Setup")).toBeInTheDocument();
     expect(screen.getByText("Index")).toBeInTheDocument();
-    expect(screen.getByText("Decisions")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Linked material/ }));
+    expect(await screen.findByText("Decisions")).toBeInTheDocument();
     expect(screen.getByText("/tmp/adr")).toBeInTheDocument();
     expect(screen.queryByText("Source id")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Used by" }));
     expect(await screen.findByText("app")).toBeInTheDocument();
   });
 
