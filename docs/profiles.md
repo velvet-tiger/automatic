@@ -10,7 +10,7 @@ Stored at `~/.automatic/library/profiles/{name}.json` (`~/.automatic-dev/` in de
 
 ## How a profile reaches a project
 
-Profiles write their references into the project's own lists in `.automatic/project.json`. Nothing else in Automatic changes: save triggers sync, drift compares the lists with disk, autodetect finds the entries already present, and the `sync_projects_referencing_*` sweeps see them.
+Profiles write their references into the project's own lists in `.automatic.json`. Nothing else in Automatic changes: save triggers sync, drift compares the lists with disk, autodetect finds the entries already present, and the `sync_projects_referencing_*` sweeps see them.
 
 Two fields on `Project` carry the link:
 
@@ -29,7 +29,7 @@ A profile whose file is missing is reported and otherwise ignored, so nothing di
 ## What this means in practice
 
 - A profile owns every entry it lists on an attached project, including entries the project had before the profile was attached. Detaching the profile removes all of them. Entries no attached profile lists are the project's own and are never touched.
-- Removing a profile-owned entry through a path that does not lock it (an MCP tool, a hand edit of `project.json`) is undone on the next save. Edit or detach the profile instead.
+- Removing a profile-owned entry through a path that does not lock it (an MCP tool, a hand edit of `.automatic.json`) is undone on the next save. Edit or detach the profile instead.
 - Deleting a library asset prunes it from every profile as well as every project. Renaming an MCP server or command renames it in profiles too.
 - Per-project disabling of a profile-provided MCP server is not available. The editor hides the toggle on inherited servers.
 

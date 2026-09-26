@@ -563,10 +563,7 @@ fn migrate_checklist_to_process(rules_dir: &Path) -> Result<(), String> {
         // We update that file; the registry entry is just a pointer and doesn't
         // need touching.
         if let Some(ref dir) = project_dir {
-            let config_path = std::path::PathBuf::from(dir)
-                .join(".automatic")
-                .join("project.json");
-            if config_path.exists() {
+            if let Some(config_path) = super::project_config_source_path(dir) {
                 if let Ok(config_raw) = fs::read_to_string(&config_path) {
                     if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&config_raw) {
                         // Rename pass + repair pass for already-damaged arrays.
@@ -576,9 +573,7 @@ fn migrate_checklist_to_process(rules_dir: &Path) -> Result<(), String> {
                         let renamed = replace_rule_in_file_rules(&mut config, OLD, NEW);
                         let deduped = dedupe_file_rules(&mut config);
                         if renamed || deduped {
-                            if let Ok(pretty) = serde_json::to_string_pretty(&config) {
-                                let _ = fs::write(&config_path, pretty);
-                            }
+                            let _ = super::write_json_file(&config_path, &config);
                         }
                     }
                 }
@@ -689,10 +684,7 @@ fn migrate_remove_default_rules(rules_dir: &Path, removed: &[&str]) -> Result<()
         // With a project directory the authoritative config lives there; the
         // registry entry is just a pointer.
         if let Some(ref dir) = project_dir {
-            let config_path = std::path::PathBuf::from(dir)
-                .join(".automatic")
-                .join("project.json");
-            if config_path.exists() {
+            if let Some(config_path) = super::project_config_source_path(dir) {
                 if let Ok(config_raw) = fs::read_to_string(&config_path) {
                     if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&config_raw) {
                         let mut changed = false;
@@ -700,9 +692,7 @@ fn migrate_remove_default_rules(rules_dir: &Path, removed: &[&str]) -> Result<()
                             changed |= remove_rule_from_file_rules(&mut config, name);
                         }
                         if changed {
-                            if let Ok(pretty) = serde_json::to_string_pretty(&config) {
-                                let _ = fs::write(&config_path, pretty);
-                            }
+                            let _ = super::write_json_file(&config_path, &config);
                         }
                     }
                 }

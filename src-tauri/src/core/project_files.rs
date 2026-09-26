@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -400,8 +400,8 @@ pub fn compute_content_hash(content: &str) -> String {
 /// Read all instruction files for a project's agents from disk and return a
 /// map of `filename → hash(full_content)`.  Only files that exist on disk are
 /// included.
-pub fn compute_instruction_hashes(project: &Project) -> HashMap<String, String> {
-    let mut hashes = HashMap::new();
+pub fn compute_instruction_hashes(project: &Project) -> BTreeMap<String, String> {
+    let mut hashes = BTreeMap::new();
     if project.directory.is_empty() {
         return hashes;
     }

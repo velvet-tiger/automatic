@@ -124,16 +124,20 @@ mod tests {
     }
 
     /// Every file under `root`, with its bytes, so a test can prove nothing
-    /// changed.  Skips `.automatic/project.json`: saving the project writes
-    /// Automatic's own record of the agent list there, which is the point.
+    /// changed.  Skips the project's own config and state files: saving the
+    /// project writes Automatic's record of the agent list there, which is the
+    /// point.
     fn snapshot(root: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
-        let record = root.join(".automatic").join("project.json");
+        let records = [
+            root.join(".automatic.json"),
+            root.join(".automatic").join("project.json"),
+        ];
         let mut out = Vec::new();
         let mut stack = vec![root.to_path_buf()];
         while let Some(dir) = stack.pop() {
             for entry in fs::read_dir(&dir).expect("read dir").flatten() {
                 let path = entry.path();
-                if path == record {
+                if records.contains(&path) {
                     continue;
                 }
                 if path.is_dir() {

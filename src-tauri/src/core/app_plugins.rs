@@ -334,7 +334,7 @@ fn remove_orphaned_plugin_tools(manifests: &[PluginManifest]) {
 
 /// Drop each of `tool_names` from every project's `tools` array.
 ///
-/// Mirrors the rule-migration scrub: prefer `.automatic/project.json` when a
+/// Mirrors the rule-migration scrub: prefer the in-directory config file when a
 /// project directory is set, otherwise update the registry entry directly.
 fn scrub_tools_from_projects(tool_names: &[String]) {
     let projects_dir = match super::paths::get_projects_dir() {
@@ -372,16 +372,11 @@ fn scrub_tools_from_projects(tool_names: &[String]) {
             .map(|d| d.to_string());
 
         if let Some(ref dir) = project_dir {
-            let config_path = std::path::PathBuf::from(dir)
-                .join(".automatic")
-                .join("project.json");
-            if config_path.exists() {
+            if let Some(config_path) = super::project_config_source_path(dir) {
                 if let Ok(config_raw) = fs::read_to_string(&config_path) {
                     if let Ok(mut config) = serde_json::from_str::<serde_json::Value>(&config_raw) {
                         if remove_tools_from_value(&mut config, tool_names) {
-                            if let Ok(pretty) = serde_json::to_string_pretty(&config) {
-                                let _ = fs::write(&config_path, pretty);
-                            }
+                            let _ = super::write_json_file(&config_path, &config);
                         }
                     }
                 }

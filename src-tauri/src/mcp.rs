@@ -729,7 +729,7 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
         }
         crate::core::DirectoryStatus::OrphanConfig { name: orphan } => {
             return Err(format!(
-                "Directory '{}' contains an Automatic config (.automatic/project.json) that is \
+                "Directory '{}' contains an Automatic config (.automatic.json) that is \
                  not registered (project name '{}'). Ask the user to import it from the \
                  Automatic app, or remove it, before registering a new project here.",
                 directory, orphan
@@ -2973,12 +2973,12 @@ mod tests {
                 "project missing from registry: {names:?}"
             );
 
-            let config = project_dir.join(".automatic").join("project.json");
-            assert!(
-                config.exists(),
-                "project config missing at {}",
-                config.display()
-            );
+            for file in [
+                project_dir.join(".automatic.json"),
+                project_dir.join(".automatic").join("project.json"),
+            ] {
+                assert!(file.exists(), "project file missing at {}", file.display());
+            }
 
             let raw = crate::core::read_project("fresh").expect("read back");
             let project: crate::core::Project =

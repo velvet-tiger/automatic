@@ -195,7 +195,8 @@ export function ProjectEditor({
   const [error, setError] = useState<string | null>(null);
 
   // Orphan-config dialog: open when the picked directory has an on-disk
-  // `.automatic/project.json` that is not registered in Automatic. The user
+  // project config (`.automatic.json`, or a legacy `.automatic/project.json`)
+  // that is not registered in Automatic. The user
   // then chooses to import it, wipe it, or cancel.
   const [orphanDialog, setOrphanDialog] = useState<{ directory: string; existingName: string; pendingName: string } | null>(null);
   const [orphanBusy, setOrphanBusy] = useState(false);

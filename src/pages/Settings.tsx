@@ -1303,8 +1303,12 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                       settings, credentials, and internal state
                     </li>
                     <li>
+                      <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">&lt;project&gt;/.automatic.json</code> — per-project
+                      configuration you can commit with your code
+                    </li>
+                    <li>
                       <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">&lt;project&gt;/.automatic/</code> — per-project
-                      configuration synced into each project directory
+                      state and files synced into each project directory
                     </li>
                   </ul>
                 </div>
@@ -1363,7 +1367,8 @@ export default function Settings({ onOpenWizard, initialPage, onInitialPageConsu
                     the <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.agents/</code> and{" "}
                     <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">~/.automatic/</code> directories,
                     or using the <strong className="text-text-base">Erase All Data</strong> option in Settings.
-                    Per-project configuration in <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">.automatic/</code> directories
+                    Per-project data in <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">.automatic.json</code> files
+                    and <code className="text-xs bg-bg-input px-1.5 py-0.5 rounded border border-border-strong/40">.automatic/</code> directories
                     within your projects can be removed individually. Uninstalling Automatic removes the
                     application but does not automatically delete your configuration data.
                   </p>

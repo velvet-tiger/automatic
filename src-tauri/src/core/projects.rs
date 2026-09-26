@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -6,17 +6,11 @@ use super::*;
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 //
-// Project configs are stored in the project directory at `.automatic/project.json`.
+// A project with a directory stores its config in `.automatic.json` and its
+// machine-local state in `.automatic/project.json` (see `project_layout`).
 // A lightweight registry entry at `~/.automatic/projects/{name}.json` maps project
 // names to their directories so we can enumerate them.  When a project has no
 // directory set yet, the full config lives in the registry file as a fallback.
-
-/// Returns the path to the full project config inside the project directory.
-fn project_config_path(directory: &str) -> PathBuf {
-    PathBuf::from(directory)
-        .join(".automatic")
-        .join("project.json")
-}
 
 pub fn list_projects() -> Result<Vec<String>, String> {
     let projects_dir = get_projects_dir()?;
@@ -66,18 +60,11 @@ pub fn read_project(name: &str) -> Result<String, String> {
         },
     };
 
-    // If directory is set, try to read full config from the project directory
+    // If directory is set, read the full project from the project directory.
+    // A malformed file there is an error rather than a fallback to registry
+    // data: the write-back below would otherwise replace it.
     let mut project = if !registry_project.directory.is_empty() {
-        let config_path = project_config_path(&registry_project.directory);
-        if config_path.exists() {
-            let project_raw = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-            match serde_json::from_str::<Project>(&project_raw) {
-                Ok(p) => p,
-                Err(_) => registry_project, // fall back to registry data
-            }
-        } else {
-            registry_project
-        }
+        read_project_files(&registry_project.directory, name)?.unwrap_or(registry_project)
     } else {
         registry_project
     };
@@ -99,9 +86,8 @@ pub fn read_project(name: &str) -> Result<String, String> {
     // a path that does not exist, and doing so would recreate the folder.
     enrich_project(&mut project);
     if !project.directory.is_empty() && !project.directory_missing {
-        let config_path = project_config_path(&project.directory);
-        if let Ok(pretty) = serde_json::to_string_pretty(&project) {
-            let _ = fs::write(&config_path, &pretty);
+        if let Err(e) = write_project_files(&project) {
+            eprintln!("read_project: could not refresh files for '{}': {}", name, e);
         }
     }
 
@@ -208,7 +194,7 @@ fn enrich_skill_sources(project: &mut Project) {
     let Ok(all_sources) = read_skill_sources() else {
         return;
     };
-    let mut sources = HashMap::new();
+    let mut sources = BTreeMap::new();
     for name in &project.skills {
         if let Some(src) = all_sources.get(name) {
             sources.insert(name.clone(), src.clone());
@@ -221,7 +207,7 @@ fn enrich_skill_collections(project: &mut Project) {
     let Ok(all_collections) = read_skill_collections() else {
         return;
     };
-    let mut collections = HashMap::new();
+    let mut collections = BTreeMap::new();
     for name in &project.skills {
         if let Some(coll) = all_collections.get(name) {
             collections.insert(name.clone(), coll.clone());
@@ -231,7 +217,7 @@ fn enrich_skill_collections(project: &mut Project) {
 }
 
 fn enrich_mcp_server_specs(project: &mut Project) {
-    let mut specs = HashMap::new();
+    let mut specs = BTreeMap::new();
     for name in &project.mcp_servers {
         let Ok(raw) = read_mcp_server_config(name) else {
             continue;
@@ -278,7 +264,7 @@ fn enrich_mcp_server_specs(project: &mut Project) {
 }
 
 fn enrich_resolved_rules(project: &mut Project) {
-    let mut resolved = HashMap::new();
+    let mut resolved = BTreeMap::new();
     // Collect all unique rule machine names from file_rules values.
     let rule_names: std::collections::HashSet<&String> =
         project.file_rules.values().flatten().collect();
@@ -301,7 +287,7 @@ fn enrich_resolved_rules(project: &mut Project) {
 }
 
 fn enrich_resolved_agents(project: &mut Project) {
-    let mut resolved = HashMap::new();
+    let mut resolved = BTreeMap::new();
     for machine_name in &project.user_agents {
         let Ok(content) = read_subagent(machine_name) else {
             continue;
@@ -314,7 +300,7 @@ fn enrich_resolved_agents(project: &mut Project) {
 }
 
 fn enrich_resolved_commands(project: &mut Project) {
-    let mut resolved = HashMap::new();
+    let mut resolved = BTreeMap::new();
     for machine_name in &project.user_commands {
         let Ok(content) = read_user_command(machine_name) else {
             continue;
@@ -464,10 +450,9 @@ pub fn inspect_project_directory(directory: &str) -> Result<DirectoryStatus, Str
         return Ok(DirectoryStatus::RegisteredHere { name: existing });
     }
 
-    let config_path = project_config_path(directory);
-    if !config_path.exists() {
+    let Some(config_path) = project_config_source_path(directory) else {
         return Ok(DirectoryStatus::Available);
-    }
+    };
 
     let name = read_orphan_config_name(&config_path).unwrap_or_else(|| {
         PathBuf::from(directory)
@@ -489,9 +474,10 @@ fn read_orphan_config_name(config_path: &std::path::Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Adopt an on-disk project config as a new registry entry. Reads
-/// `<directory>/.automatic/project.json`, refuses on invalid or colliding
-/// names, and writes the lightweight `{name, directory}` pointer to
+/// Adopt an on-disk project config as a new registry entry. Reads the
+/// project files in `<directory>` (`.automatic.json`, or a legacy
+/// `.automatic/project.json`), refuses on invalid or colliding names, and
+/// writes the lightweight `{name, directory}` pointer to
 /// `~/.automatic/projects/{name}.json`. Returns the adopted project name.
 /// The on-disk config is left untouched.
 pub fn import_existing_project(directory: &str) -> Result<String, String> {
@@ -499,31 +485,17 @@ pub fn import_existing_project(directory: &str) -> Result<String, String> {
         return Err("A project directory is required to import.".into());
     }
 
-    let config_path = project_config_path(directory);
-    if !config_path.exists() {
-        return Err(format!(
-            "No Automatic configuration was found at {}.",
-            config_path.display()
-        ));
-    }
-
-    let raw = fs::read_to_string(&config_path).map_err(|e| {
-        format!(
-            "Failed to read {}: {}",
-            config_path.display(),
-            e
-        )
-    })?;
-    let project: Project = serde_json::from_str(&raw)
-        .map_err(|e| format!("The existing project.json could not be parsed: {}", e))?;
+    let project = read_project_files(directory, "")
+        .map_err(|e| format!("The existing project config could not be read: {}", e))?
+        .ok_or_else(|| format!("No Automatic configuration was found in {}.", directory))?;
 
     let name = project.name.trim();
     if name.is_empty() {
-        return Err("The existing project.json has no name and cannot be imported.".into());
+        return Err("The existing project config has no name and cannot be imported.".into());
     }
     if !is_valid_name(name) {
         return Err(format!(
-            "The existing project.json has an invalid name ('{}') and cannot be imported.",
+            "The existing project config has an invalid name ('{}') and cannot be imported.",
             name
         ));
     }
@@ -550,33 +522,15 @@ pub fn import_existing_project(directory: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-/// Delete `<directory>/.automatic/project.json` and, if the enclosing
-/// `.automatic/` directory is empty afterwards, remove it too. Idempotent —
-/// succeeds when the file is already absent.
+/// Delete the project config and state files in `<directory>` and, if the
+/// enclosing `.automatic/` directory is empty afterwards, remove it too.
+/// Idempotent — succeeds when the files are already absent.
 pub fn delete_project_config(directory: &str) -> Result<(), String> {
     if directory.is_empty() {
         return Err("A project directory is required.".into());
     }
 
-    let config_path = project_config_path(directory);
-    if config_path.exists() {
-        fs::remove_file(&config_path).map_err(|e| {
-            format!(
-                "Failed to delete {}: {}",
-                config_path.display(),
-                e
-            )
-        })?;
-    }
-
-    let automatic_dir = PathBuf::from(directory).join(".automatic");
-    if automatic_dir.exists() {
-        if let Ok(mut entries) = fs::read_dir(&automatic_dir) {
-            if entries.next().is_none() {
-                let _ = fs::remove_dir(&automatic_dir);
-            }
-        }
-    }
+    remove_project_files(directory)?;
 
     Ok(())
 }
@@ -591,7 +545,6 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     // directory_missing is a transient runtime flag — never persist it.
     project.directory_missing = false;
     enrich_project(&mut project);
-    let pretty = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
 
     let projects_dir = get_projects_dir()?;
     if !projects_dir.exists() {
@@ -601,13 +554,7 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     let registry_path = projects_dir.join(format!("{}.json", name));
 
     if !project.directory.is_empty() {
-        // Write full config to project directory
-        let automatic_dir = PathBuf::from(&project.directory).join(".automatic");
-        if !automatic_dir.exists() {
-            fs::create_dir_all(&automatic_dir).map_err(|e| e.to_string())?;
-        }
-        let config_path = automatic_dir.join("project.json");
-        fs::write(&config_path, &pretty).map_err(|e| e.to_string())?;
+        write_project_files(&project)?;
 
         // Write lightweight registry entry
         let ref_data = serde_json::json!({
@@ -618,6 +565,7 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
         fs::write(&registry_path, &ref_pretty).map_err(|e| e.to_string())?;
     } else {
         // No directory yet — write full config to registry
+        let pretty = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
         fs::write(&registry_path, &pretty).map_err(|e| e.to_string())?;
     }
 
@@ -667,17 +615,12 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
 
     // Write the in-directory config with the updated name
     if !project.directory.is_empty() {
-        let config_path = project_config_path(&project.directory);
-        if config_path.exists()
+        if has_project_files(&project.directory)
             || PathBuf::from(&project.directory)
                 .join(".automatic")
                 .exists()
         {
-            let automatic_dir = PathBuf::from(&project.directory).join(".automatic");
-            if !automatic_dir.exists() {
-                fs::create_dir_all(&automatic_dir).map_err(|e| e.to_string())?;
-            }
-            fs::write(&config_path, &pretty).map_err(|e| e.to_string())?;
+            write_project_files(&project)?;
         }
 
         // Write new registry entry (lightweight pointer)
@@ -729,14 +672,10 @@ pub fn delete_project(name: &str) -> Result<(), String> {
         if let Ok(raw) = fs::read_to_string(&registry_path) {
             if let Ok(project) = serde_json::from_str::<Project>(&raw) {
                 if !project.directory.is_empty() {
-                    let config_path = project_config_path(&project.directory);
-                    if config_path.exists() {
-                        let _ = fs::remove_file(&config_path);
-                    }
-                    // Remove .automatic dir if it's now empty
-                    let automatic_dir = PathBuf::from(&project.directory).join(".automatic");
-                    if automatic_dir.exists() {
-                        let _ = fs::remove_dir(&automatic_dir); // only succeeds if empty
+                    // Best-effort: the registry entry is what makes the
+                    // project exist, so a leftover file must not block delete.
+                    if let Err(e) = remove_project_files(&project.directory) {
+                        eprintln!("delete_project: could not remove files for '{}': {}", name, e);
                     }
                 }
             }
@@ -781,12 +720,7 @@ mod test_helpers {
         let registry_path = projects_dir.join(format!("{}.json", name));
 
         if !project.directory.is_empty() {
-            let automatic_dir = PathBuf::from(&project.directory).join(".automatic");
-            if !automatic_dir.exists() {
-                fs::create_dir_all(&automatic_dir).map_err(|e| e.to_string())?;
-            }
-            let config_path = automatic_dir.join("project.json");
-            fs::write(&config_path, &pretty).map_err(|e| e.to_string())?;
+            write_project_files(&project)?;
 
             let ref_data = serde_json::json!({
                 "name": project.name,
@@ -822,13 +756,7 @@ mod test_helpers {
         };
 
         if !registry_project.directory.is_empty() {
-            let config_path = project_config_path(&registry_project.directory);
-            if config_path.exists() {
-                let project_raw = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-                let full_project = match serde_json::from_str::<Project>(&project_raw) {
-                    Ok(p) => p,
-                    Err(_) => registry_project,
-                };
+            if let Some(full_project) = read_project_files(&registry_project.directory, name)? {
                 return serde_json::to_string_pretty(&full_project).map_err(|e| e.to_string());
             }
         }
@@ -868,14 +796,7 @@ mod test_helpers {
             if let Ok(raw) = fs::read_to_string(&registry_path) {
                 if let Ok(project) = serde_json::from_str::<Project>(&raw) {
                     if !project.directory.is_empty() {
-                        let config_path = project_config_path(&project.directory);
-                        if config_path.exists() {
-                            let _ = fs::remove_file(&config_path);
-                        }
-                        let automatic_dir = PathBuf::from(&project.directory).join(".automatic");
-                        if automatic_dir.exists() {
-                            let _ = fs::remove_dir(&automatic_dir);
-                        }
+                        remove_project_files(&project.directory)?;
                     }
                 }
             }

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 // Serde helper: skip serializing a bool field when it is false.
 // Used for transient runtime flags that should not be persisted to disk but
@@ -322,21 +322,21 @@ pub struct Project {
     /// (e.g. "CLAUDE.md") to an ordered list of rule names whose content is
     /// appended below the user-authored content when the file is written.
     /// In unified mode the key `"_unified"` is used for all files.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub file_rules: HashMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub file_rules: BTreeMap<String, Vec<String>>,
     /// `"unified"` — one set of instructions written to all agent files.
     /// `"per-agent"` (default) — each agent file is edited independently.
     #[serde(default = "default_instruction_mode")]
     pub instruction_mode: String,
     /// Per-agent configuration options keyed by agent id (e.g. `"claude"`).
     /// Agents not present in this map use their `AgentOptions::default()`.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub agent_options: HashMap<String, AgentOptions>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub agent_options: BTreeMap<String, AgentOptions>,
     /// Hash of the full content Automatic last wrote to each instruction file.
     /// Maps filename (e.g. `"AGENTS.md"`) to a hex-encoded hash.  Used by
     /// drift detection to identify files that were modified externally.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub instruction_file_hashes: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub instruction_file_hashes: BTreeMap<String, String>,
     /// Inline custom rules stored directly in the project (not in the global
     /// rule registry). These are injected into instruction files in the same
     /// way as global rules, but are scoped to this project only.
@@ -371,8 +371,8 @@ pub struct Project {
     /// no attached profile lists stay the project's own. Drives the
     /// "Profile: X" badge and lock in the editor, and lets a later reconcile
     /// remove exactly what a profile no longer provides.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub profile_contributions: HashMap<String, ProfileContribution>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub profile_contributions: BTreeMap<String, ProfileContribution>,
     /// Context slugs attached to this project. Each references
     /// `~/.automatic/library/contexts/{slug}.json`. Agents read contexts on
     /// demand through the MCP server; nothing is written into the project.
@@ -381,8 +381,8 @@ pub struct Project {
     /// Which entries in `contexts` each project group provides, keyed by
     /// group name. Entries no group records are the project's own. Lets a
     /// later reconcile remove exactly what a group no longer provides.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub group_context_contributions: HashMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub group_context_contributions: BTreeMap<String, Vec<String>>,
     /// Inline custom sub-agents stored directly in the project configuration.
     /// These are written to each agent's sub-agent directory (e.g.
     /// `.claude/agents/`) during sync. Unlike workspace user_agents, custom
@@ -438,35 +438,35 @@ pub struct Project {
     /// Provenance metadata for skills in the `skills` list.
     /// Keyed by skill name → SkillSource (GitHub owner/repo, skills.sh id, kind).
     /// Populated from `~/.automatic/skills.json` on save.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub skill_sources: HashMap<String, SkillSource>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub skill_sources: BTreeMap<String, SkillSource>,
 
     /// Collection grouping for skills in the `skills` list.
     /// Keyed by skill name → collection name.
     /// Populated from `~/.automatic/skill-collections.json` on save.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub skill_collections: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub skill_collections: BTreeMap<String, String>,
 
     /// MCP server specifications (transport, command, args) without secret
     /// values.  Keyed by server name.  Allows another Automatic instance to
     /// know what servers are required even without the user-level config.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub mcp_server_specs: HashMap<String, McpServerSpec>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mcp_server_specs: BTreeMap<String, McpServerSpec>,
 
     /// Snapshot of workspace rule content for rules referenced in
     /// `file_rules`.  Keyed by rule machine name.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub resolved_rules: HashMap<String, ResolvedRule>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resolved_rules: BTreeMap<String, ResolvedRule>,
 
     /// Snapshot of workspace agent content for agents in `user_agents`.
     /// Keyed by agent machine name.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub resolved_agents: HashMap<String, CustomAgent>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resolved_agents: BTreeMap<String, CustomAgent>,
 
     /// Snapshot of workspace command content for commands in `user_commands`.
     /// Keyed by command machine name.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub resolved_commands: HashMap<String, CustomCommand>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub resolved_commands: BTreeMap<String, CustomCommand>,
 }
 
 impl Project {
