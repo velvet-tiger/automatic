@@ -1,3 +1,4 @@
+import { nextAvailableName } from "./uniqueName";
 import { escapeYamlDoubleQuoted } from "./yaml";
 
 /**
@@ -313,6 +314,35 @@ export function serializeSubagent(doc: SubagentDocument): string {
   const closing =
     doc.body !== "" && !layout.closing.endsWith("\n") ? layout.closing + nl : layout.closing;
   return `---${nl}${frontmatter}${closing}${doc.body}`;
+}
+
+export interface SubagentIdentity {
+  /** Machine name: the library file stem. */
+  id: string;
+  /** Front matter `name`. */
+  name: string;
+}
+
+/**
+ * Pick the name and machine name for a copy of `source`. Both get a `-copy`
+ * suffix, then `-copy-2` and so on, so the copy never shares a name with an
+ * existing agent. Tools call a sub-agent by its name, so two agents with the
+ * same name would shadow each other once synced.
+ */
+export function duplicateSubagentIdentity(
+  source: SubagentIdentity,
+  existing: readonly SubagentIdentity[],
+): SubagentIdentity {
+  return {
+    id: nextAvailableName(subagentMachineName(`${source.id}-copy`), existing.map(e => e.id)),
+    name: nextAvailableName(`${source.name}-copy`, existing.map(e => e.name)),
+  };
+}
+
+/** Return `content` with its front matter `name` replaced, keeping everything else. */
+export function withSubagentName(content: string, name: string): string {
+  const doc = parseSubagent(content);
+  return serializeSubagent({ ...doc, fields: { ...doc.fields, name } });
 }
 
 /**

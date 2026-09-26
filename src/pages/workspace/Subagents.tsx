@@ -11,13 +11,17 @@ import { AssetDrawer } from "../../components/AssetDrawer";
 import { BuiltInBadge, ReadOnlyBadge, LockCell } from "../../components/ProtectionBadge";
 import { useBulkSelection } from "../../lib/useBulkSelection";
 import { nextAvailableName } from "../../lib/uniqueName";
+import { validateLibraryName } from "../../lib/libraryNames";
+import { MarkdownPreview } from "../../components/MarkdownPreview";
 import {
   type SubagentDocument,
   type SubagentFields,
   conflictingExtraKeys,
+  duplicateSubagentIdentity,
   parseSubagent,
   serializeSubagent,
   subagentMachineName,
+  withSubagentName,
 } from "../../lib/subagentDocument";
 import {
   type AssetSecurityScanRecord,
@@ -110,8 +114,13 @@ const CUSTOM_MODEL = "__custom__";
 const COLOR_OPTIONS = ["red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan"];
 
 const FIELD_LABEL_CLASS = "block mb-1.5 text-[11px] font-semibold text-text-muted tracking-wider uppercase";
-const FIELD_INPUT_CLASS =
-  "w-full text-[12px] text-text-base bg-bg-input border border-border-strong/50 rounded-md px-2.5 py-1 placeholder-text-muted/50 focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors";
+// Border colour is left out so a field can swap it (for example on error)
+// without two border-colour utilities competing.
+const FIELD_INPUT_BASE_CLASS =
+  "w-full text-[12px] text-text-base bg-bg-input border rounded-md px-2.5 py-1 placeholder-text-muted/50 focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors";
+const FIELD_INPUT_CLASS = `${FIELD_INPUT_BASE_CLASS} border-border-strong/50`;
+const FIELD_VALUE_CLASS = "text-[13px] text-text-base leading-relaxed break-words";
+const FIELD_EMPTY_CLASS = "text-[13px] text-text-muted";
 const FIELD_SELECT_CLASS =
   "w-full appearance-none text-[12px] text-text-base bg-bg-input border border-border-strong/50 rounded-md px-2.5 pr-7 py-1 focus:outline-none focus:ring-1 focus:ring-brand/60 focus:border-brand/60 transition-colors";
 
@@ -132,6 +141,8 @@ function SubagentFieldsEditor({ draft, onChange }: SubagentFieldsEditorProps) {
   const [showExtra, setShowExtra] = useState(draft.extraFrontmatter.trim() !== "");
   const conflicts = conflictingExtraKeys(draft);
   const showModelId = customModel || modelIsCustom;
+  // An empty name is reported by the disabled Save button, not as an error.
+  const nameError = fields.name.trim() === "" ? null : validateLibraryName(fields.name.trim());
 
   const setField = (key: keyof SubagentFields, value: string) =>
     onChange({ ...draft, fields: { ...fields, [key]: value } });
@@ -155,9 +166,16 @@ function SubagentFieldsEditor({ draft, onChange }: SubagentFieldsEditorProps) {
             placeholder="code-reviewer"
             autoFocus
             spellCheck={false}
-            className={FIELD_INPUT_CLASS}
+            aria-invalid={nameError !== null}
+            className={`${FIELD_INPUT_BASE_CLASS} font-mono ${nameError ? "border-danger/60" : "border-border-strong/50"}`}
           />
-          <p className="mt-1 text-[11px] text-text-muted">Agents call the sub-agent by this name.</p>
+          {nameError ? (
+            <p className="mt-1 text-[11px] text-danger">{nameError}</p>
+          ) : (
+            <p className="mt-1 text-[11px] text-text-muted">
+              Agents call the sub-agent by this name. Use lowercase letters, numbers, and hyphens.
+            </p>
+          )}
         </div>
 
         <div>
@@ -299,6 +317,72 @@ function SubagentFieldsEditor({ draft, onChange }: SubagentFieldsEditorProps) {
   );
 }
 
+function modelLabel(model: string): string {
+  return MODEL_OPTIONS.find(o => o.value === model)?.label ?? model;
+}
+
+/**
+ * Read-only view of a sub-agent. It uses the editor's labels and layout so
+ * viewing and editing look the same, and never shows the raw file.
+ */
+function SubagentFieldsView({ doc }: { doc: SubagentDocument }) {
+  const { fields } = doc;
+  return (
+    <>
+      <div className="px-6 pt-5 pb-4 border-b border-border-strong/40 space-y-4">
+        <div>
+          <span className={FIELD_LABEL_CLASS}>Name</span>
+          {fields.name
+            ? <div className={`${FIELD_VALUE_CLASS} font-mono`}>{fields.name}</div>
+            : <div className={FIELD_EMPTY_CLASS}>Not set</div>}
+        </div>
+
+        <div>
+          <span className={FIELD_LABEL_CLASS}>Description</span>
+          {fields.description
+            ? <div className={`${FIELD_VALUE_CLASS} whitespace-pre-wrap`}>{fields.description}</div>
+            : <div className={FIELD_EMPTY_CLASS}>Not set</div>}
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,11rem)_minmax(0,8rem)] gap-3">
+          <div className="min-w-0">
+            <span className={FIELD_LABEL_CLASS}>Tools</span>
+            {fields.tools
+              ? <div className={FIELD_VALUE_CLASS}>{fields.tools}</div>
+              : <div className={FIELD_EMPTY_CLASS}>All tools</div>}
+          </div>
+          <div className="min-w-0">
+            <span className={FIELD_LABEL_CLASS}>Model</span>
+            <div className={FIELD_VALUE_CLASS}>{modelLabel(fields.model)}</div>
+          </div>
+          <div className="min-w-0">
+            <span className={FIELD_LABEL_CLASS}>Colour</span>
+            {fields.color
+              ? <div className={`${FIELD_VALUE_CLASS} capitalize`}>{fields.color}</div>
+              : <div className={FIELD_EMPTY_CLASS}>Default</div>}
+          </div>
+        </div>
+
+        {doc.extraFrontmatter.trim() !== "" && (
+          <div>
+            <span className={FIELD_LABEL_CLASS}>Other settings</span>
+            <pre className="bg-bg-input border border-border-strong/40 rounded-md px-3 py-2 font-mono text-[11px] text-text-base leading-relaxed overflow-x-auto whitespace-pre">
+              {doc.extraFrontmatter}
+            </pre>
+          </div>
+        )}
+      </div>
+
+      <div className="px-6 pt-3 pb-6">
+        <span className={FIELD_LABEL_CLASS}>Prompt</span>
+        {doc.body.trim()
+          ? <MarkdownPreview content={doc.body} />
+          : <div className={`${FIELD_EMPTY_CLASS} italic`}>This agent has no prompt. Click Edit to add one.</div>}
+      </div>
+    </>
+  );
+}
+
 export default function Subagents() {
   const [agents, setAgents] = useState<SubagentEntry[]>([]);
   const [recentRefresh, setRecentRefresh] = useState(0);
@@ -372,7 +456,11 @@ export default function Subagents() {
     if (!draft) return;
     const finalDraft = trimmedDraft(draft);
     const name = finalDraft.fields.name;
-    if (!name || !finalDraft.fields.description || conflictingExtraKeys(finalDraft).length > 0) return;
+    if (
+      validateLibraryName(name) !== null
+      || !finalDraft.fields.description
+      || conflictingExtraKeys(finalDraft).length > 0
+    ) return;
     // A new agent's file name comes from its name, so the user never picks a slug.
     const id = isCreating
       ? nextAvailableName(subagentMachineName(name), agents.map(a => a.id))
@@ -492,34 +580,28 @@ export default function Subagents() {
   };
 
   const handleDuplicate = async (id: string) => {
-    const strippedId = id.startsWith("automatic-") ? id.slice("automatic-".length) : id;
-    const base = `${strippedId}-copy`;
-    let candidate = base;
-    let suffix = 2;
-    while (agents.some(a => a.id === candidate)) {
-      candidate = `${base}-${suffix}`;
-      suffix++;
-    }
     try {
       const raw: string = await invoke("read_subagent", { machineName: id });
       const agent: UserAgent = JSON.parse(raw);
-      const dupName = agent.name;
-      await invoke("save_subagent", { machineName: candidate, name: dupName, content: agent.content });
-      const newEntry: SubagentEntry = { id: candidate, name: dupName };
+      const sourceName = parseSubagent(agent.content).fields.name || agent.name;
+      const copy = duplicateSubagentIdentity({ id, name: sourceName }, agents);
+      const content = withSubagentName(agent.content, copy.name);
+      await invoke("save_subagent", { machineName: copy.id, name: copy.name, content });
+      const newEntry: SubagentEntry = { id: copy.id, name: copy.name };
       setAgents(prev => [...prev, newEntry].sort((a, b) => a.name.localeCompare(b.name)));
-      await loadAgent(candidate);
+      await loadAgent(copy.id);
       setIsEditing(true);
       setError(null);
       setSecurityNotice(null);
-    } catch (err: any) {
-      setError(`Failed to duplicate agent: ${err}`);
+    } catch (err: unknown) {
+      setError(`Failed to duplicate agent: ${String(err)}`);
     }
   };
 
   const selectedEntry = agents.find(a => a.id === selectedId);
   const editedContent = isEditing && draft ? serializeSubagent(trimmedDraft(draft)) : agentContent;
   const canSave = !!draft
-    && draft.fields.name.trim() !== ""
+    && validateLibraryName(draft.fields.name.trim()) === null
     && draft.fields.description.trim() !== ""
     && conflictingExtraKeys(draft).length === 0;
   const { label: scanStatusLabel, className: scanStatusClass } = getAssetSecurityStatus(currentScan, {
@@ -753,23 +835,11 @@ export default function Subagents() {
           <div className="min-h-[44px] pl-6 pr-10 border-b border-border-strong/40 flex justify-between items-center gap-4 py-2 flex-shrink-0">
             <div className="flex items-center gap-3 min-w-0 flex-1">
               <MessagesSquare size={14} className="text-icon-agent flex-shrink-0" />
-              {isCreating ? (
-                <h3 className="text-[14px] font-medium text-text-base truncate">
-                  {draft?.fields.name.trim() || "New agent"}
-                </h3>
-              ) : isEditing ? (
-                <div className="flex flex-col gap-0.5 min-w-0">
-                  <h3 className="text-[14px] font-medium text-text-base truncate">
-                    {draft?.fields.name.trim() || displayName}
-                  </h3>
-                  <span className="text-[10px] text-text-muted font-mono">{selectedId}</span>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-0.5 min-w-0">
-                  <h3 className="text-[14px] font-medium text-text-base truncate">{selectedEntry?.name || displayName}</h3>
-                  <span className="text-[10px] text-text-muted font-mono">{selectedId}</span>
-                </div>
-              )}
+              <h3 className="text-[14px] font-medium text-text-base truncate">
+                {isEditing
+                  ? draft?.fields.name.trim() || (isCreating ? "New agent" : displayName)
+                  : selectedEntry?.name || displayName}
+              </h3>
             </div>
 
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -818,7 +888,7 @@ export default function Subagents() {
                   <button
                     onClick={handleSave}
                     disabled={!canSave}
-                    title={canSave ? undefined : "Add a name and description to save"}
+                    title={canSave ? undefined : "Add a valid name and a description to save"}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-brand hover:bg-brand-hover text-white rounded text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   >
                     <Check size={12} /> Save
@@ -862,9 +932,7 @@ export default function Subagents() {
                       }
                     />
                   </div>
-                  <div className="p-6 font-mono text-[13px] whitespace-pre-wrap text-text-base leading-relaxed">
-                    {agentContent || <span className="text-text-muted italic">This agent is empty. Click edit to add content.</span>}
-                  </div>
+                  {draft && <SubagentFieldsView doc={draft} />}
                 </div>
 
                 {/* Used by projects panel */}

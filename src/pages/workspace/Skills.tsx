@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { escapeYamlDoubleQuoted } from "../../lib/yaml";
+import { validateLibraryName } from "../../lib/libraryNames";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
 import { MarkdownPreview } from "../../components/MarkdownPreview";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
@@ -467,26 +468,13 @@ function SkillPreview({ content, source, sources, resources, license, onUpdated 
 // ── Frontmatter field validation ─────────────────────────────────────────────
 
 const XML_TAG_RE = /<[^>]+>/;
-const RESERVED_WORDS = ["anthropic", "claude"];
-const NAME_CHARSET_RE = /^[a-z0-9-]*$/;
 
 interface FieldError {
   name: string | null;
   description: string | null;
 }
 
-function validateSkillName(value: string): string | null {
-  if (!value) return "Name is required.";
-  if (value.length > 64) return "Name must be 64 characters or fewer.";
-  if (!NAME_CHARSET_RE.test(value)) return "Name may only contain lowercase letters, numbers, and hyphens.";
-  if (XML_TAG_RE.test(value)) return "Name must not contain XML tags.";
-  for (const word of RESERVED_WORDS) {
-    if (value === word || value.startsWith(word + "-") || value.endsWith("-" + word) || value.includes("-" + word + "-")) {
-      return `Name must not contain the reserved word "${word}".`;
-    }
-  }
-  return null;
-}
+const validateSkillName = validateLibraryName;
 
 function validateSkillDescription(value: string): string | null {
   if (!value.trim()) return "Description is required.";

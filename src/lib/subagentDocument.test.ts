@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   conflictingExtraKeys,
+  duplicateSubagentIdentity,
   parseSubagent,
   serializeSubagent,
   subagentMachineName,
+  withSubagentName,
   type SubagentDocument,
 } from "./subagentDocument";
 
@@ -172,5 +174,39 @@ describe("subagentMachineName", () => {
   it("never claims a read-only prefix", () => {
     expect(subagentMachineName("Automatic Reviewer")).toBe("reviewer");
     expect(subagentMachineName("Codex Helper OpenAI")).toBe("codex-helper-openai-agent");
+  });
+});
+
+describe("duplicateSubagentIdentity", () => {
+  const existing = [
+    { id: "automatic-code-reviewer", name: "code-reviewer" },
+    { id: "planner", name: "planner" },
+  ];
+
+  it("adds -copy to the name and the machine name", () => {
+    expect(duplicateSubagentIdentity({ id: "planner", name: "planner" }, existing))
+      .toEqual({ id: "planner-copy", name: "planner-copy" });
+  });
+
+  it("drops the bundled prefix from the machine name", () => {
+    expect(duplicateSubagentIdentity(existing[0]!, existing))
+      .toEqual({ id: "code-reviewer-copy", name: "code-reviewer-copy" });
+  });
+
+  it("counts up when a copy already exists", () => {
+    const withCopies = [
+      ...existing,
+      { id: "planner-copy", name: "planner-copy" },
+      { id: "planner-copy-2", name: "planner-copy-2" },
+    ];
+    expect(duplicateSubagentIdentity({ id: "planner", name: "planner" }, withCopies))
+      .toEqual({ id: "planner-copy-3", name: "planner-copy-3" });
+  });
+});
+
+describe("withSubagentName", () => {
+  it("replaces only the name in the front matter", () => {
+    expect(withSubagentName(CLAUDE_AGENT, "code-reviewer-copy"))
+      .toBe(CLAUDE_AGENT.replace("name: code-reviewer\n", "name: code-reviewer-copy\n"));
   });
 });
