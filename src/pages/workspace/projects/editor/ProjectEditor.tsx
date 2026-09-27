@@ -3349,7 +3349,9 @@ export function ProjectEditor({
                               className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none transition-colors"
                             />
                             <div id="wizard-project-name-help" className="mt-1.5 text-[12px] leading-relaxed">
-                              {wizardNameFormatProblem !== null ? (
+                              {/* An empty name the user has not touched (e.g. directory "/")
+                                  only disables Continue; the message waits for an edit. */}
+                              {wizardNameFormatProblem !== null && (nameEdited || wizardTrimmedName !== "") ? (
                                 <p className="text-danger">{wizardNameFormatProblem}</p>
                               ) : wizardNameTaken && wizardNameSuggestion !== null ? (
                                 <p className="text-danger">
