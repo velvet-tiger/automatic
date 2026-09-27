@@ -18,6 +18,7 @@ All notable changes to Automatic are documented here.
 
 ### Fixed
 
+- Agents are told to track features only on projects that use the Build tool. The feature-tracking instructions moved out of the Automatic service rule into a new "Build: Feature Tracking" rule, and the `automatic-features` skill now comes with the Build plugin. Both are added to a project when it has the Build tool and removed when it doesn't. Existing projects catch up the next time Automatic starts. On projects without Build, the feature tools now return an error instead of saving features nobody can see. ([ed11630](https://github.com/velvet-tiger/automatic/commit/ed11630))
 - Duplicating a sub-agent gives the copy a `-copy` name instead of the original's name. ([029cb93](https://github.com/velvet-tiger/automatic/commit/029cb93))
 - Saving or syncing a project writes its configuration in the same order every time, so it no longer shows changes when nothing changed. ([a00eece](https://github.com/velvet-tiger/automatic/commit/a00eece))
 - A damaged project file, such as one left with merge-conflict markers, now shows an error. Before, Automatic replaced it with incomplete data. ([a00eece](https://github.com/velvet-tiger/automatic/commit/a00eece))
