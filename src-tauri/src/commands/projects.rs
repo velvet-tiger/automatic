@@ -1754,7 +1754,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let err = save_project("alpha", &stub_json, Some(true))
                 .expect_err("creating over existing project must fail");
             assert!(
-                err.contains("already exists"),
+                err.contains("The name 'alpha' is already used by the project at"),
                 "unexpected error: {err}"
             );
 

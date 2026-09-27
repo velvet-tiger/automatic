@@ -3010,7 +3010,7 @@ mod tests {
             let err = register_project_impl(&params("alpha", ws2.to_str().unwrap(), None))
                 .expect_err("duplicate name must be rejected");
             assert!(
-                err.contains("already exists"),
+                err.contains("The name 'alpha' is already used by the project at"),
                 "unexpected error: {err}"
             );
         });

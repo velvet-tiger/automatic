@@ -400,10 +400,18 @@ pub fn assert_can_create_project(name: &str, directory: &str) -> Result<(), Stri
     let projects_dir = get_projects_dir()?;
     let registry_path = projects_dir.join(format!("{}.json", name));
     if registry_path.exists() {
-        return Err(format!(
-            "A project named '{}' already exists. Open it from the project list instead of creating it again.",
-            name
-        ));
+        // Name the other project's directory so the user can tell an
+        // unrelated project with the same folder name from this one.
+        return Err(match registry_directory_for(name)? {
+            Some(dir) => format!(
+                "The name '{}' is already used by the project at {}. Choose a different name.",
+                name, dir
+            ),
+            None => format!(
+                "The name '{}' is already used by another project. Choose a different name.",
+                name
+            ),
+        });
     }
 
     if directory.is_empty() {
@@ -1182,9 +1190,44 @@ mod tests {
 
             let err = assert_can_create_project("alpha", "")
                 .expect_err("duplicate name should be rejected");
-            assert!(
-                err.contains("already exists"),
-                "unexpected error: {err}"
+            assert_eq!(
+                err,
+                "The name 'alpha' is already used by another project. Choose a different name."
+            );
+        });
+    }
+
+    #[test]
+    fn assert_can_create_existing_name_error_names_the_other_directory() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let existing_dir = home.path().join("work").join("website");
+            fs::create_dir_all(&existing_dir).expect("mkdir");
+            let existing = existing_dir.to_str().unwrap().to_string();
+
+            let project = Project {
+                name: "website".to_string(),
+                directory: existing.clone(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                ..Default::default()
+            };
+            let data = serde_json::to_string(&project).expect("serialize");
+            save_project("website", &data).expect("save");
+
+            let other_dir = home.path().join("personal").join("website");
+            fs::create_dir_all(&other_dir).expect("mkdir");
+
+            let err = assert_can_create_project("website", other_dir.to_str().unwrap())
+                .expect_err("duplicate name should be rejected");
+            assert_eq!(
+                err,
+                format!(
+                    "The name 'website' is already used by the project at {}. Choose a different name.",
+                    existing
+                )
             );
         });
     }

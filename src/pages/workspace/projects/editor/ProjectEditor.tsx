@@ -109,6 +109,34 @@ import {
   EyeOff,
 } from "lucide-react";
 
+/** Last path segment of a typed or picked directory. Accepts `/` and `\`
+ *  separators and ignores trailing separators. */
+function folderBasename(dir: string): string {
+  return dir.trim().split(/[\\/]/).filter(Boolean).pop() ?? "";
+}
+
+/** Why a candidate project name cannot be used, or null when it is valid.
+ *  Mirrors `is_valid_name` in src-tauri/src/core/paths.rs, because the name
+ *  becomes the registry file name `<name>.json`. */
+function projectNameFormatProblem(name: string): string | null {
+  if (name === "") return "Enter a name for this project.";
+  if (name.includes("/") || name.includes("\\")) {
+    return "A project name cannot contain \"/\" or \"\\\".";
+  }
+  if (name === "." || name === "..") return "A project name cannot be \".\" or \"..\".";
+  return null;
+}
+
+/** First `<name>-2`, `<name>-3`, ... not in `takenLower`. The set holds
+ *  lowercased names because registry files collide case-insensitively on
+ *  macOS. Terminates because the set is finite. */
+function suggestFreeProjectName(name: string, takenLower: ReadonlySet<string>): string {
+  for (let n = 2; ; n++) {
+    const candidate = `${name}-${n}`;
+    if (!takenLower.has(candidate.toLowerCase())) return candidate;
+  }
+}
+
 /** State of the open agent-removal dialog. */
 interface AgentRemovalDialog {
   idx: number;
@@ -183,6 +211,14 @@ export function ProjectEditor({
   const [project, setProject] = useState<Project | null>(initialProject);
   const [dirty, setDirty] = useState(false);
   const [newName, setNewName] = useState("");
+  // Wizard step 1 name handling. The name follows the folder basename until
+  // the user types in the name field. `nameTakenFolder` holds the folder name
+  // when it clashed and a free suggestion was applied instead.
+  const [nameEdited, setNameEdited] = useState(false);
+  const [nameTakenFolder, setNameTakenFolder] = useState<string | null>(null);
+  // null while loading or when loading failed. The backend create check
+  // still rejects clashes, so the wizard only loses the early warning.
+  const [existingProjectNames, setExistingProjectNames] = useState<string[] | null>(null);
   // Wizard state (used while isCreating === true)
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   const [wizardDiscovering, setWizardDiscovering] = useState(false);
@@ -203,6 +239,60 @@ export function ProjectEditor({
   const [orphanError, setOrphanError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameName, setRenameName] = useState("");
+
+  // Refresh the registered names whenever step 1 is shown, so a stub saved
+  // on an earlier pass and projects added elsewhere are both current.
+  useEffect(() => {
+    if (!isCreating || wizardStep !== 1) return;
+    let cancelled = false;
+    invoke<string[]>("get_projects")
+      .then((names) => {
+        if (!cancelled) setExistingProjectNames(names);
+      })
+      .catch((err: unknown) => {
+        console.error("get_projects failed; name clash warning disabled:", err);
+        if (!cancelled) setExistingProjectNames(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isCreating, wizardStep]);
+
+  // Lowercased registered names. The wizard's own stub is left out: after
+  // Back from step 2 it is registered, but it is this same project.
+  const takenProjectNames = useMemo(() => {
+    const stub = wizardStubName.current?.toLowerCase() ?? null;
+    return new Set(
+      (existingProjectNames ?? [])
+        .map((n) => n.toLowerCase())
+        .filter((n) => n !== stub),
+    );
+  }, [existingProjectNames]);
+
+  const wizardDirectory = isCreating ? (project?.directory ?? "") : "";
+
+  // Keep the name in step with the folder until the user edits it. A taken
+  // folder name is swapped for the first free suggestion so the user is not
+  // stuck on a name they did not choose.
+  useEffect(() => {
+    if (!isCreating || wizardStep !== 1 || nameEdited) return;
+    const folder = folderBasename(wizardDirectory);
+    if (folder && takenProjectNames.has(folder.toLowerCase())) {
+      setNewName(suggestFreeProjectName(folder, takenProjectNames));
+      setNameTakenFolder(folder);
+    } else {
+      setNewName(folder);
+      setNameTakenFolder(null);
+    }
+  }, [isCreating, wizardStep, nameEdited, wizardDirectory, takenProjectNames]);
+
+  const wizardTrimmedName = newName.trim();
+  const wizardNameFormatProblem = projectNameFormatProblem(wizardTrimmedName);
+  const wizardNameTaken =
+    wizardNameFormatProblem === null && takenProjectNames.has(wizardTrimmedName.toLowerCase());
+  const wizardNameSuggestion =
+    wizardNameTaken ? suggestFreeProjectName(wizardTrimmedName, takenProjectNames) : null;
+  const wizardNameReady = wizardNameFormatProblem === null && !wizardNameTaken;
 
   // Available items to pick from
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
@@ -2070,6 +2160,8 @@ export function ProjectEditor({
     setDirty(true);
     setIsCreating(true);
     setNewName("");
+    setNameEdited(false);
+    setNameTakenFolder(null);
     setSelectedProjectTemplates(templates.map((t) => t.name));
     setShowProjectTemplatePicker(false);
     setWizardStep(1);
@@ -2083,6 +2175,27 @@ export function ProjectEditor({
    * If a stub was already saved to disk (after step 1 "Continue"), delete it so
    * it does not appear as a broken project in the project list.
    */
+  /**
+   * Return from wizard step 2 to step 1. Step 1's Continue saves a stub under
+   * the chosen name and directory, so the stub is deleted here. Otherwise the
+   * next Continue is refused because the directory is already registered.
+   */
+  const backToDirectoryStep = async () => {
+    const stub = wizardStubName.current;
+    wizardStubName.current = null;
+    setError(null);
+    if (stub) {
+      try {
+        await invoke("delete_project", { name: stub });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(`Could not remove the draft project '${stub}': ${msg}`);
+      }
+      await reloadProjects();
+    }
+    setWizardStep(1);
+  };
+
   const cancelCreate = async () => {
     const stub = wizardStubName.current;
     wizardStubName.current = null;
@@ -2155,6 +2268,7 @@ export function ProjectEditor({
       const msg = err instanceof Error ? err.message : String(err);
       const isDuplicate =
         msg.includes("already exists")
+        || msg.includes("already used")
         || msg.includes("already registered");
       setError(isDuplicate ? msg : `Autodetect failed: ${msg}`);
       return false;
@@ -3203,9 +3317,7 @@ export function ProjectEditor({
                                 console.error("open_directory_dialog failed:", err);
                               }
                               if (!selected) return;
-                              const folderName = selected.split(/[\\/]/).filter(Boolean).pop() ?? "";
-                              const name = newName.trim() || folderName;
-                              setNewName(name);
+                              // The name follows via the folder-name effect unless the user edited it.
                               updateField("directory", selected);
                             }}
                             className="px-4 py-2 bg-brand hover:bg-brand-hover text-white text-[13px] font-medium rounded shadow-sm transition-colors whitespace-nowrap"
@@ -3215,14 +3327,61 @@ export function ProjectEditor({
                         </div>
 
                         {project.directory && (
+                          <div className="pt-1">
+                            <label
+                              htmlFor="wizard-project-name"
+                              className="block text-[12px] font-medium text-text-base mb-1.5"
+                            >
+                              Project name
+                            </label>
+                            <input
+                              id="wizard-project-name"
+                              type="text"
+                              value={newName}
+                              onChange={(e) => {
+                                setNewName(e.target.value);
+                                setNameEdited(true);
+                                setNameTakenFolder(null);
+                              }}
+                              placeholder="my-project"
+                              aria-invalid={!wizardNameReady}
+                              aria-describedby="wizard-project-name-help"
+                              className="w-full bg-bg-input border border-border-strong/40 hover:border-border-strong focus:border-brand rounded-md px-3 py-2 text-[13px] text-text-base placeholder-text-muted/40 outline-none transition-colors"
+                            />
+                            <div id="wizard-project-name-help" className="mt-1.5 text-[12px] leading-relaxed">
+                              {wizardNameFormatProblem !== null ? (
+                                <p className="text-danger">{wizardNameFormatProblem}</p>
+                              ) : wizardNameTaken && wizardNameSuggestion !== null ? (
+                                <p className="text-danger">
+                                  Another project already uses this name. Try &ldquo;
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setNewName(wizardNameSuggestion);
+                                      setNameEdited(true);
+                                    }}
+                                    className="font-medium text-brand hover:underline"
+                                  >
+                                    {wizardNameSuggestion}
+                                  </button>
+                                  &rdquo;.
+                                </p>
+                              ) : nameTakenFolder !== null ? (
+                                <p className="text-text-muted">
+                                  Another project already uses the folder name "{nameTakenFolder}". You can change this name.
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+                        )}
+
+                        {project.directory && (
                           <button
-                            disabled={wizardDiscovering}
+                            disabled={wizardDiscovering || !wizardNameReady}
                             onClick={async () => {
                               const dir = project.directory.trim();
-                              if (!dir) return;
-                              const folderName = dir.split("/").filter(Boolean).pop() ?? "";
-                              const name = newName.trim() || folderName;
-                              setNewName(name);
+                              const name = wizardTrimmedName;
+                              if (!dir || !wizardNameReady) return;
                               setError(null);
                               setWizardDiscovering(true);
                               let status: { kind: "Available" }
@@ -3370,7 +3529,7 @@ export function ProjectEditor({
 
                       <div className="flex gap-2 mt-6">
                         <button
-                          onClick={() => setWizardStep(1)}
+                          onClick={() => void backToDirectoryStep()}
                           className="flex-1 px-4 py-2.5 bg-bg-sidebar hover:bg-surface text-text-muted hover:text-text-base text-[13px] font-medium rounded transition-colors"
                         >
                           Back
