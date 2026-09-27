@@ -1281,6 +1281,45 @@ pub(crate) fn resync_all_projects() {
     });
 }
 
+/// Reconcile every project's plugin-owned rules and skills with its tools,
+/// then save and re-sync the projects that changed. Run once on startup,
+/// after the plugin registries are reconciled.
+pub(crate) fn reconcile_plugin_resources_in_projects() {
+    let plugins = match core::list_app_plugins() {
+        Ok(plugins) => plugins,
+        Err(e) => {
+            eprintln!(
+                "[automatic] skipped project plugin reconcile (plugin state unreadable): {}",
+                e
+            );
+            return;
+        }
+    };
+
+    with_each_project_mut(|project_name, project| {
+        if !core::reconcile_project_plugin_resources(project, &plugins) {
+            return;
+        }
+        project.updated_at = chrono::Utc::now().to_rfc3339();
+        let data = match serde_json::to_string_pretty(project) {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("Failed to serialize project '{}': {}", project_name, e);
+                return;
+            }
+        };
+        if let Err(e) = core::save_project(project_name, &data) {
+            eprintln!("Failed to update project '{}': {}", project_name, e);
+            return;
+        }
+        eprintln!(
+            "[automatic] reconciled plugin rules and skills for project '{}'",
+            project_name
+        );
+        sync_project_if_configured(project_name, project);
+    });
+}
+
 pub(crate) fn prune_skill_from_projects(skill_name: &str) {
     with_each_project_mut(|project_name, project| {
         let before = project.skills.len();

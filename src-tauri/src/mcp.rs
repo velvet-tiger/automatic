@@ -600,6 +600,13 @@ fn tool_error(message: String) -> CallToolResult {
 /// Verify that `project` is a registered project name.
 /// Returns `Ok(())` on success, or an `Err` with a helpful message listing
 /// the valid project names so the agent can self-correct immediately.
+/// Validate the project for a feature tool call. Feature tracking needs the
+/// Build tool on the project, so this adds that check to `validate_project`.
+fn validate_feature_project(project: &str) -> Result<(), String> {
+    validate_project(project)?;
+    crate::plugins::build::require_feature_tracking(project)
+}
+
 fn validate_project(project: &str) -> Result<(), String> {
     let known = crate::core::list_projects().unwrap_or_default();
     if known.iter().any(|p| p == project) {
@@ -2645,7 +2652,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ListFeaturesParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
+        if let Err(e) = validate_feature_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
         let include_archived = params.0.include_archived.unwrap_or(false);
@@ -2677,7 +2684,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<GetFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
+        if let Err(e) = validate_feature_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
         match crate::features::get_feature_with_updates(&params.0.project, &params.0.feature_id) {
@@ -2700,7 +2707,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<CreateFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
+        if let Err(e) = validate_feature_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
         let p = params.0;
@@ -2738,7 +2745,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<UpdateFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
+        if let Err(e) = validate_feature_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
         let p = params.0;
@@ -2779,7 +2786,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<SetFeatureStateParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
+        if let Err(e) = validate_feature_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
         match crate::features::set_feature_state(
@@ -2809,7 +2816,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<DeleteFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
+        if let Err(e) = validate_feature_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
         match crate::features::delete_feature(&params.0.project, &params.0.feature_id) {
@@ -2832,7 +2839,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ArchiveFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
+        if let Err(e) = validate_feature_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
         match crate::features::archive_feature(&params.0.project, &params.0.feature_id) {
@@ -2855,7 +2862,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<UnarchiveFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
+        if let Err(e) = validate_feature_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
         match crate::features::unarchive_feature(&params.0.project, &params.0.feature_id) {
@@ -2878,7 +2885,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AddFeatureUpdateParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
+        if let Err(e) = validate_feature_project(&params.0.project) {
             return Ok(CallToolResult::error(vec![Content::text(e)]));
         }
         match crate::features::add_feature_update(

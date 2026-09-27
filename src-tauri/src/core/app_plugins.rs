@@ -586,6 +586,7 @@ fn sync_plugin_mcp_servers(manifests: &[PluginManifest], state: &PluginState) {
 /// a `rule_content(machine_name)` function; this dispatches to the right one.
 fn get_plugin_rule_content(plugin_id: &str, machine_name: &str) -> Option<String> {
     match plugin_id {
+        "build" => crate::plugins::build::rule_content(machine_name),
         "common-docs" => crate::plugins::common_docs::rule_content(machine_name),
         _ => None,
     }
@@ -693,6 +694,79 @@ pub fn strip_plugin_resources(project: &mut super::types::Project, removed_tool_
             project_rules.retain(|r| !rule_names.contains(r));
         }
     }
+}
+
+/// Bring a project's plugin-owned rules and skills in line with its tools.
+///
+/// `enrich_project_with_plugin_resources` and `strip_plugin_resources` only
+/// run when a user adds or removes a tool, so projects saved before a plugin
+/// gained a rule or skill never pick it up. This reconciles from current
+/// state instead, and is safe to run on every startup.
+///
+/// For each plugin with a tool:
+/// - Tool on the project and plugin enabled: attach every declared skill and
+///   rule.
+/// - Otherwise: detach the declared rules and bundled skills (no `source`).
+///   Remote skills stay, because a user may attach them on their own.
+///
+/// Returns `true` when the project changed.
+pub fn reconcile_project_plugin_resources(
+    project: &mut super::types::Project,
+    plugins: &[PluginEntry],
+) -> bool {
+    let mut changed = false;
+
+    for entry in plugins {
+        let Some(tool) = entry.manifest.tool.as_ref() else {
+            continue;
+        };
+        let active = entry.enabled && project.tools.contains(&tool.name);
+
+        if active {
+            for decl in &entry.manifest.skills {
+                if !project.skills.contains(&decl.name) {
+                    project.skills.push(decl.name.clone());
+                    changed = true;
+                }
+            }
+            if !entry.manifest.rules.is_empty() {
+                let project_rules = project
+                    .file_rules
+                    .entry("_project".to_string())
+                    .or_default();
+                for decl in &entry.manifest.rules {
+                    if !project_rules.contains(&decl.machine_name) {
+                        project_rules.push(decl.machine_name.clone());
+                        changed = true;
+                    }
+                }
+            }
+        } else {
+            let before = project.skills.len();
+            project.skills.retain(|s| {
+                !entry
+                    .manifest
+                    .skills
+                    .iter()
+                    .any(|decl| decl.source.is_none() && &decl.name == s)
+            });
+            changed |= project.skills.len() != before;
+
+            if let Some(project_rules) = project.file_rules.get_mut("_project") {
+                let before = project_rules.len();
+                project_rules.retain(|r| {
+                    !entry
+                        .manifest
+                        .rules
+                        .iter()
+                        .any(|decl| &decl.machine_name == r)
+                });
+                changed |= project_rules.len() != before;
+            }
+        }
+    }
+
+    changed
 }
 
 // ── Locked resource query ────────────────────────────────────────────────────
@@ -864,6 +938,99 @@ mod tests {
             rules: vec![],
             mcp_servers: vec![],
         }
+    }
+
+    fn plugin_with_tool(enabled: bool) -> PluginEntry {
+        let mut manifest = known_manifest("demo");
+        manifest.tool = Some(PluginToolDeclaration {
+            name: "demo-tool".into(),
+            display_name: "Demo".into(),
+            description: "test".into(),
+            url: "https://example.com".into(),
+            github_repo: None,
+            kind: ToolKind::Planning,
+            detect_binary: None,
+            detect_dir: None,
+            provides_tab: false,
+            project_scoped: true,
+        });
+        manifest.skills = vec![
+            PluginSkillDeclaration {
+                name: "bundled-skill".into(),
+                source: None,
+            },
+            PluginSkillDeclaration {
+                name: "remote-skill".into(),
+                source: Some("owner/repo".into()),
+            },
+        ];
+        manifest.rules = vec![PluginRuleDeclaration {
+            machine_name: "demo-rule".into(),
+            display_name: "Demo rule".into(),
+        }];
+        PluginEntry { manifest, enabled }
+    }
+
+    fn project_rules(project: &crate::core::types::Project) -> Vec<String> {
+        project.file_rules.get("_project").cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn reconcile_attaches_resources_when_tool_present() {
+        let mut project = crate::core::types::Project {
+            tools: vec!["demo-tool".into()],
+            ..Default::default()
+        };
+        assert!(reconcile_project_plugin_resources(&mut project, &[plugin_with_tool(true)]));
+        assert_eq!(project.skills, vec!["bundled-skill", "remote-skill"]);
+        assert_eq!(project_rules(&project), vec!["demo-rule"]);
+    }
+
+    #[test]
+    fn reconcile_is_noop_when_already_in_step() {
+        let mut project = crate::core::types::Project {
+            tools: vec!["demo-tool".into()],
+            ..Default::default()
+        };
+        let plugins = [plugin_with_tool(true)];
+        reconcile_project_plugin_resources(&mut project, &plugins);
+        assert!(!reconcile_project_plugin_resources(&mut project, &plugins));
+    }
+
+    #[test]
+    fn reconcile_strips_rule_and_bundled_skill_but_keeps_remote_skill_without_tool() {
+        let mut project = crate::core::types::Project {
+            skills: vec!["bundled-skill".into(), "remote-skill".into(), "mine".into()],
+            ..Default::default()
+        };
+        project
+            .file_rules
+            .insert("_project".into(), vec!["demo-rule".into(), "other".into()]);
+        assert!(reconcile_project_plugin_resources(&mut project, &[plugin_with_tool(true)]));
+        assert_eq!(project.skills, vec!["remote-skill", "mine"]);
+        assert_eq!(project_rules(&project), vec!["other"]);
+    }
+
+    #[test]
+    fn reconcile_strips_when_plugin_disabled_even_with_tool() {
+        let mut project = crate::core::types::Project {
+            tools: vec!["demo-tool".into()],
+            skills: vec!["bundled-skill".into()],
+            ..Default::default()
+        };
+        project
+            .file_rules
+            .insert("_project".into(), vec!["demo-rule".into()]);
+        assert!(reconcile_project_plugin_resources(&mut project, &[plugin_with_tool(false)]));
+        assert!(project.skills.is_empty());
+        assert!(project_rules(&project).is_empty());
+    }
+
+    #[test]
+    fn reconcile_leaves_project_without_rules_untouched() {
+        let mut project = crate::core::types::Project::default();
+        assert!(!reconcile_project_plugin_resources(&mut project, &[plugin_with_tool(true)]));
+        assert!(project.file_rules.is_empty());
     }
 
     #[test]

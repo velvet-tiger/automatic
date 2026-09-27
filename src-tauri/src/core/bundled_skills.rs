@@ -339,6 +339,8 @@ mod tests {
         assert!(names.iter().any(|n| n == "automatic"));
         // Third-party skills are NOT auto-installed.
         assert!(!names.iter().any(|n| n == "php-pro"));
+        // The Build plugin installs this one, only while it is enabled.
+        assert!(!names.iter().any(|n| n == "automatic-features"));
     }
 
     /// End-to-end parity for a library skill: the SKILL.md written to disk

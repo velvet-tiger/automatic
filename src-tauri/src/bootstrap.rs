@@ -187,6 +187,10 @@ pub fn run_startup_housekeeping() {
     }
     // Reconcile tool/skill/rule registries with current plugin states.
     core::reconcile_plugin_resources_on_startup();
+    // Then attach or detach plugin-owned rules and skills per project, so
+    // projects follow their tools even when the tool was added before the
+    // plugin declared those resources.
+    commands::reconcile_plugin_resources_in_projects();
 }
 
 #[cfg(test)]

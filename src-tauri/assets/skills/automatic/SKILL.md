@@ -256,29 +256,7 @@ Automatic provides a persistent key-value store for agents to retain context, us
 
 ### Agent Feature Tools
 
-Automatic provides project-scoped feature tracking. Features represent discrete units of work with a lifecycle visible to users in the Automatic UI.
-
-**States:** `backlog` → `todo` → `in_progress` → `review` → `complete` · `cancelled`  
-**Priority:** `low` | `medium` | `high`  
-**Effort:** `xs` | `s` | `m` | `l` | `xl`
-
-- **`automatic_list_features`**: List active (non-archived) features for a project. Optionally pass `state` to filter (e.g. `"todo"`). Pass `include_archived: true` to list archived features instead. Returns feature titles, IDs, priorities, efforts, and assignees grouped by state.
-- **`automatic_get_feature`**: Get full detail for a specific feature by `feature_id`, including description, archived status, and all update history. Works for both active and archived features.
-- **`automatic_create_feature`**: Create a new feature. Requires `project` and `title`. Optional: `description`, `state` (default `backlog`), `priority`, `assignee`, `tags`, `linked_files`, `effort`, `created_by`. Returns the created feature including its `id`.
-- **`automatic_update_feature`**: Update feature metadata fields (title, description, priority, assignee, tags, linked_files, effort). Omit any field to leave it unchanged.
-- **`automatic_set_feature_state`**: Change a feature's lifecycle state. Valid states: `backlog`, `todo`, `in_progress`, `review`, `complete`, `cancelled`.
-- **`automatic_archive_feature`**: Archive a feature — hides it from the Kanban board and from default list results. Preserves the feature's `state` for restoration.
-- **`automatic_unarchive_feature`**: Restore an archived feature to active status in its original state column.
-- **`automatic_delete_feature`**: Permanently delete a feature and all its updates. Cannot be undone — prefer archiving.
-- **`automatic_add_feature_update`**: Append a markdown progress update to a feature. Pass `author` to identify the agent.
-
-**Agent workflow for Features:**
-
-1. At session start, call `automatic_list_features` with `state: "todo"` to see planned work. Archived features are excluded automatically.
-2. Before starting a task, call `automatic_set_feature_state` to move it to `in_progress`.
-3. During work, call `automatic_add_feature_update` to log significant progress, decisions, or blockers.
-4. On completion, call `automatic_set_feature_state` to move to `review` — let the user verify before marking `complete`.
-5. If new work is discovered during implementation, call `automatic_create_feature` to capture it in the backlog.
+The `automatic_*_feature` tools track work items on a project's Build board. They work only on projects that have the Build tool. On other projects they return an error saying Build is not enabled. Projects with Build carry the `automatic-features` skill and the "Build: Feature Tracking" rule, which describe the workflow.
 
 ---
 
@@ -296,7 +274,7 @@ Automatic provides project-scoped feature tracking. Features represent discrete 
 
 6. **Wrapping up a session** — Call `automatic_store_memory` to capture any new project-specific conventions, pitfalls, or setup steps discovered so they aren't lost in future sessions.
 
-7. **For project features** — call `automatic_list_features` to see planned work. Use `automatic_set_feature_state` and `automatic_add_feature_update` to track progress across sessions.
+7. **For project features** — only when the project has the Build tool, follow the `automatic-features` skill.
 
 ## Configuration
 

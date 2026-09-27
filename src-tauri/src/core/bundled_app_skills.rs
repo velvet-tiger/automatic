@@ -5,8 +5,9 @@
 //!
 //! - **Product/plugin-specific skills** authored by Automatic that describe
 //!   how to use Automatic itself. Examples: the `automatic` skill (the MCP
-//!   service surface) and `automatic-features` (the feature tracker, which
-//!   will move to the features plugin when that plugin ships).
+//!   service surface) and `automatic-features` (the feature tracker). The
+//!   Build plugin declares `automatic-features`, so it installs only while
+//!   that plugin is enabled.
 //! - **Third-party skills** redistributed with the app under their own
 //!   licenses (see the per-skill `skill.json` metadata). Laravel, Pennant,
 //!   PHP, Python, Tailwind CSS, Terraform, Vercel/React.
@@ -61,7 +62,8 @@ pub const APP_SKILL_CONTENTS: &[(&str, &str)] = &[
 /// Names of app-bundled skills that should be installed by default on first
 /// run. The rest of `APP_SKILL_CONTENTS` is template-only (installed on
 /// demand from a project template or from the discover UI).
-pub const APP_AUTO_INSTALL: &[&str] = &["automatic", "automatic-features"];
+/// `automatic-features` is left out on purpose: the Build plugin installs it.
+pub const APP_AUTO_INSTALL: &[&str] = &["automatic"];
 
 /// Companion resource files for app-bundled skills. Same shape as the old
 /// `BUNDLED_SKILL_RESOURCES`: `(skill_name, relative_path, content)`.
