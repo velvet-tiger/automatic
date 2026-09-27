@@ -287,7 +287,19 @@ pub struct SkillEntry {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Project {
+    /// Display label. Not an identity: see `id` and `local_key`.
     pub name: String,
+    /// Permanent identity of the logical project (UUID v4). Stored in the
+    /// committed `.automatic.json`, so it travels with the repo through git
+    /// and every checkout on every machine shares it. Empty until minted by a
+    /// create path or the startup backfill (`ensure_project_keys`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+    /// Identity of this one checkout on this machine (UUID v4). Stored in the
+    /// gitignored state file and the registry pointer, never in the committed
+    /// config, because two checkouts of one repo must not share it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub local_key: String,
     #[serde(default)]
     pub description: String,
     #[serde(default)]

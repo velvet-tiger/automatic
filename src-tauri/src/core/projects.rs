@@ -59,6 +59,7 @@ pub fn read_project(name: &str) -> Result<String, String> {
             ..Default::default()
         },
     };
+    let registry_keys = ProjectKeys::of(&registry_project);
 
     // If directory is set, read the full project from the project directory.
     // A malformed file there is an error rather than a fallback to registry
@@ -68,6 +69,14 @@ pub fn read_project(name: &str) -> Result<String, String> {
     } else {
         registry_project
     };
+    // `id` from the folder's config, else the pointer's cache; `local_key`
+    // from the pointer, else the state file (see `resolve_stored_keys`). A
+    // copied state file therefore cannot hand this checkout another
+    // checkout's key, and the write-back below corrects it. No key is minted
+    // here: minting belongs to the create paths and the startup backfill.
+    let resolved = resolve_stored_keys(&ProjectKeys::of(&project), Some(&registry_keys));
+    project.id = resolved.id;
+    project.local_key = resolved.local_key;
 
     // Mark the project if its directory no longer exists on disk.
     if !project.directory.is_empty() && !std::path::Path::new(&project.directory).exists() {
@@ -84,12 +93,21 @@ pub fn read_project(name: &str) -> Result<String, String> {
     // config stays up-to-date on disk (important for portability).
     // Skip the write-back when the directory is missing — we cannot write to
     // a path that does not exist, and doing so would recreate the folder.
+    // The write-back also carries keys resolved from the registry cache into
+    // the folder, which is how a folder that returns gets its keys back.
     enrich_project(&mut project);
     if !project.directory.is_empty() && !project.directory_missing {
         if let Err(e) = write_project_files(&project) {
             eprintln!("read_project: could not refresh files for '{}': {}", name, e);
         }
     }
+
+    // The committed config can carry a different name from the registry key,
+    // for example after a teammate renamed the project and this machine
+    // pulled. Callers save back with `project.name`, so returning the config
+    // name would write a second registry entry. Set after the write-back so
+    // a read never rewrites the committed name on its own.
+    project.name = name.to_string();
 
     let formatted = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
     Ok(formatted)
@@ -355,7 +373,7 @@ fn directories_equivalent(a: &str, b: &str) -> bool {
 
 /// Read only the `directory` field from a registry entry, without loading or
 /// enriching the full project config (avoids write-back side effects).
-fn registry_directory_for(name: &str) -> Result<Option<String>, String> {
+pub(crate) fn registry_directory_for(name: &str) -> Result<Option<String>, String> {
     let projects_dir = get_projects_dir()?;
     let registry_path = projects_dir.join(format!("{}.json", name));
     if !registry_path.exists() {
@@ -485,9 +503,10 @@ fn read_orphan_config_name(config_path: &std::path::Path) -> Option<String> {
 /// Adopt an on-disk project config as a new registry entry. Reads the
 /// project files in `<directory>` (`.automatic.json`, or a legacy
 /// `.automatic/project.json`), refuses on invalid or colliding names, and
-/// writes the lightweight `{name, directory}` pointer to
+/// writes the lightweight `{name, directory, id, local_key}` pointer to
 /// `~/.automatic/projects/{name}.json`. Returns the adopted project name.
-/// The on-disk config is left untouched.
+/// The on-disk config is left untouched here; the first `read_project`
+/// writes the keys into it.
 pub fn import_existing_project(directory: &str) -> Result<String, String> {
     if directory.is_empty() {
         return Err("A project directory is required to import.".into());
@@ -520,14 +539,19 @@ pub fn import_existing_project(directory: &str) -> Result<String, String> {
         ));
     }
 
-    let ref_data = serde_json::json!({
-        "name": name,
-        "directory": directory,
-    });
-    let ref_pretty = serde_json::to_string_pretty(&ref_data).map_err(|e| e.to_string())?;
-    fs::write(&registry_path, &ref_pretty).map_err(|e| e.to_string())?;
+    // Importing registers a new checkout, so it gets a fresh `local_key`. A
+    // committed `id` means the repo already has an identity, which is kept.
+    let name = name.to_string();
+    let committed_id = Some(project.id.clone());
+    let mut pointer = Project {
+        name: name.clone(),
+        directory: directory.to_string(),
+        ..Default::default()
+    };
+    assign_new_project_keys(&mut pointer, committed_id);
+    write_registry_pointer(&registry_path, &pointer)?;
 
-    Ok(name.to_string())
+    Ok(name)
 }
 
 /// Delete the project config and state files in `<directory>` and, if the
@@ -552,7 +576,6 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
     // directory_missing is a transient runtime flag — never persist it.
     project.directory_missing = false;
-    enrich_project(&mut project);
 
     let projects_dir = get_projects_dir()?;
     if !projects_dir.exists() {
@@ -561,16 +584,32 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
 
     let registry_path = projects_dir.join(format!("{}.json", name));
 
+    // Keys are system-managed. Callers may hold none (sync paths, tests) or
+    // stale ones (an editor opened before a `git pull` changed the committed
+    // id). A stored key always wins; the incoming key is used only where
+    // nothing is stored, which is how the create paths and the backfill
+    // write keys they just minted.
+    match stored_project_keys(&registry_path, &project.directory) {
+        Ok(stored) => apply_stored_keys(&mut project, &stored),
+        // The unreadable file is about to be replaced by this save, which
+        // was already the case before keys existed. Only proceed when the
+        // incoming project carries both keys, so nothing is dropped.
+        Err(e) if ProjectKeys::of(&project).is_complete() => eprintln!(
+            "save_project: could not read the stored keys of '{}', keeping the incoming keys: {}",
+            name, e
+        ),
+        Err(e) => {
+            return Err(format!(
+                "Could not read the stored keys of project '{}': {}",
+                name, e
+            ))
+        }
+    }
+    enrich_project(&mut project);
+
     if !project.directory.is_empty() {
         write_project_files(&project)?;
-
-        // Write lightweight registry entry
-        let ref_data = serde_json::json!({
-            "name": project.name,
-            "directory": project.directory,
-        });
-        let ref_pretty = serde_json::to_string_pretty(&ref_data).map_err(|e| e.to_string())?;
-        fs::write(&registry_path, &ref_pretty).map_err(|e| e.to_string())?;
+        write_registry_pointer(&registry_path, &project)?;
     } else {
         // No directory yet — write full config to registry
         let pretty = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
@@ -632,12 +671,7 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
         }
 
         // Write new registry entry (lightweight pointer)
-        let ref_data = serde_json::json!({
-            "name": project.name,
-            "directory": project.directory,
-        });
-        let ref_pretty = serde_json::to_string_pretty(&ref_data).map_err(|e| e.to_string())?;
-        fs::write(&new_registry, &ref_pretty).map_err(|e| e.to_string())?;
+        write_registry_pointer(&new_registry, &project)?;
     } else {
         // No directory — write full config to new registry entry
         fs::write(&new_registry, &pretty).map_err(|e| e.to_string())?;
@@ -729,13 +763,7 @@ mod test_helpers {
 
         if !project.directory.is_empty() {
             write_project_files(&project)?;
-
-            let ref_data = serde_json::json!({
-                "name": project.name,
-                "directory": project.directory,
-            });
-            let ref_pretty = serde_json::to_string_pretty(&ref_data).map_err(|e| e.to_string())?;
-            fs::write(&registry_path, &ref_pretty).map_err(|e| e.to_string())?;
+            write_registry_pointer(&registry_path, &project)?;
         } else {
             fs::write(&registry_path, &pretty).map_err(|e| e.to_string())?;
         }
@@ -1496,6 +1524,490 @@ mod tests {
 
             assert_can_create_project("brand-new", &dir)
                 .expect("new name and empty directory should be allowed");
+        });
+    }
+
+    // ── identity keys (project identity plan, stage 2) ──────────────────
+
+    fn read_json(path: &std::path::Path) -> serde_json::Value {
+        let raw = fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e))
+    }
+
+    fn project_with_dir(name: &str, dir: &std::path::Path) -> Project {
+        Project {
+            name: name.to_string(),
+            directory: dir.to_str().unwrap().to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn load(name: &str) -> Project {
+        serde_json::from_str(&read_project(name).expect("read")).expect("parse")
+    }
+
+    #[test]
+    fn new_project_keys_land_in_the_right_files() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let mut project = project_with_dir("keyed", &dir);
+            prepare_new_project_keys(&mut project).expect("prepare");
+            save_project("keyed", &serde_json::to_string(&project).unwrap()).expect("save");
+
+            let config = read_json(&dir.join(CONFIG_FILE_NAME));
+            let state = read_json(&dir.join(".automatic").join("project.json"));
+            let pointer = read_json(&get_projects_dir().unwrap().join("keyed.json"));
+
+            assert_eq!(config["id"].as_str(), Some(project.id.as_str()));
+            assert!(config.get("local_key").is_none(), "local_key is never committed");
+            assert_eq!(state["local_key"].as_str(), Some(project.local_key.as_str()));
+            assert!(state.get("id").is_none(), "id is config, not state");
+            assert_eq!(
+                pointer,
+                serde_json::json!({
+                    "name": "keyed",
+                    "directory": dir.to_str().unwrap(),
+                    "id": project.id,
+                    "local_key": project.local_key,
+                })
+            );
+        });
+    }
+
+    #[test]
+    fn save_without_keys_preserves_stored_keys() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let mut project = project_with_dir("keep", &dir);
+            prepare_new_project_keys(&mut project).expect("prepare");
+            save_project("keep", &serde_json::to_string(&project).unwrap()).expect("save");
+
+            let mut keyless = project_with_dir("keep", &dir);
+            keyless.description = "edited".into();
+            save_project("keep", &serde_json::to_string(&keyless).unwrap()).expect("keyless save");
+
+            let loaded = load("keep");
+            assert_eq!(loaded.description, "edited");
+            assert_eq!(loaded.id, project.id);
+            assert_eq!(loaded.local_key, project.local_key);
+            let pointer = read_json(&get_projects_dir().unwrap().join("keep.json"));
+            assert_eq!(pointer["id"].as_str(), Some(project.id.as_str()));
+            assert_eq!(pointer["local_key"].as_str(), Some(project.local_key.as_str()));
+
+            // A directory-less project keeps its keys in the registry file.
+            let mut bare = Project {
+                name: "bare".into(),
+                ..Default::default()
+            };
+            fill_missing_project_keys(&mut bare);
+            save_project("bare", &serde_json::to_string(&bare).unwrap()).expect("save bare");
+            let keyless_bare = Project {
+                name: "bare".into(),
+                description: "edited".into(),
+                ..Default::default()
+            };
+            save_project("bare", &serde_json::to_string(&keyless_bare).unwrap())
+                .expect("keyless bare save");
+            let loaded_bare = load("bare");
+            assert_eq!(loaded_bare.id, bare.id);
+            assert_eq!(loaded_bare.local_key, bare.local_key);
+        });
+    }
+
+    #[test]
+    fn committed_id_beats_the_registry_cache() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let mut project = project_with_dir("pulled", &dir);
+            prepare_new_project_keys(&mut project).expect("prepare");
+            save_project("pulled", &serde_json::to_string(&project).unwrap()).expect("save");
+
+            // A `git pull` brings in a config with a different committed id.
+            let config_path = dir.join(CONFIG_FILE_NAME);
+            let mut config = read_json(&config_path);
+            config["id"] = serde_json::json!("id-from-upstream");
+            fs::write(&config_path, config.to_string()).expect("write config");
+
+            let loaded = load("pulled");
+            assert_eq!(loaded.id, "id-from-upstream", "the committed id wins");
+            assert_eq!(loaded.local_key, project.local_key);
+        });
+    }
+
+    #[test]
+    fn registry_cached_keys_fill_a_folder_without_them() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let project = project_with_dir("cached", &dir);
+            save_project("cached", &serde_json::to_string(&project).unwrap()).expect("save");
+            // Only the registry holds the keys, as after a backfill while the
+            // folder was away.
+            let registry_path = get_projects_dir().unwrap().join("cached.json");
+            let mut pointer = read_json(&registry_path);
+            pointer["id"] = serde_json::json!("cached-id");
+            pointer["local_key"] = serde_json::json!("cached-key");
+            fs::write(&registry_path, pointer.to_string()).expect("write pointer");
+
+            let loaded = load("cached");
+            assert_eq!(loaded.id, "cached-id");
+            assert_eq!(loaded.local_key, "cached-key");
+            // The read's write-back carries them into the folder.
+            assert_eq!(read_json(&dir.join(CONFIG_FILE_NAME))["id"], "cached-id");
+            assert_eq!(
+                read_json(&dir.join(".automatic").join("project.json"))["local_key"],
+                "cached-key"
+            );
+        });
+    }
+
+    #[test]
+    fn read_returns_the_registry_key_as_name() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let project = project_with_dir("local-name", &dir);
+            save_project("local-name", &serde_json::to_string(&project).unwrap()).expect("save");
+
+            let config_path = dir.join(CONFIG_FILE_NAME);
+            let mut config = read_json(&config_path);
+            config["name"] = serde_json::json!("renamed-upstream");
+            fs::write(&config_path, config.to_string()).expect("write config");
+
+            let loaded = load("local-name");
+            assert_eq!(loaded.name, "local-name", "name follows the registry key");
+            assert_eq!(
+                read_json(&config_path)["name"],
+                "renamed-upstream",
+                "a read alone does not rewrite the committed name"
+            );
+
+            // Saving what was read writes back under the same registry entry.
+            save_project(&loaded.name, &serde_json::to_string(&loaded).unwrap()).expect("save");
+            let mut names = list_projects().expect("list");
+            names.sort();
+            assert_eq!(names, vec!["local-name".to_string()], "no second registry entry");
+        });
+    }
+
+    #[test]
+    fn import_keeps_committed_id_and_mints_a_new_local_key() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("clone");
+            fs::create_dir_all(dir.join(".automatic")).expect("mkdir");
+            fs::write(
+                dir.join(CONFIG_FILE_NAME),
+                r#"{"id":"committed-id","name":"cloned"}"#,
+            )
+            .expect("write config");
+            // A state file copied along with the folder.
+            fs::write(
+                dir.join(".automatic").join("project.json"),
+                r#"{"local_key":"other-checkout"}"#,
+            )
+            .expect("write state");
+
+            let name = import_existing_project(dir.to_str().unwrap()).expect("import");
+            let pointer = read_json(&get_projects_dir().unwrap().join(format!("{name}.json")));
+            assert_eq!(pointer["id"], "committed-id");
+            let local_key = pointer["local_key"].as_str().expect("local_key").to_string();
+            assert_ne!(local_key, "other-checkout");
+            assert!(uuid::Uuid::parse_str(&local_key).is_ok());
+
+            let loaded = load(&name);
+            assert_eq!(loaded.id, "committed-id");
+            assert_eq!(loaded.local_key, local_key, "read returns the pointer's local_key");
+        });
+    }
+
+    #[test]
+    fn copied_folder_takes_the_pointer_local_key_not_the_copied_one() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let source_dir = home.path().join("source");
+            fs::create_dir_all(&source_dir).expect("mkdir");
+            let mut source = project_with_dir("source", &source_dir);
+            prepare_new_project_keys(&mut source).expect("prepare");
+            save_project("source", &serde_json::to_string(&source).unwrap()).expect("save");
+
+            // `cp -r source copy`, then give the copy its own name so the
+            // import does not collide.
+            let copy_dir = home.path().join("copy");
+            fs::create_dir_all(copy_dir.join(".automatic")).expect("mkdir");
+            let state_rel = std::path::Path::new(".automatic").join("project.json");
+            for rel in [std::path::Path::new(CONFIG_FILE_NAME), state_rel.as_path()] {
+                fs::copy(source_dir.join(rel), copy_dir.join(rel)).expect("copy");
+            }
+            let copy_config = copy_dir.join(CONFIG_FILE_NAME);
+            let mut config = read_json(&copy_config);
+            config["name"] = serde_json::json!("copy");
+            fs::write(&copy_config, config.to_string()).expect("rename copy");
+            assert_eq!(
+                read_json(&copy_dir.join(&state_rel))["local_key"],
+                source.local_key.as_str(),
+                "the copy starts with the source checkout's local_key"
+            );
+
+            let name = import_existing_project(copy_dir.to_str().unwrap()).expect("import");
+            let pointer = read_json(&get_projects_dir().unwrap().join(format!("{name}.json")));
+            let pointer_key = pointer["local_key"].as_str().expect("local_key").to_string();
+            assert_ne!(pointer_key, source.local_key);
+
+            let loaded = load(&name);
+            assert_eq!(loaded.local_key, pointer_key, "the pointer is authoritative");
+            assert_eq!(loaded.id, source.id, "a copy shares the committed id");
+            assert_eq!(
+                read_json(&copy_dir.join(&state_rel))["local_key"],
+                pointer_key.as_str(),
+                "the write-back corrects the copied state file"
+            );
+            assert_eq!(load("source").local_key, source.local_key);
+        });
+    }
+
+    #[test]
+    fn save_keeps_the_stored_id_over_a_stale_incoming_id() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let mut project = project_with_dir("stale", &dir);
+            project.id = "id-a".into();
+            project.local_key = "key-a".into();
+            save_project("stale", &serde_json::to_string(&project).unwrap()).expect("save");
+
+            // An editor still holding other keys saves.
+            let mut incoming = project.clone();
+            incoming.id = "id-b".into();
+            incoming.local_key = "key-b".into();
+            incoming.description = "edited".into();
+            save_project("stale", &serde_json::to_string(&incoming).unwrap()).expect("save");
+
+            assert_eq!(read_json(&dir.join(CONFIG_FILE_NAME))["id"], "id-a");
+            let loaded = load("stale");
+            assert_eq!(loaded.description, "edited");
+            assert_eq!(loaded.id, "id-a");
+            assert_eq!(loaded.local_key, "key-a");
+            let pointer = read_json(&get_projects_dir().unwrap().join("stale.json"));
+            assert_eq!(pointer["id"], "id-a");
+            assert_eq!(pointer["local_key"], "key-a");
+        });
+    }
+
+    #[test]
+    fn save_with_unreadable_registry_needs_incoming_keys() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let projects_dir = get_projects_dir().unwrap();
+            fs::create_dir_all(&projects_dir).expect("mkdir");
+            fs::write(projects_dir.join("damaged.json"), "{ not json").expect("write");
+
+            let keyless = minimal_project("damaged");
+            let err = save_project("damaged", &keyless).expect_err("keys cannot be resolved");
+            assert!(err.contains("stored keys"), "unexpected error: {err}");
+
+            let mut keyed: Project = serde_json::from_str(&keyless).unwrap();
+            fill_missing_project_keys(&mut keyed);
+            save_project("damaged", &serde_json::to_string(&keyed).unwrap())
+                .expect("a save carrying both keys replaces the damaged entry");
+            assert_eq!(load("damaged").id, keyed.id);
+        });
+    }
+
+    #[test]
+    fn import_mints_an_id_when_none_is_committed() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("old-repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            fs::write(dir.join(CONFIG_FILE_NAME), r#"{"name":"old-repo"}"#).expect("write");
+
+            import_existing_project(dir.to_str().unwrap()).expect("import");
+            let pointer = read_json(&get_projects_dir().unwrap().join("old-repo.json"));
+            assert!(uuid::Uuid::parse_str(pointer["id"].as_str().unwrap()).is_ok());
+        });
+    }
+
+    #[test]
+    fn backfill_mints_missing_keys_once() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            save_project(
+                "with-dir",
+                &serde_json::to_string(&project_with_dir("with-dir", &dir)).unwrap(),
+            )
+            .expect("save");
+            save_project("no-dir", &minimal_project("no-dir")).expect("save");
+
+            let first = ensure_project_keys().expect("backfill");
+            assert_eq!(
+                first,
+                ProjectKeyBackfill::Completed {
+                    updated: vec!["no-dir".to_string(), "with-dir".to_string()],
+                    failed: vec![],
+                }
+            );
+            let with_dir = load("with-dir");
+            let no_dir = load("no-dir");
+            for p in [&with_dir, &no_dir] {
+                assert!(uuid::Uuid::parse_str(&p.id).is_ok(), "{} has an id", p.name);
+                assert!(uuid::Uuid::parse_str(&p.local_key).is_ok());
+            }
+            assert_eq!(read_json(&dir.join(CONFIG_FILE_NAME))["id"], with_dir.id.as_str());
+
+            let projects_dir = get_projects_dir().unwrap();
+            let files = [
+                dir.join(CONFIG_FILE_NAME),
+                dir.join(".automatic").join("project.json"),
+                projects_dir.join("with-dir.json"),
+                projects_dir.join("no-dir.json"),
+            ];
+            let before: Vec<String> =
+                files.iter().map(|f| fs::read_to_string(f).unwrap()).collect();
+
+            let second = ensure_project_keys().expect("second backfill");
+            assert_eq!(
+                second,
+                ProjectKeyBackfill::Completed {
+                    updated: vec![],
+                    failed: vec![],
+                }
+            );
+            let after: Vec<String> =
+                files.iter().map(|f| fs::read_to_string(f).unwrap()).collect();
+            assert_eq!(before, after, "a second run changes nothing");
+            assert_eq!(load("with-dir").id, with_dir.id);
+        });
+    }
+
+    #[test]
+    fn backfill_keeps_an_id_already_committed() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            save_project(
+                "half",
+                &serde_json::to_string(&project_with_dir("half", &dir)).unwrap(),
+            )
+            .expect("save");
+            let config_path = dir.join(CONFIG_FILE_NAME);
+            let mut config = read_json(&config_path);
+            config["id"] = serde_json::json!("from-teammate");
+            fs::write(&config_path, config.to_string()).expect("write config");
+
+            ensure_project_keys().expect("backfill");
+            let loaded = load("half");
+            assert_eq!(loaded.id, "from-teammate");
+            assert!(uuid::Uuid::parse_str(&loaded.local_key).is_ok());
+        });
+    }
+
+    #[test]
+    fn backfill_with_missing_directory_writes_only_the_registry() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("gone");
+            fs::create_dir_all(&dir).expect("mkdir");
+            save_project(
+                "gone",
+                &serde_json::to_string(&project_with_dir("gone", &dir)).unwrap(),
+            )
+            .expect("save");
+            fs::remove_dir_all(&dir).expect("remove folder");
+
+            let result = ensure_project_keys().expect("backfill");
+            assert_eq!(
+                result,
+                ProjectKeyBackfill::Completed {
+                    updated: vec!["gone".to_string()],
+                    failed: vec![],
+                }
+            );
+            assert!(!dir.exists(), "the missing folder is not recreated");
+            let pointer = read_json(&get_projects_dir().unwrap().join("gone.json"));
+            assert_eq!(pointer["directory"], dir.to_str().unwrap());
+            let id = pointer["id"].as_str().expect("id cached").to_string();
+            let local_key = pointer["local_key"].as_str().expect("local_key cached").to_string();
+
+            // When the folder returns, the next read writes the cached keys in.
+            fs::create_dir_all(&dir).expect("restore folder");
+            let loaded = load("gone");
+            assert_eq!(loaded.id, id);
+            assert_eq!(loaded.local_key, local_key);
+            assert_eq!(read_json(&dir.join(CONFIG_FILE_NAME))["id"], id.as_str());
+        });
+    }
+
+    #[test]
+    fn backfill_reports_a_broken_project_and_continues() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let broken_dir = home.path().join("broken");
+            fs::create_dir_all(&broken_dir).expect("mkdir");
+            save_project(
+                "broken",
+                &serde_json::to_string(&project_with_dir("broken", &broken_dir)).unwrap(),
+            )
+            .expect("save");
+            fs::write(broken_dir.join(CONFIG_FILE_NAME), "<<<<<<< HEAD\n").expect("conflict");
+            save_project("fine", &minimal_project("fine")).expect("save");
+
+            match ensure_project_keys().expect("backfill") {
+                ProjectKeyBackfill::Completed { updated, failed } => {
+                    assert_eq!(updated, vec!["fine".to_string()]);
+                    assert_eq!(failed.len(), 1);
+                    assert_eq!(failed[0].0, "broken");
+                }
+                other => panic!("unexpected outcome: {:?}", other),
+            }
+            assert_eq!(
+                fs::read_to_string(broken_dir.join(CONFIG_FILE_NAME)).unwrap(),
+                "<<<<<<< HEAD\n",
+                "a conflicted config is left for the user to fix"
+            );
         });
     }
 }

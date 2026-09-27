@@ -122,13 +122,15 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<()
     // Groups: same idea for contexts. Membership lives in the group files,
     // so a stale editor copy cannot drop or duplicate a group's contexts.
     core::reconcile_group_contexts(&mut incoming, &core::groups_for_project(name));
-    let reconciled = serde_json::to_string_pretty(&incoming).map_err(|e| e.to_string())?;
-    let data: &str = &reconciled;
 
-    // Add Project wizard: refuse to overwrite an existing project/directory.
+    // Add Project wizard: refuse to overwrite an existing project/directory,
+    // then give the new project its identity keys before the first write.
     if creating.unwrap_or(false) {
         core::assert_can_create_project(name, &incoming.directory)?;
+        core::prepare_new_project_keys(&mut incoming)?;
     }
+    let reconciled = serde_json::to_string_pretty(&incoming).map_err(|e| e.to_string())?;
+    let data: &str = &reconciled;
 
     // No directory configured yet -- just persist to the registry and return.
     // There is nothing to sync until the user has pointed us at a real directory.
@@ -1791,6 +1793,31 @@ fn detach_profile_from_projects_removes_provided_entries() {
             )
             .expect("parse");
             assert_eq!(detected.agents, vec!["claude".to_string()]);
+        });
+    }
+
+    /// The wizard's create is one of the paths that mints identity keys. The
+    /// editor's follow-up save carries no keys and must not erase them.
+    #[test]
+    fn creating_a_project_mints_keys_that_later_saves_keep() {
+        with_temp_home(|_| {
+            let project_dir = tempdir().expect("project dir");
+            let stub = core::Project {
+                name: "minted".to_string(),
+                directory: project_dir.path().display().to_string(),
+                ..Default::default()
+            };
+            let stub_json = serde_json::to_string_pretty(&stub).expect("stub json");
+
+            save_project("minted", &stub_json, Some(true)).expect("create");
+            let created = read_back("minted");
+            assert!(uuid::Uuid::parse_str(&created.id).is_ok(), "create mints an id");
+            assert!(uuid::Uuid::parse_str(&created.local_key).is_ok());
+
+            save_project("minted", &stub_json, None).expect("keyless save");
+            let saved = read_back("minted");
+            assert_eq!(saved.id, created.id);
+            assert_eq!(saved.local_key, created.local_key);
         });
     }
 

@@ -748,7 +748,7 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
     crate::core::assert_can_create_project(name, directory)?;
 
     let now = chrono::Utc::now().to_rfc3339();
-    let project = crate::core::Project {
+    let mut project = crate::core::Project {
         name: name.to_string(),
         description: params
             .description
@@ -762,6 +762,7 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
         updated_at: now,
         ..Default::default()
     };
+    crate::core::prepare_new_project_keys(&mut project)?;
     let data = serde_json::to_string(&project)
         .map_err(|e| format!("Failed to serialise project: {}", e))?;
     crate::core::save_project(name, &data)?;
@@ -2992,6 +2993,11 @@ mod tests {
                 serde_json::from_str(&raw).expect("parse roundtrip");
             assert_eq!(project.name, "fresh");
             assert_eq!(project.directory, dir);
+            assert!(uuid::Uuid::parse_str(&project.id).is_ok(), "register mints an id");
+            assert!(
+                uuid::Uuid::parse_str(&project.local_key).is_ok(),
+                "register mints a local_key"
+            );
         });
     }
 

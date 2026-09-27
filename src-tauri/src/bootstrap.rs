@@ -87,6 +87,25 @@ pub fn run_startup_housekeeping() {
         Err(e) => eprintln!("[automatic] library layout migration error: {}", e),
     }
 
+    // Give every registered project a committed `id` and a machine-local
+    // `local_key`. Runs before anything below re-syncs projects, so those
+    // saves already carry the keys. Idempotent, and locked because the GUI
+    // and every `mcp-serve` process run this at the same time.
+    match core::ensure_project_keys() {
+        Ok(core::ProjectKeyBackfill::LockHeld) => eprintln!(
+            "[automatic] project key backfill skipped: another process holds the lock"
+        ),
+        Ok(core::ProjectKeyBackfill::Completed { updated, failed }) => {
+            if !updated.is_empty() {
+                eprintln!("[automatic] minted project keys for: {:?}", updated);
+            }
+            for (name, e) in failed {
+                eprintln!("[automatic] project key backfill error for '{}': {}", name, e);
+            }
+        }
+        Err(e) => eprintln!("[automatic] project key backfill error: {}", e),
+    }
+
     // Drop stale project references from group files. Heals data
     // written before delete_project/rename_project started cleaning
     // up their own group entries. Idempotent.

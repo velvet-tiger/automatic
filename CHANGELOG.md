@@ -8,6 +8,7 @@ All notable changes to Automatic are documented here.
 
 - Removing an agent from a project now asks what to do with its files. Remove deletes everything the agent uses in the project, including its own folders such as `.claude/` and `.junie/` and its own instruction file such as `CLAUDE.md`. Keep stops syncing the agent and leaves every file where it is. Before you confirm, the dialog lists each path it will delete and each shared file it will leave for your other agents. ([41829f2](https://github.com/velvet-tiger/automatic/commit/41829f2))
 - The library's sub-agent editor has separate fields for name, description, tools, model and colour, and its own editor for the prompt. Any other front matter goes in an Other settings box. Fields you don't touch are saved exactly as they were. The read-only view shows the same fields. ([5d9e796](https://github.com/velvet-tiger/automatic/commit/5d9e796), [029cb93](https://github.com/velvet-tiger/automatic/commit/029cb93))
+- Each project now gets a permanent id. On first launch Automatic adds an `"id"` field to `.automatic.json` in every project it manages. It shows up as an uncommitted change. Commit it so every copy of the repo shares the same id.
 - Hold Option (Alt on Windows and Linux) while dragging a project in the sidebar to add it to another group and keep it in its current one. A plain drag still moves it. ([987cf79](https://github.com/velvet-tiger/automatic/commit/987cf79))
 
 ### Changed

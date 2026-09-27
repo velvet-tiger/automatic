@@ -38,6 +38,16 @@ export interface UserCommandEntry {
 
 export interface Project {
   name: string;
+  /**
+   * Permanent project identity, committed in `.automatic.json`. Set by the
+   * backend; the frontend passes it back unchanged on save.
+   */
+  readonly id?: string;
+  /**
+   * Identity of this checkout on this machine. Kept out of the committed
+   * config. Set by the backend; passed back unchanged on save.
+   */
+  readonly local_key?: string;
   description: string;
   directory: string;
   skills: string[];

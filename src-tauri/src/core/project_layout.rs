@@ -34,6 +34,11 @@ type ProjectFields = Map<String, Value>;
 /// field is configuration.
 const STATE_FIELDS: &[&str] = &[
     "directory",
+    // Names this checkout on this machine. Committing it would give every
+    // clone the same key, and a copied folder could not be told apart from
+    // the original. The project `id` stays in the config because it must
+    // travel with the repo.
+    "local_key",
     "created_at",
     "updated_at",
     "last_activity",
