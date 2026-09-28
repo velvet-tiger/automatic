@@ -567,7 +567,7 @@ export default function McpServers({ initialServer = null, onInitialServerConsum
 
   const checkOpencodeProjects = async () => {
     try {
-      const projectNames: string[] = await invoke("list_projects");
+      const projectNames: string[] = await invoke("get_projects");
       const affectedProjects: string[] = [];
 
       for (const name of projectNames) {

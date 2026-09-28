@@ -228,7 +228,7 @@ export default function Projects({
     let cancelled = false;
     (async () => {
       try {
-        const names: string[] = await invoke("get_project_templates");
+        const names: string[] = await invoke("get_templates");
         if (cancelled || !names.includes(initialCreateWithTemplate)) {
           onInitialCreateWithTemplateConsumed?.();
           return;

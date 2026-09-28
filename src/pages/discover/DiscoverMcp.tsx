@@ -362,8 +362,8 @@ export default function DiscoverMcp({
   // Load installed skills
   const loadInstalledSkills = useCallback(async () => {
     try {
-      const result: string[] = await invoke("list_skills");
-      setInstalledSkills(new Set(result));
+      const result: { name: string }[] = await invoke("get_skills");
+      setInstalledSkills(new Set(result.map((s) => s.name)));
     } catch {
       // non-fatal
     }

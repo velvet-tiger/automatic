@@ -17,7 +17,6 @@ describe("Projects (smoke)", () => {
       get_instructions: [],
       get_rules: [],
       get_templates: [],
-      get_project_templates: [],
       list_groups: [],
       list_tools_with_detection: [],
       agent_features_enabled: false,

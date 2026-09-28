@@ -72,7 +72,6 @@ function baselineRoutes(overrides: Record<string, unknown> = {}) {
     get_instructions: [],
     get_rules: [],
     get_templates: [],
-    get_project_templates: [],
     list_groups: [],
     groups_for_project: [],
     list_tools_with_detection: [],
