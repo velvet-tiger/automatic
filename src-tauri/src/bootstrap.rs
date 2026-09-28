@@ -88,11 +88,13 @@ pub fn run_startup_housekeeping() {
     }
 
     // Give every registered project a committed `id` and a machine-local
-    // `local_key`, and name its registry file by the `local_key`. Runs
-    // before the group scrub below, which needs names from the migrated
-    // files, and before anything below re-syncs projects, so those
-    // saves already carry the keys. Idempotent, and locked because the GUI
-    // and every `mcp-serve` process run this at the same time.
+    // `local_key`, name its registry file by the `local_key`, and move
+    // memory, features, groups, activity, recommendations and dev servers
+    // from name keys to project keys (backed up first). Runs before the
+    // group scrub below, which classifies members by id, and before
+    // anything below re-syncs projects, so those saves already carry the
+    // keys. Idempotent, and locked because the GUI and every `mcp-serve`
+    // process run this at the same time.
     match core::ensure_project_keys() {
         Ok(core::ProjectKeyBackfill::LockHeld) => eprintln!(
             "[automatic] project key backfill skipped: another process holds the lock"
@@ -101,6 +103,7 @@ pub fn run_startup_housekeeping() {
             updated,
             renamed,
             failed,
+            stores,
         }) => {
             if !updated.is_empty() {
                 eprintln!("[automatic] minted project keys for: {:?}", updated);
@@ -114,26 +117,41 @@ pub fn run_startup_housekeeping() {
             for (name, e) in failed {
                 eprintln!("[automatic] project key backfill error for '{}': {}", name, e);
             }
+            if stores.changed_anything() {
+                eprintln!(
+                    "[automatic] re-keyed project stores: {} memory file(s), {} feature row(s), \
+                     {} activity row(s), {} recommendation row(s), {} group file(s), \
+                     {} dev-server file(s); backup in {}",
+                    stores.memory_files,
+                    stores.feature_rows,
+                    stores.activity_rows,
+                    stores.recommendation_rows,
+                    stores.group_files,
+                    stores.dev_server_files,
+                    stores
+                        .backup_dir
+                        .as_ref()
+                        .map_or_else(|| "(none)".to_string(), |d| d.display().to_string())
+                );
+            }
+            for problem in stores.problems {
+                eprintln!("[automatic] project store migration: {}", problem);
+            }
         }
         Err(e) => eprintln!("[automatic] project key backfill error: {}", e),
     }
 
-    // Drop stale project references from group files. Heals data
-    // written before delete_project/rename_project started cleaning
-    // up their own group entries. Idempotent.
-    match core::list_projects() {
-        Ok(live) => match core::scrub_orphan_project_references(&live) {
-            Ok(affected) if !affected.is_empty() => eprintln!(
-                "[automatic] scrubbed orphan project references from groups: {:?}",
-                affected
-            ),
-            Ok(_) => {}
-            Err(e) => eprintln!("[automatic] group scrub error: {}", e),
-        },
-        Err(e) => eprintln!(
-            "[automatic] group scrub skipped (list_projects failed): {}",
-            e
+    // Drop group members that are project keys no registered project has
+    // (references to deleted projects). Runs after the store migration
+    // above, which turns member names into ids. Members it cannot
+    // classify, such as names, are never removed. Idempotent.
+    match core::scrub_orphan_project_references() {
+        Ok(affected) if !affected.is_empty() => eprintln!(
+            "[automatic] scrubbed orphan project references from groups: {:?}",
+            affected
         ),
+        Ok(_) => {}
+        Err(e) => eprintln!("[automatic] group scrub error: {}", e),
     }
 
     if let Err(e) = core::install_default_skills_inner(force_reinstall) {

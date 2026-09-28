@@ -366,7 +366,9 @@ async fn run_ai_recommendations_bg(project: &str, force: bool) -> Result<(), Str
     crate::core::ai::resolve_api_key(None)?;
 
     // Honour the throttle for existing projects; always run for new ones.
-    if !force && crate::recommendations::ai_recommendations_throttled(project)? {
+    // The throttle timestamp is stored under the checkout's `local_key`.
+    let store_key = crate::core::project_store_local_key(project)?;
+    if !force && crate::recommendations::ai_recommendations_throttled(&store_key)? {
         return Ok(());
     }
 
@@ -408,16 +410,17 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     let old_name = &crate::core::canonical_project_name(old_name)?;
     core::rename_project(old_name, new_name)?;
 
-    // Keep the dev-servers plugin's registry file and running processes
-    // aligned with the new name. Without this, `~/.automatic/dev-servers/<old>.json`
-    // would keep showing rows in the global Tools > Servers view attached
-    // to a project that no longer exists, and a running server would lose
-    // its stop control (VEL-160). Best-effort — the rename has already
-    // succeeded and this cleanup should not block it.
-    if let Err(e) = crate::plugins::dev_servers::rename_project(old_name, new_name) {
+    // Memory, features, groups, activity, recommendations and dev servers
+    // are keyed by `id` or `local_key`, which a rename does not change, so
+    // nothing moves. Dev servers still keyed by the old name (not migrated
+    // yet) are moved under the key, or the new name for a project without
+    // one, so a running server keeps its stop control (VEL-160).
+    // Best-effort — the rename has already succeeded.
+    let store_key = crate::core::project_store_local_key(new_name)?;
+    if let Err(e) = crate::plugins::dev_servers::adopt_legacy_project(old_name, &store_key) {
         eprintln!(
-            "rename_project: could not rename dev-server config '{}' -> '{}': {}",
-            old_name, new_name, e
+            "rename_project: could not move dev-server config '{}' -> '{}': {}",
+            old_name, store_key, e
         );
     }
 
@@ -458,16 +461,26 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
 pub fn delete_project(name: &str) -> Result<(), String> {
     // Deleting an unknown project still clears what it left behind, as before.
     let name = &core::resolve_project_name(name)?.unwrap_or_else(|| name.to_string());
+    // Resolve the store keys before the registry entry goes.
+    let keys = core::project_store_keys(name)?;
     core::delete_project(name)?;
 
-    // Drop the dev-servers plugin's per-project registry file so no
-    // orphan is left in the global Tools > Servers view (VEL-160).
+    // Memory, features, activity and recommendations are kept (user
+    // decision, stage 3b step 2). Drop the dev-servers plugin's per-checkout
+    // registry file so no orphan is left in the global Tools > Servers view
+    // (VEL-160), and a legacy file still named by the project's name.
     // Best-effort — the project delete has already succeeded.
-    if let Err(e) = crate::plugins::dev_servers::registry::remove_project(name) {
-        eprintln!(
-            "delete_project: could not remove dev-server config for '{}': {}",
-            name, e
-        );
+    let mut dev_server_keys = vec![keys.local_key.as_str()];
+    if keys.local_key != *name {
+        dev_server_keys.push(name.as_str());
+    }
+    for key in dev_server_keys {
+        if let Err(e) = crate::plugins::dev_servers::registry::remove_project(key) {
+            eprintln!(
+                "delete_project: could not remove dev-server config '{}' for '{}': {}",
+                key, name, e
+            );
+        }
     }
 
     Ok(())
@@ -1910,8 +1923,9 @@ fn detach_profile_from_projects_removes_provided_entries() {
     }
 }
 
-/// Commands accept a `local_key` or a name, and name-keyed stores always
-/// receive the name (project identity plan, stage 3b step 1).
+/// Commands accept a `local_key` or a name (stage 3b step 1), and each
+/// store receives its key: `id` for memory, features and groups, `local_key`
+/// for activity, recommendations and dev servers (stage 3b step 2).
 #[cfg(test)]
 mod identifier_tests {
     use super::*;
@@ -1933,27 +1947,49 @@ mod identifier_tests {
         });
     }
 
+    /// Stored `project` values of every activity row, newest first.
     fn activity_projects() -> Vec<String> {
         let entries = crate::activity::get_all_activity(100).expect("activity");
         entries.into_iter().map(|e| e.project).collect()
     }
 
+    fn site_id() -> String {
+        let project: core::Project =
+            serde_json::from_str(&core::read_project("site").unwrap()).unwrap();
+        project.id
+    }
+
+    /// Register a second checkout of `site`: same `id`, its own `local_key`.
+    fn add_checkout(name: &str) -> String {
+        let project = core::Project {
+            name: name.into(),
+            id: site_id(),
+            local_key: core::new_project_key(),
+            ..Default::default()
+        };
+        core::save_project(name, &serde_json::to_string(&project).unwrap()).expect("save checkout");
+        project.local_key
+    }
+
     #[test]
-    fn projects_command_given_a_key_logs_activity_under_the_name() {
+    fn projects_command_given_a_key_logs_activity_under_the_key() {
         with_site(|key| {
             adopt_stale_skill(key, "my-skill").expect("adopt by key");
 
             let project: core::Project =
                 serde_json::from_str(&core::read_project("site").unwrap()).unwrap();
             assert_eq!(project.skills, vec!["my-skill".to_string()]);
-            assert_eq!(activity_projects(), vec!["site".to_string()]);
+            assert_eq!(activity_projects(), vec![key.to_string()], "stored by local_key");
 
-            // The activity command takes the key too, and tags the rows.
-            let raw = super::super::activity::get_project_activity(key, 0).expect("by key");
-            let rows: Vec<crate::activity::ActivityEntry> = serde_json::from_str(&raw).unwrap();
-            assert_eq!(rows.len(), 1);
-            assert_eq!(rows[0].project, "site");
-            assert_eq!(rows[0].local_key.as_deref(), Some(key));
+            // The activity command takes a key or a name, and shows rows by name.
+            for ident in [key, "site"] {
+                let raw = super::super::activity::get_project_activity(ident, 0).expect("by ident");
+                let rows: Vec<crate::activity::ActivityEntry> = serde_json::from_str(&raw).unwrap();
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].project, "site");
+                assert_eq!(rows[0].local_key.as_deref(), Some(key));
+            }
+            assert_eq!(super::super::activity::get_project_activity_count("site").unwrap(), 1);
         });
     }
 
@@ -1964,19 +2000,86 @@ mod identifier_tests {
             let raw = super::super::activity::get_all_activity(0).expect("all");
             let rows: Vec<crate::activity::ActivityEntry> = serde_json::from_str(&raw).unwrap();
             assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].project, "ghost", "an orphan row is returned unchanged");
             assert_eq!(rows[0].local_key, None);
             assert!(!raw.contains("local_key"), "None is not serialised");
         });
     }
 
     #[test]
-    fn memory_command_given_a_key_stores_under_the_name() {
+    fn memory_command_given_a_name_or_key_stores_under_the_id() {
         with_site(|key| {
-            super::super::memory::store_memory(key, "k", "v", None).expect("store by key");
-            assert!(crate::memory::get_all_memories("site").unwrap().contains_key("k"));
+            let id = site_id();
+            super::super::memory::store_memory(key, "by-key", "v", None).expect("store by key");
+            super::super::memory::store_memory("site", "by-name", "v", None).expect("store by name");
+            let stored = crate::memory::get_all_memories(&id).unwrap();
+            assert!(stored.contains_key("by-key") && stored.contains_key("by-name"));
+            assert!(crate::memory::get_all_memories("site").unwrap().is_empty());
             assert!(crate::memory::get_all_memories(key).unwrap().is_empty());
-            let db = super::super::memory::get_project_memories(key).expect("read by key");
-            assert!(db.contains_key("k"));
+            let db = super::super::memory::get_project_memories("site").expect("read by name");
+            assert_eq!(db.len(), 2);
+            assert_eq!(activity_projects(), vec![key.to_string(), key.to_string()]);
+        });
+    }
+
+    #[test]
+    fn checkouts_share_memory_and_features_but_not_activity() {
+        with_site(|key| {
+            let worktree_key = add_checkout("site-wt");
+            super::super::memory::store_memory("site-wt", "k", "v", None).expect("store");
+            let db = super::super::memory::get_project_memories("site").expect("read");
+            assert!(db.contains_key("k"), "the other checkout sees the memory");
+
+            crate::plugins::build::commands::create_feature(
+                "site-wt", "shared", None, None, None, None, None, None, None, None,
+            )
+            .expect("create");
+            let listed = crate::plugins::build::commands::list_features("site", None, None).unwrap();
+            assert_eq!(listed.len(), 1);
+            assert_eq!(listed[0].project, "site", "shown by the calling checkout's name");
+
+            let raw = super::super::activity::get_project_activity("site", 0).unwrap();
+            assert_eq!(raw, "[]", "activity stays with the checkout that acted");
+            assert_eq!(activity_projects(), vec![worktree_key.clone(), worktree_key]);
+            let _ = key;
+        });
+    }
+
+    #[test]
+    fn recommendations_are_stored_by_key_and_shown_by_name() {
+        with_site(|key| {
+            let params = |project: &str| crate::recommendations::AddRecommendationParams {
+                project: project.into(),
+                kind: "skill".into(),
+                title: format!("t-{project}"),
+                body: String::new(),
+                priority: crate::recommendations::RecommendationPriority::Normal,
+                source: "test".into(),
+                metadata: String::new(),
+            };
+            super::super::recommendations::add_recommendation(params("site")).expect("add by name");
+            super::super::recommendations::add_recommendation(params("ghost")).expect("add orphan");
+
+            let stored = crate::recommendations::list_recommendations(
+                key,
+                crate::recommendations::ListRecommendationsFilter {
+                    status: None,
+                    kind: None,
+                    source: None,
+                    limit: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(stored.len(), 1, "stored under the local_key");
+            assert_eq!(stored[0].project, key);
+
+            let shown = super::super::recommendations::list_all_pending_recommendations(None).unwrap();
+            let site = shown.iter().find(|r| r.title == "t-site").unwrap();
+            assert_eq!(site.project, "site");
+            assert_eq!(site.local_key.as_deref(), Some(key));
+            let ghost = shown.iter().find(|r| r.title == "t-ghost").unwrap();
+            assert_eq!(ghost.project, "ghost");
+            assert_eq!(ghost.local_key, None);
         });
     }
 
@@ -1985,43 +2088,111 @@ mod identifier_tests {
         with_site(|_| {
             super::super::memory::store_memory("orphan", "k", "v", None).expect("store");
             assert!(crate::memory::get_all_memories("orphan").unwrap().contains_key("k"));
-            assert!(crate::memory::get_all_memories("site").unwrap().is_empty());
+            assert!(crate::memory::get_all_memories(&site_id()).unwrap().is_empty());
         });
     }
 
     #[test]
-    fn feature_command_given_a_key_creates_under_the_name() {
+    fn feature_command_given_a_name_creates_under_the_id() {
         with_site(|key| {
+            let id = site_id();
             let feature = crate::plugins::build::commands::create_feature(
-                key, "via key", None, None, None, None, None, None, None, None,
+                "site", "via name", None, None, None, None, None, None, None, None,
             )
-            .expect("create by key");
-            assert_eq!(feature.project, "site");
-            let listed = crate::plugins::build::features::list_features("site", None, false)
-                .expect("list by name");
-            assert_eq!(listed.len(), 1);
-            assert!(crate::plugins::build::features::list_features(key, None, false)
-                .expect("list by key")
-                .is_empty());
+            .expect("create by name");
+            assert_eq!(feature.project, "site", "the row is named, not keyed");
+            let stored = crate::plugins::build::features::list_features(
+                &core::ProjectStoreKeys::unregistered(&id),
+                None,
+                false,
+            )
+            .expect("list by id");
+            assert_eq!(stored.len(), 1);
+            assert!(crate::plugins::build::features::list_features(
+                &core::ProjectStoreKeys::unregistered("site"),
+                None,
+                false
+            )
+            .expect("list by name")
+            .is_empty());
+            let by_key = crate::plugins::build::commands::list_features(key, None, None).unwrap();
+            assert_eq!(by_key.len(), 1);
         });
     }
 
     #[test]
-    fn groups_for_project_accepts_a_key() {
+    fn groups_store_ids_and_show_every_checkout_by_name() {
         with_site(|key| {
-            let group = serde_json::json!({"name": "g", "projects": ["site"]});
+            let group = serde_json::json!({"name": "g", "projects": ["site", "ghost"]});
             core::save_group("g", &group.to_string()).expect("save group");
+            let raw: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(core::get_groups_dir().unwrap().join("g.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(raw["projects"], serde_json::json!([site_id(), "ghost"]));
+
+            add_checkout("site-wt");
+            let read: core::ProjectGroup =
+                serde_json::from_str(&super::super::groups::read_group("g").unwrap()).unwrap();
+            assert_eq!(read.projects, vec!["site", "site-wt", "ghost"]);
+
             assert_eq!(super::super::groups::groups_for_project(key).unwrap(), vec!["g"]);
-            assert_eq!(super::super::groups::groups_for_project("site").unwrap(), vec!["g"]);
+            assert_eq!(super::super::groups::groups_for_project("site-wt").unwrap(), vec!["g"]);
             assert!(super::super::groups::groups_for_project("orphan").unwrap().is_empty());
         });
     }
 
     #[test]
-    fn delete_command_given_a_key_removes_the_project() {
+    fn rename_keeps_memory_features_activity_and_groups() {
         with_site(|key| {
+            super::super::memory::store_memory("site", "k", "v", None).unwrap();
+            crate::plugins::build::commands::create_feature(
+                "site", "f", None, None, None, None, None, None, None, None,
+            )
+            .unwrap();
+            core::save_group("g", &serde_json::json!({"name": "g", "projects": ["site"]}).to_string())
+                .unwrap();
+
+            rename_project("site", "renamed").expect("rename");
+
+            assert!(super::super::memory::get_project_memories("renamed").unwrap().contains_key("k"));
+            let features = crate::plugins::build::commands::list_features("renamed", None, None).unwrap();
+            assert_eq!(features.len(), 1);
+            assert_eq!(features[0].project, "renamed");
+            let raw = super::super::activity::get_project_activity("renamed", 0).unwrap();
+            let rows: Vec<crate::activity::ActivityEntry> = serde_json::from_str(&raw).unwrap();
+            assert!(rows.iter().all(|r| r.project == "renamed"));
+            assert!(rows.iter().any(|r| r.label == "Project renamed"));
+            assert!(activity_projects().iter().all(|p| p == key), "every row is under the key");
+            assert_eq!(super::super::groups::groups_for_project("renamed").unwrap(), vec!["g"]);
+        });
+    }
+
+    #[test]
+    fn delete_keeps_data_and_drops_the_group_id_with_the_last_checkout() {
+        with_site(|key| {
+            let id = site_id();
+            super::super::memory::store_memory("site", "k", "v", None).unwrap();
+            core::save_group("g", &serde_json::json!({"name": "g", "projects": ["site"]}).to_string())
+                .unwrap();
+            let worktree_key = add_checkout("site-wt");
+            let dev_dir = core::get_automatic_dir().unwrap().join("dev-servers");
+            std::fs::create_dir_all(&dev_dir).unwrap();
+            std::fs::write(dev_dir.join(format!("{key}.json")), "[]").unwrap();
+
             delete_project(key).expect("delete by key");
-            assert!(core::list_projects().unwrap().is_empty());
+            assert_eq!(core::list_projects().unwrap(), vec!["site-wt"]);
+            assert!(crate::memory::get_all_memories(&id).unwrap().contains_key("k"), "memory kept");
+            assert!(!dev_dir.join(format!("{key}.json")).exists(), "dev servers removed");
+            let read: core::ProjectGroup =
+                serde_json::from_str(&super::super::groups::read_group("g").unwrap()).unwrap();
+            assert_eq!(read.projects, vec!["site-wt"], "another checkout keeps the id in the group");
+
+            delete_project(&worktree_key).expect("delete the last checkout");
+            let read: core::ProjectGroup =
+                serde_json::from_str(&super::super::groups::read_group("g").unwrap()).unwrap();
+            assert!(read.projects.is_empty(), "the last checkout takes the id with it");
+            assert!(crate::memory::get_all_memories(&id).unwrap().contains_key("k"), "memory kept");
         });
     }
 

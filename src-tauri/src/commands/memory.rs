@@ -2,11 +2,15 @@ use crate::core;
 use crate::memory;
 
 // ── Memory ───────────────────────────────────────────────────────────────────
+//
+// Memory is keyed by project `id`. Each command resolves its `project`
+// identifier (a name, `local_key` or `id`) with `project_store_keys`, which
+// passes an unregistered identifier through unchanged.
 
 #[tauri::command]
 pub fn get_project_memories(project: &str) -> Result<memory::MemoryDb, String> {
-    let project = &crate::core::project_store_name(project)?;
-    memory::get_all_memories(project)
+    let project = crate::core::project_store_keys(project)?;
+    memory::get_all_memories(&project.id)
 }
 
 #[tauri::command]
@@ -16,31 +20,31 @@ pub fn store_memory(
     value: &str,
     source: Option<&str>,
 ) -> Result<String, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_keys(project)?;
     memory::store_memory(project, key, value, source)
 }
 
 #[tauri::command]
 pub fn get_memory(project: &str, key: &str) -> Result<String, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_keys(project)?;
     memory::get_memory(project, key)
 }
 
 #[tauri::command]
 pub fn list_memories(project: &str, pattern: Option<&str>) -> Result<String, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_keys(project)?;
     memory::list_memories(project, pattern)
 }
 
 #[tauri::command]
 pub fn search_memories(project: &str, query: &str) -> Result<String, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_keys(project)?;
     memory::search_memories(project, query)
 }
 
 #[tauri::command]
 pub fn delete_memory(project: &str, key: &str) -> Result<String, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_keys(project)?;
     memory::delete_memory(project, key)
 }
 
@@ -50,7 +54,7 @@ pub fn clear_memories(
     pattern: Option<&str>,
     confirm: bool,
 ) -> Result<String, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_keys(project)?;
     memory::clear_memories(project, pattern, confirm)
 }
 

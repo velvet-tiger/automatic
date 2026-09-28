@@ -11,12 +11,16 @@ fn resolve_dir(project_dir: &str, subdirectory: Option<&str>) -> PathBuf {
     }
 }
 
-/// Fill each status's `local_key` from the registry, scanned once per call.
-/// Statuses for a project that is no longer registered keep `None`.
+/// Show each status by project name and fill its `local_key`, reading the
+/// registry once per call. Dev servers are keyed by `local_key` (stage 3b
+/// step 2); a legacy status tagged with a name keeps it, and one no project
+/// claims is unchanged with no key.
 fn with_local_keys(mut statuses: Vec<DevServerStatus>) -> Result<Vec<DevServerStatus>, String> {
-    let keys = crate::core::project_local_keys_by_name()?;
+    let index = crate::core::ProjectKeyIndex::load()?;
     for status in &mut statuses {
-        status.local_key = keys.get(&status.project).cloned();
+        let (name, local_key) = index.display_checkout_row(&status.project);
+        status.project = name;
+        status.local_key = local_key;
     }
     Ok(statuses)
 }
@@ -35,22 +39,26 @@ fn project_directory(project: &str) -> Result<String, String> {
 }
 
 // ── Config CRUD ──────────────────────────────────────────────────────────────
+//
+// Each command resolves its `project` identifier to the checkout's
+// `local_key` with `project_store_local_key`; an unregistered identifier
+// passes through unchanged, so an orphaned config stays reachable.
 
 #[tauri::command]
 pub fn list_dev_server_configs(project: String) -> Result<Vec<ServerConfig>, String> {
-    let project = crate::core::project_store_name(&project)?;
+    let project = crate::core::project_store_local_key(&project)?;
     registry::list_configs(&project)
 }
 
 #[tauri::command]
 pub fn save_dev_server_config(project: String, config: ServerConfig) -> Result<ServerConfig, String> {
-    let project = crate::core::project_store_name(&project)?;
+    let project = crate::core::project_store_local_key(&project)?;
     registry::save_config(&project, config)
 }
 
 #[tauri::command]
 pub fn delete_dev_server_config(project: String, id: String) -> Result<(), String> {
-    let project = crate::core::project_store_name(&project)?;
+    let project = crate::core::project_store_local_key(&project)?;
     process::forget(&id)?;
     registry::delete_config(&project, &id)
 }
@@ -82,7 +90,7 @@ pub fn list_dev_server_scripts(
 /// the work is moved to a blocking task to keep the window responsive.
 #[tauri::command]
 pub async fn start_dev_server(project: String, id: String) -> Result<DevServerStatus, String> {
-    let project = crate::core::project_store_name(&project)?;
+    let project = crate::core::project_store_local_key(&project)?;
     tokio::task::spawn_blocking(move || {
         let config = registry::find_config(&project, &id)?;
         let directory = project_directory(&project)?;
@@ -118,9 +126,9 @@ pub fn stop_dev_server(id: String) -> Result<DevServerStatus, String> {
 pub fn list_dev_server_statuses(project: Option<String>) -> Result<Vec<DevServerStatus>, String> {
     match project {
         Some(project) => {
-            let project = crate::core::project_store_name(&project)?;
-            let configs = registry::list_configs(&project)?;
-            with_local_keys(process::list_statuses(&project, &configs))
+            let keys = crate::core::project_store_keys(&project)?;
+            let configs = registry::list_configs(&keys.local_key)?;
+            with_local_keys(process::list_statuses(&keys.local_key, &[keys.name.as_str()], &configs))
         }
         None => with_local_keys(process::list_all_statuses()?),
     }
@@ -165,23 +173,28 @@ mod tests {
     }
 
     #[test]
-    fn config_saved_by_key_lands_under_the_name() {
+    fn config_saved_by_name_or_key_lands_under_the_key() {
         with_site(|key| {
             save_dev_server_config(key.to_string(), sample()).expect("save by key");
-            assert_eq!(registry::list_configs("site").unwrap().len(), 1);
-            assert!(registry::list_configs(key).unwrap().is_empty());
-            assert_eq!(list_dev_server_configs(key.to_string()).unwrap().len(), 1);
+            save_dev_server_config("site".to_string(), sample()).expect("save by name");
+            assert_eq!(registry::list_configs(key).unwrap().len(), 2);
+            assert!(registry::list_configs("site").unwrap().is_empty());
+            assert_eq!(list_dev_server_configs("site".to_string()).unwrap().len(), 2);
         });
     }
 
     #[test]
-    fn statuses_carry_the_key_and_orphans_carry_none() {
+    fn statuses_show_the_name_and_key_and_orphans_carry_none() {
         with_site(|key| {
-            registry::save_config("site", sample()).unwrap();
-            let by_key = list_dev_server_statuses(Some(key.to_string())).expect("by key");
-            assert_eq!(by_key.len(), 1);
-            assert_eq!(by_key[0].project, "site");
-            assert_eq!(by_key[0].local_key.as_deref(), Some(key));
+            registry::save_config(key, sample()).unwrap();
+            let by_name = list_dev_server_statuses(Some("site".into())).expect("by name");
+            assert_eq!(by_name.len(), 1);
+            assert_eq!(by_name[0].project, "site", "the key is shown as the name");
+            assert_eq!(by_name[0].local_key.as_deref(), Some(key));
+
+            let all = list_dev_server_statuses(None).expect("all");
+            assert_eq!(all.len(), 1, "a keyed config is live, not an orphan");
+            assert_eq!(all[0].project, "site");
 
             registry::save_config("ghost", sample()).unwrap();
             let ghost = list_dev_server_statuses(Some("ghost".into())).expect("orphan");

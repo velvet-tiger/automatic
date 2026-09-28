@@ -477,14 +477,22 @@ pub fn stop(id: &str) -> Result<DevServerStatus, String> {
     Ok(status_from_running(id, running))
 }
 
-/// Statuses for a set of configs known to belong to `project`, merging live
-/// process state where a server is (or was) running.
-pub fn list_statuses(project: &str, configs: &[ServerConfig]) -> Vec<DevServerStatus> {
+/// Statuses for a set of configs known to belong to `project` (its store
+/// key, the `local_key`), merging live process state where a server is (or
+/// was) running.
+///
+/// A process is matched when it is tagged with `project` or with one of
+/// `aliases`. Callers pass the project's name as an alias: a server started
+/// before the startup migration re-keyed dev servers, in this same session,
+/// is still tagged with the name and must keep showing as running.
+pub fn list_statuses(project: &str, aliases: &[&str], configs: &[ServerConfig]) -> Vec<DevServerStatus> {
     let mut map = processes().lock().unwrap();
     configs
         .iter()
         .map(|config| match map.get_mut(&config.id) {
-            Some(running) if running.project == project => status_from_running(&config.id, running),
+            Some(running) if running.project == project || aliases.contains(&running.project.as_str()) => {
+                status_from_running(&config.id, running)
+            }
             _ => status_from_config(project, config),
         })
         .collect()
@@ -498,25 +506,36 @@ pub fn list_statuses(project: &str, configs: &[ServerConfig]) -> Vec<DevServerSt
 /// remove them, because the per-project delete control lives in the
 /// project editor. A failure to list projects is returned as an error
 /// rather than treated as "no projects", which would delete every file.
+///
+/// Registry files are named by the project's `local_key`. A file still
+/// named by a project name (not migrated yet) is live too, so the live set
+/// holds every registered project's `local_key` and name.
 pub fn list_all_statuses() -> Result<Vec<DevServerStatus>, String> {
-    let live_projects = crate::core::list_projects()
+    let index = crate::core::ProjectKeyIndex::load()
         .map_err(|e| format!("Could not list projects to check dev servers: {}", e))?;
-    let owners = registry::classify_config_projects(&registry::list_config_projects()?, &live_projects);
+    let mut live_owners: Vec<String> = Vec::new();
+    for summary in index.summaries() {
+        if !summary.local_key.is_empty() {
+            live_owners.push(summary.local_key.clone());
+        }
+        live_owners.push(summary.name.clone());
+    }
+    let owners = registry::classify_config_projects(&registry::list_config_projects()?, &live_owners);
     registry::remove_orphaned_configs(&owners.orphans);
 
     let mut all = Vec::new();
-    for project in owners.live {
-        let configs = registry::list_configs(&project)?;
-        all.extend(list_statuses(&project, &configs));
+    for owner in owners.live {
+        let configs = registry::list_configs(&owner)?;
+        let (name, _) = index.display_checkout_row(&owner);
+        all.extend(list_statuses(&owner, &[name.as_str()], &configs));
     }
     Ok(all)
 }
 
-/// Move tracked processes from project `old` to project `new` after a
-/// project rename. `list_statuses` only merges a process into a row when
-/// the project names match. Without this, a server left running across a
-/// rename shows as "Stopped", cannot be started ("already running"),
-/// cannot be stopped from the UI, and its config cannot be deleted.
+/// Move tracked processes tagged `old` to `new`. `list_statuses` merges a
+/// process into a row only when the tags match. Used to re-tag a server
+/// started under a project's name, before its dev servers were keyed by
+/// `local_key`, so it keeps its stop control.
 pub fn rename_project(old: &str, new: &str) {
     let mut map = processes().lock().unwrap();
     for running in map.values_mut() {
@@ -751,7 +770,7 @@ mod tests {
 
         let mut captured = Vec::new();
         for _ in 0..25 {
-            let statuses = list_statuses("test-project", std::slice::from_ref(&config));
+            let statuses = list_statuses("test-project", &[], std::slice::from_ref(&config));
             if let Some(status) = statuses.first() {
                 if !status.urls.is_empty() {
                     captured = status.urls.clone();
@@ -805,7 +824,7 @@ mod tests {
         assert!(err.contains("failed to start"), "got: {}", err);
         assert!(err.contains("EADDRINUSE"), "got: {}", err);
 
-        let status = list_statuses("test-project", std::slice::from_ref(&config))
+        let status = list_statuses("test-project", &[], std::slice::from_ref(&config))
             .into_iter()
             .next()
             .expect("entry is kept after the kill");
@@ -864,7 +883,7 @@ mod tests {
 
         let mut observed: Option<DevServerStatus> = None;
         for _ in 0..40 {
-            let statuses = list_statuses("test-project", std::slice::from_ref(&config));
+            let statuses = list_statuses("test-project", &[], std::slice::from_ref(&config));
             if let Some(status) = statuses.into_iter().next() {
                 if status.last_error.is_some() {
                     observed = Some(status);
@@ -1007,7 +1026,7 @@ mod tests {
         );
 
         rename_project("vel-160-old", "vel-160-new");
-        let statuses = list_statuses("vel-160-new", std::slice::from_ref(&config));
+        let statuses = list_statuses("vel-160-new", &[], std::slice::from_ref(&config));
 
         let stopped = stop(&config.id).expect("stop should reach the renamed server");
         forget(&config.id).expect("forget after stop");
@@ -1015,6 +1034,62 @@ mod tests {
         assert!(statuses[0].running, "renamed project should see its running server");
         assert_eq!(statuses[0].project, "vel-160-new");
         assert!(!stopped.running);
+    }
+
+    /// A server started before the startup migration re-keyed dev servers
+    /// is tagged with the project's name. It must still show as running
+    /// when the statuses are listed under the `local_key`.
+    #[cfg(unix)]
+    #[test]
+    fn status_matches_a_process_tagged_with_the_old_name() {
+        let config = fixture_config("identity-legacy-tag");
+        let child = Command::new("sleep").arg("30").process_group(0).spawn().expect("spawn sleep");
+        let pid = child.id();
+        processes().lock().unwrap().insert(
+            config.id.clone(),
+            RunningServer {
+                project: "identity-legacy-name".to_string(),
+                config: config.clone(),
+                child,
+                pid,
+                started_at: String::new(),
+                log: Arc::new(Mutex::new(VecDeque::new())),
+                urls: Arc::new(Mutex::new(Vec::new())),
+                last_error: Arc::new(Mutex::new(None)),
+            },
+        );
+
+        let by_key_only = list_statuses("identity-key", &[], std::slice::from_ref(&config));
+        let with_alias =
+            list_statuses("identity-key", &["identity-legacy-name"], std::slice::from_ref(&config));
+
+        stop(&config.id).expect("stop");
+        forget(&config.id).expect("forget after stop");
+
+        assert!(!by_key_only[0].running, "a different tag does not match");
+        assert!(with_alias[0].running, "the old name matches as an alias");
+    }
+
+    #[test]
+    fn list_all_statuses_keeps_configs_named_by_a_local_key() {
+        let tmp = TempDir::new().unwrap();
+        crate::core::with_test_home(tmp.path().to_path_buf(), || {
+            let mut project = crate::core::Project {
+                name: "keyed-live".into(),
+                ..Default::default()
+            };
+            crate::core::fill_missing_project_keys(&mut project);
+            crate::core::save_project("keyed-live", &serde_json::to_string(&project).unwrap())
+                .expect("register project");
+            registry::save_config(&project.local_key, fixture_config("")).unwrap();
+            registry::save_config("keyed-ghost", fixture_config("")).unwrap();
+
+            let statuses = list_all_statuses().expect("list statuses");
+
+            assert_eq!(statuses.len(), 1);
+            assert_eq!(statuses[0].project, project.local_key, "the command layer shows the name");
+            assert_eq!(registry::list_config_projects().unwrap(), vec![project.local_key.clone()]);
+        });
     }
 
     #[test]

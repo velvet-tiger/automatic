@@ -5,29 +5,29 @@ use super::{CliError, MemoryAction};
 use crate::memory as memory_store;
 
 pub fn dispatch(action: MemoryAction, opts: OutputOptions) -> Result<(), CliError> {
-    // Memory is keyed by project name. A `local_key` becomes its project's
-    // name; any other string is used as given, as before.
-    let store_name = |project: &str| crate::core::project_store_name(project).map_err(CliError::from);
+    // Memory is keyed by project `id`. A name or `local_key` becomes its
+    // project's id; any other string is used as given, as before.
+    let store_keys = |project: &str| crate::core::project_store_keys(project).map_err(CliError::from);
     match action {
         MemoryAction::List { project, pattern } => {
-            list(&store_name(&project)?, pattern.as_deref(), opts)
+            list(&store_keys(&project)?, pattern.as_deref(), opts)
         }
-        MemoryAction::Get { project, key } => get(&store_name(&project)?, &key, opts),
+        MemoryAction::Get { project, key } => get(&store_keys(&project)?, &key, opts),
         MemoryAction::Set {
             project,
             key,
             value,
             source,
-        } => set(&store_name(&project)?, &key, &value, &source, opts),
-        MemoryAction::Search { project, query } => search(&store_name(&project)?, &query, opts),
+        } => set(&store_keys(&project)?, &key, &value, &source, opts),
+        MemoryAction::Search { project, query } => search(&store_keys(&project)?, &query, opts),
     }
 }
 
-fn list(project: &str, pattern: Option<&str>, opts: OutputOptions) -> Result<(), CliError> {
+fn list(project: &crate::core::ProjectStoreKeys, pattern: Option<&str>, opts: OutputOptions) -> Result<(), CliError> {
     if opts.json {
         // Structured form: serialise the on-disk DB. `list_memories` returns
         // a markdown string which is not useful to scripts.
-        let db = memory_store::read_memory_db(project).map_err(CliError::from)?;
+        let db = memory_store::read_memory_db(&project.id).map_err(CliError::from)?;
         let filtered = filter_db(&db, pattern);
         emit(opts, &filtered, String::new).map_err(CliError::Io)
     } else {
@@ -36,9 +36,9 @@ fn list(project: &str, pattern: Option<&str>, opts: OutputOptions) -> Result<(),
     }
 }
 
-fn get(project: &str, key: &str, opts: OutputOptions) -> Result<(), CliError> {
+fn get(project: &crate::core::ProjectStoreKeys, key: &str, opts: OutputOptions) -> Result<(), CliError> {
     if opts.json {
-        let db = memory_store::read_memory_db(project).map_err(CliError::from)?;
+        let db = memory_store::read_memory_db(&project.id).map_err(CliError::from)?;
         match db.get(key) {
             Some(entry) => emit(opts, entry, String::new).map_err(CliError::Io),
             None => Err(CliError::NotFound(format!(
@@ -53,7 +53,7 @@ fn get(project: &str, key: &str, opts: OutputOptions) -> Result<(), CliError> {
 }
 
 fn set(
-    project: &str,
+    project: &crate::core::ProjectStoreKeys,
     key: &str,
     value: &str,
     source: &str,
@@ -64,9 +64,9 @@ fn set(
     emit_status(opts, "ok", &message).map_err(CliError::Io)
 }
 
-fn search(project: &str, query: &str, opts: OutputOptions) -> Result<(), CliError> {
+fn search(project: &crate::core::ProjectStoreKeys, query: &str, opts: OutputOptions) -> Result<(), CliError> {
     if opts.json {
-        let db = memory_store::read_memory_db(project).map_err(CliError::from)?;
+        let db = memory_store::read_memory_db(&project.id).map_err(CliError::from)?;
         let needle = query.to_lowercase();
         let matches: Vec<_> = db
             .iter()

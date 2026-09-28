@@ -337,6 +337,19 @@ fn next_position(conn: &Connection, project: &str, state: &str) -> Result<i64, S
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+//
+// Features are keyed by project `id` (stage 3b step 2 of the project
+// identity plan), so every checkout of a project shares one list. Each
+// function takes the project's resolved `ProjectStoreKeys`: `id` is the
+// stored `project` column, `local_key` tags activity rows with the checkout
+// the call came from, and `name` replaces the stored key in every row
+// returned, so callers keep seeing the project's name.
+
+/// A row as callers see it: named by the project, not its stored key.
+fn shown(mut feature: Feature, keys: &crate::core::ProjectStoreKeys) -> Feature {
+    feature.project = keys.name.clone();
+    feature
+}
 
 /// List all features for a project, optionally filtered by state.
 ///
@@ -344,10 +357,11 @@ fn next_position(conn: &Connection, project: &str, state: &str) -> Result<i64, S
 /// `include_archived = true` to return **only** archived features instead.
 /// Ordered by state lifecycle order then position within each state.
 pub fn list_features(
-    project: &str,
+    keys: &crate::core::ProjectStoreKeys,
     state_filter: Option<&str>,
     include_archived: bool,
 ) -> Result<Vec<Feature>, String> {
+    let project = keys.id.as_str();
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
@@ -401,7 +415,7 @@ pub fn list_features(
             .map_err(|e| format!("Failed to read feature rows: {}", e))?
     };
 
-    Ok(features)
+    Ok(features.into_iter().map(|f| shown(f, keys)).collect())
 }
 
 /// Get a single feature by ID (without updates).
@@ -409,7 +423,8 @@ pub fn list_features(
 /// Accepts either a full UUID or a unique case-insensitive prefix.  If the
 /// prefix matches more than one feature an error is returned so the caller
 /// can disambiguate.
-pub fn get_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
+pub fn get_feature(keys: &crate::core::ProjectStoreKeys, feature_id: &str) -> Result<Feature, String> {
+    let project = keys.id.as_str();
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
@@ -428,7 +443,7 @@ pub fn get_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
     );
 
     match exact {
-        Ok(f) => return Ok(f),
+        Ok(f) => return Ok(shown(f, keys)),
         Err(rusqlite::Error::QueryReturnedNoRows) => {} // fall through to prefix search
         Err(e) => return Err(format!("Failed to get feature: {}", e)),
     }
@@ -453,23 +468,23 @@ pub fn get_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
     match matches.len() {
         0 => Err(format!(
             "Feature '{}' not found in project '{}'",
-            feature_id, project
+            feature_id, keys.name
         )),
-        1 => Ok(matches.into_iter().next().unwrap()),
+        1 => Ok(shown(matches.into_iter().next().unwrap(), keys)),
         n => Err(format!(
             "Partial ID '{}' is ambiguous: {} features match in project '{}'. Provide more characters.",
-            feature_id, n, project
+            feature_id, n, keys.name
         )),
     }
 }
 
 /// Get a feature together with its full update history (updates newest-first).
 pub fn get_feature_with_updates(
-    project: &str,
+    keys: &crate::core::ProjectStoreKeys,
     feature_id: &str,
 ) -> Result<FeatureWithUpdates, String> {
-    let feature = get_feature(project, feature_id)?;
-    let updates = get_feature_updates(project, feature_id)?;
+    let feature = get_feature(keys, feature_id)?;
+    let updates = get_feature_updates(keys, feature_id)?;
     Ok(FeatureWithUpdates { feature, updates })
 }
 
@@ -479,7 +494,7 @@ pub fn get_feature_with_updates(
 /// used for both the row and column position so create-from-UI respects the
 /// State selector in the Build tool.
 pub fn create_feature(
-    project: &str,
+    keys: &crate::core::ProjectStoreKeys,
     title: &str,
     description: &str,
     priority: &str,
@@ -490,6 +505,7 @@ pub fn create_feature(
     created_by: Option<&str>,
     state: Option<&str>,
 ) -> Result<Feature, String> {
+    let project = keys.id.as_str();
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
@@ -540,21 +556,22 @@ pub fn create_feature(
     .map_err(|e| format!("Failed to create feature: {}", e))?;
 
     crate::activity::log(
-        project,
+        &keys.local_key,
         crate::activity::ActivityEvent::FeatureCreated,
         &format!("Feature created: {}", title.trim()),
         &id,
     );
 
-    get_feature(project, &id)
+    get_feature(keys, &id)
 }
 
 /// Apply a partial update to a feature's metadata fields.
 pub fn update_feature(
-    project: &str,
+    keys: &crate::core::ProjectStoreKeys,
     feature_id: &str,
     patch: FeaturePatch,
 ) -> Result<Feature, String> {
+    let project = keys.id.as_str();
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
@@ -575,7 +592,7 @@ pub fn update_feature(
         }
     }
 
-    let existing = get_feature(project, feature_id)?;
+    let existing = get_feature(keys, feature_id)?;
     let conn = open_conn()?;
     let ts = now();
 
@@ -635,27 +652,28 @@ pub fn update_feature(
     .map_err(|e| format!("Failed to update feature: {}", e))?;
 
     crate::activity::log(
-        project,
+        &keys.local_key,
         crate::activity::ActivityEvent::FeatureUpdated,
         &format!("Feature updated: {}", new_title.trim()),
         feature_id,
     );
 
-    get_feature(project, feature_id)
+    get_feature(keys, feature_id)
 }
 
 /// Change a feature's state. Places the feature at the end of the target state column.
 pub fn set_feature_state(
-    project: &str,
+    keys: &crate::core::ProjectStoreKeys,
     feature_id: &str,
     new_state: &str,
 ) -> Result<Feature, String> {
+    let project = keys.id.as_str();
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
     FeatureState::from_str(new_state)?;
 
-    let existing = get_feature(project, feature_id)?;
+    let existing = get_feature(keys, feature_id)?;
     let conn = open_conn()?;
     let ts = now();
     let position = next_position(&conn, project, new_state)?;
@@ -667,29 +685,30 @@ pub fn set_feature_state(
     .map_err(|e| format!("Failed to set feature state: {}", e))?;
 
     crate::activity::log(
-        project,
+        &keys.local_key,
         crate::activity::ActivityEvent::FeatureStateChanged,
         &format!("Feature '{}' moved to {}", existing.title, new_state),
         &format!("{} -> {}", existing.state, new_state),
     );
 
-    get_feature(project, feature_id)
+    get_feature(keys, feature_id)
 }
 
 /// Move a feature to a new state and position (used by Kanban drag-and-drop).
 /// Shifts other features in the target column to make room atomically.
 pub fn move_feature(
-    project: &str,
+    keys: &crate::core::ProjectStoreKeys,
     feature_id: &str,
     new_state: &str,
     new_position: i64,
 ) -> Result<(), String> {
+    let project = keys.id.as_str();
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
     FeatureState::from_str(new_state)?;
 
-    let existing = get_feature(project, feature_id)?;
+    let existing = get_feature(keys, feature_id)?;
     let conn = open_conn()?;
     let ts = now();
 
@@ -730,7 +749,7 @@ pub fn move_feature(
 
     if existing.state != new_state {
         crate::activity::log(
-            project,
+            &keys.local_key,
             crate::activity::ActivityEvent::FeatureStateChanged,
             &format!("Feature '{}' moved to {}", existing.title, new_state),
             &format!("{} -> {}", existing.state, new_state),
@@ -741,12 +760,13 @@ pub fn move_feature(
 }
 
 /// Permanently delete a feature and all its updates (cascade via FK).
-pub fn delete_feature(project: &str, feature_id: &str) -> Result<(), String> {
+pub fn delete_feature(keys: &crate::core::ProjectStoreKeys, feature_id: &str) -> Result<(), String> {
+    let project = keys.id.as_str();
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
 
-    let feature = get_feature(project, feature_id)?;
+    let feature = get_feature(keys, feature_id)?;
 
     let conn = open_conn()?;
     conn.execute(
@@ -756,7 +776,7 @@ pub fn delete_feature(project: &str, feature_id: &str) -> Result<(), String> {
     .map_err(|e| format!("Failed to delete feature: {}", e))?;
 
     crate::activity::log(
-        project,
+        &keys.local_key,
         crate::activity::ActivityEvent::FeatureDeleted,
         &format!("Feature deleted: {}", feature.title),
         feature_id,
@@ -769,12 +789,13 @@ pub fn delete_feature(project: &str, feature_id: &str) -> Result<(), String> {
 ///
 /// The feature's `state` is preserved unchanged so that it can be restored to
 /// its original column when unarchived.
-pub fn archive_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
+pub fn archive_feature(keys: &crate::core::ProjectStoreKeys, feature_id: &str) -> Result<Feature, String> {
+    let project = keys.id.as_str();
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
 
-    let existing = get_feature(project, feature_id)?;
+    let existing = get_feature(keys, feature_id)?;
     if existing.archived {
         return Err(format!("Feature '{}' is already archived", feature_id));
     }
@@ -789,23 +810,24 @@ pub fn archive_feature(project: &str, feature_id: &str) -> Result<Feature, Strin
     .map_err(|e| format!("Failed to archive feature: {}", e))?;
 
     crate::activity::log(
-        project,
+        &keys.local_key,
         crate::activity::ActivityEvent::FeatureUpdated,
         &format!("Feature '{}' archived", existing.title),
         feature_id,
     );
 
-    get_feature(project, feature_id)
+    get_feature(keys, feature_id)
 }
 
 /// Unarchive a feature, restoring it to its preserved state in the Kanban board
 /// and default list views.
-pub fn unarchive_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
+pub fn unarchive_feature(keys: &crate::core::ProjectStoreKeys, feature_id: &str) -> Result<Feature, String> {
+    let project = keys.id.as_str();
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
 
-    let existing = get_feature(project, feature_id)?;
+    let existing = get_feature(keys, feature_id)?;
     if !existing.archived {
         return Err(format!("Feature '{}' is not archived", feature_id));
     }
@@ -820,22 +842,23 @@ pub fn unarchive_feature(project: &str, feature_id: &str) -> Result<Feature, Str
     .map_err(|e| format!("Failed to unarchive feature: {}", e))?;
 
     crate::activity::log(
-        project,
+        &keys.local_key,
         crate::activity::ActivityEvent::FeatureUpdated,
         &format!("Feature '{}' unarchived", existing.title),
         feature_id,
     );
 
-    get_feature(project, feature_id)
+    get_feature(keys, feature_id)
 }
 
 /// Append a progress update to a feature. Returns the new update record.
 pub fn add_feature_update(
-    project: &str,
+    keys: &crate::core::ProjectStoreKeys,
     feature_id: &str,
     content: &str,
     author: Option<&str>,
 ) -> Result<FeatureUpdate, String> {
+    let project = keys.id.as_str();
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
@@ -844,7 +867,7 @@ pub fn add_feature_update(
     }
 
     // Confirm feature exists in this project before inserting.
-    get_feature(project, feature_id)?;
+    get_feature(keys, feature_id)?;
 
     let conn = open_conn()?;
     let ts = now();
@@ -861,7 +884,7 @@ pub fn add_feature_update(
     Ok(FeatureUpdate {
         id,
         feature_id: feature_id.to_string(),
-        project: project.to_string(),
+        project: keys.name.clone(),
         content: content.to_string(),
         author: author.map(|s| s.to_string()),
         timestamp: ts,
@@ -869,7 +892,8 @@ pub fn add_feature_update(
 }
 
 /// Get all updates for a feature, ordered newest-first.
-pub fn get_feature_updates(project: &str, feature_id: &str) -> Result<Vec<FeatureUpdate>, String> {
+pub fn get_feature_updates(keys: &crate::core::ProjectStoreKeys, feature_id: &str) -> Result<Vec<FeatureUpdate>, String> {
+    let project = keys.id.as_str();
     if !crate::core::is_valid_name(project) {
         return Err("Invalid project name".into());
     }
@@ -889,7 +913,8 @@ pub fn get_feature_updates(project: &str, feature_id: &str) -> Result<Vec<Featur
             Ok(FeatureUpdate {
                 id: row.get(0)?,
                 feature_id: row.get(1)?,
-                project: row.get(2)?,
+                // Stored under the project id; shown by name.
+                project: keys.name.clone(),
                 content: row.get(3)?,
                 author: row.get(4)?,
                 timestamp: row.get(5)?,
@@ -1046,6 +1071,11 @@ mod tests {
 
     const TEST_PROJECT: &str = "_test_feature";
 
+    /// Keys for a project that is not registered: every store uses the name.
+    fn test_keys() -> crate::core::ProjectStoreKeys {
+        crate::core::ProjectStoreKeys::unregistered(TEST_PROJECT)
+    }
+
     /// Run `test` against a throwaway Automatic data directory.
     ///
     /// `features.db` and the activity log both resolve their paths through
@@ -1070,7 +1100,7 @@ mod tests {
     fn create_feature_defaults_to_backlog() {
         with_temp_automatic_dir(|| {
             let feature = create_feature(
-                TEST_PROJECT,
+                &test_keys(),
                 "default state feature",
                 "",
                 "medium",
@@ -1083,7 +1113,7 @@ mod tests {
             )
             .expect("create should succeed");
             assert_eq!(feature.state, "backlog");
-            delete_feature(TEST_PROJECT, &feature.id).expect("delete should succeed");
+            delete_feature(&test_keys(), &feature.id).expect("delete should succeed");
         });
     }
 
@@ -1091,7 +1121,7 @@ mod tests {
     fn create_feature_respects_requested_state() {
         with_temp_automatic_dir(|| {
             let feature = create_feature(
-                TEST_PROJECT,
+                &test_keys(),
                 "todo state feature",
                 "",
                 "medium",
@@ -1104,7 +1134,7 @@ mod tests {
             )
             .expect("create should succeed");
             assert_eq!(feature.state, "todo");
-            delete_feature(TEST_PROJECT, &feature.id).expect("delete should succeed");
+            delete_feature(&test_keys(), &feature.id).expect("delete should succeed");
         });
     }
 
@@ -1112,7 +1142,7 @@ mod tests {
     fn create_feature_rejects_invalid_state() {
         with_temp_automatic_dir(|| {
             let err = create_feature(
-                TEST_PROJECT,
+                &test_keys(),
                 "bad state feature",
                 "",
                 "medium",
@@ -1156,7 +1186,7 @@ mod tests {
     fn update_feature_clears_assignee_when_patch_sends_null() {
         with_temp_automatic_dir(|| {
             let feature = create_feature(
-                TEST_PROJECT,
+                &test_keys(),
                 "clear assignee feature",
                 "",
                 "medium",
@@ -1172,10 +1202,10 @@ mod tests {
 
             let patch: FeaturePatch =
                 serde_json::from_str(r#"{"assignee":null}"#).expect("deserialize clear patch");
-            let updated = update_feature(TEST_PROJECT, &feature.id, patch).expect("update");
+            let updated = update_feature(&test_keys(), &feature.id, patch).expect("update");
             assert_eq!(updated.assignee, None);
 
-            delete_feature(TEST_PROJECT, &feature.id).expect("delete should succeed");
+            delete_feature(&test_keys(), &feature.id).expect("delete should succeed");
         });
     }
 }

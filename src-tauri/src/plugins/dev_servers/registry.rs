@@ -409,9 +409,10 @@ mod tests {
 
     #[test]
     fn migrated_registry_keeps_dev_server_configs_live() {
-        // Registry files are renamed to their local_key at startup.
-        // `list_projects` must still return names, or every config below
-        // would be classed as an orphan and deleted by `list_all_statuses`.
+        // Registry files are renamed to their local_key at startup, and the
+        // store migration renames each dev-server file to that key too.
+        // Classifying against keys and names must keep both live, or every
+        // config below would be deleted by `list_all_statuses`.
         let tmp = tmp();
         with_test_home(tmp.path().to_path_buf(), || {
             let dir = tmp.path().join("site");
@@ -432,13 +433,20 @@ mod tests {
             assert!(!projects_dir.join("site.json").exists(), "registry was migrated");
             assert!(!projects_dir.join("bare.json").exists(), "registry was migrated");
 
-            let live = crate::core::list_projects().unwrap();
+            let keys = |name: &str| crate::core::project_store_local_key(name).unwrap();
+            let (site, bare) = (keys("site"), keys("bare"));
+            assert!(list_configs("site").unwrap().is_empty(), "the file moved to the key");
+
+            let mut live = crate::core::list_projects().unwrap();
+            live.extend([site.clone(), bare.clone()]);
             let owners = classify_config_projects(&list_config_projects().unwrap(), &live);
-            assert_eq!(owners.live, names(&["bare", "site"]));
+            let mut expected = vec![site.clone(), bare.clone()];
+            expected.sort();
+            assert_eq!(owners.live, expected);
             assert_eq!(owners.orphans, names(&["ghost"]));
             remove_orphaned_configs(&owners.orphans);
-            assert_eq!(list_configs("site").unwrap().len(), 1);
-            assert_eq!(list_configs("bare").unwrap().len(), 1);
+            assert_eq!(list_configs(&site).unwrap().len(), 1);
+            assert_eq!(list_configs(&bare).unwrap().len(), 1);
         });
     }
 
@@ -455,6 +463,18 @@ mod tests {
 
             let listed = list_configs("renamed").unwrap();
             assert_eq!(listed.len(), 1);
+        });
+    }
+
+    #[test]
+    fn adopt_legacy_project_moves_a_name_file_under_the_key() {
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            save_config("old-name", sample()).unwrap();
+            crate::plugins::dev_servers::adopt_legacy_project("old-name", "the-key").unwrap();
+            assert_eq!(list_config_projects().unwrap(), names(&["the-key"]));
+            // Nothing left to adopt: a second call is a no-op.
+            crate::plugins::dev_servers::adopt_legacy_project("old-name", "the-key").unwrap();
         });
     }
 

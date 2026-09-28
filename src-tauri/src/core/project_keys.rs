@@ -224,8 +224,8 @@ pub(crate) fn stored_project_keys(
 const LOCK_FILE_NAME: &str = ".project-keys.lock";
 
 /// A lock older than this is left over from a process that died mid-run. A
-/// full backfill touches each project once, so a live run finishes well
-/// within it.
+/// full backfill touches each project once and the store migration each
+/// store once, so a live run finishes well within it.
 const LOCK_STALE_AFTER: Duration = Duration::from_secs(120);
 
 /// Held backfill lock. Dropping it removes the lock file.
@@ -321,15 +321,21 @@ pub enum ProjectKeyBackfill {
         renamed: Vec<String>,
         /// Registry names that could not be backfilled, with the reason.
         failed: Vec<(String, String)>,
+        /// What re-keying the per-project stores did (stage 3b step 2).
+        stores: StoreMigrationReport,
     },
 }
 
-/// Give every registered project an `id` and a `local_key`, then name its
-/// registry file by the `local_key`. Runs at startup.
+/// Give every registered project an `id` and a `local_key`, name its
+/// registry file by the `local_key`, then move the per-project stores
+/// (memory, features, groups, activity, recommendations, dev servers) from
+/// name keys to project keys. Runs at startup, under one lock.
 ///
-/// Idempotent: a project that already has both keys is not written, and a
-/// file already named by its key is not moved. One project's failure does
-/// not stop the rest; it is reported in `failed`.
+/// Idempotent: a project that already has both keys is not written, a
+/// file already named by its key is not moved, and store data already keyed
+/// is left alone (see `store_migration`). One project's failure does not
+/// stop the rest; it is reported in `failed`, and store problems in
+/// `stores.problems`.
 pub fn ensure_project_keys() -> Result<ProjectKeyBackfill, String> {
     let automatic_dir = get_automatic_dir()?;
     fs::create_dir_all(&automatic_dir)
@@ -358,10 +364,22 @@ pub fn ensure_project_keys() -> Result<ProjectKeyBackfill, String> {
             Err(e) => failed.push((name, e)),
         }
     }
+
+    // Stores move only for projects that now have both keys, so this runs
+    // after the loop above. A registry that cannot be read is reported and
+    // leaves every store untouched.
+    let stores = match get_project_summaries() {
+        Ok(summaries) => super::store_migration::migrate_project_stores(summaries),
+        Err(e) => StoreMigrationReport {
+            problems: vec![format!("Could not read the project registry: {}", e)],
+            ..Default::default()
+        },
+    };
     Ok(ProjectKeyBackfill::Completed {
         updated,
         renamed,
         failed,
+        stores,
     })
 }
 
@@ -599,6 +617,59 @@ mod tests {
         assert!(path.exists());
         drop(lock);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn backfill_moves_name_keyed_stores_to_the_new_keys() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project = Project {
+                name: "legacy".into(),
+                ..Default::default()
+            };
+            save_project("legacy", &serde_json::to_string(&project).unwrap()).unwrap();
+            // Data written by the previous release, keyed by name.
+            let unregistered = ProjectStoreKeys::unregistered("legacy");
+            crate::memory::store_memory(&unregistered, "k", "v", None).unwrap();
+            crate::features::create_feature(&unregistered, "f", "", "medium", None, &[], &[], None, None, None)
+                .unwrap();
+            let groups_dir = get_groups_dir().unwrap();
+            fs::create_dir_all(&groups_dir).unwrap();
+            fs::write(groups_dir.join("g.json"), r#"{"name":"g","projects":["legacy","ghost"]}"#).unwrap();
+            let dev_dir = get_automatic_dir().unwrap().join("dev-servers");
+            fs::create_dir_all(&dev_dir).unwrap();
+            fs::write(dev_dir.join("legacy.json"), "[]").unwrap();
+
+            let ProjectKeyBackfill::Completed { stores, failed, .. } = ensure_project_keys().unwrap() else {
+                panic!("lock unexpectedly held");
+            };
+            assert!(failed.is_empty(), "{failed:?}");
+            assert!(stores.problems.is_empty(), "{:?}", stores.problems);
+            assert_eq!(stores.memory_files, 1);
+            assert_eq!(stores.feature_rows, 1);
+            assert!(stores.activity_rows >= 2, "memory and feature activity: {stores:?}");
+            assert_eq!(stores.group_files, 1);
+            assert_eq!(stores.dev_server_files, 1);
+            let backup = stores.backup_dir.expect("backed up");
+            assert!(backup.join("memory/legacy.json").is_file());
+            assert!(backup.join("features.db").is_file());
+            assert!(backup.join("activity.db").is_file());
+
+            let keys = project_store_keys("legacy").unwrap();
+            assert!(crate::memory::get_all_memories(&keys.id).unwrap().contains_key("k"));
+            assert_eq!(crate::features::list_features(&keys, None, false).unwrap().len(), 1);
+            assert!(crate::activity::get_project_activity(&keys.local_key, 10).unwrap().len() >= 2);
+            assert!(dev_dir.join(format!("{}.json", keys.local_key)).is_file());
+            let group: ProjectGroup = serde_json::from_str(&read_group("g").unwrap()).unwrap();
+            assert_eq!(group.projects, vec!["legacy", "ghost"], "shown by name");
+
+            let ProjectKeyBackfill::Completed { stores, .. } = ensure_project_keys().unwrap() else {
+                panic!("lock unexpectedly held");
+            };
+            assert_eq!(stores, StoreMigrationReport::default(), "a second start changes nothing");
+        });
     }
 
     #[test]

@@ -7,12 +7,16 @@ use serde_json::{json, Value};
 
 // ── Recommendations ───────────────────────────────────────────────────────────
 
-/// Fill each row's `local_key` from the registry, scanned once per call.
-/// Rows for a project that is no longer registered keep `None`.
+/// Show each row by project name and fill its `local_key`, reading the
+/// registry once per call. Rows are stored under the project's `local_key`
+/// (stage 3b step 2); a legacy row stored under a name keeps it, and a row
+/// no project claims is unchanged with no key.
 fn with_local_keys(mut recs: Vec<Recommendation>) -> Result<Vec<Recommendation>, String> {
-    let keys = crate::core::project_local_keys_by_name()?;
+    let index = crate::core::ProjectKeyIndex::load()?;
     for rec in &mut recs {
-        rec.local_key = keys.get(&rec.project).cloned();
+        let (name, local_key) = index.display_checkout_row(&rec.project);
+        rec.project = name;
+        rec.local_key = local_key;
     }
     Ok(recs)
 }
@@ -22,7 +26,7 @@ fn with_local_keys(mut recs: Vec<Recommendation>) -> Result<Vec<Recommendation>,
 /// Returns the `id` of the newly created row.
 #[tauri::command]
 pub fn add_recommendation(mut params: AddRecommendationParams) -> Result<i64, String> {
-    params.project = crate::core::project_store_name(&params.project)?;
+    params.project = crate::core::project_store_local_key(&params.project)?;
     crate::recommendations::add_recommendation(params)
 }
 
@@ -47,7 +51,7 @@ pub fn list_recommendations(
     kind: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<Recommendation>, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_local_key(project)?;
     let filter = ListRecommendationsFilter {
         status: status.as_deref().map(RecommendationStatus::from_str),
         kind,
@@ -83,7 +87,7 @@ pub fn delete_recommendation(id: i64) -> Result<(), String> {
 /// Returns the number of rows deleted.
 #[tauri::command]
 pub fn clear_recommendations(project: &str, status: Option<String>) -> Result<usize, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_local_key(project)?;
     let s = status.as_deref().map(RecommendationStatus::from_str);
     crate::recommendations::clear_recommendations(project, s)
 }
@@ -91,7 +95,7 @@ pub fn clear_recommendations(project: &str, status: Option<String>) -> Result<us
 /// Return pending / dismissed / actioned counts for a project.
 #[tauri::command]
 pub fn count_recommendations(project: &str) -> Result<RecommendationCounts, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_local_key(project)?;
     crate::recommendations::count_recommendations(project)
 }
 
@@ -105,7 +109,7 @@ pub fn list_recommendations_by_source(
     project: &str,
     source: &str,
 ) -> Result<Vec<Recommendation>, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_local_key(project)?;
     with_local_keys(crate::recommendations::list_recommendations(
         project,
         crate::recommendations::ListRecommendationsFilter {
@@ -143,7 +147,9 @@ pub fn list_all_pending_recommendations(
 /// Returns the list of current pending recommendations after evaluation.
 #[tauri::command]
 pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendation>, String> {
-    let project = &crate::core::canonical_project_name(project)?;
+    // Recommendations are stored under the checkout's `local_key`; the
+    // project must exist, as before.
+    let project = &crate::core::project_store_local_key(&crate::core::canonical_project_name(project)?)?;
     use crate::agent;
     use std::path::Path;
 
@@ -511,7 +517,7 @@ pub struct AiRecommendationsResult {
 /// to decide whether to show "last updated" metadata.
 #[tauri::command]
 pub fn get_ai_recommendations_timestamp(project: &str) -> Result<Option<String>, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_local_key(project)?;
     crate::recommendations::get_ai_recommendations_timestamp(project)
 }
 
@@ -531,7 +537,7 @@ pub async fn ai_generate_project_recommendations(
     project: &str,
     force: Option<bool>,
 ) -> Result<AiRecommendationsResult, String> {
-    let project = &crate::core::project_store_name(project)?;
+    let project = &crate::core::project_store_local_key(project)?;
     let force = force.unwrap_or(false);
 
     // Throttle check — skip if run within 24 h and not forced.
@@ -625,7 +631,7 @@ Recommend 3-7 specific skills, MCP servers, or instruction templates that are
 NOT already installed/configured. For each recommendation explain concisely why 
 it would help this specific project. Be specific and practical — focus on what 
 will have the highest impact given the project's evident tech stack and workflow."#,
-        name = project,
+        name = proj.name,
         description = if description.is_empty() {
             "(none provided)".to_string()
         } else {
@@ -1049,7 +1055,9 @@ fn persist_targeted_suggestions(
 /// Returns all current pending recommendations for the project after the run.
 #[tauri::command]
 pub async fn ai_suggest_skills(project: &str) -> Result<Vec<Recommendation>, String> {
-    let project = &crate::core::canonical_project_name(project)?;
+    // Recommendations are stored under the checkout's `local_key`; the
+    // project must exist, as before.
+    let project = &crate::core::project_store_local_key(&crate::core::canonical_project_name(project)?)?;
     crate::core::ai::resolve_api_key(None)?;
 
     let raw = crate::core::read_project(project)?;
@@ -1168,7 +1176,9 @@ source, installs count, and a brief reason why each fits this project."#,
 /// Returns all current pending recommendations for the project after the run.
 #[tauri::command]
 pub async fn ai_suggest_mcp_servers(project: &str) -> Result<Vec<Recommendation>, String> {
-    let project = &crate::core::canonical_project_name(project)?;
+    // Recommendations are stored under the checkout's `local_key`; the
+    // project must exist, as before.
+    let project = &crate::core::project_store_local_key(&crate::core::canonical_project_name(project)?)?;
     crate::core::ai::resolve_api_key(None)?;
 
     let raw = crate::core::read_project(project)?;

@@ -605,10 +605,11 @@ fn validate_feature_project(project: &str) -> Result<String, String> {
 
 /// Resolve a tool's `project` argument, which may be a `local_key` or a
 /// project name (see `core::resolve_project_name`), to the canonical project
-/// name. Tools must use the returned name from here on: memory, features,
-/// groups and the other stores are keyed by name, so a key must never reach
-/// them. An unknown project is an `Err` listing the valid project names so
-/// the agent can self-correct immediately.
+/// name. Tools that reach a store resolve the name once more with
+/// `core::project_store_keys`: memory and features are keyed by project
+/// `id`, so every checkout shares them. An unknown project is an `Err`
+/// listing the valid project names so the agent can self-correct
+/// immediately.
 fn validate_project(project: &str) -> Result<String, String> {
     if let Some(name) = crate::core::resolve_project_name(project)? {
         Ok(name)
@@ -2479,8 +2480,14 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
         match crate::memory::store_memory(
-            &params.0.project,
+            &keys,
             &params.0.key,
             &params.0.value,
             params.0.source.as_deref(),
@@ -2508,7 +2515,13 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
-        match crate::memory::get_memory(&params.0.project, &params.0.key) {
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::memory::get_memory(&keys, &params.0.key) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to get memory: {}",
@@ -2532,7 +2545,13 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
-        match crate::memory::list_memories(&params.0.project, params.0.pattern.as_deref()) {
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::memory::list_memories(&keys, params.0.pattern.as_deref()) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to list memories: {}",
@@ -2556,7 +2575,13 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
-        match crate::memory::search_memories(&params.0.project, &params.0.query) {
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::memory::search_memories(&keys, &params.0.query) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to search memories: {}",
@@ -2580,7 +2605,13 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
-        match crate::memory::delete_memory(&params.0.project, &params.0.key) {
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::memory::delete_memory(&keys, &params.0.key) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to delete memory: {}",
@@ -2604,8 +2635,14 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
         match crate::memory::clear_memories(
-            &params.0.project,
+            &keys,
             params.0.pattern.as_deref(),
             params.0.confirm,
         ) {
@@ -2713,9 +2750,15 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
         let include_archived = params.0.include_archived.unwrap_or(false);
         match crate::features::list_features(
-            &params.0.project,
+            &keys,
             params.0.state.as_deref(),
             include_archived,
         ) {
@@ -2749,7 +2792,13 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
-        match crate::features::get_feature_with_updates(&params.0.project, &params.0.feature_id) {
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::features::get_feature_with_updates(&keys, &params.0.feature_id) {
             Ok(fw) => {
                 let output = crate::features::format_feature_detail_markdown(&fw);
                 Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -2776,9 +2825,15 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
         let p = params.0;
         match crate::features::create_feature(
-            &p.project,
+            &keys,
             &p.title,
             p.description.as_deref().unwrap_or(""),
             p.priority.as_deref().unwrap_or("medium"),
@@ -2818,6 +2873,12 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
         let p = params.0;
         let patch = crate::features::FeaturePatch {
             title: p.title,
@@ -2833,7 +2894,7 @@ impl AutomaticMcpServer {
             // Archiving is not exposed via this tool; use archive/unarchive tools instead.
             archived: None,
         };
-        match crate::features::update_feature(&p.project, &p.feature_id, patch) {
+        match crate::features::update_feature(&keys, &p.feature_id, patch) {
             Ok(feature) => {
                 let output = format!(
                     "Feature updated successfully.\n\n**ID:** `{}`\n**Title:** {}\n**State:** {}\n**Priority:** {}\n",
@@ -2863,8 +2924,14 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
         match crate::features::set_feature_state(
-            &params.0.project,
+            &keys,
             &params.0.feature_id,
             &params.0.state,
         ) {
@@ -2897,7 +2964,13 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
-        match crate::features::delete_feature(&params.0.project, &params.0.feature_id) {
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::features::delete_feature(&keys, &params.0.feature_id) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Feature '{}' deleted from project '{}'.",
                 params.0.feature_id, params.0.project
@@ -2924,7 +2997,13 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
-        match crate::features::archive_feature(&params.0.project, &params.0.feature_id) {
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::features::archive_feature(&keys, &params.0.feature_id) {
             Ok(feature) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Feature '{}' archived. State '{}' is preserved for later restoration.",
                 feature.title, feature.state
@@ -2951,7 +3030,13 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
-        match crate::features::unarchive_feature(&params.0.project, &params.0.feature_id) {
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::features::unarchive_feature(&keys, &params.0.feature_id) {
             Ok(feature) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Feature '{}' unarchived and restored to state '{}'.",
                 feature.title, feature.state
@@ -2978,8 +3063,14 @@ impl AutomaticMcpServer {
                 return Ok(CallToolResult::error(vec![Content::text(e)]));
             }
         };
+        // Memory and features are keyed by project id, so every checkout
+        // of a project reads the same store.
+        let keys = match crate::core::project_store_keys(&params.0.project) {
+            Ok(keys) => keys,
+            Err(e) => return Ok(tool_error(e)),
+        };
         match crate::features::add_feature_update(
-            &params.0.project,
+            &keys,
             &params.0.feature_id,
             &params.0.content,
             params.0.author.as_deref(),
@@ -3097,12 +3188,14 @@ mod tests {
     }
 
     #[test]
-    fn memory_tool_given_a_local_key_stores_under_the_name() {
+    fn memory_tool_given_a_name_or_key_stores_under_the_id() {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
             let key = "5b1f0c7e-0000-4000-8000-000000000002";
+            let id = "5b1f0c7e-0000-4000-8000-0000000000aa";
             let project = crate::core::Project {
                 name: "site".into(),
+                id: id.into(),
                 local_key: key.into(),
                 ..Default::default()
             };
@@ -3110,21 +3203,111 @@ mod tests {
                 .expect("save");
 
             let server = AutomaticMcpServer::new();
-            let result = tauri::async_runtime::block_on(server.store_memory(Parameters(
-                StoreMemoryParams {
-                    project: key.into(),
-                    key: "k".into(),
-                    value: "v".into(),
-                    source: None,
+            for (ident, memory_key) in [(key, "by-key"), ("site", "by-name")] {
+                let result = tauri::async_runtime::block_on(server.store_memory(Parameters(
+                    StoreMemoryParams {
+                        project: ident.into(),
+                        key: memory_key.into(),
+                        value: "v".into(),
+                        source: None,
+                    },
+                )))
+                .expect("tool call");
+                assert_ne!(result.is_error, Some(true), "{:?}", result.content);
+            }
+            let stored = crate::memory::get_all_memories(id).unwrap();
+            assert!(stored.contains_key("by-key") && stored.contains_key("by-name"));
+            assert!(crate::memory::get_all_memories("site").unwrap().is_empty());
+            assert!(crate::memory::get_all_memories(key).unwrap().is_empty());
+
+            let read = tauri::async_runtime::block_on(server.get_memory(Parameters(GetMemoryParams {
+                project: "site".into(),
+                key: "by-key".into(),
+            })))
+            .expect("tool call");
+            assert_ne!(read.is_error, Some(true), "{:?}", read.content);
+        });
+    }
+
+    #[test]
+    fn feature_tool_creates_under_the_id_and_names_the_project() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let id = "5b1f0c7e-0000-4000-8000-0000000000bb";
+            let project = crate::core::Project {
+                name: "site".into(),
+                id: id.into(),
+                local_key: "5b1f0c7e-0000-4000-8000-000000000003".into(),
+                tools: vec!["build".into()],
+                ..Default::default()
+            };
+            crate::core::save_project("site", &serde_json::to_string(&project).unwrap())
+                .expect("save");
+            let keys = crate::core::project_store_keys("site").unwrap();
+            assert_eq!(keys.id, id);
+
+            let created = crate::features::create_feature(
+                &keys, "t", "", "medium", None, &[], &[], None, None, None,
+            )
+            .expect("create");
+            assert_eq!(created.project, "site", "rows are named, not keyed");
+
+            // Feature tools need the Build plugin on; write its state
+            // directly to skip the plugin resource sync.
+            let dir = crate::core::get_automatic_dir().unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("app_plugins.json"), r#"{"plugins":{"build":true}}"#).unwrap();
+
+            let server = AutomaticMcpServer::new();
+            let listed = tauri::async_runtime::block_on(server.list_features(Parameters(
+                ListFeaturesParams {
+                    project: "site".into(),
+                    state: None,
+                    include_archived: None,
                 },
             )))
             .expect("tool call");
-            assert_ne!(result.is_error, Some(true), "{:?}", result.content);
-            assert!(crate::memory::get_memory("site", "k").unwrap().contains('v'));
+            assert_ne!(listed.is_error, Some(true), "{:?}", listed.content);
+            let text = format!("{:?}", listed.content);
+            assert!(text.contains(&created.id), "{text}");
+            assert!(!text.contains(id), "the id stays internal: {text}");
             assert!(
-                crate::memory::get_all_memories(key).unwrap().is_empty(),
-                "nothing is stored under the key"
+                crate::features::list_features(&crate::core::ProjectStoreKeys::unregistered("site"), None, false)
+                    .unwrap()
+                    .is_empty(),
+                "nothing is stored under the name"
             );
+        });
+    }
+
+    #[test]
+    fn related_projects_are_listed_by_name() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            for (name, id, key) in [
+                ("site", "5b1f0c7e-0000-4000-8000-0000000000c1", "5b1f0c7e-0000-4000-8000-0000000000d1"),
+                ("api", "5b1f0c7e-0000-4000-8000-0000000000c2", "5b1f0c7e-0000-4000-8000-0000000000d2"),
+            ] {
+                let project = crate::core::Project {
+                    name: name.into(),
+                    id: id.into(),
+                    local_key: key.into(),
+                    ..Default::default()
+                };
+                crate::core::save_project(name, &serde_json::to_string(&project).unwrap())
+                    .expect("save");
+            }
+            let group = serde_json::json!({"name": "team", "projects": ["site", "api"]});
+            crate::core::save_group("team", &group.to_string()).expect("save group");
+
+            let server = AutomaticMcpServer::new();
+            let result = tauri::async_runtime::block_on(server.get_related_projects(Parameters(
+                GetRelatedProjectsParams { project: "site".into() },
+            )))
+            .expect("tool call");
+            let text = format!("{:?}", result.content);
+            assert!(text.contains("**api**"), "{text}");
+            assert!(!text.contains("0000000000c2"), "no id leaks: {text}");
         });
     }
 

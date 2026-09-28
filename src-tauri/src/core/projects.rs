@@ -17,10 +17,10 @@ use super::*;
 // Callers address a project by an identifier: its `local_key` or its name
 // (stage 3b, step 1). The functions here resolve an identifier to its
 // registry file through `resolve_registry_entry`. Stores outside the
-// registry (groups, memory, features, activity, recommendations, dev
-// servers) are still keyed by name, so callers turn an identifier into the
-// canonical name with `canonical_project_name` or `project_store_name`
-// before they reach one.
+// registry are keyed by the project `id` (memory, features, groups) or the
+// `local_key` (activity, recommendations, dev servers) since stage 3b step
+// 2. Callers turn an identifier into the store's key with
+// `project_store_keys` (see `project_store_keys.rs`) before they reach one.
 
 /// Names of every registered project, sorted.
 pub fn list_projects() -> Result<Vec<String>, String> {
@@ -39,9 +39,10 @@ pub fn list_projects() -> Result<Vec<String>, String> {
 // - Store-only commands (memory, features, activity, recommendations, dev
 //   servers, group lookups) never consulted the registry, and accept any
 //   string so data for a deleted or never-registered project stays
-//   reachable. They use `project_store_name`, which canonicalises an
-//   identifier that resolves and passes any other string through unchanged.
-//   A key therefore never reaches a store unless no project has it.
+//   reachable. Since stage 3b step 2 they use `project_store_keys`, which
+//   applies the same pass-through policy but yields the store's key
+//   (`id` or `local_key`) instead of the name. `project_store_name` remains
+//   for callers that need the name alone.
 
 /// The registry name of the project `ident` identifies, or `None` when no
 /// entry matches. An invalid identifier matches nothing.
@@ -109,7 +110,7 @@ pub(crate) fn get_project_summaries_in(
     Ok(entries.iter().map(project_summary).collect())
 }
 
-fn project_summary(entry: &RegistryEntry) -> ProjectSummary {
+pub(crate) fn project_summary(entry: &RegistryEntry) -> ProjectSummary {
     let directory = match entry.directory() {
         Ok(dir) => dir.unwrap_or_default(),
         Err(e) => {
@@ -830,13 +831,16 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
         })?;
     }
 
-    // Update group membership lists so references follow the rename. Best-
-    // effort — see delete_project for the rationale. Groups store the name
-    // exactly as the registry held it.
-    if let Err(e) = rename_project_in_all_groups(&entry.name, new_name) {
+    // Groups store members by `id`, which a rename does not change. A group
+    // still listing the old name (written before the startup migration, or
+    // by an older process) gets the `id` instead, or the new name when the
+    // project has no `id` yet. Best-effort — see delete_project for the
+    // rationale.
+    let replacement = if project.id.is_empty() { new_name } else { project.id.as_str() };
+    if let Err(e) = rename_project_in_all_groups(&entry.name, replacement) {
         eprintln!(
             "rename_project: could not update group references '{}' -> '{}': {}",
-            entry.name, new_name, e
+            entry.name, replacement, e
         );
     }
 
@@ -857,6 +861,11 @@ fn same_file(a: &std::path::Path, b: &std::path::Path) -> Result<bool, String> {
 
 /// Delete a project by identifier (a `local_key` or a name). An identifier
 /// that resolves to nothing still clears group references to it.
+///
+/// Memory, features, activity and recommendations are kept (user decision,
+/// stage 3b step 2). Group membership is keyed by the project `id`, which
+/// other checkouts of the project share, so the `id` leaves its groups only
+/// when this was the last registered checkout.
 pub fn delete_project(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid project name".into());
@@ -864,6 +873,10 @@ pub fn delete_project(name: &str) -> Result<(), String> {
     let entry = resolve_registry_entry(name)?;
     // Group references use the registry's spelling of the name.
     let name = entry.as_ref().map_or(name, |e| e.name.as_str());
+    let id = entry
+        .as_ref()
+        .map(|e| project_summary(e).id)
+        .filter(|id| !id.is_empty());
 
     // Try to read the project to clean up the project-directory config
     if let Some(registry_path) = entry.as_ref().map(|e| &e.path) {
@@ -886,7 +899,19 @@ pub fn delete_project(name: &str) -> Result<(), String> {
     // project file is already gone, so a failure here cannot be recovered by
     // re-running the delete — log and continue so the UI still sees a clean
     // delete result.
-    if let Err(e) = remove_project_from_all_groups(name) {
+    // A legacy member still stored by name goes too.
+    let mut stale = vec![name.to_string()];
+    if let Some(id) = id {
+        match get_project_summaries() {
+            Ok(remaining) if remaining.iter().any(|s| s.id == id) => {}
+            Ok(_) => stale.push(id),
+            Err(e) => eprintln!(
+                "delete_project: kept '{}' in its groups because the registry could not be read: {}",
+                name, e
+            ),
+        }
+    }
+    if let Err(e) = remove_project_from_all_groups(&stale) {
         eprintln!(
             "delete_project: could not clean up group references for '{}': {}",
             name, e
@@ -2049,6 +2074,7 @@ mod tests {
                     updated: both.clone(),
                     renamed: both,
                     failed: vec![],
+                    stores: StoreMigrationReport::default(),
                 }
             );
             let with_dir = load("with-dir");
@@ -2077,6 +2103,7 @@ mod tests {
                     updated: vec![],
                     renamed: vec![],
                     failed: vec![],
+                    stores: StoreMigrationReport::default(),
                 }
             );
             let after: Vec<String> =
@@ -2133,6 +2160,7 @@ mod tests {
                     updated: vec!["gone".to_string()],
                     renamed: vec!["gone".to_string()],
                     failed: vec![],
+                    stores: StoreMigrationReport::default(),
                 }
             );
             assert!(!dir.exists(), "the missing folder is not recreated");
@@ -2174,6 +2202,7 @@ mod tests {
                     updated,
                     renamed,
                     failed,
+                    ..
                 } => {
                     assert_eq!(updated, vec!["fine".to_string()]);
                     assert_eq!(renamed, vec!["fine".to_string()]);
@@ -2469,6 +2498,7 @@ mod tests {
                     updated: vec!["legacy".to_string()],
                     renamed: vec!["legacy".to_string()],
                     failed: vec![],
+                    stores: StoreMigrationReport::default(),
                 }
             );
             let loaded = load("legacy");
@@ -2485,6 +2515,7 @@ mod tests {
                     updated: vec![],
                     renamed: vec![],
                     failed: vec![],
+                    stores: StoreMigrationReport::default(),
                 }
             );
             assert_eq!(fs::read_to_string(&keyed_path).unwrap(), before);
@@ -2512,6 +2543,7 @@ mod tests {
                     updated,
                     renamed,
                     failed,
+                    ..
                 } => {
                     assert!(updated.is_empty(), "the folder's keys are kept");
                     assert_eq!(renamed, vec!["half".to_string()]);
@@ -2575,10 +2607,25 @@ mod tests {
             save_members("g", &["with-dir", "no-dir", "deleted-long-ago"]);
 
             ensure_project_keys().expect("backfill");
-            let live = list_projects().expect("list");
-            assert_eq!(live, vec!["no-dir", "with-dir"]);
-            scrub_orphan_project_references(&live).expect("scrub");
-            assert_eq!(group_members("g"), vec!["with-dir", "no-dir"]);
+            let raw = read_json(&get_groups_dir().unwrap().join("g.json"));
+            let ids = [load("with-dir").id, load("no-dir").id];
+            assert_eq!(
+                raw["projects"],
+                serde_json::json!([ids[0], ids[1], "deleted-long-ago"]),
+                "the migration stored members by id and left the unknown name"
+            );
+            scrub_orphan_project_references().expect("scrub");
+            assert_eq!(
+                group_members("g"),
+                vec!["with-dir", "no-dir", "deleted-long-ago"],
+                "a name cannot be classified, so it stays"
+            );
+
+            // A deleted project's id is an orphan the scrub can prove.
+            let dead = "99999999-9999-4999-8999-999999999999";
+            save_members("g", &["with-dir", dead]);
+            scrub_orphan_project_references().expect("scrub");
+            assert_eq!(group_members("g"), vec!["with-dir"]);
         });
     }
 

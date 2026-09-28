@@ -10,6 +10,11 @@
 //!     timestamp TEXT    NOT NULL    -- ISO 8601 UTC
 //!   )
 //!
+//! `project` holds the project's `local_key` (stage 3b step 2 of the project
+//! identity plan): activity happens in one checkout. Rows written before the
+//! startup migration, or for a project that was never registered, hold a
+//! name. The Tauri commands show every row by name.
+//!
 //! The DB file lives at `~/.automatic/activity.db`.  The table is created on
 //! first use (idempotent, "IF NOT EXISTS").  Reads return up to `limit` rows
 //! ordered newest-first.
@@ -140,8 +145,22 @@ fn open_conn_at(path: &PathBuf) -> Result<Connection, String> {
 /// Append one event to the activity log.  Non-fatal: errors are logged to
 /// stderr but never bubble up to callers so a DB write failure never blocks
 /// the main operation.
+///
+/// `project` is any project identifier (a name, `local_key` or `id`). The
+/// row is stored under the project's `local_key`; an identifier that names
+/// no registered project is stored as given (`core::project_store_keys`).
 pub fn log(project: &str, event: ActivityEvent, label: &str, detail: &str) {
-    if let Err(e) = log_inner(project, event, label, detail) {
+    let key = match crate::core::project_store_local_key(project) {
+        Ok(key) => key,
+        Err(e) => {
+            eprintln!(
+                "[activity] could not resolve project '{}', logging under it as given: {}",
+                project, e
+            );
+            project.to_string()
+        }
+    };
+    if let Err(e) = log_inner(&key, event, label, detail) {
         eprintln!("[activity] log error: {}", e);
     }
 }

@@ -10,6 +10,17 @@ use super::*;
 //
 // Each file contains a full `ProjectGroup` value.  The group name is the
 // file stem; it must pass `is_valid_name`.
+//
+// Membership is stored by project `id` (stage 3b step 2 of the project
+// identity plan), so a rename touches no group file and every checkout of a
+// project shares its groups. The public API still speaks names: `read_group`
+// and `groups_for_project` return member names, and `save_group` accepts
+// them. `project_store_keys::group_members_for_display` and
+// `group_members_for_storage` do the translation. A member no registered
+// project claims is kept as stored in both directions, so a legacy name
+// that the startup migration has not converted, or the id of a deleted
+// project, never silently disappears. The raw helpers below
+// (`*_in_dir`) work on stored values.
 
 fn group_path(groups_dir: &PathBuf, name: &str) -> PathBuf {
     groups_dir.join(format!("{}.json", name))
@@ -51,16 +62,27 @@ pub fn read_group(name: &str) -> Result<String, String> {
         return Err(format!("Group '{}' not found", name));
     }
 
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let group = read_group_for_display(&ProjectKeyIndex::load()?, &path, name)?;
+    serde_json::to_string_pretty(&group).map_err(|e| e.to_string())
+}
+
+/// Read the group file at `path` with its members translated to names.
+fn read_group_for_display(
+    index: &ProjectKeyIndex,
+    path: &std::path::Path,
+    name: &str,
+) -> Result<ProjectGroup, String> {
+    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
     // Round-trip through the struct to ensure forward-compatibility: unknown
     // fields are silently dropped and defaults are applied.
-    let group = serde_json::from_str::<ProjectGroup>(&raw).unwrap_or_else(|_| ProjectGroup {
+    let mut group = serde_json::from_str::<ProjectGroup>(&raw).unwrap_or_else(|_| ProjectGroup {
         name: name.to_string(),
         created_at: chrono::Utc::now().to_rfc3339(),
         updated_at: chrono::Utc::now().to_rfc3339(),
         ..Default::default()
     });
-    serde_json::to_string_pretty(&group).map_err(|e| e.to_string())
+    group.projects = group_members_for_display(index, &group.projects);
+    Ok(group)
 }
 
 pub fn save_group(name: &str, data: &str) -> Result<(), String> {
@@ -68,8 +90,10 @@ pub fn save_group(name: &str, data: &str) -> Result<(), String> {
         return Err("Invalid group name".into());
     }
 
-    let group: ProjectGroup =
+    let mut group: ProjectGroup =
         serde_json::from_str(data).map_err(|e| format!("Invalid group data: {}", e))?;
+    // Members arrive as names; store them by project id.
+    group.projects = group_members_for_storage(&ProjectKeyIndex::load()?, &group.projects);
     let pretty = serde_json::to_string_pretty(&group).map_err(|e| e.to_string())?;
 
     let groups_dir = get_groups_dir()?;
@@ -94,56 +118,80 @@ pub fn delete_group(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Return all groups that contain the given project name.
+/// Return all groups that contain the given project name, with members as
+/// names. The registry is read once for the whole pass.
 pub fn groups_for_project(project_name: &str) -> Vec<ProjectGroup> {
     let names = match list_groups() {
         Ok(n) => n,
         Err(_) => return Vec::new(),
     };
+    let index = match ProjectKeyIndex::load() {
+        Ok(index) => index,
+        Err(e) => {
+            eprintln!("groups_for_project: could not read the project registry: {}", e);
+            return Vec::new();
+        }
+    };
+    let groups_dir = match get_groups_dir() {
+        Ok(dir) => dir,
+        Err(_) => return Vec::new(),
+    };
 
     let mut result = Vec::new();
     for name in names {
-        if let Ok(raw) = read_group(&name) {
-            if let Ok(group) = serde_json::from_str::<ProjectGroup>(&raw) {
-                if group.projects.iter().any(|p| p == project_name) {
-                    result.push(group);
-                }
+        if let Ok(group) = read_group_for_display(&index, &group_path(&groups_dir, &name), &name) {
+            if group.projects.iter().any(|p| p == project_name) {
+                result.push(group);
             }
         }
     }
     result
 }
 
-/// Remove the project name from every group's `projects` list and persist
-/// the changes. Returns the names of groups that were modified.
+/// Remove each of `stored_values` (a project `id`, or a legacy name) from
+/// every group's stored `projects` list and persist the changes. Returns the
+/// names of groups that were modified.
 ///
 /// Per-group failures are logged and skipped rather than aborting the whole
 /// pass — callers (typically `delete_project`) treat this as best-effort
 /// cleanup since the project file is already gone.
-pub fn remove_project_from_all_groups(project_name: &str) -> Result<Vec<String>, String> {
+pub fn remove_project_from_all_groups(stored_values: &[String]) -> Result<Vec<String>, String> {
     let groups_dir = get_groups_dir()?;
-    remove_project_from_all_groups_in_dir(&groups_dir, project_name)
+    remove_project_from_all_groups_in_dir(&groups_dir, stored_values)
 }
 
-/// Replace `old_name` with `new_name` in every group's `projects` list. If a
-/// group already contains `new_name`, the stale `old_name` entry is dropped
-/// (deduplication) rather than producing a duplicate. Returns the names of
-/// groups that were modified.
-pub fn rename_project_in_all_groups(old_name: &str, new_name: &str) -> Result<Vec<String>, String> {
-    let groups_dir = get_groups_dir()?;
-    rename_project_in_all_groups_in_dir(&groups_dir, old_name, new_name)
-}
-
-/// Drop every reference to a project name that does not appear in
-/// `live_projects` from any group's `projects` list. Returns the names of
-/// groups that were modified.
+/// Replace the stored member `old_value` with `new_value` in every group's
+/// `projects` list. If a group already contains `new_value`, the stale
+/// `old_value` entry is dropped (deduplication) rather than producing a
+/// duplicate. Returns the names of groups that were modified.
 ///
-/// Intended as a one-shot startup migration to heal pre-existing stale
-/// references left over from before `delete_project` and `rename_project`
-/// started cleaning up their own group entries. Idempotent.
-pub fn scrub_orphan_project_references(live_projects: &[String]) -> Result<Vec<String>, String> {
+/// Members are stored by `id`, which a rename does not change. A rename
+/// uses this only to convert a legacy name member the startup migration
+/// has not reached yet: `old_value` is the old name and `new_value` the
+/// project's `id` (or its new name when it has no `id` yet).
+pub fn rename_project_in_all_groups(old_value: &str, new_value: &str) -> Result<Vec<String>, String> {
     let groups_dir = get_groups_dir()?;
-    scrub_orphan_project_references_in_dir(&groups_dir, live_projects)
+    rename_project_in_all_groups_in_dir(&groups_dir, old_value, new_value)
+}
+
+/// Drop every member that is a well-formed project key but belongs to no
+/// registered project. Returns the names of groups that were modified.
+///
+/// Heals references to deleted projects. It never removes a member it
+/// cannot classify: any other string (a legacy name the migration has not
+/// converted, or a hand-edited value) is left alone. When some registered
+/// project has no `id`, an unknown key might be that project's, so the
+/// scrub is skipped and an empty list returned. Idempotent.
+pub fn scrub_orphan_project_references() -> Result<Vec<String>, String> {
+    let index = ProjectKeyIndex::load()?;
+    if !index.every_project_has_an_id() {
+        eprintln!(
+            "[automatic] group scrub skipped: a registered project has no id yet, so orphaned members cannot be told apart"
+        );
+        return Ok(Vec::new());
+    }
+    let groups_dir = get_groups_dir()?;
+    scrub_orphan_project_references_in_dir(&groups_dir, &|member| index.is_known_key(member))
 }
 
 // ── Path-injectable internals (used by the public API and tests) ──────────────
@@ -184,7 +232,7 @@ fn list_group_names_in_dir(groups_dir: &PathBuf) -> Result<Vec<String>, String> 
 
 fn remove_project_from_all_groups_in_dir(
     groups_dir: &PathBuf,
-    project_name: &str,
+    stored_values: &[String],
 ) -> Result<Vec<String>, String> {
     let names = list_group_names_in_dir(groups_dir)?;
     let mut affected = Vec::new();
@@ -200,7 +248,7 @@ fn remove_project_from_all_groups_in_dir(
             }
         };
         let before = group.projects.len();
-        group.projects.retain(|p| p != project_name);
+        group.projects.retain(|p| !stored_values.contains(p));
         if group.projects.len() == before {
             continue;
         }
@@ -216,10 +264,8 @@ fn remove_project_from_all_groups_in_dir(
 
 fn scrub_orphan_project_references_in_dir(
     groups_dir: &PathBuf,
-    live_projects: &[String],
+    is_live_key: &dyn Fn(&str) -> bool,
 ) -> Result<Vec<String>, String> {
-    use std::collections::HashSet;
-    let live: HashSet<&str> = live_projects.iter().map(|s| s.as_str()).collect();
     let names = list_group_names_in_dir(groups_dir)?;
     let mut affected = Vec::new();
     for name in names {
@@ -231,7 +277,7 @@ fn scrub_orphan_project_references_in_dir(
             }
         };
         let before = group.projects.len();
-        group.projects.retain(|p| live.contains(p.as_str()));
+        group.projects.retain(|p| !is_project_key(p) || is_live_key(p));
         if group.projects.len() == before {
             continue;
         }
@@ -327,7 +373,7 @@ mod tests {
         write_group(&groups_dir, "bar", &["a"]);
         write_group(&groups_dir, "baz", &["b"]);
 
-        let mut affected = remove_project_from_all_groups_in_dir(&groups_dir, "a").expect("clean");
+        let mut affected = remove_project_from_all_groups_in_dir(&groups_dir, &["a".to_string()]).expect("clean");
         affected.sort();
         assert_eq!(affected, vec!["bar", "foo"]);
         assert_eq!(read_projects(&groups_dir, "foo"), vec!["b"]);
@@ -339,7 +385,7 @@ mod tests {
     fn remove_is_no_op_when_project_absent() {
         let (_tmp, groups_dir) = setup();
         write_group(&groups_dir, "foo", &["a"]);
-        let affected = remove_project_from_all_groups_in_dir(&groups_dir, "ghost").expect("clean");
+        let affected = remove_project_from_all_groups_in_dir(&groups_dir, &["ghost".to_string()]).expect("clean");
         assert!(affected.is_empty());
         assert_eq!(read_projects(&groups_dir, "foo"), vec!["a"]);
     }
@@ -347,7 +393,7 @@ mod tests {
     #[test]
     fn remove_handles_missing_groups_dir() {
         let (_tmp, groups_dir) = setup();
-        let affected = remove_project_from_all_groups_in_dir(&groups_dir, "a").expect("clean");
+        let affected = remove_project_from_all_groups_in_dir(&groups_dir, &["a".to_string()]).expect("clean");
         assert!(affected.is_empty());
     }
 
@@ -398,37 +444,65 @@ mod tests {
 
     // ── scrub_orphan_project_references ──────────────────────────────────────
 
-    #[test]
-    fn scrub_drops_only_orphan_references() {
-        let (_tmp, groups_dir) = setup();
-        write_group(&groups_dir, "foo", &["a", "ghost", "b"]);
-        write_group(&groups_dir, "bar", &["b"]);
-        write_group(&groups_dir, "baz", &["only-ghosts"]);
+    const LIVE: &str = "11111111-1111-4111-8111-111111111111";
+    const DEAD: &str = "22222222-2222-4222-8222-222222222222";
 
-        let live = vec!["a".to_string(), "b".to_string()];
+    #[test]
+    fn scrub_drops_only_unknown_project_keys() {
+        let (_tmp, groups_dir) = setup();
+        write_group(&groups_dir, "foo", &[LIVE, DEAD, "legacy-name"]);
+        write_group(&groups_dir, "bar", &[LIVE]);
+        write_group(&groups_dir, "baz", &[DEAD]);
+
         let mut affected =
-            scrub_orphan_project_references_in_dir(&groups_dir, &live).expect("scrub");
+            scrub_orphan_project_references_in_dir(&groups_dir, &|m| m == LIVE).expect("scrub");
         affected.sort();
         assert_eq!(affected, vec!["baz", "foo"]);
-        assert_eq!(read_projects(&groups_dir, "foo"), vec!["a", "b"]);
-        assert_eq!(read_projects(&groups_dir, "bar"), vec!["b"]);
+        assert_eq!(
+            read_projects(&groups_dir, "foo"),
+            vec![LIVE, "legacy-name"],
+            "a member that is not a key cannot be classified and stays"
+        );
+        assert_eq!(read_projects(&groups_dir, "bar"), vec![LIVE]);
         assert!(read_projects(&groups_dir, "baz").is_empty());
+    }
+
+    #[test]
+    fn scrub_never_removes_names_even_when_nothing_is_live() {
+        let (_tmp, groups_dir) = setup();
+        write_group(&groups_dir, "foo", &["ghost", "Other Name", "not-a-uuid-1234"]);
+        let affected = scrub_orphan_project_references_in_dir(&groups_dir, &|_| false).expect("scrub");
+        assert!(affected.is_empty());
+        assert_eq!(read_projects(&groups_dir, "foo"), vec!["ghost", "Other Name", "not-a-uuid-1234"]);
     }
 
     #[test]
     fn scrub_is_idempotent_when_no_orphans() {
         let (_tmp, groups_dir) = setup();
-        write_group(&groups_dir, "foo", &["a"]);
-        let live = vec!["a".to_string()];
-        let affected = scrub_orphan_project_references_in_dir(&groups_dir, &live).expect("scrub");
+        write_group(&groups_dir, "foo", &[LIVE]);
+        let affected = scrub_orphan_project_references_in_dir(&groups_dir, &|m| m == LIVE).expect("scrub");
         assert!(affected.is_empty());
-        assert_eq!(read_projects(&groups_dir, "foo"), vec!["a"]);
+        assert_eq!(read_projects(&groups_dir, "foo"), vec![LIVE]);
     }
 
     #[test]
     fn scrub_handles_missing_groups_dir() {
         let (_tmp, groups_dir) = setup();
-        let affected = scrub_orphan_project_references_in_dir(&groups_dir, &[]).expect("scrub");
+        let affected = scrub_orphan_project_references_in_dir(&groups_dir, &|_| false).expect("scrub");
         assert!(affected.is_empty());
+    }
+
+    #[test]
+    fn scrub_is_skipped_while_a_project_has_no_id() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            crate::core::save_project("unkeyed", r#"{"name":"unkeyed"}"#).unwrap();
+            let groups_dir = get_groups_dir().unwrap();
+            write_group(&groups_dir, "g", &[DEAD]);
+            assert!(scrub_orphan_project_references().unwrap().is_empty());
+            assert_eq!(read_projects(&groups_dir, "g"), vec![DEAD], "an unclassifiable key stays");
+        });
     }
 }

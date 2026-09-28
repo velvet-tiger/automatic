@@ -14,6 +14,11 @@
 //!     updated_at  TEXT    NOT NULL
 //!   )
 //!
+//! `project` (here and in `recommendation_meta`) holds the project's
+//! `local_key` (stage 3b step 2 of the project identity plan): suggestions
+//! are computed from one checkout's files. Callers pass the key; the Tauri
+//! commands show rows by name.
+//!
 //! The table is created on first use (idempotent, "IF NOT EXISTS").
 //! The DB file is the same `~/.automatic/activity.db` used by the activity log
 //! so that a single file-handle / WAL state is shared.

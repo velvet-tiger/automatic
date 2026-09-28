@@ -157,21 +157,29 @@ pub fn current_timestamp() -> String {
 // Raw API for Frontend UI
 // ============================================================================
 
-pub fn get_all_memories(project_name: &str) -> Result<MemoryDb, String> {
-    read_memory_db(project_name)
+/// Every entry in the store keyed `store_key` (a project `id`, or a value
+/// passed through for an unregistered project).
+pub fn get_all_memories(store_key: &str) -> Result<MemoryDb, String> {
+    read_memory_db(store_key)
 }
 
 // ============================================================================
 // Formatted API for MCP (Agents)
 // ============================================================================
+//
+// Memory is keyed by project `id` (stage 3b step 2 of the project identity
+// plan), so every checkout of a project shares one store. These functions
+// take the project's resolved `ProjectStoreKeys`: `id` picks the file,
+// `name` is used in messages, and `local_key` tags the activity row with
+// the checkout the call came from.
 
 pub fn store_memory(
-    project_name: &str,
+    project: &crate::core::ProjectStoreKeys,
     key: &str,
     value: &str,
     source: Option<&str>,
 ) -> Result<String, String> {
-    let mut db = read_memory_db(project_name)?;
+    let mut db = read_memory_db(&project.id)?;
 
     db.insert(
         key.to_string(),
@@ -183,10 +191,10 @@ pub fn store_memory(
         },
     );
 
-    write_memory_db(project_name, &db)?;
+    write_memory_db(&project.id, &db)?;
 
     crate::activity::log(
-        project_name,
+        &project.local_key,
         crate::activity::ActivityEvent::MemoryStored,
         &format!("Memory stored: {}", key),
         key,
@@ -194,12 +202,12 @@ pub fn store_memory(
 
     Ok(format!(
         "Memory stored: key='{}' for project '{}'",
-        key, project_name
+        key, project.name
     ))
 }
 
-pub fn get_memory(project_name: &str, key: &str) -> Result<String, String> {
-    let db = read_memory_db(project_name)?;
+pub fn get_memory(project: &crate::core::ProjectStoreKeys, key: &str) -> Result<String, String> {
+    let db = read_memory_db(&project.id)?;
 
     if let Some(entry) = db.get(key) {
         let mut output = format!("# Memory: {}\n\n", key);
@@ -214,11 +222,11 @@ pub fn get_memory(project_name: &str, key: &str) -> Result<String, String> {
     }
 }
 
-pub fn list_memories(project_name: &str, pattern: Option<&str>) -> Result<String, String> {
-    let db = read_memory_db(project_name)?;
+pub fn list_memories(project: &crate::core::ProjectStoreKeys, pattern: Option<&str>) -> Result<String, String> {
+    let db = read_memory_db(&project.id)?;
 
     if db.is_empty() {
-        return Ok(format!("No memories stored for project '{}'", project_name));
+        return Ok(format!("No memories stored for project '{}'", project.name));
     }
 
     let mut keys: Vec<&String> = db.keys().collect();
@@ -237,11 +245,11 @@ pub fn list_memories(project_name: &str, pattern: Option<&str>) -> Result<String
         return Ok(format!(
             "No memories matching pattern '{}' for project '{}'",
             pattern.unwrap_or(""),
-            project_name
+            project.name
         ));
     }
 
-    let mut output = format!("# Memories for '{}'\n\n", project_name);
+    let mut output = format!("# Memories for '{}'\n\n", project.name);
     if let Some(pat) = pattern {
         output.push_str(&format!("Filtered by: {}\n\n", pat));
     }
@@ -265,11 +273,11 @@ pub fn list_memories(project_name: &str, pattern: Option<&str>) -> Result<String
     Ok(output)
 }
 
-pub fn search_memories(project_name: &str, query: &str) -> Result<String, String> {
-    let db = read_memory_db(project_name)?;
+pub fn search_memories(project: &crate::core::ProjectStoreKeys, query: &str) -> Result<String, String> {
+    let db = read_memory_db(&project.id)?;
 
     if db.is_empty() {
-        return Ok(format!("No memories stored for project '{}'", project_name));
+        return Ok(format!("No memories stored for project '{}'", project.name));
     }
 
     let query_lower = query.to_lowercase();
@@ -283,13 +291,13 @@ pub fn search_memories(project_name: &str, query: &str) -> Result<String, String
     if matches.is_empty() {
         return Ok(format!(
             "No memories matching query '{}' for project '{}'",
-            query, project_name
+            query, project.name
         ));
     }
 
     matches.sort_by_key(|(k, _)| *k);
 
-    let mut output = format!("# Search results for '{}' in '{}'\n\n", query, project_name);
+    let mut output = format!("# Search results for '{}' in '{}'\n\n", query, project.name);
     output.push_str(&format!("Found {} match(es)\n\n", matches.len()));
 
     for (key, entry) in matches {
@@ -305,17 +313,17 @@ pub fn search_memories(project_name: &str, query: &str) -> Result<String, String
     Ok(output)
 }
 
-pub fn delete_memory(project_name: &str, key: &str) -> Result<String, String> {
-    let mut db = read_memory_db(project_name)?;
+pub fn delete_memory(project: &crate::core::ProjectStoreKeys, key: &str) -> Result<String, String> {
+    let mut db = read_memory_db(&project.id)?;
 
     if db.remove(key).is_none() {
         return Err(format!("Memory key '{}' not found", key));
     }
 
-    write_memory_db(project_name, &db)?;
+    write_memory_db(&project.id, &db)?;
 
     crate::activity::log(
-        project_name,
+        &project.local_key,
         crate::activity::ActivityEvent::MemoryDeleted,
         &format!("Memory deleted: {}", key),
         key,
@@ -323,12 +331,12 @@ pub fn delete_memory(project_name: &str, key: &str) -> Result<String, String> {
 
     Ok(format!(
         "Memory deleted: key='{}' for project '{}'",
-        key, project_name
+        key, project.name
     ))
 }
 
 pub fn clear_memories(
-    project_name: &str,
+    project: &crate::core::ProjectStoreKeys,
     pattern: Option<&str>,
     confirm: bool,
 ) -> Result<String, String> {
@@ -336,7 +344,7 @@ pub fn clear_memories(
         return Err("Deletion not confirmed. Set 'confirm' to true to proceed.".to_string());
     }
 
-    let mut db = read_memory_db(project_name)?;
+    let mut db = read_memory_db(&project.id)?;
     let deleted_count;
 
     if let Some(pat) = pattern {
@@ -356,7 +364,7 @@ pub fn clear_memories(
         db.clear();
     }
 
-    write_memory_db(project_name, &db)?;
+    write_memory_db(&project.id, &db)?;
 
     let detail = if let Some(pat) = pattern {
         format!("{} entries matching '{}'", deleted_count, pat)
@@ -365,7 +373,7 @@ pub fn clear_memories(
     };
 
     crate::activity::log(
-        project_name,
+        &project.local_key,
         crate::activity::ActivityEvent::MemoryCleared,
         "Memory cleared",
         &detail,
@@ -377,14 +385,14 @@ pub fn clear_memories(
             deleted_count,
             if deleted_count == 1 { "y" } else { "ies" },
             pat,
-            project_name
+            project.name
         ))
     } else {
         Ok(format!(
             "Cleared all {} memor{} for project '{}'",
             deleted_count,
             if deleted_count == 1 { "y" } else { "ies" },
-            project_name
+            project.name
         ))
     }
 }
