@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { loadProjectSummaries } from "../lib/projectIdentity";
 import { ArrowRight, Code, Compass, Copy, Layers, Server, Sparkles, Zap } from "lucide-react";
 
 interface GettingStartedProps {
@@ -248,13 +249,13 @@ export default function GettingStarted({ onNavigate }: GettingStartedProps) {
   useEffect(() => {
     async function loadData() {
       try {
-        const [projectNames, mcpNames, settings] = await Promise.all([
-          invoke<string[]>("get_projects").catch(() => [] as string[]),
+        const [projectSummaries, mcpNames, settings] = await Promise.all([
+          loadProjectSummaries().catch(() => []),
           invoke<string[]>("list_mcp_server_configs").catch(() => [] as string[]),
           invoke<Record<string, unknown>>("read_settings").catch(() => null),
         ]);
 
-        setProjectCount(projectNames.length);
+        setProjectCount(projectSummaries.length);
         setMcpServerCount(mcpNames.length);
 
         if (settings?.getting_started) {

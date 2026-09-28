@@ -10,9 +10,10 @@ interface ProfilesPanelProps {
   setDirty: (v: boolean) => void;
   /** In the create wizard the project is not on disk yet, so attach/detach only edit state. */
   isCreating: boolean;
-  selectedName: string | null;
+  /** local_key of the open project; null while creating. */
+  selectedKey: string | null;
   availableProfiles: string[];
-  reloadProject: (name: string) => Promise<void>;
+  reloadProject: (projectKey: string) => Promise<void>;
 }
 
 const KIND_LABELS: Record<(typeof PROFILE_RESOURCE_KINDS)[number], [string, string]> = {
@@ -44,7 +45,7 @@ function summariseContribution(contribution: ProfileContribution | undefined): s
  * "Profile: name" badge in the other tabs.
  */
 export function ProfilesPanel({
-  project, setProject, setDirty, isCreating, selectedName, availableProfiles, reloadProject,
+  project, setProject, setDirty, isCreating, selectedKey, availableProfiles, reloadProject,
 }: ProfilesPanelProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -61,7 +62,7 @@ export function ProfilesPanel({
   // Saved projects go through the backend so the profile is applied and the
   // project re-synced at once. The wizard only edits state; the first save
   // reconciles.
-  const persisted = !isCreating && !!selectedName;
+  const persisted = !isCreating && !!selectedKey;
 
   const attach = async (profileName: string) => {
     setAdding(false);
@@ -74,8 +75,8 @@ export function ProfilesPanel({
     }
     setBusy(profileName);
     try {
-      await invoke("attach_profile_to_project", { projectName: selectedName, profileName });
-      await reloadProject(selectedName!);
+      await invoke("attach_profile_to_project", { projectName: selectedKey, profileName });
+      await reloadProject(selectedKey!);
     } catch (err) {
       setError(`Failed to attach profile "${profileName}": ${err}`);
     } finally {
@@ -92,8 +93,8 @@ export function ProfilesPanel({
     }
     setBusy(profileName);
     try {
-      await invoke("detach_profile_from_project", { projectName: selectedName, profileName });
-      await reloadProject(selectedName!);
+      await invoke("detach_profile_from_project", { projectName: selectedKey, profileName });
+      await reloadProject(selectedKey!);
     } catch (err) {
       setError(`Failed to detach profile "${profileName}": ${err}`);
     } finally {

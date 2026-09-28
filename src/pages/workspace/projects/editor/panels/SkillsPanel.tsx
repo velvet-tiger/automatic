@@ -10,7 +10,8 @@ import type { CustomSkill, DriftReport, ProfileLockMap, Project, ProjectRecommen
 interface SkillsPanelProps {
   project: Project;
   setProject: (next: Project) => void;
-  selectedName: string | null;
+  /** local_key of the open project; null while creating. */
+  selectedKey: string | null;
   setProjectDetailsMap: React.Dispatch<React.SetStateAction<Map<string, Project>>>;
   setDirty: (v: boolean) => void;
   setSyncStatus: (v: string | null) => void;
@@ -42,7 +43,7 @@ interface SkillsPanelProps {
 
 export function SkillsPanel(props: SkillsPanelProps) {
   const {
-    project, setProject, selectedName, setProjectDetailsMap, setDirty,
+    project, setProject, selectedKey, setProjectDetailsMap, setDirty,
     setSyncStatus, setError, setDriftReport, setDriftByProject,
     customSkillEditingIdx, setCustomSkillEditingIdx,
     customSkillEditName, setCustomSkillEditName,
@@ -57,21 +58,22 @@ export function SkillsPanel(props: SkillsPanelProps) {
   const customSkills: CustomSkill[] = project.custom_skills || [];
 
   const saveProjectWithSkills = async (updatedProject: Project) => {
-    if (!selectedName) return;
-    const toSave = { ...updatedProject, name: selectedName, updated_at: new Date().toISOString() };
+    if (!selectedKey) return;
+    // Keep the display name from the project; selectedKey is its local_key.
+    const toSave = { ...updatedProject, updated_at: new Date().toISOString() };
     setProject(toSave);
     try {
       setSyncStatus("syncing");
       await invoke("save_project", {
-        name: selectedName,
+        name: selectedKey,
         data: JSON.stringify(toSave, null, 2),
       });
-      setProjectDetailsMap((prev) => new Map(prev).set(selectedName, toSave));
+      setProjectDetailsMap((prev) => new Map(prev).set(selectedKey, toSave));
       setDirty(false);
       setSyncStatus(toSave.directory && toSave.agents.length > 0 ? "Saved & synced" : "Saved");
       if (toSave.directory && toSave.agents.length > 0) {
         setDriftReport({ drifted: false, agents: [] });
-        setDriftByProject((prev) => ({ ...prev, [selectedName]: false }));
+        setDriftByProject((prev) => ({ ...prev, [selectedKey]: false }));
       }
     } catch (err: unknown) {
       setError(`Save failed: ${err}`);
@@ -218,7 +220,7 @@ export function SkillsPanel(props: SkillsPanelProps) {
                         </button>
                         <button
                           onClick={async () => {
-                            if (!selectedName) return;
+                            if (!selectedKey) return;
                             try {
                               setSyncStatus("syncing");
                               await invoke("save_skill", { name: skill.name, content: skill.content });
@@ -281,7 +283,7 @@ export function SkillsPanel(props: SkillsPanelProps) {
           }}
           onNavigateToSkill={onNavigateToSkill}
           onForkSkill={async (skillName, content) => {
-            if (!selectedName) return;
+            if (!selectedKey) return;
             try {
               const existingCustomNames = new Set((project.custom_skills ?? []).map(s => s.name));
               const taken = new Set([...project.skills, ...existingCustomNames]);
@@ -294,16 +296,15 @@ export function SkillsPanel(props: SkillsPanelProps) {
               const newCustomSkill: CustomSkill = { name: copyName, content };
               const forkedProject = {
                 ...project,
-                name: selectedName,
                 custom_skills: [...(project.custom_skills ?? []), newCustomSkill],
                 updated_at: new Date().toISOString(),
               };
               setProject(forkedProject);
               await invoke("save_project", {
-                name: selectedName,
+                name: selectedKey,
                 data: JSON.stringify(forkedProject, null, 2),
               });
-              setProjectDetailsMap((prev) => new Map(prev).set(selectedName, forkedProject));
+              setProjectDetailsMap((prev) => new Map(prev).set(selectedKey, forkedProject));
               setDirty(false);
               notifyProjectUpdated();
               setSyncStatus(`Forked "${skillName}" → project skill "${copyName}"`);

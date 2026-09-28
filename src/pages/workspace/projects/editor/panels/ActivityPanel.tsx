@@ -7,16 +7,17 @@ import type { ActivityEntry } from "../../types";
 const ACTIVITY_PAGE_SIZE = 50;
 
 interface ActivityPanelProps {
-  projectName: string;
+  /** The project's local_key. */
+  projectKey: string;
   activityPageEntries: ActivityEntry[];
   activityPage: number;
   activityTotalCount: number;
   loadingActivityPage: boolean;
-  reloadActivityPage: (projectName: string, page: number) => void;
+  reloadActivityPage: (projectKey: string, page: number) => void;
 }
 
 export function ActivityPanel({
-  projectName,
+  projectKey,
   activityPageEntries,
   activityPage,
   activityTotalCount,
@@ -36,7 +37,7 @@ export function ActivityPanel({
           )}
         </div>
         <button
-          onClick={() => reloadActivityPage(projectName, activityPage)}
+          onClick={() => reloadActivityPage(projectKey, activityPage)}
           disabled={loadingActivityPage}
           className="text-[11px] text-text-muted hover:text-text-base transition-colors flex items-center gap-1 disabled:opacity-40"
         >
@@ -82,7 +83,7 @@ export function ActivityPanel({
       {totalPages > 1 && (
         <div className="flex items-center justify-between pt-3 flex-shrink-0">
           <button
-            onClick={() => reloadActivityPage(projectName, activityPage - 1)}
+            onClick={() => reloadActivityPage(projectKey, activityPage - 1)}
             disabled={activityPage === 0 || loadingActivityPage}
             className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text-base border border-border-strong/40 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
@@ -92,7 +93,7 @@ export function ActivityPanel({
             Page {activityPage + 1} of {totalPages}
           </span>
           <button
-            onClick={() => reloadActivityPage(projectName, activityPage + 1)}
+            onClick={() => reloadActivityPage(projectKey, activityPage + 1)}
             disabled={activityPage >= totalPages - 1 || loadingActivityPage}
             className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text-base border border-border-strong/40 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >

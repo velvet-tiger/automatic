@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { loadProjectSummaries, resolveProjectKey } from "../../lib/projectIdentity";
+import type { ProjectSummary } from "./projects/types";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, Check, Layers, FolderOpen } from "lucide-react";
 import { GroupContextsSection } from "./contexts/GroupContextsSection";
@@ -33,7 +35,8 @@ async function withLatestContexts(updated: ProjectGroup): Promise<ProjectGroup> 
 }
 
 interface ProjectGroupsProps {
-  onNavigateToProject?: (projectName: string) => void;
+  /** Opens a project by local_key (or by name when it has no key). */
+  onNavigateToProject?: (projectKey: string) => void;
   initialGroup?: string | null;
   onInitialGroupConsumed?: () => void;
 }
@@ -44,7 +47,10 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
   const [groups, setGroups] = useState<string[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [group, setGroup] = useState<ProjectGroup | null>(null);
+  // Group files list members by name, so this page works on names and maps
+  // a name to its local_key only to open the project.
   const [allProjects, setAllProjects] = useState<string[]>([]);
+  const [summaries, setSummaries] = useState<ProjectSummary[]>([]);
 
   // Edit state
   const [isEditing, setIsEditing] = useState(false);
@@ -91,8 +97,9 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
 
   const loadAllProjects = async () => {
     try {
-      const result: string[] = await invoke("get_projects");
-      setAllProjects(result.sort((a, b) => a.localeCompare(b)));
+      const result = await loadProjectSummaries();
+      setSummaries(result);
+      setAllProjects(result.map((s) => s.name).sort((a, b) => a.localeCompare(b)));
     } catch {
       // Non-fatal.
     }
@@ -470,7 +477,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
                       <FolderOpen size={13} className="text-text-muted shrink-0" />
                       <span
                         className={`flex-1 text-[13px] text-text-base truncate ${onNavigateToProject ? "cursor-pointer hover:text-brand transition-colors" : ""}`}
-                        onClick={() => onNavigateToProject?.(projectName)}
+                        onClick={() => onNavigateToProject?.(resolveProjectKey(summaries, projectName) ?? projectName)}
                         title={onNavigateToProject ? `Open ${projectName}` : projectName}
                       >
                         {projectName}

@@ -9,6 +9,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { handleExternalLinkClick } from "../../../../lib/externalLinks";
 import { useProjectNavLayout } from "../../../../lib/projectNavLayout";
+import { loadProjectSummaries } from "../../../../lib/projectIdentity";
+import { SELECTED_PROJECT_STORAGE_KEY } from "../../../../lib/projectStorageMigration";
 import {
   trackProjectCreated,
   trackProjectUpdated,
@@ -127,6 +129,44 @@ function projectNameFormatProblem(name: string): string | null {
   return null;
 }
 
+/** Remember the open project's local_key. Storage may be unavailable. */
+function writeSelectedProject(projectKey: string): void {
+  try {
+    localStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, projectKey);
+  } catch (err: unknown) {
+    console.warn("Could not remember the selected project:", err);
+  }
+}
+
+function clearSelectedProject(): void {
+  try {
+    localStorage.removeItem(SELECTED_PROJECT_STORAGE_KEY);
+  } catch (err: unknown) {
+    console.warn("Could not clear the selected project:", err);
+  }
+}
+
+/**
+ * The local_key of a project that was just created or imported under
+ * `name`. Falls back to the name when the project has no key or cannot be
+ * read back: every command also accepts the name, and the save itself has
+ * already succeeded, so failing here would report a false error.
+ */
+async function localKeyForProject(name: string): Promise<string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await invoke<string>("read_project", { name }));
+  } catch (err: unknown) {
+    console.warn(`Could not read the key of project '${name}'; addressing it by name:`, err);
+    return name;
+  }
+  if (typeof parsed === "object" && parsed !== null && "local_key" in parsed) {
+    const key = (parsed as { local_key: unknown }).local_key;
+    if (typeof key === "string" && key !== "") return key;
+  }
+  return name;
+}
+
 /** First `<name>-2`, `<name>-3`, ... not in `takenLower`. The set holds
  *  lowercased names because registry files collide case-insensitively on
  *  macOS. Terminates because the set is finite. */
@@ -150,11 +190,13 @@ interface AgentRemovalDialog {
 }
 
 interface ProjectEditorProps {
-  selectedName: string | null;
-  setSelectedName: (name: string | null) => void;
+  /** local_key of the open project; null while creating. Names are display-only. */
+  selectedKey: string | null;
+  setSelectedKey: (projectKey: string | null) => void;
   isCreating: boolean;
   setIsCreating: (v: boolean) => void;
   reloadProjects: () => Promise<void>;
+  /** Keyed by local_key. */
   setProjectDetailsMap: React.Dispatch<React.SetStateAction<Map<string, Project>>>;
   setDriftByProject: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   onBack: () => void;
@@ -181,8 +223,8 @@ interface ProjectEditorProps {
 }
 
 export function ProjectEditor({
-  selectedName,
-  setSelectedName,
+  selectedKey,
+  setSelectedKey,
   isCreating,
   setIsCreating,
   reloadProjects,
@@ -205,8 +247,6 @@ export function ProjectEditor({
 }: ProjectEditorProps) {
   const { userId } = useCurrentUser();
   const { log, update } = useTaskLog();
-  const LAST_PROJECT_KEY = "automatic.projects.selected";
-  const PROJECT_ORDER_KEY = "automatic.projects.order";
 
   const [project, setProject] = useState<Project | null>(initialProject);
   const [dirty, setDirty] = useState(false);
@@ -245,12 +285,14 @@ export function ProjectEditor({
   useEffect(() => {
     if (!isCreating || wizardStep !== 1) return;
     let cancelled = false;
-    invoke<string[]>("get_projects")
-      .then((names) => {
-        if (!cancelled) setExistingProjectNames(names);
+    loadProjectSummaries()
+      .then((summaries) => {
+        // The clash check compares display names, which stay unique until
+        // duplicate names are allowed.
+        if (!cancelled) setExistingProjectNames(summaries.map((s) => s.name));
       })
       .catch((err: unknown) => {
-        console.error("get_projects failed; name clash warning disabled:", err);
+        console.error("get_project_summaries failed; name clash warning disabled:", err);
         if (!cancelled) setExistingProjectNames(null);
       });
     return () => {
@@ -382,11 +424,12 @@ export function ProjectEditor({
   const [selectedProjectTemplates, setSelectedProjectTemplates] = useState<string[]>([]);
   // Pending unified instruction content + rules to write after next save (from template applies).
   // Each entry corresponds to one applied template; contents are concatenated on flush.
-  // `projectName` records who the entries belong to so switching projects with an
-  // unsaved apply cannot write one project's instruction into another; `null`
-  // means the project currently being created by the wizard, which has no name yet.
+  // `projectKey` records who the entries belong to (a local_key) so switching
+  // projects with an unsaved apply cannot write one project's instruction into
+  // another; `null` means the project currently being created by the wizard,
+  // which has no key yet.
   const pendingUnifiedInstruction = useRef<{
-    projectName: string | null;
+    projectKey: string | null;
     entries: { content: string; rules: string[] }[];
   } | null>(null);
 
@@ -529,8 +572,8 @@ export function ProjectEditor({
         const tab = g.tabs[0]!.id;
         setProjectTab(tab);
         // Trigger data loading for tabs that need it.
-        if (tab === "activity" && selectedName) {
-          loadActivityPage(selectedName, 0);
+        if (tab === "activity" && selectedKey) {
+          loadActivityPage(selectedKey, 0);
         }
         if (tab === "tools") {
           setToolTab(null);
@@ -548,8 +591,8 @@ export function ProjectEditor({
     if (tab !== "rules") setCustomRuleEditingIdx(null);
     if (tab !== "commands") setCustomCommandEditingIdx(null);
     if (tab !== "skills") setCustomSkillEditingIdx(null);
-    if (tab === "activity" && selectedName) {
-      loadActivityPage(selectedName, 0);
+    if (tab === "activity" && selectedKey) {
+      loadActivityPage(selectedKey, 0);
     }
     if (tab === "tools") {
       // Reset tool detail view and load available tool entries.
@@ -786,11 +829,11 @@ export function ProjectEditor({
     return () => document.removeEventListener("mousedown", handler);
   }, [openInDropdownOpen]);
 
-  // SEAM 1 — load the active project whenever `selectedName` changes (not in create flow).
+  // SEAM 1 — load the active project whenever `selectedKey` changes (not in create flow).
   useEffect(() => {
-    if (selectedName && !isCreating) void selectProject(selectedName);
+    if (selectedKey && !isCreating) void selectProject(selectedKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedName]);
+  }, [selectedKey]);
 
   // After a project is selected via the router, switch to the requested tab.
   useEffect(() => {
@@ -827,17 +870,17 @@ export function ProjectEditor({
     setAiMcpSuggestions([]);
     setActiveToolName(null);
     // Load tool entries eagerly so enabled tools can appear in the top-level nav.
-    if (selectedName) loadToolEntries();
-  }, [selectedName]);
+    if (selectedKey) loadToolEntries();
+  }, [selectedKey]);
 
   // Reload tool entries when a plugin is toggled elsewhere (e.g. Settings),
   // so newly-enabled plugin tabs appear in the sidebar without a project switch.
   useEffect(() => {
-    if (!selectedName) return;
+    if (!selectedKey) return;
     const handler = () => { loadToolEntries(); };
     window.addEventListener("plugins-updated", handler);
     return () => window.removeEventListener("plugins-updated", handler);
-  }, [selectedName]);
+  }, [selectedKey]);
 
   // Profiles are edited on their own library page. Saving one rewrites every
   // attached project's config behind this editor, so reload the open project
@@ -846,11 +889,11 @@ export function ProjectEditor({
     loadAvailableProfiles();
     const handler = () => {
       loadAvailableProfiles();
-      if (selectedName && !isCreating && !dirty) reloadProject(selectedName);
+      if (selectedKey && !isCreating && !dirty) reloadProject(selectedKey);
     };
     window.addEventListener("profiles-updated", handler);
     return () => window.removeEventListener("profiles-updated", handler);
-  }, [selectedName, isCreating, dirty]);
+  }, [selectedKey, isCreating, dirty]);
 
   // Fetch plugin-locked skills/rules whenever the project's tools change.
   useEffect(() => {
@@ -881,7 +924,7 @@ export function ProjectEditor({
   // with the project page when an in-memory edit (e.g. an autodetect merge
   // performed by `selectProject`) makes the project dirty on entry.
   useEffect(() => {
-    const name = selectedName;
+    const name = selectedKey;
     if (!name || !project || !project.directory || project.agents.length === 0 || isCreating) {
       return;
     }
@@ -932,7 +975,7 @@ export function ProjectEditor({
     runCheck();
     const interval = setInterval(runCheck, 15_000);
     return () => clearInterval(interval);
-  }, [selectedName, project?.directory, project?.agents.length, isCreating]);
+  }, [selectedKey, project?.directory, project?.agents.length, isCreating]);
 
   // Re-fetch just the problems report for the given project name, so
   // mutations that change what would appear in the banner (adding, removing,
@@ -1125,7 +1168,7 @@ export function ProjectEditor({
 
     try {
       const raw: string = await invoke("apply_templates_to_project", {
-        projectName: project.name,
+        projectName: selectedKey ?? project.name,
         templateNames: [templateName],
       });
       const result: { project: Project; pending_unified: { content: string; rules: string[] }[] } = JSON.parse(raw);
@@ -1138,7 +1181,7 @@ export function ProjectEditor({
       const withContent = result.pending_unified.filter((e) => e.content.trim());
       if (withContent.length > 0) {
         pendingUnifiedInstruction.current = {
-          projectName: project.name,
+          projectKey: selectedKey,
           entries: withContent,
         };
         setDirty(true);
@@ -1171,10 +1214,10 @@ export function ProjectEditor({
     }
   };
 
-  const loadMemories = async (projectName: string) => {
+  const loadMemories = async (projectKey: string) => {
     try {
       setLoadingMemories(true);
-      const data: Record<string, { value: string; timestamp: string; source: string | null }> = await invoke("get_project_memories", { project: projectName });
+      const data: Record<string, { value: string; timestamp: string; source: string | null }> = await invoke("get_project_memories", { project: projectKey });
       setMemories(data);
     } catch (err: any) {
       console.error("Failed to load memories:", err);
@@ -1184,13 +1227,13 @@ export function ProjectEditor({
   };
 
   /** Load which groups this project belongs to, and all available groups. */
-  const loadGroups = async (projectName: string) => {
+  const loadGroups = async (projectKey: string) => {
     try {
       setLoadingGroups(true);
       // Clear stale data immediately so UI doesn't show previous project's groups.
       setProjectGroupMemberships([]);
       const [memberships, available] = await Promise.all([
-        invoke<string[]>("groups_for_project", { projectName }),
+        invoke<string[]>("groups_for_project", { projectName: projectKey }),
         invoke<string[]>("list_groups"),
       ]);
       setProjectGroupMemberships(memberships);
@@ -1285,9 +1328,9 @@ export function ProjectEditor({
     window.dispatchEvent(new CustomEvent("groups-updated"));
   };
 
-  const loadDocs = async (projectName: string) => {
+  const loadDocs = async (projectKey: string) => {
     try {
-      setProjectDocs(JSON.parse(await invoke<string>("get_project_docs", { name: projectName })));
+      setProjectDocs(JSON.parse(await invoke<string>("get_project_docs", { name: projectKey })));
     } catch (err: unknown) {
       console.error("Failed to load project docs:", err);
       setProjectDocs({});
@@ -1307,9 +1350,9 @@ export function ProjectEditor({
   const saveDocsToContext = async (
     newDocs: ProjectDocsData
   ): Promise<void> => {
-    if (!selectedName) return;
+    if (!selectedKey) return;
     const updated = JSON.stringify(newDocs, null, 2);
-    await invoke("save_project_docs_raw", { name: selectedName, content: updated });
+    await invoke("save_project_docs_raw", { name: selectedKey, content: updated });
     setProjectDocs(newDocs);
   };
 
@@ -1370,13 +1413,13 @@ export function ProjectEditor({
 
   /** Remove a doc entry by key. Also deletes the note file if it's a note entry. */
   const removeDocEntry = async (key: string, isNote: boolean): Promise<void> => {
-    if (!selectedName) return;
+    if (!selectedKey) return;
     const docs = parsedDocs();
     const { [key]: _removed, ...rest } = docs;
     await saveDocsToContext(rest);
     if (isNote) {
       try {
-        await invoke("delete_doc_note", { name: selectedName, noteName: key + ".md" });
+        await invoke("delete_doc_note", { name: selectedKey, noteName: key + ".md" });
       } catch {
         // best-effort — file may not exist yet
       }
@@ -1390,13 +1433,13 @@ export function ProjectEditor({
 
   /** Load the content of a note file into the editor. */
   const loadDocNote = async (key: string): Promise<void> => {
-    if (!selectedName) return;
+    if (!selectedKey) return;
     setDocNoteLoading(true);
     setDocNoteSelected(key);
     setDocNoteDirty(false);
     try {
       const content: string = await invoke("read_doc_note", {
-        name: selectedName,
+        name: selectedKey,
         noteName: key + ".md",
       });
       setDocNoteContent(content);
@@ -1410,11 +1453,11 @@ export function ProjectEditor({
 
   /** Save the current note editor content to disk. */
   const saveDocNote = async (): Promise<void> => {
-    if (!selectedName || !docNoteSelected) return;
+    if (!selectedKey || !docNoteSelected) return;
     setDocNoteSaving(true);
     try {
       await invoke("save_doc_note", {
-        name: selectedName,
+        name: selectedKey,
         noteName: docNoteSelected + ".md",
         content: docNoteContent,
       });
@@ -1428,7 +1471,7 @@ export function ProjectEditor({
 
   /** Create a new note: adds an index entry to docs.json, then opens the editor. */
   const createDocNote = async (noteName: string): Promise<void> => {
-    if (!noteName.trim() || !selectedName) return;
+    if (!noteName.trim() || !selectedKey) return;
     // Sanitise: lowercase, spaces → hyphens, strip non-alphanumeric except hyphens
     const slug = noteName
       .trim()
@@ -1465,18 +1508,18 @@ export function ProjectEditor({
     window.dispatchEvent(new CustomEvent("recommendations-updated"));
   };
 
-  const loadRecommendations = async (projectName: string) => {
+  const loadRecommendations = async (projectKey: string) => {
     try {
       const [recs, skillRecs, mcpRecs] = await Promise.all([
-        invoke<ProjectRecommendation[]>("evaluate_project_recommendations", { project: projectName }),
-        invoke<ProjectRecommendation[]>("list_recommendations_by_source", { project: projectName, source: "automatic-ai-skills" }),
-        invoke<ProjectRecommendation[]>("list_recommendations_by_source", { project: projectName, source: "automatic-ai-mcp" }),
+        invoke<ProjectRecommendation[]>("evaluate_project_recommendations", { project: projectKey }),
+        invoke<ProjectRecommendation[]>("list_recommendations_by_source", { project: projectKey, source: "automatic-ai-skills" }),
+        invoke<ProjectRecommendation[]>("list_recommendations_by_source", { project: projectKey, source: "automatic-ai-mcp" }),
       ]);
       setRecommendations(recs);
       setAiSkillsSuggestions(skillRecs);
       setAiMcpSuggestions(mcpRecs);
       // Fetch the last AI run timestamp (non-blocking, best-effort).
-      invoke<string | null>("get_ai_recommendations_timestamp", { project: projectName })
+      invoke<string | null>("get_ai_recommendations_timestamp", { project: projectKey })
         .then((ts) => setAiRecsLastRunAt(ts ?? null))
         .catch(() => {});
       // Notify the global Recommendations view so it re-fetches from the DB.
@@ -1491,18 +1534,19 @@ export function ProjectEditor({
   };
 
   const handleUpdateAiRecommendations = async () => {
-    if (!selectedName || aiRecsLoading) return;
+    if (!selectedKey || aiRecsLoading) return;
+    const projectLabel = project?.name ?? selectedKey;
     setAiRecsLoading(true);
-    const entryId = log(`Analysing recommendations for "${selectedName}"…`, "running", activeAgentLabel);
+    const entryId = log(`Analysing recommendations for "${projectLabel}"…`, "running", activeAgentLabel);
     try {
       const result = await invoke<{ recommendations: ProjectRecommendation[]; last_run_at: string }>(
         "ai_generate_project_recommendations",
-        { project: selectedName, force: true },
+        { project: selectedKey, force: true },
       );
       setRecommendations(result.recommendations);
       setAiRecsLastRunAt(result.last_run_at);
       window.dispatchEvent(new CustomEvent("recommendations-updated"));
-      update(entryId, `Recommendations updated for "${selectedName}"`, "success");
+      update(entryId, `Recommendations updated for "${projectLabel}"`, "success");
     } catch (err: any) {
       console.error("Failed to generate AI recommendations:", err);
       update(entryId, `Recommendation analysis failed: ${err}`, "error");
@@ -1512,15 +1556,16 @@ export function ProjectEditor({
   };
 
   const handleSuggestSkills = async () => {
-    if (!selectedName || aiSkillsLoading) return;
+    if (!selectedKey || aiSkillsLoading) return;
+    const projectLabel = project?.name ?? selectedKey;
     setAiSkillsLoading(true);
-    const entryId = log(`Suggesting skills for "${selectedName}"…`, "running", activeAgentLabel);
+    const entryId = log(`Suggesting skills for "${projectLabel}"…`, "running", activeAgentLabel);
     try {
-      const recs = await invoke<ProjectRecommendation[]>("ai_suggest_skills", { project: selectedName });
+      const recs = await invoke<ProjectRecommendation[]>("ai_suggest_skills", { project: selectedKey });
       const skillRecs = recs.filter((r) => r.source === "automatic-ai-skills" && r.status === "pending");
       setAiSkillsSuggestions(skillRecs);
       window.dispatchEvent(new CustomEvent("recommendations-updated"));
-      update(entryId, `Skills suggestions ready for "${selectedName}"`, "success");
+      update(entryId, `Skills suggestions ready for "${projectLabel}"`, "success");
     } catch (err: any) {
       console.error("Failed to suggest skills:", err);
       update(entryId, `Skills suggestion failed: ${err}`, "error");
@@ -1530,15 +1575,16 @@ export function ProjectEditor({
   };
 
   const handleSuggestMcpServers = async () => {
-    if (!selectedName || aiMcpLoading) return;
+    if (!selectedKey || aiMcpLoading) return;
+    const projectLabel = project?.name ?? selectedKey;
     setAiMcpLoading(true);
-    const entryId = log(`Suggesting MCP servers for "${selectedName}"…`, "running", activeAgentLabel);
+    const entryId = log(`Suggesting MCP servers for "${projectLabel}"…`, "running", activeAgentLabel);
     try {
-      const recs = await invoke<ProjectRecommendation[]>("ai_suggest_mcp_servers", { project: selectedName });
+      const recs = await invoke<ProjectRecommendation[]>("ai_suggest_mcp_servers", { project: selectedKey });
       const mcpRecs = recs.filter((r) => r.source === "automatic-ai-mcp" && r.status === "pending");
       setAiMcpSuggestions(mcpRecs);
       window.dispatchEvent(new CustomEvent("recommendations-updated"));
-      update(entryId, `MCP server suggestions ready for "${selectedName}"`, "success");
+      update(entryId, `MCP server suggestions ready for "${projectLabel}"`, "success");
     } catch (err: any) {
       console.error("Failed to suggest MCP servers:", err);
       update(entryId, `MCP server suggestion failed: ${err}`, "error");
@@ -1551,14 +1597,14 @@ export function ProjectEditor({
   // Callers signal a change by calling notifyProjectUpdated() — no need to
   // wire loadRecommendations into every individual save handler.
   useEffect(() => {
-    if (projectVersion === 0 || !selectedName) return;
-    loadRecommendations(selectedName);
+    if (projectVersion === 0 || !selectedKey) return;
+    loadRecommendations(selectedKey);
   }, [projectVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadActivity = async (projectName: string) => {
+  const loadActivity = async (projectKey: string) => {
     try {
       setLoadingActivity(true);
-      const raw: string = await invoke("get_project_activity", { project: projectName, limit: 5 });
+      const raw: string = await invoke("get_project_activity", { project: projectKey, limit: 5 });
       setActivityEntries(JSON.parse(raw) as ActivityEntry[]);
     } catch (err: any) {
       console.error("Failed to load activity:", err);
@@ -1567,17 +1613,17 @@ export function ProjectEditor({
     }
   };
 
-  const loadActivityPage = async (projectName: string, page: number) => {
+  const loadActivityPage = async (projectKey: string, page: number) => {
     try {
       setLoadingActivityPage(true);
       const offset = page * ACTIVITY_PAGE_SIZE;
       const [raw, count] = await Promise.all([
         invoke<string>("get_project_activity_paged", {
-          project: projectName,
+          project: projectKey,
           limit: ACTIVITY_PAGE_SIZE,
           offset,
         }),
-        invoke<number>("get_project_activity_count", { project: projectName }),
+        invoke<number>("get_project_activity_count", { project: projectKey }),
       ]);
       setActivityPageEntries(JSON.parse(raw) as ActivityEntry[]);
       setActivityTotalCount(count);
@@ -1613,9 +1659,9 @@ export function ProjectEditor({
     }
   };
 
-  const loadProjectFileContent = async (projectName: string, filename: string) => {
+  const loadProjectFileContent = async (projectKey: string, filename: string) => {
     try {
-      const content: string = await invoke("read_project_file", { name: projectName, filename });
+      const content: string = await invoke("read_project_file", { name: projectKey, filename });
       setProjectFileContent(content);
       setProjectFileEditing(false);
       setProjectFileDirty(false);
@@ -1627,25 +1673,25 @@ export function ProjectEditor({
   };
 
   const handleSaveProjectFile = async () => {
-    if (!selectedName || !activeProjectFile || !project) return;
+    if (!selectedKey || !activeProjectFile || !project) return;
     setProjectFileSaving(true);
     try {
       // Flush the in-memory project config (including file_rules) to disk first,
       // so save_project_file on the backend reads up-to-date rule assignments.
       // This also handles the case where rules were toggled on a not-yet-existing file.
-      const toSave = { ...project, name: selectedName, updated_at: new Date().toISOString() };
-      await invoke("save_project", { name: selectedName, data: JSON.stringify(toSave, null, 2) });
+      const toSave = { ...project, updated_at: new Date().toISOString() };
+      await invoke("save_project", { name: selectedKey, data: JSON.stringify(toSave, null, 2) });
       setDirty(false);
 
       await invoke("save_project_file", {
-        name: selectedName,
+        name: selectedKey,
         filename: activeProjectFile,
         content: projectFileContent,
       });
       setProjectFileDirty(false);
 
       // Reload file list so the "exists" flag updates for newly created files
-      await loadProjectFiles(selectedName);
+      await loadProjectFiles(selectedKey);
       notifyProjectUpdated();
     } catch (err: any) {
       setError(`Failed to save project file: ${err}`);
@@ -1667,7 +1713,7 @@ export function ProjectEditor({
   };
 
   const handleGenerateInstruction = async () => {
-    if (!selectedName || !activeProjectFile) return;
+    if (!selectedKey || !activeProjectFile) return;
     setProjectFileGenerating(true);
     // Resolve a human-readable label: use the agent name(s) rather than the
     // internal "_unified" virtual filename.
@@ -1679,7 +1725,7 @@ export function ProjectEditor({
     const entryId = log(`Generating instruction file for ${displayLabel}…`, "running", activeAgentLabel);
     try {
       const generated: string = await invoke("ai_generate_instruction", {
-        name: selectedName,
+        name: selectedKey,
         filename: activeProjectFile,
       });
       setProjectFileContent(generated);
@@ -1694,7 +1740,7 @@ export function ProjectEditor({
   };
 
   const handleUpdateInstruction = async () => {
-    if (!selectedName || !activeProjectFile) return;
+    if (!selectedKey || !activeProjectFile) return;
     if (!projectFileContent.trim()) return;
     setProjectFileUpdating(true);
     const fileInfo = projectFiles.find((f) => f.filename === activeProjectFile);
@@ -1705,7 +1751,7 @@ export function ProjectEditor({
     const entryId = log(`Updating instruction file for ${displayLabel}…`, "running", activeAgentLabel);
     try {
       const updated: string = await invoke("ai_update_instruction", {
-        name: selectedName,
+        name: selectedKey,
         filename: activeProjectFile,
         currentContent: projectFileContent,
       });
@@ -1720,7 +1766,7 @@ export function ProjectEditor({
     }
   };
 
-  const selectProject = async (name: string) => {
+  const selectProject = async (projectKey: string) => {
     // If the wizard is open, cancel it (cleans up any saved stub) before loading the selected project.
     if (isCreating) {
       await cancelCreate();
@@ -1729,8 +1775,8 @@ export function ProjectEditor({
       // Fetch both the stored state and the autodetected state in parallel so
       // we can tell whether detection found anything new that hasn't been saved.
       const [rawDetected, rawStored] = await Promise.all([
-        invoke<string>("autodetect_project_dependencies", { name }),
-        invoke<string>("read_project", { name }),
+        invoke<string>("autodetect_project_dependencies", { name: projectKey }),
+        invoke<string>("read_project", { name: projectKey }),
       ]);
       const parsed = JSON.parse(rawDetected);
       const stored = JSON.parse(rawStored);
@@ -1766,7 +1812,7 @@ export function ProjectEditor({
       // Normalize: ensure all fields exist with defaults for older projects.
       // Start from stored data and append any newly-detected items.
       const data: Project = {
-        name: stored.name || name,
+        name: stored.name || projectKey,
         description: stored.description || "",
         directory: stored.directory || "",
         skills: [...storedSkills, ...newSkills],
@@ -1796,16 +1842,16 @@ export function ProjectEditor({
         directory_missing: stored.directory_missing === true,
       };
 
-      setSelectedName(name);
-      localStorage.setItem(LAST_PROJECT_KEY, name);
+      setSelectedKey(projectKey);
+      writeSelectedProject(projectKey);
       setProject(data);
-      setProjectDetailsMap((prev) => new Map(prev).set(name, data));
+      setProjectDetailsMap((prev) => new Map(prev).set(projectKey, data));
       setDirty(detectedDiffers);
       setIsCreating(false);
       setError(null);
       // Load project files for this project
       if (data.directory && data.agents.length > 0) {
-        await loadProjectFiles(name);
+        await loadProjectFiles(projectKey);
       } else {
         setProjectFiles([]);
         setActiveProjectFile(null);
@@ -1813,18 +1859,18 @@ export function ProjectEditor({
         setProjectFileEditing(false);
         setProjectFileDirty(false);
       }
-      await loadMemories(name);
-      await loadGroups(name);
-      await loadActivity(name);
-      await loadRecommendations(name);
-      await loadDocs(name);
+      await loadMemories(projectKey);
+      await loadGroups(projectKey);
+      await loadActivity(projectKey);
+      await loadRecommendations(projectKey);
+      await loadDocs(projectKey);
       // Reset activity tab pagination for the newly selected project
       setActivityPage(0);
       setActivityPageEntries([]);
       setActivityTotalCount(0);
       // Reset the tool sub-tab so a stale selection from a previous project isn't shown.
       // Do NOT clear toolEntries here. The registry is global, not per-project, and the
-      // selectedName effect above has already started reloading it. Clearing here can win
+      // selectedKey effect above has already started reloading it. Clearing here can win
       // the race against that load and wipe the top-level tool tabs (e.g. Build).
       setToolTab(null);
     } catch (err: any) {
@@ -1842,14 +1888,14 @@ export function ProjectEditor({
   };
 
   // Reload project state from disk and refresh all dependent UI.
-  // Always re-affirms selectedName so that any async state race between
+  // Always re-affirms selectedKey so that any async state race between
   // isCreating=false and the reload completing cannot drop back to the overview.
-  const reloadProject = async (name: string) => {
+  const reloadProject = async (projectKey: string) => {
     try {
-      const raw: string = await invoke("read_project", { name });
+      const raw: string = await invoke("read_project", { name: projectKey });
       const parsed = JSON.parse(raw);
       const data: Project = {
-        name: parsed.name || name,
+        name: parsed.name || projectKey,
         description: parsed.description || "",
         directory: parsed.directory || "",
         skills: parsed.skills || [],
@@ -1879,19 +1925,19 @@ export function ProjectEditor({
         manage_gitignore: parsed.manage_gitignore === true,
         directory_missing: parsed.directory_missing === true,
       };
-      setSelectedName(name);
+      setSelectedKey(projectKey);
       setIsCreating(false);
       setProject(data);
       // Keep the overview card in sync whenever a project is reloaded from disk.
-      setProjectDetailsMap((prev) => new Map(prev).set(name, data));
+      setProjectDetailsMap((prev) => new Map(prev).set(projectKey, data));
       setDirty(false);
 
       await loadAvailableSkills();
       await loadAvailableMcpServers();
-      await loadMemories(name);
-      await loadGroups(name);
-      await loadActivity(name);
-      await loadDocs(name);
+      await loadMemories(projectKey);
+      await loadGroups(projectKey);
+      await loadActivity(projectKey);
+      await loadDocs(projectKey);
       notifyProjectUpdated();
       // Reset activity tab pagination on project reload
       setActivityPage(0);
@@ -1899,7 +1945,7 @@ export function ProjectEditor({
       setActivityTotalCount(0);
 
       if (data.directory && data.agents.length > 0) {
-        await loadProjectFiles(name);
+        await loadProjectFiles(projectKey);
       } else {
         setProjectFiles([]);
         setActiveProjectFile(null);
@@ -1917,10 +1963,13 @@ export function ProjectEditor({
     const folderName = project.directory
       ? project.directory.split("/").filter(Boolean).pop() ?? ""
       : "";
-    const name = isCreating
+    // The wizard saves under the chosen name, because no key exists yet. An
+    // existing project is addressed by its local_key and keeps its name.
+    const displayName = isCreating
       ? (newName.trim() || folderName)
-      : selectedName;
-    if (!name) return;
+      : project.name;
+    const identifier = isCreating ? displayName : selectedKey;
+    if (!identifier || !displayName) return;
     try {
       setSyncStatus("syncing");
 
@@ -1967,7 +2016,7 @@ export function ProjectEditor({
         if (wizardPending.length > 0) {
           // Merge with any previously stashed pending entries (e.g. from startCreate)
           pendingUnifiedInstruction.current = {
-            projectName: null,
+            projectKey: null,
             entries: [
               ...(pendingUnifiedInstruction.current?.entries ?? []),
               ...wizardPending,
@@ -1976,7 +2025,7 @@ export function ProjectEditor({
         }
       }
 
-      const toSave = { ...effectiveProject, name, updated_at: new Date().toISOString() };
+      const toSave = { ...effectiveProject, name: displayName, updated_at: new Date().toISOString() };
       // Tag new projects with the current user for future team/cloud sync
       if (isCreating && userId && !toSave.created_by) {
         toSave.created_by = userId;
@@ -1984,13 +2033,15 @@ export function ProjectEditor({
       // save_project writes the project config AND syncs all agent configs
       // (skills, MCP servers) in one atomic backend call.
       await invoke("save_project", {
-        name,
+        name: identifier,
         data: JSON.stringify(toSave, null, 2),
       });
-      setSelectedName(name);
-      localStorage.setItem(LAST_PROJECT_KEY, name);
+      // From here on the project exists, so address it by its key.
+      const name = isCreating ? await localKeyForProject(identifier) : identifier;
+      setSelectedKey(name);
+      writeSelectedProject(name);
       if (isCreating) {
-        trackProjectCreated(name);
+        trackProjectCreated(displayName);
         // Clear the stub reference so the unmount cleanup does not delete the
         // project we just successfully saved.
         wizardStubName.current = null;
@@ -1998,9 +2049,9 @@ export function ProjectEditor({
         setProjectTab("summary");
         setProjectGroup("summary");
         await reloadProjects();
-        window.dispatchEvent(new CustomEvent("project-added", { detail: { name } }));
+        window.dispatchEvent(new CustomEvent("project-added", { detail: { name: displayName, local_key: name } }));
       } else {
-        trackProjectUpdated(name, {
+        trackProjectUpdated(displayName, {
           agent_count: toSave.agents.length,
           skill_count: toSave.skills.length,
           mcp_count: (toSave.mcp_servers ?? []).length,
@@ -2024,7 +2075,7 @@ export function ProjectEditor({
       // saves that project next, not to this save.
       const pending = pendingUnifiedInstruction.current;
       const pendingIsOurs =
-        pending !== null && (pending.projectName === null || pending.projectName === name);
+        pending !== null && (pending.projectKey === null || pending.projectKey === name);
       if (pending !== null && pendingIsOurs && pending.entries.length > 0 && toSave.directory && toSave.agents.length > 0) {
         pendingUnifiedInstruction.current = null;
         const mergedRules = [...new Set(pending.entries.flatMap((e) => e.rules))];
@@ -2067,21 +2118,22 @@ export function ProjectEditor({
     }
   };
 
-  const handleRemove = async (name: string, e?: React.MouseEvent) => {
+  /** Remove a project. `name` is its local_key; `displayName` is shown to the user. */
+  const handleRemove = async (name: string, displayName: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    const confirmed = await ask(`Remove project "${name}" from Automatic?\n\n(This only removes the project from this app. Your actual project files will NOT be deleted.)`, { title: "Remove Project", kind: "warning" });
+    const confirmed = await ask(`Remove project "${displayName}" from Automatic?\n\n(This only removes the project from this app. Your actual project files will NOT be deleted.)`, { title: "Remove Project", kind: "warning" });
     if (!confirmed) return;
     try {
       await invoke("delete_project", { name });
-      trackProjectDeleted(name);
-      if (selectedName === name) {
-        setSelectedName(null);
-        localStorage.removeItem(LAST_PROJECT_KEY);
+      trackProjectDeleted(displayName);
+      if (selectedKey === name) {
+        setSelectedKey(null);
+        clearSelectedProject();
         setProject(null);
         setDirty(false);
       }
       await reloadProjects();
-      window.dispatchEvent(new CustomEvent("project-removed", { detail: { name } }));
+      window.dispatchEvent(new CustomEvent("project-removed", { detail: { name: displayName, local_key: name } }));
       setError(null);
     } catch (err: any) {
       setError(`Failed to remove project: ${err}`);
@@ -2089,8 +2141,8 @@ export function ProjectEditor({
   };
 
   const startCreate = async (opts?: { fromTemplates?: ProjectTemplate[] }) => {
-    setSelectedName(null);
-    localStorage.removeItem(LAST_PROJECT_KEY);
+    setSelectedKey(null);
+    clearSelectedProject();
     if (!opts?.fromTemplates?.length) setWizardSourceTemplates([]);
     // Pre-populate agents and agent options from settings defaults
     let defaultAgents: string[] = [];
@@ -2154,7 +2206,7 @@ export function ProjectEditor({
       : baseProject;
 
     pendingUnifiedInstruction.current =
-      pendingEntries.length > 0 ? { projectName: null, entries: pendingEntries } : null;
+      pendingEntries.length > 0 ? { projectKey: null, entries: pendingEntries } : null;
 
     setProject(initialProject);
     setDirty(true);
@@ -2290,11 +2342,12 @@ export function ProjectEditor({
       setDirty(false);
       setError(null);
       await reloadProjects();
+      const importedKey = await localKeyForProject(importedName);
       setIsCreating(false);
-      setSelectedName(importedName);
+      setSelectedKey(importedKey);
       // Refresh the WorkspaceSidebar's cached project list so the newly imported
       // project appears and can be highlighted (same pattern as create + rename).
-      window.dispatchEvent(new CustomEvent("project-added", { detail: { name: importedName } }));
+      window.dispatchEvent(new CustomEvent("project-added", { detail: { name: importedName, local_key: importedKey } }));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setOrphanError(msg);
@@ -2328,45 +2381,31 @@ export function ProjectEditor({
   };
 
   const startRename = () => {
-    if (!selectedName || isCreating) return;
-    setRenameName(selectedName);
+    if (!selectedKey || isCreating || !project) return;
+    setRenameName(project.name);
     setIsRenaming(true);
   };
 
   const handleRename = async () => {
     const trimmed = renameName.trim();
-    if (!selectedName || !trimmed || trimmed === selectedName) {
+    const oldName = project?.name ?? null;
+    if (!selectedKey || !oldName || !trimmed || trimmed === oldName) {
       setIsRenaming(false);
       return;
     }
-    const oldName = selectedName;
+    const key = selectedKey;
     try {
-      await invoke("rename_project", { oldName, newName: trimmed });
-      // Update localStorage order
-      const stored = localStorage.getItem(PROJECT_ORDER_KEY);
-      if (stored) {
-        try {
-          const order: string[] = JSON.parse(stored);
-          const idx = order.indexOf(oldName);
-          if (idx !== -1) {
-            order[idx] = trimmed;
-            localStorage.setItem(PROJECT_ORDER_KEY, JSON.stringify(order));
-          }
-        } catch { /* ignore */ }
-      }
-      setSelectedName(trimmed);
-      localStorage.setItem(LAST_PROJECT_KEY, trimmed);
+      // The local_key does not change on rename, so the selection, the stored
+      // order and the per-project localStorage entries all stay valid.
+      await invoke("rename_project", { oldName: key, newName: trimmed });
       setIsRenaming(false);
       setError(null);
       await reloadProjects();
       // The WorkspaceSidebar caches its own project list and only refreshes on
-      // project-added / project-removed / groups-updated. Without these dispatches
-      // the sidebar keeps showing the old name and cannot highlight the new one
-      // (activeProjectName follows selectedName correctly, but no row matches
-      // because the cached list is stale). Mirrors the create + delete flows.
-      window.dispatchEvent(new CustomEvent("project-removed", { detail: { name: oldName } }));
-      window.dispatchEvent(new CustomEvent("project-added", { detail: { name: trimmed } }));
-      await selectProject(trimmed);
+      // project-added / project-removed / groups-updated, so tell it the name
+      // changed. Its selected row is found by key and stays highlighted.
+      window.dispatchEvent(new CustomEvent("project-added", { detail: { name: trimmed, local_key: key } }));
+      await selectProject(key);
     } catch (err: any) {
       setError(`Failed to rename project: ${err}`);
       setIsRenaming(false);
@@ -2381,10 +2420,13 @@ export function ProjectEditor({
   // can pass the already-computed new value without waiting for a React state flush.
   const saveProjectSnapshot = async (snapshot: Project): Promise<boolean> => {
     const folderFallback = snapshot.directory?.split("/").filter(Boolean).pop() ?? "";
-    const name = isCreating ? (newName.trim() || folderFallback) : selectedName;
-    if (!name) return false;
+    // The wizard's stub is addressed by its chosen name; a saved project by
+    // its local_key. The display name is never replaced by the key.
+    const displayName = isCreating ? (newName.trim() || folderFallback) : snapshot.name;
+    const name = isCreating ? displayName : selectedKey;
+    if (!name || !displayName) return false;
     try {
-      const toSave = { ...snapshot, name, updated_at: new Date().toISOString() };
+      const toSave = { ...snapshot, name: displayName, updated_at: new Date().toISOString() };
       await invoke("save_project", { name, data: JSON.stringify(toSave, null, 2) });
       // Re-read the project — the backend may have enriched it (e.g. plugin
       // skills/rules added when a plugin tool is toggled on).
@@ -2410,13 +2452,14 @@ export function ProjectEditor({
     if (project[key].includes(item.trim())) return true;
     const newList = [...project[key], item.trim()];
     updateField(key, newList);
-    const pName = isCreating ? newName.trim() : (selectedName ?? "");
-    if (key === "agents") trackProjectAgentAdded(pName, item.trim());
+    const pName = isCreating ? newName.trim() : (selectedKey ?? "");
+    const pLabel = isCreating ? newName.trim() : project.name;
+    if (key === "agents") trackProjectAgentAdded(pLabel, item.trim());
     else if (key === "skills") {
-      trackProjectSkillAdded(pName, item.trim());
+      trackProjectSkillAdded(pLabel, item.trim());
       return await saveProjectSnapshot({ ...project, skills: newList as string[] });
     } else if (key === "mcp_servers") {
-      trackProjectMcpServerAdded(pName, item.trim());
+      trackProjectMcpServerAdded(pLabel, item.trim());
       const nextProject = {
         ...project,
         mcp_servers: newList as string[],
@@ -2435,14 +2478,15 @@ export function ProjectEditor({
     const removed = project[key][idx];
     const newList = project[key].filter((_, i) => i !== idx);
     updateField(key, newList);
-    const pName = isCreating ? newName.trim() : (selectedName ?? "");
+    const pName = isCreating ? newName.trim() : (selectedKey ?? "");
+    const pLabel = isCreating ? newName.trim() : project.name;
     if (removed) {
-      if (key === "agents") trackProjectAgentRemoved(pName, removed);
+      if (key === "agents") trackProjectAgentRemoved(pLabel, removed);
       else if (key === "skills") {
-        trackProjectSkillRemoved(pName, removed);
+        trackProjectSkillRemoved(pLabel, removed);
         saveProjectSnapshot({ ...project, skills: newList as string[] });
       } else if (key === "mcp_servers") {
-        trackProjectMcpServerRemoved(pName, removed);
+        trackProjectMcpServerRemoved(pLabel, removed);
         const nextProject = {
           ...project,
           mcp_servers: newList as string[],
@@ -2472,7 +2516,7 @@ export function ProjectEditor({
     setProject(nextProject);
     setDirty(true);
     await saveProjectSnapshot(nextProject);
-    if (selectedName) refreshProblemsReport(selectedName);
+    if (selectedKey) refreshProblemsReport(selectedKey);
   };
 
   const handleDismissRecommendation = async (id: number) => {
@@ -2497,7 +2541,7 @@ export function ProjectEditor({
     if (!agentId) return;
 
     const agentLabel = availableAgents.find((a) => a.id === agentId)?.label ?? agentId;
-    const name = selectedName;
+    const name = selectedKey;
     const hasDirectory = Boolean(project.directory) && name !== null && !isCreating;
 
     setAgentRemoval({
@@ -2526,17 +2570,17 @@ export function ProjectEditor({
     const removal = agentRemoval;
     if (!removal) return;
 
-    if (!removal.hasDirectory || selectedName === null) {
+    if (!removal.hasDirectory || selectedKey === null) {
       removeItem("agents", removal.idx);
       setAgentRemoval(null);
       return;
     }
 
-    const name = selectedName;
+    const name = selectedKey;
     setAgentRemoval({ ...removal, busy: true });
     try {
       await invoke("remove_agent_from_project", { name, agentId: removal.agentId, mode });
-      trackProjectAgentRemoved(name, removal.agentId);
+      trackProjectAgentRemoved(project?.name ?? name, removal.agentId);
     } catch (err: unknown) {
       setError(`Failed to remove ${removal.agentLabel}: ${String(err)}`);
     }
@@ -2550,7 +2594,7 @@ export function ProjectEditor({
 
   /** User chose "Use existing file" — adopt the on-disk content into the editor. */
   const handleAdoptInstructionFile = async (filename: string, adoptedContent: string) => {
-    const name = selectedName;
+    const name = selectedKey;
     if (!name) return;
     try {
       await invoke("adopt_instruction_file", { name, filename });
@@ -2574,7 +2618,7 @@ export function ProjectEditor({
 
   /** User chose "Overwrite with Automatic content" — wipe the externally-added content. */
   const handleOverwriteInstructionFile = async (filename: string) => {
-    const name = selectedName;
+    const name = selectedKey;
     if (!name) return;
     try {
       await invoke("overwrite_instruction_file", { name, filename });
@@ -2598,7 +2642,7 @@ export function ProjectEditor({
 
   /** User chose "Use on-disk …" — adopt disk content into the project config. */
   const handleAdoptCustomAsset = async (kind: string, assetName: string) => {
-    const name = selectedName;
+    const name = selectedKey;
     if (!name) return;
     try {
       await invoke("adopt_custom_asset", { name, kind, assetName });
@@ -2619,7 +2663,7 @@ export function ProjectEditor({
 
   /** User chose "Overwrite with Automatic content" for a custom asset. */
   const handleOverwriteCustomAsset = async (kind: string, assetName: string) => {
-    const name = selectedName;
+    const name = selectedKey;
     if (!name) return;
     try {
       await invoke("overwrite_custom_asset", { name, kind, assetName });
@@ -2640,7 +2684,7 @@ export function ProjectEditor({
 
   /** Re-check drift after a stale skill was adopted, removed, or overwritten. */
   const handleDriftResolved = async () => {
-    const name = selectedName;
+    const name = selectedKey;
     if (!name) return;
     try {
       const raw: string = await invoke("check_project_drift", { name });
@@ -2657,7 +2701,7 @@ export function ProjectEditor({
   };
 
   const handleSync = async () => {
-    const name = isCreating ? newName.trim() : selectedName;
+    const name = isCreating ? newName.trim() : selectedKey;
     if (!name || !project) return;
 
     // Save first if dirty — handleSave already includes sync
@@ -2671,7 +2715,7 @@ export function ProjectEditor({
       setSyncStatus("syncing");
       const result: string = await invoke("sync_project", { name });
       const files: string[] = JSON.parse(result);
-      trackProjectSynced(name);
+      trackProjectSynced(isCreating ? name : project.name);
       setSyncStatus(`Synced ${files.length} config${files.length !== 1 ? "s" : ""}`);
       setDriftReport({ drifted: false, agents: [] });
       setDriftByProject((prev) => ({ ...prev, [name]: false }));
@@ -2684,7 +2728,7 @@ export function ProjectEditor({
   };
 
   const handleRebuild = async () => {
-    const name = isCreating ? newName.trim() : selectedName;
+    const name = isCreating ? newName.trim() : selectedKey;
     if (!name) return;
 
     try {
@@ -2700,7 +2744,7 @@ export function ProjectEditor({
   };
 
   const confirmRebuild = async () => {
-    const name = isCreating ? newName.trim() : selectedName;
+    const name = isCreating ? newName.trim() : selectedKey;
     if (!name) return;
 
     try {
@@ -2777,7 +2821,7 @@ export function ProjectEditor({
                   </span>
                 )}
                 {/* Rebuild button */}
-                {!isCreating && selectedName && (
+                {!isCreating && selectedKey && (
                   <span className="relative group/keytip">
                     <button
                       onClick={handleRebuild}
@@ -2792,7 +2836,7 @@ export function ProjectEditor({
                   </span>
                 )}
                 {/* Apply Template button */}
-                {!isCreating && selectedName && (
+                {!isCreating && selectedKey && (
                   <span className="relative group/keytip">
                     <button
                       onClick={() => {
@@ -2810,7 +2854,7 @@ export function ProjectEditor({
                   </span>
                 )}
                 {/* Attach Profile button */}
-                {!isCreating && selectedName && (
+                {!isCreating && selectedKey && (
                   <span className="relative group/keytip">
                     <button
                       onClick={() => {
@@ -2866,10 +2910,10 @@ export function ProjectEditor({
                     )}
                   </div>
                 )}
-                {!isCreating && selectedName && (
+                {!isCreating && selectedKey && (
                   <span className="relative group/keytip">
                     <button
-                      onClick={() => handleRemove(selectedName)}
+                      onClick={() => handleRemove(selectedKey, project?.name ?? selectedKey)}
                       className="flex items-center justify-center h-7 w-7 bg-bg-input hover:bg-danger/10 text-text-base hover:text-danger rounded transition-colors"
                       aria-label="Remove project"
                     >
@@ -2965,7 +3009,7 @@ export function ProjectEditor({
                       onDoubleClick={startRename}
                       title="Double-click to rename"
                     >
-                      {selectedName}
+                      {project?.name ?? ""}
                     </h1>
                   )}
                   {/* Directory path — click to change */}
@@ -3047,17 +3091,17 @@ export function ProjectEditor({
                       } catch (err) {
                         console.error("open_directory_dialog failed:", err);
                       }
-                      if (!selected || !project || !selectedName) return;
+                      if (!selected || !project || !selectedKey) return;
                       const updatedProject = { ...project, directory: selected, directory_missing: false };
                       setProject(updatedProject);
                       setDirty(false);
                       setSyncStatus("syncing");
                       try {
                         await invoke("save_project", {
-                          name: selectedName,
+                          name: selectedKey,
                           data: JSON.stringify(updatedProject),
                         });
-                        await reloadProject(selectedName);
+                        await reloadProject(selectedKey);
                         setSyncStatus("saved");
                         setTimeout(() => setSyncStatus(null), 4000);
                       } catch (err: any) {
@@ -3071,7 +3115,7 @@ export function ProjectEditor({
                     Relink folder
                   </button>
                   <button
-                    onClick={() => handleRemove(selectedName!)}
+                    onClick={() => handleRemove(selectedKey!, project?.name ?? selectedKey!)}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-md border border-danger/40 bg-danger/5 text-danger hover:bg-danger/15 transition-colors"
                   >
                     <Trash2 size={12} />
@@ -3737,7 +3781,7 @@ export function ProjectEditor({
                 project={project}
                 setProject={setProject}
                 setDirty={setDirty}
-                selectedName={selectedName}
+                selectedKey={selectedKey}
                 projectFiles={projectFiles}
                 activeProjectFile={activeProjectFile}
                 setActiveProjectFile={setActiveProjectFile}
@@ -3766,14 +3810,14 @@ export function ProjectEditor({
             )}
 
             {/* ── Top-level tool tab panels ──────────────────────── */}
-            {activeToolName === "build" && selectedName && (
+            {activeToolName === "build" && selectedKey && (
               <div className="flex-1 overflow-hidden">
-                <Features projectName={selectedName} />
+                <Features projectKey={selectedKey} />
               </div>
             )}
-            {activeToolName === "dev-servers" && selectedName && project && (
+            {activeToolName === "dev-servers" && selectedKey && project && (
               <div className="flex-1 overflow-hidden">
-                <ServersPanel projectName={selectedName} projectDirectory={project.directory} />
+                <ServersPanel projectKey={selectedKey} projectDirectory={project.directory} />
               </div>
             )}
             {/* ── Tools tab (under Configuration) ──────────────────── */}
@@ -3941,7 +3985,7 @@ export function ProjectEditor({
                   <SkillsPanel
                     project={project}
                     setProject={setProject}
-                    selectedName={selectedName}
+                    selectedKey={selectedKey}
                     setProjectDetailsMap={setProjectDetailsMap}
                     setDirty={setDirty}
                     setSyncStatus={setSyncStatus}
@@ -4057,7 +4101,7 @@ export function ProjectEditor({
                     dirty={dirty}
                     setDirty={setDirty}
                     isCreating={isCreating}
-                    selectedName={selectedName}
+                    selectedKey={selectedKey}
                     reloadProject={reloadProject}
                     onNavigateToGroup={onNavigateToGroup}
                     onNavigateToContexts={onNavigateToContexts}
@@ -4065,9 +4109,9 @@ export function ProjectEditor({
                 )}
 
                 {/* ── Memory tab ──────────────────────────────────── */}
-                {projectTab === "memory" && selectedName && (
+                {projectTab === "memory" && selectedKey && (
                   <MemoryPanel
-                    projectName={selectedName}
+                    projectKey={selectedKey}
                     project={project}
                     memories={memories}
                     loadingMemories={loadingMemories}
@@ -4077,9 +4121,9 @@ export function ProjectEditor({
                 )}
 
                 {/* ── Activity tab ─────────────────────────────────── */}
-                {projectTab === "activity" && selectedName && (
+                {projectTab === "activity" && selectedKey && (
                   <ActivityPanel
-                    projectName={selectedName}
+                    projectKey={selectedKey}
                     activityPageEntries={activityPageEntries}
                     activityPage={activityPage}
                     activityTotalCount={activityTotalCount}
@@ -4110,9 +4154,10 @@ export function ProjectEditor({
                 )}
 
                 {/* ── Groups tab ───────────────────────────────────── */}
-                {projectTab === "groups" && selectedName && (
+                {projectTab === "groups" && selectedKey && (
                   <GroupsPanel
-                    projectName={selectedName}
+                    projectKey={selectedKey}
+                    projectName={project?.name ?? selectedKey}
                     projectGroupMemberships={projectGroupMemberships}
                     allGroups={allGroups}
                     loadingGroups={loadingGroups}
@@ -4131,7 +4176,7 @@ export function ProjectEditor({
                     setProject={setProject}
                     setDirty={setDirty}
                     isCreating={isCreating}
-                    selectedName={selectedName}
+                    selectedKey={selectedKey}
                     availableProfiles={availableProfiles}
                     reloadProject={reloadProject}
                   />
@@ -4240,17 +4285,17 @@ export function ProjectEditor({
       <DriftDiffModal
         file={driftDiffFile.file}
         agentLabel={driftDiffFile.agentLabel}
-        projectName={selectedName ?? undefined}
+        projectKey={selectedKey ?? undefined}
         onClose={() => setDriftDiffFile(null)}
         onResolved={handleDriftResolved}
       />
     )}
 
     {/* ── Instruction file conflict modal ──────────────────────────────── */}
-    {instructionConflict && selectedName && (
+    {instructionConflict && selectedKey && (
       <InstructionConflictModal
         conflict={instructionConflict}
-        projectName={selectedName}
+        projectKey={selectedKey}
         onAdopt={(adopted) => handleAdoptInstructionFile(instructionConflict.filename, adopted)}
         onOverwrite={() => handleOverwriteInstructionFile(instructionConflict.filename)}
         onClose={() => setInstructionConflict(null)}
@@ -4258,7 +4303,7 @@ export function ProjectEditor({
     )}
 
     {/* ── Project custom asset conflict modal ──────────────────────────── */}
-    {customAssetConflict && selectedName && (
+    {customAssetConflict && selectedKey && (
       <CustomAssetConflictModal
         conflict={customAssetConflict}
         onAdopt={() => handleAdoptCustomAsset(customAssetConflict.kind, customAssetConflict.name)}
@@ -4305,7 +4350,7 @@ export function ProjectEditor({
       />
     )}
 
-    {unifiedSourcePicker && selectedName && (
+    {unifiedSourcePicker && selectedKey && (
       <SwitchToUnifiedModal
         candidates={unifiedSourcePicker}
         busy={unifiedSourcePickerBusy}
@@ -4316,7 +4361,7 @@ export function ProjectEditor({
           setUnifiedSourcePickerBusy(true);
           try {
             await invoke("switch_to_unified_mode", {
-              name: selectedName,
+              name: selectedKey,
               sourceFilename: filename,
             });
             setProject({
@@ -4325,7 +4370,7 @@ export function ProjectEditor({
               updated_at: new Date().toISOString(),
             });
             setDirty(false);
-            await loadProjectFiles(selectedName);
+            await loadProjectFiles(selectedKey);
             notifyProjectUpdated();
             setUnifiedSourcePicker(null);
           } catch (e) {
@@ -4363,7 +4408,7 @@ export function ProjectEditor({
     )}
 
     {/* Attach-profile modal */}
-    {showAttachProfilePicker && project && !isCreating && selectedName && (
+    {showAttachProfilePicker && project && !isCreating && selectedKey && (
       <AttachProfileModal
         profiles={[...availableProfileData].sort((a, b) => a.name.localeCompare(b.name))}
         attached={project.profiles ?? []}
@@ -4374,13 +4419,13 @@ export function ProjectEditor({
           setProfileAttachSelection(null);
         }}
         onConfirm={async () => {
-          if (!profileAttachSelection || !selectedName) return;
+          if (!profileAttachSelection || !selectedKey) return;
           try {
             await invoke("attach_profile_to_project", {
-              projectName: selectedName,
+              projectName: selectedKey,
               profileName: profileAttachSelection,
             });
-            await reloadProject(selectedName);
+            await reloadProject(selectedKey);
           } catch (err) {
             setError(`Failed to attach profile "${profileAttachSelection}": ${err}`);
           } finally {

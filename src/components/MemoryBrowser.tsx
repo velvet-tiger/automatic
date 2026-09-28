@@ -255,7 +255,8 @@ function AddMemoryModal({ onClose, onSave, saving }: AddMemoryModalProps) {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 interface MemoryBrowserProps {
-  projectName: string;
+  /** The project's local_key (or a name for a project without one). */
+  projectKey: string;
   memories: MemoryRecord;
   loading: boolean;
   onRefresh: () => Promise<void>;
@@ -263,7 +264,7 @@ interface MemoryBrowserProps {
 }
 
 export function MemoryBrowser({
-  projectName,
+  projectKey,
   memories,
   loading,
   onRefresh,
@@ -366,12 +367,12 @@ export function MemoryBrowser({
     try {
       setSavingMemory(true);
       await invoke("store_memory", {
-        project: projectName,
+        project: projectKey,
         key: editingKey,
         value: editingValue,
         source: memories[editingKey]?.source ?? null,
       });
-      trackMemoryStored(projectName, editingKey);
+      trackMemoryStored(projectKey, editingKey);
       setEditingKey(null);
       setEditingValue("");
       await onRefresh();
@@ -384,8 +385,8 @@ export function MemoryBrowser({
 
   const deleteMemory = async (key: string) => {
     try {
-      await invoke("delete_memory", { project: projectName, key });
-      trackMemoryDeleted(projectName, key);
+      await invoke("delete_memory", { project: projectKey, key });
+      trackMemoryDeleted(projectKey, key);
       if (editingKey === key) cancelEdit();
       setExpandedKeys((prev) => {
         const next = new Set(prev);
@@ -415,11 +416,11 @@ export function MemoryBrowser({
     try {
       const countBeforeClear = Object.keys(memories).length;
       await invoke("clear_memories", {
-        project: projectName,
+        project: projectKey,
         confirm: true,
         pattern: null,
       });
-      trackMemoryCleared(projectName, countBeforeClear);
+      trackMemoryCleared(projectKey, countBeforeClear);
       setExpandedKeys(new Set());
       setEditingKey(null);
       await onRefresh();
@@ -432,12 +433,12 @@ export function MemoryBrowser({
     try {
       setSavingMemory(true);
       await invoke("store_memory", {
-        project: projectName,
+        project: projectKey,
         key,
         value,
         source: null,
       });
-      trackMemoryStored(projectName, key);
+      trackMemoryStored(projectKey, key);
       setShowAddModal(false);
       await onRefresh();
     } catch (err: any) {

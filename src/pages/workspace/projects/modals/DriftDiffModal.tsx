@@ -9,12 +9,12 @@ import type { DriftedFile } from "../types";
 interface DriftDiffModalProps {
   file: DriftedFile;
   agentLabel: string;
-  projectName?: string;
+  projectKey?: string;
   onClose: () => void;
   onResolved?: () => void;
 }
 
-export function DriftDiffModal({ file, agentLabel, projectName, onClose, onResolved }: DriftDiffModalProps) {
+export function DriftDiffModal({ file, agentLabel, projectKey, onClose, onResolved }: DriftDiffModalProps) {
   const diffLines = file.expected != null && file.actual != null
     ? computeLineDiff(file.expected, file.actual)
     : null;
@@ -35,10 +35,10 @@ export function DriftDiffModal({ file, agentLabel, projectName, onClose, onResol
   }, [onClose]);
 
   const handleAdoptSkill = async () => {
-    if (!projectName || !staleSkillName) return;
+    if (!projectKey || !staleSkillName) return;
     setActionInProgress("adopt");
     try {
-      await invoke("adopt_stale_skill", { name: projectName, skillName: staleSkillName });
+      await invoke("adopt_stale_skill", { name: projectKey, skillName: staleSkillName });
       onResolved?.();
       onClose();
     } catch (err: any) {
@@ -48,10 +48,10 @@ export function DriftDiffModal({ file, agentLabel, projectName, onClose, onResol
   };
 
   const handleRemoveSkill = async () => {
-    if (!projectName || !staleSkillName) return;
+    if (!projectKey || !staleSkillName) return;
     setActionInProgress("remove");
     try {
-      await invoke("remove_stale_skill", { name: projectName, skillName: staleSkillName });
+      await invoke("remove_stale_skill", { name: projectKey, skillName: staleSkillName });
       onResolved?.();
       onClose();
     } catch (err: any) {
@@ -61,10 +61,10 @@ export function DriftDiffModal({ file, agentLabel, projectName, onClose, onResol
   };
 
   const handleSyncOverwrite = async () => {
-    if (!projectName) return;
+    if (!projectKey) return;
     setActionInProgress("overwrite");
     try {
-      await invoke("sync_project", { name: projectName });
+      await invoke("sync_project", { name: projectKey });
       onResolved?.();
       onClose();
     } catch (err: any) {
@@ -228,7 +228,7 @@ export function DriftDiffModal({ file, agentLabel, projectName, onClose, onResol
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-border-strong flex-shrink-0">
           {/* Stale skill resolution actions */}
-          {file.reason === "stale" && staleSkillName && projectName ? (
+          {file.reason === "stale" && staleSkillName && projectKey ? (
             <>
               <div className="flex items-center gap-2">
                 <button

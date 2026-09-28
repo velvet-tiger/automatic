@@ -12,6 +12,7 @@ import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { useBulkSelection } from "../../lib/useBulkSelection";
 import { invoke } from "@tauri-apps/api/core";
+import { loadProjectSummaries, projectKeyOf } from "../../lib/projectIdentity";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   Plus,
@@ -63,6 +64,8 @@ interface UserCommandEntry {
 
 interface Project {
   name: string;
+  /** Set by the backend; the key the page addresses the project by. */
+  local_key?: string;
   description: string;
   directory: string;
   skills: string[];
@@ -104,7 +107,8 @@ export default function Templates({
 }: {
   initialTemplate?: string | null;
   onCreateProjectFromTemplate?: (templateName: string) => void;
-  onNavigateToProject?: (projectName: string) => void;
+  /** Opens a project by local_key. */
+  onNavigateToProject?: (projectKey: string) => void;
 }) {
   const [templates, setTemplates] = useState<string[]>([]);
   const [recentRefresh, setRecentRefresh] = useState(0);
@@ -262,12 +266,14 @@ export default function Templates({
 
   const loadAllProjects = async () => {
     try {
-      const names: string[] = await invoke("get_projects");
+      const summaries = await loadProjectSummaries();
       const loaded = await Promise.all(
-        names.map(async (name) => {
+        summaries.map(async (summary) => {
+          const key = projectKeyOf(summary);
           try {
-            const raw: string = await invoke("read_project", { name });
-            return JSON.parse(raw) as Project;
+            const raw: string = await invoke("read_project", { name: key });
+            // Carry the key even when the stored project has none yet.
+            return { ...(JSON.parse(raw) as Project), local_key: key };
           } catch {
             return null;
           }
@@ -441,11 +447,12 @@ export default function Templates({
   // attachment, project-file writing and syncing, so this shares one
   // implementation with the project editor's Apply Template action. It reads the
   // template from disk, so unsaved edits are not applied.
-  const applyToProject = async (projectName: string) => {
+  const applyToProject = async (projectKey: string) => {
     if (!template || !selectedName) return;
+    const projectName = allProjects.find((p) => templateProjectKey(p) === projectKey)?.name ?? projectKey;
     try {
       const raw: string = await invoke("apply_templates_to_project", {
-        projectName,
+        projectName: projectKey,
         templateNames: [selectedName],
       });
       const result: { pending_unified: { content: string; rules: string[] }[] } = JSON.parse(raw);
@@ -462,7 +469,7 @@ export default function Templates({
       if (mergedContent) {
         try {
           await invoke("save_project_file", {
-            name: projectName,
+            name: projectKey,
             filename: "_unified",
             content: mergedContent,
           });
@@ -1066,8 +1073,8 @@ export default function Templates({
                     <div className="flex flex-wrap gap-2">
                       {appliedProjects.map((p) => (
                         <button
-                          key={p.name}
-                          onClick={() => onNavigateToProject?.(p.name)}
+                          key={templateProjectKey(p)}
+                          onClick={() => onNavigateToProject?.(templateProjectKey(p))}
                           className="px-2.5 py-1 bg-bg-sidebar border border-border-strong/40 rounded-md text-[12px] text-text-base font-medium hover:border-border-strong hover:text-text-base hover:bg-bg-hover transition-colors cursor-pointer"
                         >
                           {p.name}
@@ -1119,7 +1126,7 @@ export default function Templates({
       {showApplyPicker && template && (
         <ApplyToProjectModal
           projects={[...allProjects].sort((a, b) => a.name.localeCompare(b.name))}
-          appliedProjectNames={appliedProjects.map((p) => p.name)}
+          appliedProjectKeys={appliedProjects.map(templateProjectKey)}
           selected={applyTargetProject}
           onSelect={setApplyTargetProject}
           onCancel={() => {
@@ -1138,18 +1145,25 @@ export default function Templates({
   );
 }
 
+/** The key a project is addressed by: its local_key, else its name. */
+function templateProjectKey(p: Project): string {
+  return p.local_key !== undefined && p.local_key !== "" ? p.local_key : p.name;
+}
+
 function ApplyToProjectModal({
   projects,
-  appliedProjectNames,
+  appliedProjectKeys,
   selected,
   onSelect,
   onCancel,
   onConfirm,
 }: {
   projects: Project[];
-  appliedProjectNames: string[];
+  /** local_keys of projects the template is already applied to. */
+  appliedProjectKeys: string[];
+  /** local_key of the chosen project. */
   selected: string | null;
-  onSelect: (name: string) => void;
+  onSelect: (projectKey: string) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -1213,13 +1227,14 @@ function ApplyToProjectModal({
           ) : (
             <ul className="space-y-1">
               {visible.map((p) => {
-                const isSelected = selected === p.name;
-                const alreadyApplied = appliedProjectNames.includes(p.name);
+                const key = templateProjectKey(p);
+                const isSelected = selected === key;
+                const alreadyApplied = appliedProjectKeys.includes(key);
                 return (
-                  <li key={p.name}>
+                  <li key={key}>
                     <button
-                      onClick={() => onSelect(p.name)}
-                      onDoubleClick={() => { onSelect(p.name); onConfirm(); }}
+                      onClick={() => onSelect(key)}
+                      onDoubleClick={() => { onSelect(key); onConfirm(); }}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
                         isSelected
                           ? "bg-brand/15 border border-brand/40"

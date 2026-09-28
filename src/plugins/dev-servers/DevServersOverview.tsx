@@ -2,20 +2,24 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertCircle, ArrowUpRight, ExternalLink, Loader2, Play, Server as ServerIcon, Square, X } from "lucide-react";
 import { openExternalUrl } from "../../lib/externalLinks";
+import { rowProjectKey } from "../../lib/projectIdentity";
 import { formatServerUrlLabel, type DevServerStatus } from "./types";
 
 const STATUS_POLL_MS = 3000;
 
 interface DevServersOverviewProps {
-  onNavigateToProject: (projectName: string) => void;
+  /** Opens a project by local_key (or by name for an orphan status). */
+  onNavigateToProject: (projectKey: string) => void;
 }
 
+/** Statuses grouped by project key (local_key, else the name). */
 function groupByProject(statuses: DevServerStatus[]): Map<string, DevServerStatus[]> {
   const groups = new Map<string, DevServerStatus[]>();
   for (const status of statuses) {
-    const existing = groups.get(status.project);
+    const key = rowProjectKey(status);
+    const existing = groups.get(key);
     if (existing) existing.push(status);
-    else groups.set(status.project, [status]);
+    else groups.set(key, [status]);
   }
   return groups;
 }
@@ -63,7 +67,7 @@ export default function DevServersOverview({ onNavigateToProject }: DevServersOv
   const handleStart = async (status: DevServerStatus) => {
     setBusy(status.id, true);
     try {
-      await invoke("start_dev_server", { project: status.project, id: status.id });
+      await invoke("start_dev_server", { project: rowProjectKey(status), id: status.id });
       await refresh(false);
     } catch (err) {
       setError(String(err));
@@ -130,13 +134,13 @@ export default function DevServersOverview({ onNavigateToProject }: DevServersOv
           </div>
         ) : (
           <div className="space-y-5">
-            {Array.from(groups.entries()).map(([project, servers]) => (
-              <div key={project} className="rounded-xl border border-border-strong/40 bg-bg-input overflow-hidden">
+            {Array.from(groups.entries()).map(([projectKey, servers]) => (
+              <div key={projectKey} className="rounded-xl border border-border-strong/40 bg-bg-input overflow-hidden">
                 <button
-                  onClick={() => onNavigateToProject(project)}
+                  onClick={() => onNavigateToProject(projectKey)}
                   className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border-b border-border-strong/40 bg-bg-sidebar/40 hover:bg-bg-sidebar/70 transition-colors text-left"
                 >
-                  <span className="text-[12px] font-semibold text-text-base truncate">{project}</span>
+                  <span className="text-[12px] font-semibold text-text-base truncate">{servers[0]?.project ?? projectKey}</span>
                   <ArrowUpRight size={12} className="text-text-muted shrink-0" />
                 </button>
                 <div className="divide-y divide-border-strong/20">

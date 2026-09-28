@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Send, Trash2, AlertCircle, ChevronDown, ChevronUp, Bot, Check, FolderOpen } from "lucide-react";
 import { flag } from "../../lib/flags";
+import { loadProjectSummaries, projectKeyOf } from "../../lib/projectIdentity";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -85,6 +86,8 @@ function ModelPicker({
 // ── ProjectPicker ─────────────────────────────────────────────────────────────
 
 interface ProjectOption {
+  /** The project's local_key. */
+  key: string;
   name: string;
   directory: string;
 }
@@ -95,11 +98,12 @@ function ProjectPicker({
   onChange,
 }: {
   projects: ProjectOption[];
+  /** local_key of the selected project. */
   value: string;
-  onChange: (name: string, directory: string) => void;
+  onChange: (projectKey: string, directory: string) => void;
 }) {
   const { open, setOpen, ref } = useDropdown();
-  const selected = projects.find((p) => p.name === value);
+  const selected = projects.find((p) => p.key === value);
 
   // Truncate a long path to the last N path segments for display.
   const shortenPath = (dir: string, segments = 3) => {
@@ -131,15 +135,15 @@ function ProjectPicker({
         <div className="absolute right-0 top-full mt-1 z-50 min-w-[260px] max-w-[340px] rounded-md bg-bg-input border border-border-strong/40 shadow-lg overflow-hidden">
           {projects.map((p) => (
             <button
-              key={p.name}
-              onClick={() => { onChange(p.name, p.directory); setOpen(false); }}
+              key={p.key}
+              onClick={() => { onChange(p.key, p.directory); setOpen(false); }}
               className={`w-full flex items-start gap-2 px-3 py-2 text-left transition-colors ${
-                p.name === value
+                p.key === value
                   ? "text-text-base bg-bg-sidebar"
                   : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
               }`}
             >
-              <Check size={11} className={`mt-0.5 shrink-0 ${p.name === value ? "opacity-100 text-brand" : "opacity-0"}`} />
+              <Check size={11} className={`mt-0.5 shrink-0 ${p.key === value ? "opacity-100 text-brand" : "opacity-0"}`} />
               <span className="flex flex-col min-w-0">
                 <span className="text-[12px] font-medium truncate">{p.name}</span>
                 <span className="text-[10px] text-text-muted/70 truncate font-mono mt-0.5">
@@ -168,7 +172,7 @@ export default function AiPlayground() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [workingDir, setWorkingDir] = useState<string>("");
-  const [projects, setProjects] = useState<Array<{ name: string; directory: string }>>([]);
+  const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [agentFeaturesEnabled, setAgentFeaturesEnabled] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -198,23 +202,16 @@ export default function AiPlayground() {
 
   useEffect(() => {
     if (!toolsEnabled) return;
-    invoke<string[]>("get_projects")
-      .then((names) =>
-        Promise.all(
-          names.map((name) =>
-            invoke<string>("read_project", { name }).then((raw) => {
-              const p = JSON.parse(raw);
-              return { name, directory: p?.directory ?? "" };
-            })
-          )
-        )
+    loadProjectSummaries()
+      .then((summaries) =>
+        summaries.map((s): ProjectOption => ({ key: projectKeyOf(s), name: s.name, directory: s.directory })),
       )
       .then((all) => {
         const withDir = all.filter((p) => p.directory);
         setProjects(withDir);
         // Default to the first project that has a directory — never home.
         if (withDir.length > 0 && !selectedProject) {
-          setSelectedProject(withDir[0]!.name);
+          setSelectedProject(withDir[0]!.key);
           setWorkingDir(withDir[0]!.directory);
         }
       })
@@ -313,8 +310,8 @@ export default function AiPlayground() {
             <ProjectPicker
               projects={projects}
               value={selectedProject}
-              onChange={(name, directory) => {
-                setSelectedProject(name);
+              onChange={(projectKey, directory) => {
+                setSelectedProject(projectKey);
                 setWorkingDir(directory);
               }}
             />

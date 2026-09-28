@@ -17,8 +17,9 @@ interface ContextsPanelProps {
   setDirty: (v: boolean) => void;
   /** In the create wizard the project is not on disk yet, so attach/detach only edit state. */
   isCreating: boolean;
-  selectedName: string | null;
-  reloadProject: (name: string) => Promise<void>;
+  /** local_key of the open project; null while creating. */
+  selectedKey: string | null;
+  reloadProject: (projectKey: string) => Promise<void>;
   onNavigateToGroup?: (groupName: string) => void;
   /** Opens Library → Contexts, where contexts are created. */
   onNavigateToContexts?: () => void;
@@ -37,7 +38,7 @@ function ContextIcon({ context, size = 15 }: { context: Context | undefined; siz
  * provides show which group, and are removed from the group, not here.
  */
 export function ContextsPanel({
-  project, setProject, dirty, setDirty, isCreating, selectedName, reloadProject, onNavigateToGroup, onNavigateToContexts,
+  project, setProject, dirty, setDirty, isCreating, selectedKey, reloadProject, onNavigateToGroup, onNavigateToContexts,
 }: ContextsPanelProps) {
   const [library, setLibrary] = useState<Context[]>([]);
   const [picking, setPicking] = useState(false);
@@ -67,7 +68,7 @@ export function ContextsPanel({
   // A clean, saved project goes through the backend so the change lands at
   // once. With unsaved edits (or in the wizard) only state changes, so a
   // reload cannot throw those edits away; the next save persists it.
-  const direct = !isCreating && !!selectedName && !dirty;
+  const direct = !isCreating && !!selectedKey && !dirty;
 
   const change = async (slug: string, command: "attach_context" | "detach_context") => {
     setError(null);
@@ -79,9 +80,9 @@ export function ContextsPanel({
     }
     setBusy(true);
     try {
-      const target: ContextTarget = { type: "project", name: selectedName! };
+      const target: ContextTarget = { type: "project", name: selectedKey! };
       await invoke(command, { target, slug });
-      await reloadProject(selectedName!);
+      await reloadProject(selectedKey!);
     } finally {
       setBusy(false);
     }

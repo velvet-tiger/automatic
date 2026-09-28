@@ -12,12 +12,15 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ProjectsOverview } from "./projects/overview/ProjectsOverview";
 import { ProjectEditor } from "./projects/editor/ProjectEditor";
-import type { Project, ProjectTemplate, DriftReport } from "./projects/types";
+import type { Project, ProjectTemplate, DriftReport, ProjectSummary } from "./projects/types";
 import { trackProjectSynced } from "../../lib/analytics";
+import { loadProjectSummaries, projectKeyOf, resolveProjectKey } from "../../lib/projectIdentity";
+import { PROJECT_ORDER_STORAGE_KEY, SELECTED_PROJECT_STORAGE_KEY } from "../../lib/projectStorageMigration";
 
 interface ProjectsProps {
   /** Increment to navigate back to the projects list (deselects any open project). */
   resetKey?: number;
+  /** local_key of the project to open. A name is resolved too (orphan rows). */
   initialProject?: string | null;
   onInitialProjectConsumed?: () => void;
   /** When set, switch to this project tab immediately after selecting the project. */
@@ -36,12 +39,12 @@ interface ProjectsProps {
   onInitialCreateWithTemplateConsumed?: () => void;
   /** When set, filters the overview to show only projects in this group. */
   filterGroup?: string | null;
-  /** Called whenever the currently open project (editor view) changes, including to null when returning to the overview. */
-  onActiveProjectChange?: (name: string | null) => void;
+  /** Called with the open project's local_key whenever it changes, including to null when returning to the overview. */
+  onActiveProjectChange?: (projectKey: string | null) => void;
 }
 
-const LAST_PROJECT_KEY = "automatic.projects.selected";
-const PROJECT_ORDER_KEY = "automatic.projects.order";
+const LAST_PROJECT_KEY = SELECTED_PROJECT_STORAGE_KEY;
+const PROJECT_ORDER_KEY = PROJECT_ORDER_STORAGE_KEY;
 
 export default function Projects({
   resetKey,
@@ -63,6 +66,8 @@ export default function Projects({
   onActiveProjectChange,
 }: ProjectsProps = {}) {
   // ── List state ────────────────────────────────────────────────────────────
+  // Every map and list below is keyed by the project's local_key.
+  const [summaries, setSummaries] = useState<ProjectSummary[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectDetailsMap, setProjectDetailsMap] = useState<Map<string, Project>>(new Map());
@@ -70,16 +75,16 @@ export default function Projects({
   const [syncAllStatus, setSyncAllStatus] = useState<"idle" | "syncing">("idle");
 
   // ── Selection / wizard state ─────────────────────────────────────────────
-  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   /** Resolved templates seeded into the wizard via initialCreateWithTemplate. */
   const [createFromTemplates, setCreateFromTemplates] = useState<ProjectTemplate[] | null>(null);
 
   // Report the currently open project up to the parent (drives sidebar highlighting).
   useEffect(() => {
-    onActiveProjectChange?.(selectedName);
+    onActiveProjectChange?.(selectedKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedName]);
+  }, [selectedKey]);
 
   // ── Legacy localStorage migration ────────────────────────────────────────
   useEffect(() => {
@@ -97,32 +102,36 @@ export default function Projects({
   }, []);
 
   // ── Project list loader ──────────────────────────────────────────────────
-  const applyStoredOrder = (names: string[]): string[] => {
+  /**
+   * Order project keys by the stored order, then the rest by name. The
+   * stored order holds keys (see `projectStorageMigration.ts`).
+   */
+  const applyStoredOrder = (list: ProjectSummary[]): string[] => {
+    const byName = [...list].sort((a, b) => a.name.localeCompare(b.name)).map(projectKeyOf);
     try {
       const stored = localStorage.getItem(PROJECT_ORDER_KEY);
-      if (!stored) return names.sort();
+      if (!stored) return byName;
       const order: string[] = JSON.parse(stored);
-      const ordered: string[] = [];
-      for (const n of order) {
-        if (names.includes(n)) ordered.push(n);
-      }
-      const remaining = names.filter((n) => !ordered.includes(n)).sort();
-      return [...ordered, ...remaining];
+      const known = new Set(byName);
+      const ordered = order.filter((k) => known.has(k));
+      const placed = new Set(ordered);
+      return [...ordered, ...byName.filter((k) => !placed.has(k))];
     } catch {
-      return names.sort();
+      return byName;
     }
   };
 
   const loadProjects = async (): Promise<void> => {
     try {
-      const result: string[] = await invoke("get_projects");
+      const result = await loadProjectSummaries();
+      setSummaries(result);
       const ordered = applyStoredOrder(result);
       setProjects(ordered);
       const entries = await Promise.all(
-        ordered.map(async (name) => {
+        ordered.map(async (key) => {
           try {
-            const raw: string = await invoke("read_project", { name });
-            return [name, JSON.parse(raw) as Project] as const;
+            const raw: string = await invoke("read_project", { name: key });
+            return [key, JSON.parse(raw) as Project] as const;
           } catch {
             return null;
           }
@@ -146,13 +155,13 @@ export default function Projects({
     if (projects.length === 0) return;
     let cancelled = false;
     const checkAll = async () => {
-      for (const name of projects) {
+      for (const key of projects) {
         if (cancelled) return;
         try {
-          const raw: string = await invoke("check_project_drift", { name });
+          const raw: string = await invoke("check_project_drift", { name: key });
           const report = JSON.parse(raw) as DriftReport;
           if (!cancelled) {
-            setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
+            setDriftByProject((prev) => ({ ...prev, [key]: report.drifted }));
           }
         } catch {
           // skip silently
@@ -172,7 +181,7 @@ export default function Projects({
   useEffect(() => {
     const handler = () => {
       setCreateFromTemplates(null);
-      setSelectedName(null);
+      setSelectedKey(null);
       setIsCreating(true);
     };
     window.addEventListener("create-project", handler);
@@ -181,9 +190,10 @@ export default function Projects({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const removedName = (event as CustomEvent<{ name?: string }>).detail?.name;
-      if (!removedName) return;
-      setSelectedName((current) => (current === removedName ? null : current));
+      const detail = (event as CustomEvent<{ name?: string; local_key?: string }>).detail;
+      const removedKey = detail?.local_key || detail?.name;
+      if (!removedKey) return;
+      setSelectedKey((current) => (current === removedKey ? null : current));
       void loadProjects();
     };
     window.addEventListener("project-removed", handler);
@@ -193,20 +203,24 @@ export default function Projects({
   // resetKey: parent nav click while already on Projects → return to list
   useEffect(() => {
     if (resetKey === undefined || resetKey === 0) return;
-    setSelectedName(null);
+    setSelectedKey(null);
     setIsCreating(false);
     setCreateFromTemplates(null);
   }, [resetKey]);
 
-  // initialProject: open this project's editor directly
+  // initialProject: open this project's editor directly. Callers pass a
+  // local_key; a name is resolved as well, for rows about a project whose
+  // key the caller did not have.
   useEffect(() => {
-    if (initialProject && projects.includes(initialProject)) {
-      setSelectedName(initialProject);
+    if (!initialProject) return;
+    const key = resolveProjectKey(summaries, initialProject);
+    if (key !== null && projects.includes(key)) {
+      setSelectedKey(key);
       setIsCreating(false);
       onInitialProjectConsumed?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialProject, projects]);
+  }, [initialProject, projects, summaries]);
 
   // initialCreateWithTemplate: resolve the template name, seed the wizard
   useEffect(() => {
@@ -223,7 +237,7 @@ export default function Projects({
         const tmpl = JSON.parse(raw) as ProjectTemplate;
         if (cancelled) return;
         setCreateFromTemplates([tmpl]);
-        setSelectedName(null);
+        setSelectedKey(null);
         setIsCreating(true);
         onInitialCreateWithTemplateConsumed?.();
       } catch {
@@ -242,12 +256,12 @@ export default function Projects({
     if (driftedProjects.length === 0) return;
     setSyncAllStatus("syncing");
     try {
-      for (const name of driftedProjects) {
+      for (const key of driftedProjects) {
         try {
-          const result: string = await invoke("sync_project", { name });
+          const result: string = await invoke("sync_project", { name: key });
           const files: string[] = JSON.parse(result);
-          trackProjectSynced(name);
-          setDriftByProject((prev) => ({ ...prev, [name]: false }));
+          trackProjectSynced(projectDetailsMap.get(key)?.name ?? key);
+          setDriftByProject((prev) => ({ ...prev, [key]: false }));
           void files;
         } catch {
           // continue
@@ -259,22 +273,23 @@ export default function Projects({
   };
 
   const handleBackToOverview = () => {
-    setSelectedName(null);
+    setSelectedKey(null);
     setIsCreating(false);
     setCreateFromTemplates(null);
     localStorage.removeItem(LAST_PROJECT_KEY);
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
-  if (!selectedName && !isCreating) {
+  if (!selectedKey && !isCreating) {
     return (
       <div className="h-full w-full bg-bg-base overflow-hidden">
         <ProjectsOverview
           projects={projects}
+          summaries={summaries}
           projectsLoading={projectsLoading}
           projectDetails={projectDetailsMap}
           driftByProject={driftByProject}
-          onSelect={(name) => setSelectedName(name)}
+          onSelect={(key) => setSelectedKey(key)}
           onCreate={() => {
             setCreateFromTemplates(null);
             setIsCreating(true);
@@ -289,15 +304,15 @@ export default function Projects({
 
   return (
     <ProjectEditor
-      selectedName={selectedName}
-      setSelectedName={setSelectedName}
+      selectedKey={selectedKey}
+      setSelectedKey={setSelectedKey}
       isCreating={isCreating}
       setIsCreating={setIsCreating}
       reloadProjects={loadProjects}
       setProjectDetailsMap={setProjectDetailsMap}
       setDriftByProject={setDriftByProject}
       onBack={handleBackToOverview}
-      initialProject={selectedName ? projectDetailsMap.get(selectedName) ?? null : null}
+      initialProject={selectedKey ? projectDetailsMap.get(selectedKey) ?? null : null}
       initialProjectTab={initialProjectTab}
       onInitialProjectTabConsumed={onInitialProjectTabConsumed}
       createFromTemplates={createFromTemplates}

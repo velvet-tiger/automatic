@@ -26,7 +26,8 @@ interface ClaudeMemoryContent {
 interface PromoteModalProps {
   initialKey: string;
   initialValue: string;
-  projectName: string;
+  /** The project's local_key. */
+  projectKey: string;
   onClose: () => void;
   onPromoted: () => void;
 }
@@ -36,7 +37,7 @@ interface PromoteModalProps {
 function PromoteModal({
   initialKey,
   initialValue,
-  projectName,
+  projectKey,
   onClose,
   onPromoted,
 }: PromoteModalProps) {
@@ -53,7 +54,7 @@ function PromoteModal({
       setSaving(true);
       setError(null);
       await invoke("store_memory", {
-        project: projectName,
+        project: projectKey,
         key: trimmedKey,
         value: trimmedValue,
         source: "claude-auto-memory",
@@ -137,11 +138,11 @@ function PromoteModal({
 
 interface TopicFileSectionProps {
   file: ClaudeMemoryTopicFile;
-  projectName: string;
+  projectKey: string;
   onPromoted: () => void;
 }
 
-function TopicFileSection({ file, projectName, onPromoted }: TopicFileSectionProps) {
+function TopicFileSection({ file, projectKey, onPromoted }: TopicFileSectionProps) {
   const [expanded, setExpanded] = useState(false);
   const [promoteModal, setPromoteModal] = useState<{ key: string; value: string } | null>(null);
 
@@ -181,7 +182,7 @@ function TopicFileSection({ file, projectName, onPromoted }: TopicFileSectionPro
         <PromoteModal
           initialKey={promoteModal.key}
           initialValue={promoteModal.value}
-          projectName={projectName}
+          projectKey={projectKey}
           onClose={() => setPromoteModal(null)}
           onPromoted={onPromoted}
         />
@@ -194,7 +195,7 @@ function TopicFileSection({ file, projectName, onPromoted }: TopicFileSectionPro
 
 interface ClaudeMemoryPanelProps {
   /** Automatic project name (used as key for store_memory calls). */
-  projectName: string;
+  projectKey: string;
   /** Absolute path to the project directory (used to derive the Claude memory path). */
   projectDirectory: string;
   /** Called when a memory entry has been successfully promoted. */
@@ -202,7 +203,7 @@ interface ClaudeMemoryPanelProps {
 }
 
 export function ClaudeMemoryPanel({
-  projectName,
+  projectKey,
   projectDirectory,
   onPromoted,
 }: ClaudeMemoryPanelProps) {
@@ -218,7 +219,7 @@ export function ClaudeMemoryPanel({
       setLoading(true);
       setError(null);
       const result = await invoke<ClaudeMemoryContent>("get_claude_memory", {
-        project: projectName,
+        project: projectKey,
       });
       setContent(result);
     } catch (err: any) {
@@ -226,7 +227,7 @@ export function ClaudeMemoryPanel({
     } finally {
       setLoading(false);
     }
-  }, [projectName, projectDirectory]);
+  }, [projectKey, projectDirectory]);
 
   useEffect(() => {
     load();
@@ -336,7 +337,7 @@ export function ClaudeMemoryPanel({
             <TopicFileSection
               key={file.name}
               file={file}
-              projectName={projectName}
+              projectKey={projectKey}
               onPromoted={onPromoted}
             />
           ))}
@@ -361,7 +362,7 @@ export function ClaudeMemoryPanel({
         <PromoteModal
           initialKey="claude-memory/MEMORY"
           initialValue={content.memory_md}
-          projectName={projectName}
+          projectKey={projectKey}
           onClose={() => setPromoteMemoryMd(false)}
           onPromoted={onPromoted}
         />

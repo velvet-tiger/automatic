@@ -83,7 +83,9 @@ export default function Rules() {
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Projects referencing this rule
-  const [referencingProjects, setReferencingProjects] = useState<string[]>([]);
+  // `key` is the local_key (the name for a row without one); `name` is shown.
+  // Sync state is keyed by `key`.
+  const [referencingProjects, setReferencingProjects] = useState<{ key: string; name: string }[]>([]);
   const [projectSyncState, setProjectSyncState] = useState<Record<string, SyncState>>({});
   const [syncAllState, setSyncAllState] = useState<SyncState>("needs-sync");
 
@@ -106,9 +108,10 @@ export default function Rules() {
     try {
       const statuses: RuleProjectStatus[] = await invoke("get_projects_referencing_rule", { ruleName: id });
       const sorted = statuses.sort((a, b) => a.name.localeCompare(b.name));
-      setReferencingProjects(sorted.map(s => s.name));
+      const refs = sorted.map(s => ({ key: s.local_key || s.name, name: s.name }));
+      setReferencingProjects(refs);
       const initial: Record<string, SyncState> = {};
-      for (const s of sorted) initial[s.name] = s.synced ? "synced" : "needs-sync";
+      for (const s of sorted) initial[s.local_key || s.name] = s.synced ? "synced" : "needs-sync";
       setProjectSyncState(initial);
       // Aggregate: all synced → "synced", otherwise "needs-sync".
       const allSynced = sorted.length > 0 && sorted.every(s => s.synced);
@@ -308,12 +311,12 @@ export default function Rules() {
     setRuleAuthor(null);
   };
 
-  const handleSyncProject = async (projectName: string) => {
+  const handleSyncProject = async (projectKey: string, projectName: string) => {
     if (!selectedId) return;
-    setProjectSyncState(prev => ({ ...prev, [projectName]: "syncing" }));
+    setProjectSyncState(prev => ({ ...prev, [projectKey]: "syncing" }));
     try {
-      await invoke("sync_rule_to_project", { ruleName: selectedId, projectName });
-      setProjectSyncState(prev => ({ ...prev, [projectName]: "synced" }));
+      await invoke("sync_rule_to_project", { ruleName: selectedId, projectName: projectKey });
+      setProjectSyncState(prev => ({ ...prev, [projectKey]: "synced" }));
       // Recalculate aggregate state.
       setSyncAllState(prev => {
         if (prev === "syncing") return "syncing";
@@ -321,7 +324,7 @@ export default function Rules() {
         return "synced";
       });
     } catch (err: any) {
-      setProjectSyncState(prev => ({ ...prev, [projectName]: "error" }));
+      setProjectSyncState(prev => ({ ...prev, [projectKey]: "error" }));
       setError(`Failed to sync rule to project "${projectName}": ${err}`);
     }
   };
@@ -330,16 +333,16 @@ export default function Rules() {
     if (!selectedId || referencingProjects.length === 0) return;
     setSyncAllState("syncing");
     const initialStates: Record<string, SyncState> = {};
-    for (const p of referencingProjects) initialStates[p] = "syncing";
+    for (const p of referencingProjects) initialStates[p.key] = "syncing";
     setProjectSyncState(initialStates);
 
     let hadError = false;
-    for (const projectName of referencingProjects) {
+    for (const { key: projectKey, name: projectName } of referencingProjects) {
       try {
-        await invoke("sync_rule_to_project", { ruleName: selectedId, projectName });
-        setProjectSyncState(prev => ({ ...prev, [projectName]: "synced" }));
+        await invoke("sync_rule_to_project", { ruleName: selectedId, projectName: projectKey });
+        setProjectSyncState(prev => ({ ...prev, [projectKey]: "synced" }));
       } catch (err: any) {
-        setProjectSyncState(prev => ({ ...prev, [projectName]: "error" }));
+        setProjectSyncState(prev => ({ ...prev, [projectKey]: "error" }));
         hadError = true;
         setError(`Failed to sync rule to project "${projectName}": ${err}`);
       }
@@ -772,10 +775,10 @@ export default function Rules() {
                     </div>
                     {/* Max 3 rows visible; scrollable if more */}
                     <ul className="space-y-1.5 max-h-[108px] overflow-y-auto custom-scrollbar">
-                      {referencingProjects.map(projectName => {
-                        const state = projectSyncState[projectName] ?? "needs-sync";
+                      {referencingProjects.map(({ key: projectKey, name: projectName }) => {
+                        const state = projectSyncState[projectKey] ?? "needs-sync";
                         return (
-                          <li key={projectName} className="flex items-center justify-between gap-3 py-1">
+                          <li key={projectKey} className="flex items-center justify-between gap-3 py-1">
                             <div className="flex items-center gap-2 min-w-0">
                               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                                 state === "synced" ? "bg-success" : state === "error" ? "bg-danger" : "bg-warning"
@@ -784,7 +787,7 @@ export default function Rules() {
                             </div>
                             {state !== "synced" && (
                               <button
-                                onClick={() => handleSyncProject(projectName)}
+                                onClick={() => handleSyncProject(projectKey, projectName)}
                                 disabled={state === "syncing"}
                                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-colors flex-shrink-0 ${
                                   state === "error"

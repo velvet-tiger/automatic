@@ -32,7 +32,8 @@ const STATUS_POLL_MS = 2000;
 const LOG_POLL_MS = 1500;
 
 interface ServersPanelProps {
-  projectName: string;
+  /** The project's local_key. */
+  projectKey: string;
   projectDirectory: string;
 }
 
@@ -58,7 +59,7 @@ function statusFor(statuses: DevServerStatus[], id: string): DevServerStatus | u
   return statuses.find((s) => s.id === id);
 }
 
-export default function ServersPanel({ projectName, projectDirectory }: ServersPanelProps) {
+export default function ServersPanel({ projectKey, projectDirectory }: ServersPanelProps) {
   const [configs, setConfigs] = useState<ServerConfig[]>([]);
   const [statuses, setStatuses] = useState<DevServerStatus[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,29 +92,29 @@ export default function ServersPanel({ projectName, projectDirectory }: ServersP
     setLoading(true);
     setError(null);
     try {
-      const result = await invoke<ServerConfig[]>("list_dev_server_configs", { project: projectName });
+      const result = await invoke<ServerConfig[]>("list_dev_server_configs", { project: projectKey });
       setConfigs(result);
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
     }
-  }, [projectName]);
+  }, [projectKey]);
 
   const refreshStatuses = useCallback(async () => {
     try {
-      const result = await invoke<DevServerStatus[]>("list_dev_server_statuses", { project: projectName });
+      const result = await invoke<DevServerStatus[]>("list_dev_server_statuses", { project: projectKey });
       setStatuses(result);
     } catch (err) {
       console.error("Failed to refresh dev server statuses:", err);
     }
-  }, [projectName]);
+  }, [projectKey]);
 
   useEffect(() => {
     void loadConfigs();
     void refreshStatuses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectName]);
+  }, [projectKey]);
 
   useEffect(() => {
     const interval = setInterval(() => void refreshStatuses(), STATUS_POLL_MS);
@@ -185,7 +186,7 @@ export default function ServersPanel({ projectName, projectDirectory }: ServersP
         port: null,
         created_at: "",
       };
-      await invoke("save_dev_server_config", { project: projectName, config: payload });
+      await invoke("save_dev_server_config", { project: projectKey, config: payload });
       await loadConfigs();
     } catch (err) {
       setError(String(err));
@@ -198,7 +199,7 @@ export default function ServersPanel({ projectName, projectDirectory }: ServersP
     setBusy(config.id, true);
     setError(null);
     try {
-      await invoke("start_dev_server", { project: projectName, id: config.id });
+      await invoke("start_dev_server", { project: projectKey, id: config.id });
       await refreshStatuses();
     } catch (err) {
       setError(String(err));
@@ -230,7 +231,7 @@ export default function ServersPanel({ projectName, projectDirectory }: ServersP
     setBusy(config.id, true);
     setError(null);
     try {
-      await invoke("delete_dev_server_config", { project: projectName, id: config.id });
+      await invoke("delete_dev_server_config", { project: projectKey, id: config.id });
       if (expandedId === config.id) setExpandedId(null);
       await loadConfigs();
       await refreshStatuses();
@@ -329,7 +330,7 @@ export default function ServersPanel({ projectName, projectDirectory }: ServersP
         port,
         created_at: "",
       };
-      await invoke("save_dev_server_config", { project: projectName, config: payload });
+      await invoke("save_dev_server_config", { project: projectKey, config: payload });
       closeForm();
       await loadConfigs();
     } catch (err) {

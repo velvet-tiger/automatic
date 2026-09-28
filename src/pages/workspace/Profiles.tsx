@@ -25,6 +25,8 @@ import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { useBulkSelection } from "../../lib/useBulkSelection";
 import type { HookEntry, ProjectProfile, UserCommandEntry } from "./projects/types";
+import { loadProjectSummaries, projectKeyOf } from "../../lib/projectIdentity";
+import type { ProjectSummary } from "./projects/types";
 import { normaliseProfile } from "./projects/helpers";
 
 // ── Profiles ──────────────────────────────────────────────────────────────────
@@ -41,9 +43,9 @@ interface ProjectRef {
   local_key?: string;
 }
 
-interface ProjectSummary {
-  name: string;
-  directory: string;
+/** The key a project row is addressed by: its local_key, else its name. */
+function refKey(p: ProjectRef): string {
+  return p.local_key !== undefined && p.local_key !== "" ? p.local_key : p.name;
 }
 
 function emptyProfile(name: string): ProjectProfile {
@@ -82,7 +84,8 @@ function summarise(p: ProjectProfile | undefined): string {
 export default function Profiles({
   onNavigateToProject,
 }: {
-  onNavigateToProject?: (projectName: string) => void;
+  /** Opens a project by local_key (or by name for a row without one). */
+  onNavigateToProject?: (projectKey: string) => void;
 }) {
   const [profiles, setProfiles] = useState<string[]>([]);
   const [recentRefresh, setRecentRefresh] = useState(0);
@@ -186,19 +189,8 @@ export default function Profiles({
 
   const loadAllProjects = async () => {
     try {
-      const names: string[] = await invoke("get_projects");
-      const loaded = await Promise.all(
-        names.map(async (name) => {
-          try {
-            const raw: string = await invoke("read_project", { name });
-            const parsed = JSON.parse(raw) as { directory?: string };
-            return { name, directory: parsed.directory ?? "" };
-          } catch {
-            return { name, directory: "" };
-          }
-        }),
-      );
-      setAllProjects(loaded.sort((a, b) => a.name.localeCompare(b.name)));
+      const loaded = await loadProjectSummaries();
+      setAllProjects([...loaded].sort((a, b) => a.name.localeCompare(b.name)));
     } catch { /* picker stays empty */ }
   };
 
@@ -388,10 +380,11 @@ export default function Profiles({
     }
   };
 
-  const attachToProject = async (projectName: string) => {
+  const attachToProject = async (projectKey: string) => {
     if (!selectedName) return;
+    const projectName = allProjects.find((p) => projectKeyOf(p) === projectKey)?.name ?? projectKey;
     try {
-      await invoke("attach_profile_to_project", { projectName, profileName: selectedName });
+      await invoke("attach_profile_to_project", { projectName: projectKey, profileName: selectedName });
       await loadReferencingProjects(selectedName);
       setShowAttachPicker(false);
       setError(null);
@@ -877,9 +870,9 @@ export default function Profiles({
                 </div>
                 <ul className="space-y-1.5 max-h-[108px] overflow-y-auto custom-scrollbar">
                   {referencingProjects.map((p) => (
-                    <li key={p.name} className="flex items-center justify-between gap-3 py-1">
+                    <li key={refKey(p)} className="flex items-center justify-between gap-3 py-1">
                       <button
-                        onClick={() => onNavigateToProject?.(p.name)}
+                        onClick={() => onNavigateToProject?.(refKey(p))}
                         className="flex items-center gap-2 min-w-0 text-left hover:text-brand transition-colors"
                         title={p.directory || undefined}
                       >
@@ -898,7 +891,7 @@ export default function Profiles({
       {showAttachPicker && profile && (
         <AttachToProjectModal
           projects={allProjects}
-          attachedProjectNames={referencingProjects.map((p) => p.name)}
+          attachedProjectKeys={referencingProjects.map(refKey)}
           selected={attachTarget}
           onSelect={setAttachTarget}
           onCancel={() => {
@@ -919,16 +912,18 @@ export default function Profiles({
 
 function AttachToProjectModal({
   projects,
-  attachedProjectNames,
+  attachedProjectKeys,
   selected,
   onSelect,
   onCancel,
   onConfirm,
 }: {
   projects: ProjectSummary[];
-  attachedProjectNames: string[];
+  /** local_keys of projects the profile is already attached to. */
+  attachedProjectKeys: string[];
+  /** local_key of the chosen project. */
   selected: string | null;
-  onSelect: (name: string) => void;
+  onSelect: (projectKey: string) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -989,13 +984,14 @@ function AttachToProjectModal({
           ) : (
             <ul className="space-y-1">
               {visible.map((p) => {
-                const isSelected = selected === p.name;
-                const alreadyAttached = attachedProjectNames.includes(p.name);
+                const key = projectKeyOf(p);
+                const isSelected = selected === key;
+                const alreadyAttached = attachedProjectKeys.includes(key);
                 return (
-                  <li key={p.name}>
+                  <li key={key}>
                     <button
-                      onClick={() => { if (!alreadyAttached) onSelect(p.name); }}
-                      onDoubleClick={() => { if (!alreadyAttached) { onSelect(p.name); onConfirm(); } }}
+                      onClick={() => { if (!alreadyAttached) onSelect(key); }}
+                      onDoubleClick={() => { if (!alreadyAttached) { onSelect(key); onConfirm(); } }}
                       disabled={alreadyAttached}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
                         isSelected

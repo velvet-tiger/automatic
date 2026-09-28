@@ -3,7 +3,7 @@ import { ContentConflictModal } from "./ContentConflictModal";
 
 interface InstructionConflictModalProps {
   conflict: InstructionFileConflict;
-  projectName: string;
+  projectKey: string;
   onAdopt: (adoptedContent: string) => void;
   onOverwrite: () => void;
   onClose: () => void;
@@ -11,7 +11,7 @@ interface InstructionConflictModalProps {
 
 export function InstructionConflictModal({
   conflict,
-  projectName: _projectName,
+  projectKey: _projectKey,
   onAdopt,
   onOverwrite,
   onClose,

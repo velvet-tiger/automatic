@@ -40,6 +40,7 @@ import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { BuiltInBadge, ReadOnlyBadge, LockCell } from "../../components/ProtectionBadge";
 import { useBulkSelection } from "../../lib/useBulkSelection";
+import { loadProjectSummaries, projectKeyOf } from "../../lib/projectIdentity";
 import {
   type AssetSecurityScanRecord,
   formatAssetScanResult,
@@ -91,7 +92,8 @@ interface SkillCollection {
 }
 
 interface SkillUsedBy {
-  projects: string[];
+  /** Projects using the skill: `key` is the local_key, `name` is shown. */
+  projects: { key: string; name: string }[];
   templates: string[];
 }
 
@@ -620,7 +622,8 @@ interface SkillsProps {
   /** Called once the initial skill has been applied so the parent can clear it. */
   onInitialSkillConsumed?: () => void;
   /** Navigate to the Projects tab, pre-selecting the given project. */
-  onNavigateToProject?: (name: string) => void;
+  /** Opens a project by local_key. */
+  onNavigateToProject?: (projectKey: string) => void;
   /** Navigate to the Project Templates tab, pre-selecting the given template. */
   onNavigateToTemplate?: (name: string) => void;
 }
@@ -692,10 +695,10 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
 
   const loadSkillContent = async (name: string) => {
     try {
-      const [content, resources, projectNames, templateNames] = await Promise.all([
+      const [content, resources, projectSummaries, templateNames] = await Promise.all([
         invoke<string>("read_skill", { name }),
         invoke<SkillResources>("get_skill_resources", { name }),
-        invoke<string[]>("get_projects"),
+        loadProjectSummaries(),
         invoke<string[]>("get_templates"),
       ]);
       const scan = await scanAssetContent("skill", content);
@@ -706,11 +709,12 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
       // Resolve which projects and templates reference this skill.
       // Both commands return a raw JSON string (double-encoded by Tauri), so we parse manually.
       const [projectDetails, templateDetails] = await Promise.all([
-        Promise.all(projectNames.map(n =>
-          invoke<string>("read_project", { name: n })
-            .then(raw => { const p = JSON.parse(raw); return { name: n, skills: Array.isArray(p.skills) ? p.skills as string[] : [] }; })
-            .catch(() => null)
-        )),
+        Promise.all(projectSummaries.map(summary => {
+          const key = projectKeyOf(summary);
+          return invoke<string>("read_project", { name: key })
+            .then(raw => { const p = JSON.parse(raw); return { key, name: summary.name, skills: Array.isArray(p.skills) ? p.skills as string[] : [] }; })
+            .catch(() => null);
+        })),
         Promise.all(templateNames.map(n =>
           invoke<string>("read_template", { name: n })
             .then(raw => { const t = JSON.parse(raw); return { name: n, skills: Array.isArray(t.skills) ? t.skills as string[] : [] }; })
@@ -718,7 +722,9 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
         )),
       ]);
 
-      const usingProjects = projectDetails.filter(p => p && p.skills.includes(name)).map(p => p!.name);
+      const usingProjects = projectDetails
+        .filter(p => p && p.skills.includes(name))
+        .map(p => ({ key: p!.key, name: p!.name }));
       const usingTemplates = templateDetails.filter(t => t && t.skills.includes(name)).map(t => t!.name);
       setSkillUsedBy({ projects: usingProjects, templates: usingTemplates });
 
@@ -1694,10 +1700,10 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                             <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-text-muted/70 tracking-wider uppercase">
                               Projects
                             </p>
-                            {skillUsedBy.projects.map(name => (
+                            {skillUsedBy.projects.map(({ key, name }) => (
                               <button
-                                key={`project-${name}`}
-                                onClick={() => onNavigateToProject?.(name)}
+                                key={`project-${key}`}
+                                onClick={() => onNavigateToProject?.(key)}
                                 className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-bg-sidebar/60 transition-colors group"
                                 title={`Open project: ${name}`}
                               >

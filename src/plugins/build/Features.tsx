@@ -523,7 +523,7 @@ function PriorityDot({ priority }: { priority: string }) {
 // ── Feature Detail Panel ──────────────────────────────────────────────────────
 
 interface DetailPanelProps {
-  projectName: string;
+  projectKey: string;
   featureId: string;
   allTags: string[];
   onClose: () => void;
@@ -534,7 +534,7 @@ interface DetailPanelProps {
 }
 
 function DetailPanel({
-  projectName,
+  projectKey,
   featureId,
   allTags,
   onClose,
@@ -568,7 +568,7 @@ function DetailPanel({
     setError(null);
     try {
       const fw = await invoke<FeatureWithUpdates>("get_feature_with_updates", {
-        project: projectName,
+        project: projectKey,
         featureId,
       });
       setFeature(fw);
@@ -585,7 +585,7 @@ function DetailPanel({
     } finally {
       setLoading(false);
     }
-  }, [projectName, featureId]);
+  }, [projectKey, featureId]);
 
   useEffect(() => {
     load();
@@ -597,7 +597,7 @@ function DetailPanel({
     setError(null);
     try {
       const updated = await invoke<Feature>("update_feature", {
-        project: projectName,
+        project: projectKey,
         featureId,
         patch,
       });
@@ -608,7 +608,7 @@ function DetailPanel({
     } catch (err: any) {
       setError(String(err));
     }
-  }, [feature, projectName, featureId, onUpdated]);
+  }, [feature, projectKey, featureId, onUpdated]);
 
   const handleAddUpdate = async () => {
     if (!updateContent.trim()) return;
@@ -616,7 +616,7 @@ function DetailPanel({
     setError(null);
     try {
       const update = await invoke<FeatureUpdate>("add_feature_update", {
-        project: projectName,
+        project: projectKey,
         featureId,
         content: updateContent.trim(),
         author: "user",
@@ -640,7 +640,7 @@ function DetailPanel({
     );
     if (!confirmed) return;
     try {
-      await invoke("delete_feature", { project: projectName, featureId });
+      await invoke("delete_feature", { project: projectKey, featureId });
       onDeleted(featureId);
     } catch (err: any) {
       setError(String(err));
@@ -652,7 +652,7 @@ function DetailPanel({
     setError(null);
     try {
       const updated = await invoke<Feature>("archive_feature", {
-        project: projectName,
+        project: projectKey,
         featureId,
       });
       setFeature((prev) => prev ? { ...prev, ...updated } : null);
@@ -667,7 +667,7 @@ function DetailPanel({
     setError(null);
     try {
       const updated = await invoke<Feature>("unarchive_feature", {
-        project: projectName,
+        project: projectKey,
         featureId,
       });
       setFeature((prev) => prev ? { ...prev, ...updated } : null);
@@ -942,13 +942,13 @@ function DetailPanel({
 // ── Create Feature Panel ───────────────────────────────────────────────────────
 
 interface CreateFeaturePanelProps {
-  projectName: string;
+  projectKey: string;
   allTags: string[];
   onCreated: (f: Feature) => void;
   onCancel: () => void;
 }
 
-function CreateFeaturePanel({ projectName, allTags, onCreated, onCancel }: CreateFeaturePanelProps) {
+function CreateFeaturePanel({ projectKey, allTags, onCreated, onCancel }: CreateFeaturePanelProps) {
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editState, setEditState] = useState("backlog");
@@ -979,7 +979,7 @@ function CreateFeaturePanel({ projectName, allTags, onCreated, onCancel }: Creat
       const tags = editTags;
       const linked_files = editLinkedFilesRaw.split("\n").map((file) => file.trim()).filter(Boolean);
       const feature = await invoke<Feature>("create_feature", {
-        project: projectName,
+        project: projectKey,
         title: editTitle.trim(),
         description: editDescription,
         state: editState,
@@ -1142,9 +1142,9 @@ const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
 
 const MIN_COLUMN_WIDTH = 48;
 
-function readStoredColumnWidths(projectName: string): Record<ColumnKey, number> {
+function readStoredColumnWidths(projectKey: string): Record<ColumnKey, number> {
   try {
-    const raw = localStorage.getItem(buildColumnWidthsStorageKey(projectName));
+    const raw = localStorage.getItem(buildColumnWidthsStorageKey(projectKey));
     if (!raw) return { ...DEFAULT_COLUMN_WIDTHS };
     const parsed = JSON.parse(raw) as Partial<Record<ColumnKey, number>>;
     const keys: ColumnKey[] = ["title", "state", "priority", "effort", "assignee", "updated"];
@@ -1161,7 +1161,7 @@ function readStoredColumnWidths(projectName: string): Record<ColumnKey, number> 
 }
 
 interface ListViewProps {
-  projectName: string;
+  projectKey: string;
   features: Feature[];
   selectedId: string | null;
   filterState: string | null;
@@ -1211,7 +1211,7 @@ function SortableHeader({ label, column, sort, onSort }: SortableHeaderProps) {
 }
 
 function ListView({
-  projectName,
+  projectKey,
   features,
   selectedId,
   filterState,
@@ -1229,7 +1229,7 @@ function ListView({
 }: ListViewProps) {
   // ── Column resize ────────────────────────────────────────────────────────────
   const [colWidths, setColWidths] = useState<Record<ColumnKey, number>>(
-    () => readStoredColumnWidths(projectName)
+    () => readStoredColumnWidths(projectKey)
   );
   const resizingCol = useRef<ColumnKey | null>(null);
   const resizeStartX = useRef(0);
@@ -1238,12 +1238,12 @@ function ListView({
   const persistColWidths = useCallback(
     (widths: Record<ColumnKey, number>) => {
       try {
-        localStorage.setItem(buildColumnWidthsStorageKey(projectName), JSON.stringify(widths));
+        localStorage.setItem(buildColumnWidthsStorageKey(projectKey), JSON.stringify(widths));
       } catch {
         // localStorage unavailable — non-fatal
       }
     },
-    [projectName]
+    [projectKey]
   );
 
   const startResize = useCallback(
@@ -1782,28 +1782,29 @@ function KanbanView({
 // ── Main Component ────────────────────────────────────────────────────────────
 
 interface FeaturesProps {
-  projectName: string;
+  /** The project's local_key. Also names the per-project localStorage entries. */
+  projectKey: string;
 }
 
-function buildViewStorageKey(projectName: string): string {
-  return `automatic.projects.${projectName}.build.view`;
+function buildViewStorageKey(projectKey: string): string {
+  return `automatic.projects.${projectKey}.build.view`;
 }
 
-function buildFilterStorageKey(projectName: string): string {
-  return `automatic.projects.${projectName}.build.filters`;
+function buildFilterStorageKey(projectKey: string): string {
+  return `automatic.projects.${projectKey}.build.filters`;
 }
 
-function buildSortStorageKey(projectName: string): string {
-  return `automatic.projects.${projectName}.build.sort`;
+function buildSortStorageKey(projectKey: string): string {
+  return `automatic.projects.${projectKey}.build.sort`;
 }
 
-function buildColumnWidthsStorageKey(projectName: string): string {
-  return `automatic.projects.${projectName}.build.columnWidths`;
+function buildColumnWidthsStorageKey(projectKey: string): string {
+  return `automatic.projects.${projectKey}.build.columnWidths`;
 }
 
-function readStoredFilters(projectName: string): { filterState: string | null; filterPriority: string | null } {
+function readStoredFilters(projectKey: string): { filterState: string | null; filterPriority: string | null } {
   try {
-    const raw = localStorage.getItem(buildFilterStorageKey(projectName));
+    const raw = localStorage.getItem(buildFilterStorageKey(projectKey));
     if (!raw) {
       return { filterState: null, filterPriority: null };
     }
@@ -1817,9 +1818,9 @@ function readStoredFilters(projectName: string): { filterState: string | null; f
   }
 }
 
-function readStoredSort(projectName: string): ListSort | null {
+function readStoredSort(projectKey: string): ListSort | null {
   try {
-    const raw = localStorage.getItem(buildSortStorageKey(projectName));
+    const raw = localStorage.getItem(buildSortStorageKey(projectKey));
     if (!raw) {
       return null;
     }
@@ -1844,13 +1845,13 @@ function readStoredSort(projectName: string): ListSort | null {
   }
 }
 
-export default function Features({ projectName }: FeaturesProps) {
+export default function Features({ projectKey }: FeaturesProps) {
   const [features, setFeatures] = useState<Feature[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<"list" | "kanban">(() => {
     try {
-      const stored = localStorage.getItem(buildViewStorageKey(projectName));
+      const stored = localStorage.getItem(buildViewStorageKey(projectKey));
       return stored === "kanban" ? "kanban" : "list";
     } catch {
       return "list";
@@ -1858,9 +1859,9 @@ export default function Features({ projectName }: FeaturesProps) {
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [filterState, setFilterState] = useState<string | null>(() => readStoredFilters(projectName).filterState);
-  const [filterPriority, setFilterPriority] = useState<string | null>(() => readStoredFilters(projectName).filterPriority);
-  const [sort, setSort] = useState<ListSort | null>(() => readStoredSort(projectName));
+  const [filterState, setFilterState] = useState<string | null>(() => readStoredFilters(projectKey).filterState);
+  const [filterPriority, setFilterPriority] = useState<string | null>(() => readStoredFilters(projectKey).filterPriority);
+  const [sort, setSort] = useState<ListSort | null>(() => readStoredSort(projectKey));
   // When true, the list view shows archived features instead of active ones.
   // Archived features are never shown in the Kanban board.
   const [showArchived, setShowArchived] = useState(false);
@@ -1882,7 +1883,7 @@ export default function Features({ projectName }: FeaturesProps) {
     setError(null);
     try {
       const result = await invoke<Feature[]>("list_features", {
-        project: projectName,
+        project: projectKey,
         state: null,
         includeArchived: showArchived,
       });
@@ -1892,7 +1893,7 @@ export default function Features({ projectName }: FeaturesProps) {
     } finally {
       setLoading(false);
     }
-  }, [projectName, showArchived]);
+  }, [projectKey, showArchived]);
 
   // Silent background refresh — does not touch loading/error state so the UI
   // does not flash. Used by the polling interval and post-move sync.
@@ -1901,7 +1902,7 @@ export default function Features({ projectName }: FeaturesProps) {
   const refreshFeatures = useCallback(async () => {
     try {
       const result = await invoke<Feature[]>("list_features", {
-        project: projectName,
+        project: projectKey,
         state: null,
         includeArchived: showArchived,
       });
@@ -1919,7 +1920,7 @@ export default function Features({ projectName }: FeaturesProps) {
     } catch {
       // Silently ignore transient poll failures.
     }
-  }, [projectName, showArchived]);
+  }, [projectKey, showArchived]);
 
   // Initial load
   useEffect(() => {
@@ -1939,58 +1940,58 @@ export default function Features({ projectName }: FeaturesProps) {
     setSelectedId(null);
     setIsCreating(false);
     setShowArchived(false);
-  }, [projectName]);
+  }, [projectKey]);
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(buildViewStorageKey(projectName));
+      const stored = localStorage.getItem(buildViewStorageKey(projectKey));
       setView(stored === "kanban" ? "kanban" : "list");
     } catch {
       setView("list");
     }
-  }, [projectName]);
+  }, [projectKey]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(buildViewStorageKey(projectName), view);
+      localStorage.setItem(buildViewStorageKey(projectKey), view);
     } catch {
       // Ignore storage failures and keep the in-memory preference.
     }
-  }, [projectName, view]);
+  }, [projectKey, view]);
 
   useEffect(() => {
-    const stored = readStoredFilters(projectName);
+    const stored = readStoredFilters(projectKey);
     setFilterState(stored.filterState);
     setFilterPriority(stored.filterPriority);
-  }, [projectName]);
+  }, [projectKey]);
 
   useEffect(() => {
-    setSort(readStoredSort(projectName));
-  }, [projectName]);
+    setSort(readStoredSort(projectKey));
+  }, [projectKey]);
 
   useEffect(() => {
     try {
       localStorage.setItem(
-        buildFilterStorageKey(projectName),
+        buildFilterStorageKey(projectKey),
         JSON.stringify({ filterState, filterPriority })
       );
     } catch {
       // Ignore storage failures and keep the in-memory filters.
     }
-  }, [filterPriority, filterState, projectName]);
+  }, [filterPriority, filterState, projectKey]);
 
   useEffect(() => {
     try {
       if (!sort) {
-        localStorage.removeItem(buildSortStorageKey(projectName));
+        localStorage.removeItem(buildSortStorageKey(projectKey));
         return;
       }
 
-      localStorage.setItem(buildSortStorageKey(projectName), JSON.stringify(sort));
+      localStorage.setItem(buildSortStorageKey(projectKey), JSON.stringify(sort));
     } catch {
       // Ignore storage failures and keep the in-memory sort.
     }
-  }, [projectName, sort]);
+  }, [projectKey, sort]);
 
   // Drag resize handlers
   const handleResizeMouseDown = (e: React.MouseEvent) => {
@@ -2066,7 +2067,7 @@ export default function Features({ projectName }: FeaturesProps) {
   const handleArchiveById = async (id: string) => {
     try {
       const updated = await invoke<Feature>("archive_feature", {
-        project: projectName,
+        project: projectKey,
         featureId: id,
       });
       handleArchived(updated);
@@ -2078,7 +2079,7 @@ export default function Features({ projectName }: FeaturesProps) {
   const handleUnarchiveById = async (id: string) => {
     try {
       const updated = await invoke<Feature>("unarchive_feature", {
-        project: projectName,
+        project: projectKey,
         featureId: id,
       });
       handleUnarchived(updated);
@@ -2109,7 +2110,7 @@ export default function Features({ projectName }: FeaturesProps) {
     );
     try {
       await invoke("move_feature", {
-        project: projectName,
+        project: projectKey,
         featureId,
         newState,
         newPosition,
@@ -2199,7 +2200,7 @@ export default function Features({ projectName }: FeaturesProps) {
           </div>
         ) : view === "list" ? (
           <ListView
-            projectName={projectName}
+            projectKey={projectKey}
             features={features}
             selectedId={selectedId}
             filterState={filterState}
@@ -2243,14 +2244,14 @@ export default function Features({ projectName }: FeaturesProps) {
           >
             {isCreating ? (
               <CreateFeaturePanel
-                projectName={projectName}
+                projectKey={projectKey}
                 allTags={allTags}
                 onCreated={handleCreated}
                 onCancel={() => setIsCreating(false)}
               />
             ) : selectedId ? (
               <DetailPanel
-                projectName={projectName}
+                projectKey={projectKey}
                 featureId={selectedId}
                 allTags={allTags}
                 onClose={() => setSelectedId(null)}

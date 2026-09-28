@@ -37,7 +37,7 @@ interface ContextEditorProps {
   onChanged: () => void;
   onRenamed: (newSlug: string) => void;
   onDeleted: () => void;
-  onNavigateToProject?: (name: string) => void;
+  onNavigateToProject?: (projectKey: string) => void;
   onNavigateToGroup?: (name: string) => void;
 }
 

@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { rowProjectKey } from "../lib/projectIdentity";
+import { SELECTED_PROJECT_STORAGE_KEY } from "../lib/projectStorageMigration";
 import { AlertCircle, ArrowRight, ChevronDown, ChevronRight, Code, FileText, FolderOpen, Layers, Lightbulb, RefreshCw, Server, Sparkles, X } from "lucide-react";
 
 interface RecRowProps {
@@ -78,7 +80,8 @@ interface Recommendation {
 }
 
 interface RecommendationsProps {
-  onNavigateToProject: (name: string, tab?: string) => void;
+  /** Opens a project by local_key (or by name for an orphan row). */
+  onNavigateToProject: (projectKey: string, tab?: string) => void;
   onNavigateToSkillStoreWithResult?: (result: { id: string; name: string; source: string; installs: number }) => void;
   onNavigateToDiscoverMcp?: (slug: string) => void;
   onNavigateToDiscoverTemplates?: (templateName: string) => void;
@@ -135,20 +138,29 @@ export default function Recommendations({
     return () => window.removeEventListener("recommendations-updated", handler);
   }, [load]);
 
-  const handleProjectClick = (name: string, tab?: string) => {
-    localStorage.setItem("automatic.projects.selected", name);
-    onNavigateToProject(name, tab);
+  const handleProjectClick = (projectKey: string, tab?: string) => {
+    try {
+      localStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, projectKey);
+    } catch (err: unknown) {
+      console.warn("Could not remember the selected project:", err);
+    }
+    onNavigateToProject(projectKey, tab);
   };
+
+  // Rows carry the display name in `project` and the local_key when the
+  // project is registered. Group by key; show the name.
+  const projectLabels = new Map(recommendations.map((r) => [rowProjectKey(r), r.project] as const));
 
   // Separate normal recs from AI suggestion rollup sources, grouped by project then kind.
   const groupedNormal = recommendations
     .filter((r) => !AI_SUGGESTION_SOURCES.has(r.source))
     .reduce<Map<string, Map<string, Recommendation[]>>>((map, rec) => {
-      const projectMap = map.get(rec.project) ?? new Map<string, Recommendation[]>();
+      const key = rowProjectKey(rec);
+      const projectMap = map.get(key) ?? new Map<string, Recommendation[]>();
       const list = projectMap.get(rec.kind) ?? [];
       list.push(rec);
       projectMap.set(rec.kind, list);
-      map.set(rec.project, projectMap);
+      map.set(key, projectMap);
       return map;
     }, new Map());
 
@@ -156,10 +168,11 @@ export default function Recommendations({
   const aiRollupByProject = recommendations
     .filter((r) => AI_SUGGESTION_SOURCES.has(r.source))
     .reduce<Map<string, { skillCount: number; mcpCount: number }>>((map, rec) => {
-      const entry = map.get(rec.project) ?? { skillCount: 0, mcpCount: 0 };
+      const key = rowProjectKey(rec);
+      const entry = map.get(key) ?? { skillCount: 0, mcpCount: 0 };
       if (rec.source === "automatic-ai-skills") entry.skillCount++;
       if (rec.source === "automatic-ai-mcp") entry.mcpCount++;
-      map.set(rec.project, entry);
+      map.set(key, entry);
       return map;
     }, new Map());
 
@@ -213,15 +226,16 @@ export default function Recommendations({
           </div>
         ) : (
           <div className="space-y-6 max-w-2xl">
-            {[...allProjects].map((projectName) => {
-              const normalKindGroups = groupedNormal.get(projectName) ?? new Map<string, Recommendation[]>();
-              const aiRollup = aiRollupByProject.get(projectName);
+            {[...allProjects].map((projectKey) => {
+              const normalKindGroups = groupedNormal.get(projectKey) ?? new Map<string, Recommendation[]>();
+              const aiRollup = aiRollupByProject.get(projectKey);
+              const projectName = projectLabels.get(projectKey) ?? projectKey;
 
               return (
-                <section key={projectName}>
+                <section key={projectKey}>
                   {/* Project heading */}
                   <button
-                    onClick={() => handleProjectClick(projectName)}
+                    onClick={() => handleProjectClick(projectKey)}
                     className="flex items-center gap-2 mb-3 group"
                   >
                     <FolderOpen size={13} className="text-text-muted group-hover:text-brand transition-colors" />
@@ -240,7 +254,7 @@ export default function Recommendations({
                         badge={<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-brand/10 text-brand border border-brand/20 leading-none flex items-center gap-1"><Sparkles size={8} /> AI</span>}
                         body={`The AI has identified ${aiRollup.skillCount} skill${aiRollup.skillCount !== 1 ? "s" : ""} that may benefit this project. Open the project and go to the Skills tab to review and add them.`}
                         linkLabel={<><Code size={10} /> Open project → Skills tab</>}
-                        onLinkClick={() => handleProjectClick(projectName, "skills")}
+                        onLinkClick={() => handleProjectClick(projectKey, "skills")}
                       />
                     )}
 
@@ -252,7 +266,7 @@ export default function Recommendations({
                         badge={<span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-brand/10 text-brand border border-brand/20 leading-none flex items-center gap-1"><Sparkles size={8} /> AI</span>}
                         body={`The AI has identified ${aiRollup.mcpCount} MCP server${aiRollup.mcpCount !== 1 ? "s" : ""} that may benefit this project. Open the project and go to the MCP Servers tab to review and add them.`}
                         linkLabel={<><Server size={10} /> Open project → MCP Servers tab</>}
-                        onLinkClick={() => handleProjectClick(projectName, "mcp_servers")}
+                        onLinkClick={() => handleProjectClick(projectKey, "mcp_servers")}
                       />
                     )}
 
@@ -269,7 +283,7 @@ export default function Recommendations({
                           ) : undefined}
                           body={recs.map((r) => r.title).join(", ")}
                           linkLabel={<>Open project <ArrowRight size={10} /></>}
-                          onLinkClick={() => handleProjectClick(projectName, "recommendations")}
+                          onLinkClick={() => handleProjectClick(projectKey, "recommendations")}
                         />
                       );
                     })}

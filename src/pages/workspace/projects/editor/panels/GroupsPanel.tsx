@@ -3,11 +3,17 @@
 import { ExternalLink, Layers, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 interface GroupsPanelProps {
+  /** The project's local_key, used to reload its memberships. */
+  projectKey: string;
+  /**
+   * The project's display name. Group files still list members by name on
+   * the wire, so membership edits use it.
+   */
   projectName: string;
   projectGroupMemberships: string[];
   allGroups: string[];
   loadingGroups: boolean;
-  reloadGroups: (projectName: string) => Promise<void>;
+  reloadGroups: (projectKey: string) => Promise<void>;
   onAddToGroup: (groupName: string, projectName: string) => Promise<void> | void;
   onRemoveFromGroup: (groupName: string, projectName: string) => Promise<void> | void;
   onRemoveFromAllGroups: (projectName: string) => Promise<void> | void;
@@ -15,6 +21,7 @@ interface GroupsPanelProps {
 }
 
 export function GroupsPanel({
+  projectKey,
   projectName,
   projectGroupMemberships,
   allGroups,
@@ -41,7 +48,7 @@ export function GroupsPanel({
             )}
           </div>
           <button
-            onClick={() => reloadGroups(projectName)}
+            onClick={() => reloadGroups(projectKey)}
             disabled={loadingGroups}
             className="text-[11px] text-text-muted hover:text-text-base transition-colors flex items-center gap-1 disabled:opacity-40"
             title="Refresh"

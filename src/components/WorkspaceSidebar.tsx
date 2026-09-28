@@ -4,6 +4,8 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight, Layers, LayoutGrid, Plus, Trash2 } from "lucide-react";
 import { trackProjectDeleted } from "../lib/analytics";
 import { resolveGroupDrop, UNGROUPED_DROP_TARGET } from "../lib/groupDrop";
+import { loadProjectSummaries, projectKeyOf, projectNameForKey, resolveProjectKey } from "../lib/projectIdentity";
+import type { ProjectSummary } from "../pages/workspace/projects/types";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -17,19 +19,20 @@ interface ProjectGroup {
 
 interface SidebarGroup {
   name: string;
+  /** Member project local_keys. The group file lists names. */
   projects: string[];
 }
 
 interface WorkspaceSidebarProps {
   activeTab: string;
   onTabClick: (id: string) => void;
-  onNavigateToProject: (name: string) => void;
+  onNavigateToProject: (projectKey: string) => void;
   /** Currently active group filter for the Projects page. */
   activeGroupFilter: string | null;
   /** Called when a group name is clicked — filters the Projects page to that group. */
   onFilterByGroup: (groupName: string | null) => void;
-  /** Name of the project currently open in the editor, if any. */
-  activeProjectName: string | null;
+  /** local_key of the project currently open in the editor, if any. */
+  activeProjectKey: string | null;
 }
 
 /** Label for the key that adds a dragged project to a group without moving it. */
@@ -61,9 +64,11 @@ function NavItem({ id, icon: Icon, label, isActive, onClick }: {
 
 // ── WorkspaceSidebar ─────────────────────────────────────────────────────────
 
-export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToProject, activeGroupFilter, onFilterByGroup, activeProjectName }: WorkspaceSidebarProps) {
+export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToProject, activeGroupFilter, onFilterByGroup, activeProjectKey }: WorkspaceSidebarProps) {
   // ── Project + group data ─────────────────────────────────────────────────
+  /** Project local_keys, sorted by display name. */
   const [projects, setProjects] = useState<string[]>([]);
+  const [summaries, setSummaries] = useState<ProjectSummary[]>([]);
   const [groups, setGroups] = useState<SidebarGroup[]>([]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
     try {
@@ -86,9 +91,11 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   // ── Load data ────────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
     try {
-      const projectNames: string[] = await invoke("get_projects");
-      const sortedProjectNames = [...projectNames].sort((a, b) => a.localeCompare(b));
-      setProjects(sortedProjectNames);
+      const loadedSummaries = await loadProjectSummaries();
+      const sorted = [...loadedSummaries].sort((a, b) => a.name.localeCompare(b.name));
+      const sortedKeys = sorted.map(projectKeyOf);
+      setSummaries(sorted);
+      setProjects(sortedKeys);
 
       const groupNames: string[] = await invoke("list_groups");
       const loaded: SidebarGroup[] = [];
@@ -98,7 +105,9 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
           const g = JSON.parse(raw);
           loaded.push({
             name: g.name,
-            projects: (g.projects ?? []).filter((projectName: string) => sortedProjectNames.includes(projectName)),
+            projects: ((g.projects ?? []) as string[])
+              .map((member) => resolveProjectKey(sorted, member))
+              .filter((key): key is string => key !== null),
           });
         } catch {
           // Skip unreadable groups
@@ -130,9 +139,12 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
     window.dispatchEvent(new CustomEvent("groups-updated"));
   };
 
-  const emitProjectRemoved = (name: string) => {
-    window.dispatchEvent(new CustomEvent("project-removed", { detail: { name } }));
+  const emitProjectRemoved = (name: string, localKey: string) => {
+    window.dispatchEvent(new CustomEvent("project-removed", { detail: { name, local_key: localKey } }));
   };
+
+  /** Display name for a project key. Group files store names, so edits use it. */
+  const nameForKey = (key: string): string => projectNameForKey(summaries, key) ?? key;
 
   // ── Derived data ─────────────────────────────────────────────────────────
   const groupedProjectNames = new Set(groups.flatMap((g) => g.projects));
@@ -174,7 +186,8 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   }, [creatingGroup]);
 
   // ── Drag: add project to group ───────────────────────────────────────────
-  const addProjectToGroup = async (projectName: string, groupName: string) => {
+  const addProjectToGroup = async (projectKey: string, groupName: string) => {
+    const projectName = nameForKey(projectKey);
     try {
       const raw: string = await invoke("read_group", { name: groupName });
       const g: ProjectGroup = JSON.parse(raw);
@@ -191,14 +204,17 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
     }
   };
 
-  const removeProjectFromGroup = async (projectName: string, groupName: string) => {
+  const removeProjectFromGroup = async (projectKey: string, groupName: string) => {
+    const projectName = nameForKey(projectKey);
     try {
       const raw: string = await invoke("read_group", { name: groupName });
       const g: ProjectGroup = JSON.parse(raw);
       g.projects = g.projects.filter((p: string) => p !== projectName);
       g.updated_at = new Date().toISOString();
       await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
-      const toSync = [...g.projects, projectName];
+      // Remaining members are names from the group file; the removed
+      // project is addressed by its key.
+      const toSync = [...g.projects, projectKey];
       for (const name of toSync) {
         invoke("sync_project", { name }).catch(() => {});
       }
@@ -207,17 +223,18 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
     }
   };
 
-  const removeProjectFromAllGroups = async (projectName: string) => {
+  const removeProjectFromAllGroups = async (projectKey: string) => {
     for (const group of groups) {
-      if (group.projects.includes(projectName)) {
-        await removeProjectFromGroup(projectName, group.name);
+      if (group.projects.includes(projectKey)) {
+        await removeProjectFromGroup(projectKey, group.name);
       }
     }
   };
 
-  const handleRemoveProject = async (projectName: string, event: React.MouseEvent<HTMLButtonElement>) => {
+  const handleRemoveProject = async (projectKey: string, event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    const projectName = nameForKey(projectKey);
 
     const confirmed = await ask(
       `Remove project "${projectName}" from Automatic?\n\n(This only removes the project from this app. Your actual project files will NOT be deleted.)`,
@@ -226,19 +243,20 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
     if (!confirmed) return;
 
     try {
-      await invoke("delete_project", { name: projectName });
+      await invoke("delete_project", { name: projectKey });
       trackProjectDeleted(projectName);
       await loadData();
       emitGroupsUpdated();
-      emitProjectRemoved(projectName);
+      emitProjectRemoved(projectName, projectKey);
     } catch (error) {
       console.error("Failed to remove project:", error);
     }
   };
 
   // ── Drag handlers ────────────────────────────────────────────────────────
-  const handleDragStart = (projectName: string, sourceGroup: string | null, e: React.PointerEvent) => {
+  const handleDragStart = (projectKey: string, sourceGroup: string | null, e: React.PointerEvent) => {
     e.preventDefault();
+    const projectName = nameForKey(projectKey);
     const startX = e.clientX;
     const startY = e.clientY;
 
@@ -285,12 +303,12 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
       const action = resolveGroupDrop(sourceGroup, targetGroup, ev.altKey);
       if (action.kind === "none") return;
       if (action.kind === "remove-all") {
-        await removeProjectFromAllGroups(projectName);
+        await removeProjectFromAllGroups(projectKey);
       } else {
         if (action.kind === "move") {
-          await removeProjectFromGroup(projectName, action.from);
+          await removeProjectFromGroup(projectKey, action.from);
         }
-        await addProjectToGroup(projectName, action.to);
+        await addProjectToGroup(projectKey, action.to);
       }
       await loadData();
       emitGroupsUpdated();
@@ -301,18 +319,19 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   };
 
   // ── Render ───────────────────────────────────────────────────────────────
-  const renderProjectRow = (projectName: string, sourceGroup: string | null) => {
-    const isActive = activeTab === "projects" && projectName === activeProjectName;
+  const renderProjectRow = (projectKey: string, sourceGroup: string | null) => {
+    const isActive = activeTab === "projects" && projectKey === activeProjectKey;
+    const projectName = nameForKey(projectKey);
     return (
-      <div key={projectName} className="group/project relative">
+      <div key={projectKey} className="group/project relative">
         <button
-          onClick={() => onNavigateToProject(projectName)}
+          onClick={() => onNavigateToProject(projectKey)}
           className={`w-full truncate rounded-md py-1.5 pl-[34px] pr-9 text-left text-[13px] font-normal transition-colors hover:bg-bg-sidebar hover:text-text-base ${
             isActive ? "bg-bg-sidebar text-text-base" : "text-text-muted"
           }`}
           onPointerDown={(e) => {
             if (e.button !== 0) return;
-            const timeout = setTimeout(() => handleDragStart(projectName, sourceGroup, e), 200);
+            const timeout = setTimeout(() => handleDragStart(projectKey, sourceGroup, e), 200);
             const cancel = () => { clearTimeout(timeout); window.removeEventListener("pointerup", cancel); };
             window.addEventListener("pointerup", cancel, { once: true });
           }}
@@ -321,7 +340,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
         </button>
         <button
           type="button"
-          onClick={(event) => void handleRemoveProject(projectName, event)}
+          onClick={(event) => void handleRemoveProject(projectKey, event)}
           className="pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-text-muted/50 opacity-0 transition-[background-color,color,opacity] hover:bg-danger/10 hover:text-danger group-hover/project:pointer-events-auto group-hover/project:opacity-100 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100"
           aria-label={`Remove ${projectName}`}
           title={`Remove ${projectName}`}
@@ -341,7 +360,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
             id="projects"
             icon={LayoutGrid}
             label="View All"
-            isActive={activeTab === "projects" && activeGroupFilter === null && !activeProjectName}
+            isActive={activeTab === "projects" && activeGroupFilter === null && !activeProjectKey}
             onClick={() => {
               onFilterByGroup(null);
               onTabClick("projects");
@@ -390,11 +409,11 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
         <div className="mb-1 space-y-0.5">
           {groups.map((group) => {
             const isCollapsed = collapsedGroups.has(group.name);
-            const isActiveFilter = activeGroupFilter === group.name && activeTab === "projects" && !activeProjectName;
+            const isActiveFilter = activeGroupFilter === group.name && activeTab === "projects" && !activeProjectKey;
             const Chevron = isCollapsed ? ChevronRight : ChevronDown;
             const visibleProjects = group.projects
               .filter((p) => projects.includes(p))
-              .sort((a, b) => a.localeCompare(b));
+              .sort((a, b) => nameForKey(a).localeCompare(nameForKey(b)));
             return (
               <div key={group.name} data-sidebar-group={group.name}>
                 <button
@@ -420,7 +439,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
                 </button>
                 {!isCollapsed && (
                   <div>
-                    {visibleProjects.map((projectName) => renderProjectRow(projectName, group.name))}
+                    {visibleProjects.map((projectKey) => renderProjectRow(projectKey, group.name))}
                     {visibleProjects.length === 0 && (
                       <div className="px-3 py-1.5 pl-[34px] text-[11px] italic text-text-muted/35">
                         Empty
@@ -442,7 +461,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
                 onTabClick("projects");
               }}
               className={`flex w-full items-center gap-2 rounded-md py-1.5 pl-3 pr-3 text-[13px] font-medium transition-colors ${
-                activeGroupFilter === "__ungrouped__" && activeTab === "projects" && !activeProjectName
+                activeGroupFilter === "__ungrouped__" && activeTab === "projects" && !activeProjectKey
                   ? "bg-bg-sidebar text-text-base"
                   : "text-text-muted hover:bg-bg-sidebar hover:text-text-base"
               }`}
@@ -454,7 +473,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
                 {ungroupedProjects.length}
               </span>
             </button>
-            {ungroupedProjects.map((projectName) => renderProjectRow(projectName, null))}
+            {ungroupedProjects.map((projectKey) => renderProjectRow(projectKey, null))}
           </div>
         )}
       </div>

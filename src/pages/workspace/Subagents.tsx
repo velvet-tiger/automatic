@@ -948,7 +948,7 @@ export default function Subagents() {
                     </div>
                     <ul className="space-y-1.5 max-h-[108px] overflow-y-auto custom-scrollbar">
                       {referencingProjects.map(project => (
-                        <li key={project.name} className="flex items-center justify-between gap-3 py-1">
+                        <li key={project.local_key || project.name} className="flex items-center justify-between gap-3 py-1">
                           <span className="text-[13px] text-text-base truncate">{project.name}</span>
                         </li>
                       ))}

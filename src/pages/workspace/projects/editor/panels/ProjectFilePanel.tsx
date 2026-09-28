@@ -12,7 +12,8 @@ interface ProjectFilePanelProps {
   project: Project;
   setProject: (next: Project) => void;
   setDirty: (v: boolean) => void;
-  selectedName: string | null;
+  /** local_key of the open project; null while creating. */
+  selectedKey: string | null;
   projectFiles: ProjectFileInfo[];
   activeProjectFile: string | null;
   setActiveProjectFile: (v: string | null) => void;
@@ -41,7 +42,7 @@ interface ProjectFilePanelProps {
 
 export function ProjectFilePanel(props: ProjectFilePanelProps) {
   const {
-    project, setProject, setDirty, selectedName,
+    project, setProject, setDirty, selectedKey,
     projectFiles, activeProjectFile, setActiveProjectFile,
     projectFileContent, setProjectFileContent,
     projectFileEditing, setProjectFileEditing,
@@ -64,13 +65,13 @@ export function ProjectFilePanel(props: ProjectFilePanelProps) {
             <div className="flex rounded overflow-hidden border border-border-strong/40">
               <button
                 onClick={async () => {
-                  if (project.instruction_mode === "unified" || !selectedName) {
+                  if (project.instruction_mode === "unified" || !selectedKey) {
                     return;
                   }
                   let inspection: UnifiedInspection;
                   try {
                     const raw = await invoke<string>("inspect_unified_candidates", {
-                      name: selectedName,
+                      name: selectedKey,
                     });
                     inspection = JSON.parse(raw) as UnifiedInspection;
                   } catch (e) {
@@ -81,8 +82,8 @@ export function ProjectFilePanel(props: ProjectFilePanelProps) {
                     const updated = { ...project, instruction_mode: "unified", updated_at: new Date().toISOString() };
                     setProject(updated);
                     setDirty(false);
-                    await invoke("save_project", { name: selectedName, data: JSON.stringify(updated, null, 2) });
-                    await loadProjectFiles(selectedName);
+                    await invoke("save_project", { name: selectedKey, data: JSON.stringify(updated, null, 2) });
+                    await loadProjectFiles(selectedKey);
                     notifyProjectUpdated();
                     return;
                   }
@@ -99,12 +100,12 @@ export function ProjectFilePanel(props: ProjectFilePanelProps) {
               </button>
               <button
                 onClick={async () => {
-                  if (project.instruction_mode !== "per-agent" && selectedName) {
+                  if (project.instruction_mode !== "per-agent" && selectedKey) {
                     const updated = { ...project, instruction_mode: "per-agent", updated_at: new Date().toISOString() };
                     setProject(updated);
                     setDirty(false);
-                    await invoke("save_project", { name: selectedName, data: JSON.stringify(updated, null, 2) });
-                    await loadProjectFiles(selectedName);
+                    await invoke("save_project", { name: selectedKey, data: JSON.stringify(updated, null, 2) });
+                    await loadProjectFiles(selectedKey);
                     notifyProjectUpdated();
                   }
                 }}
@@ -147,7 +148,7 @@ export function ProjectFilePanel(props: ProjectFilePanelProps) {
                         onClick={async () => {
                           if (projectFileDirty && !(await ask("Discard unsaved changes?", { title: "Unsaved Changes", kind: "warning" }))) return;
                           setActiveProjectFile(f.filename);
-                          if (selectedName) await loadProjectFileContent(selectedName, f.filename);
+                          if (selectedKey) await loadProjectFileContent(selectedKey, f.filename);
                         }}
                         className={`w-full text-left px-2.5 py-1.5 rounded-md text-[13px] font-medium transition-colors flex items-center gap-2 ${
                           activeProjectFile === f.filename
@@ -316,9 +317,9 @@ export function ProjectFilePanel(props: ProjectFilePanelProps) {
                           <button
                             onClick={() => {
                               setProjectFileEditing(false);
-                              if (projectFileDirty && selectedName && activeProjectFile) {
+                              if (projectFileDirty && selectedKey && activeProjectFile) {
                                 if (fileExists) {
-                                  loadProjectFileContent(selectedName, activeProjectFile);
+                                  loadProjectFileContent(selectedKey, activeProjectFile);
                                 } else {
                                   setProjectFileContent("");
                                   setProjectFileDirty(false);

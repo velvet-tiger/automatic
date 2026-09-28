@@ -22,7 +22,7 @@ export default function Contexts({
   onNavigateToProject,
   onNavigateToGroup,
 }: {
-  onNavigateToProject?: (projectName: string) => void;
+  onNavigateToProject?: (projectKey: string) => void;
   onNavigateToGroup?: (groupName: string) => void;
 }) {
   const [contexts, setContexts] = useState<Context[]>([]);

@@ -16,7 +16,7 @@ describe("Profiles (smoke)", () => {
       get_skills: [],
       list_mcp_server_configs: [],
       get_rules: [],
-      get_projects: [],
+      get_project_summaries: [],
     });
   });
 
@@ -47,7 +47,7 @@ describe("Profiles (smoke)", () => {
       get_skills: [],
       list_mcp_server_configs: [],
       get_rules: [],
-      get_projects: [],
+      get_project_summaries: [],
     });
     render(<Profiles />);
     await waitFor(() => {

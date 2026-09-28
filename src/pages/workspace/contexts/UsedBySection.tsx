@@ -3,10 +3,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { Check, Folder, Layers, Plus, Search, X } from "lucide-react";
 import { ContextDialog, DialogError, PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from "./ContextDialog";
 import type { ContextReferences, ContextTarget } from "./types";
+import type { ProjectSummary } from "../projects/types";
+import { loadProjectSummaries, projectKeyOf } from "../../../lib/projectIdentity";
+
+/** The key for a referenced project name: its local_key when known, else the name. */
+function referencedProjectKey(refs: ContextReferences, name: string): string {
+  return refs.project_local_keys?.[name] ?? name;
+}
 
 interface UsedBySectionProps {
   contextSlug: string;
-  onNavigateToProject?: (name: string) => void;
+  /** Opens a project by local_key (or by name for an orphan reference). */
+  onNavigateToProject?: (projectKey: string) => void;
   onNavigateToGroup?: (name: string) => void;
 }
 
@@ -66,16 +74,19 @@ export function UsedBySection({ contextSlug, onNavigateToProject, onNavigateToGr
               onDetach={() => void detach({ type: "group", name })}
             />
           ))}
-          {refs.projects.map((name) => (
-            <Row
-              key={`p:${name}`}
-              icon={<Folder size={13} className="text-text-muted" />}
-              label={name}
-              note="Project"
-              onOpen={() => onNavigateToProject?.(name)}
-              onDetach={() => void detach({ type: "project", name })}
-            />
-          ))}
+          {refs.projects.map((name) => {
+            const key = referencedProjectKey(refs, name);
+            return (
+              <Row
+                key={`p:${key}`}
+                icon={<Folder size={13} className="text-text-muted" />}
+                label={name}
+                note="Project"
+                onOpen={() => onNavigateToProject?.(key)}
+                onDetach={() => void detach({ type: "project", name: key })}
+              />
+            );
+          })}
         </ul>
       )}
       {picking && (
@@ -131,7 +142,7 @@ function AttachDialog({
   onClose: () => void;
   onAttached: () => Promise<void>;
 }) {
-  const [projects, setProjects] = useState<string[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [groups, setGroups] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<ContextTarget | null>(null);
@@ -141,8 +152,8 @@ function AttachDialog({
   useEffect(() => {
     void (async () => {
       try {
-        const [p, g] = await Promise.all([invoke<string[]>("get_projects"), invoke<string[]>("list_groups")]);
-        setProjects([...p].sort((a, b) => a.localeCompare(b)));
+        const [p, g] = await Promise.all([loadProjectSummaries(), invoke<string[]>("list_groups")]);
+        setProjects([...p].sort((a, b) => a.name.localeCompare(b.name)));
         setGroups([...g].sort((a, b) => a.localeCompare(b)));
       } catch (err) {
         setError(`Couldn't load projects and groups: ${err}`);
@@ -167,7 +178,8 @@ function AttachDialog({
     }
   };
 
-  const option = (target: ContextTarget, isAttached: boolean) => {
+  /** `label` is shown; a project target's `name` holds its local_key. */
+  const option = (target: ContextTarget, isAttached: boolean, label: string = target.name) => {
     const isSelected = selected?.type === target.type && selected.name === target.name;
     return (
       <li key={`${target.type}:${target.name}`}>
@@ -180,7 +192,7 @@ function AttachDialog({
           } disabled:cursor-default disabled:hover:bg-transparent`}
         >
           {target.type === "group" ? <Layers size={13} className="text-text-muted" /> : <Folder size={13} className="text-text-muted" />}
-          <span className="flex-1 text-[13px] text-text-base truncate">{target.name}</span>
+          <span className="flex-1 text-[13px] text-text-base truncate">{label}</span>
           {isAttached && <span className="flex items-center gap-1 text-[11px] text-text-muted"><Check size={11} /> Attached</span>}
         </button>
       </li>
@@ -188,7 +200,8 @@ function AttachDialog({
   };
 
   const visibleGroups = groups.filter(match);
-  const visibleProjects = projects.filter(match);
+  const visibleProjects = projects.filter((p) => match(p.name));
+  const attachedProjectKeys = new Set(attached.projects.map((name) => referencedProjectKey(attached, name)));
 
   return (
     <ContextDialog
@@ -224,7 +237,10 @@ function AttachDialog({
       {visibleProjects.length > 0 && (
         <div>
           <p className="text-[11px] font-medium text-text-muted mb-1">Projects</p>
-          <ul className="space-y-0.5">{visibleProjects.map((name) => option({ type: "project", name }, attached.projects.includes(name)))}</ul>
+          <ul className="space-y-0.5">{visibleProjects.map((p) => {
+            const key = projectKeyOf(p);
+            return option({ type: "project", name: key }, attachedProjectKeys.has(key), p.name);
+          })}</ul>
         </div>
       )}
       {visibleGroups.length === 0 && visibleProjects.length === 0 && (

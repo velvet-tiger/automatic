@@ -215,10 +215,12 @@ function App() {
   const [activeGroupFilter, setActiveGroupFilter] = useState<string | null>(null);
 
   // ── Currently open project (drives sidebar active-project highlighting) ────
-  const [activeProjectName, setActiveProjectName] = useState<string | null>(null);
+  // Holds the project's local_key; names are display-only.
+  const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
 
   // ── Pending navigation state ─────────────────────────────────────────────
-  const [pendingProject, setPendingProject] = useState<string | null>(null);
+  /** local_key (or, for an orphan row, the name) of the project to open. */
+  const [pendingProjectKey, setPendingProjectKey] = useState<string | null>(null);
   const [pendingProjectTab, setPendingProjectTab] = useState<string | null>(null);
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
   const [pendingSkill, setPendingSkill] = useState<string | null>(null);
@@ -325,8 +327,13 @@ function App() {
   }, []);
 
   // ── Navigation helpers ───────────────────────────────────────────────────
-  const navigateToProject = (projectName: string, tab?: string) => {
-    setPendingProject(projectName);
+  /**
+   * Open a project's editor. `projectKey` is the project's local_key; a name
+   * is accepted too and resolved by the Projects page (used for rows that
+   * name a project with no key).
+   */
+  const navigateToProject = (projectKey: string, tab?: string) => {
+    setPendingProjectKey(projectKey);
     setPendingProjectTab(tab ?? null);
     setActiveTabWithSection("projects");
   };
@@ -599,7 +606,7 @@ function App() {
               onNavigateToProject={navigateToProject}
               activeGroupFilter={activeGroupFilter}
               onFilterByGroup={setActiveGroupFilter}
-              activeProjectName={activeProjectName}
+              activeProjectKey={activeProjectKey}
             />
           )}
 
@@ -736,8 +743,8 @@ function App() {
             <div className="flex-1 h-full">
               <Projects
                 resetKey={projectsResetKey}
-                initialProject={pendingProject}
-                onInitialProjectConsumed={() => setPendingProject(null)}
+                initialProject={pendingProjectKey}
+                onInitialProjectConsumed={() => setPendingProjectKey(null)}
                 initialProjectTab={pendingProjectTab}
                 onInitialProjectTabConsumed={() => setPendingProjectTab(null)}
                 onNavigateToSkill={navigateToSkill}
@@ -751,7 +758,7 @@ function App() {
                 initialCreateWithTemplate={pendingCreateWithTemplate}
                 onInitialCreateWithTemplateConsumed={() => setPendingCreateWithTemplate(null)}
                 filterGroup={activeGroupFilter}
-                onActiveProjectChange={setActiveProjectName}
+                onActiveProjectChange={setActiveProjectKey}
               />
             </div>
           )}

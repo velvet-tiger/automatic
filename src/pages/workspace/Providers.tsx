@@ -95,7 +95,8 @@ function CapabilityRow({ label, description, unsupportedDescription, supported }
 }
 
 interface ProvidersProps {
-  onNavigateToProject?: (projectName: string) => void;
+  /** Opens a project by local_key (or by name for a row without one). */
+  onNavigateToProject?: (projectKey: string) => void;
 }
 
 type DetailTab = "details" | "management" | "mcp" | "projects";
@@ -540,9 +541,9 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
                     ) : (
                       <ul className="space-y-2">
                         {selected.projects.map((p) => (
-                          <li key={p.name}>
+                          <li key={p.local_key || p.name}>
                             <button
-                              onClick={() => onNavigateToProject?.(p.name)}
+                              onClick={() => onNavigateToProject?.(p.local_key || p.name)}
                               className={`w-full flex items-center gap-3 px-3 py-3 bg-bg-input rounded-lg border border-border-strong/40 text-left transition-colors ${onNavigateToProject ? "hover:bg-bg-sidebar hover:border-brand/40 group cursor-pointer" : "cursor-default"}`}
                             >
                               <div className={ICONS.project.iconBox}>

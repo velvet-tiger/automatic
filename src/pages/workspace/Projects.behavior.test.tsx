@@ -41,11 +41,23 @@ function emptyProject(name: string) {
   };
 }
 
+/** A `get_project_summaries` row whose local_key is `key-<name>`. */
+function summary(name: string) {
+  return { name, local_key: `key-${name}`, id: `id-${name}`, directory: "/tmp/" + name };
+}
+
+/** Commands take a local_key; map it back to the display name for fixtures. */
+function nameFromIdentifier(identifier: string | undefined): string {
+  if (!identifier) return "x";
+  return identifier.startsWith("key-") ? identifier.slice(4) : identifier;
+}
+
 function baselineRoutes(overrides: Record<string, unknown> = {}) {
   return {
     // List + details
-    get_projects: [],
-    read_project: (args: any) => JSON.stringify(emptyProject(args?.name ?? "x")),
+    get_project_summaries: [],
+    read_project: (args: any) =>
+      JSON.stringify({ ...emptyProject(nameFromIdentifier(args?.name)), local_key: args?.name ?? "x" }),
     // Per-project drift + problems
     check_project_drift: JSON.stringify({ drifted: false, files: [] }),
     check_project_problems: JSON.stringify({ problems: [] }),
@@ -79,7 +91,7 @@ function baselineRoutes(overrides: Record<string, unknown> = {}) {
     get_project_activity_count: 0,
     get_project_file_info: JSON.stringify([]),
     autodetect_project_dependencies: (args: any) =>
-      JSON.stringify(emptyProject(args?.name ?? "x")),
+      JSON.stringify(emptyProject(nameFromIdentifier(args?.name))),
     evaluate_project_recommendations: [],
     list_recommendations_by_source: [],
     get_ai_recommendations_timestamp: null,
@@ -97,15 +109,15 @@ describe("Projects — characterization", () => {
     localStorage.clear();
   });
 
-  it("B1: list renders project names from get_projects", async () => {
-    mockInvoke(baselineRoutes({ get_projects: ["alpha", "beta"] }));
+  it("B1: list renders project names from get_project_summaries", async () => {
+    mockInvoke(baselineRoutes({ get_project_summaries: [summary("alpha"), summary("beta")] }));
     renderProjects();
     expect(await screen.findByText("alpha")).toBeInTheDocument();
     expect(await screen.findByText("beta")).toBeInTheDocument();
   });
 
   it("B2: clicking a project card opens the editor (calls read_project and shows project title h1)", async () => {
-    mockInvoke(baselineRoutes({ get_projects: ["alpha"] }));
+    mockInvoke(baselineRoutes({ get_project_summaries: [summary("alpha")] }));
     renderProjects();
     const card = await screen.findByRole("button", { name: /alpha/i });
     await userEvent.click(card);
@@ -117,13 +129,13 @@ describe("Projects — characterization", () => {
     });
     // The back button labelled "Projects" is the editor chrome
     expect(screen.getByTitle("Back to all projects")).toBeInTheDocument();
-    // read_project was invoked for "alpha"
+    // read_project was invoked with alpha's local_key, not its name
     const calls = invokeMock.mock.calls.map((c) => [c[0], c[1]]);
-    expect(calls.some(([cmd, args]) => cmd === "read_project" && (args as any)?.name === "alpha")).toBe(true);
+    expect(calls.some(([cmd, args]) => cmd === "read_project" && (args as any)?.name === "key-alpha")).toBe(true);
   });
 
   it("B3: back button returns to the list", async () => {
-    mockInvoke(baselineRoutes({ get_projects: ["alpha"] }));
+    mockInvoke(baselineRoutes({ get_project_summaries: [summary("alpha")] }));
     renderProjects();
     const card = await screen.findByRole("button", { name: /alpha/i });
     await userEvent.click(card);
@@ -137,7 +149,7 @@ describe("Projects — characterization", () => {
   });
 
   it("B4: clicking Add Project opens the wizard at step 1", async () => {
-    mockInvoke(baselineRoutes({ get_projects: [] }));
+    mockInvoke(baselineRoutes({ get_project_summaries: [] }));
     renderProjects();
     // Empty-state CTA labelled "Create Project"
     const cta = await screen.findByRole("button", { name: /Create Project/i });
@@ -148,7 +160,7 @@ describe("Projects — characterization", () => {
   });
 
   it("B5: create-project window event triggers the wizard", async () => {
-    mockInvoke(baselineRoutes({ get_projects: ["alpha"] }));
+    mockInvoke(baselineRoutes({ get_project_summaries: [summary("alpha")] }));
     renderProjects();
     await screen.findByText("alpha");
     await act(async () => {
@@ -160,14 +172,14 @@ describe("Projects — characterization", () => {
   });
 
   it("B6: project-removed event clears the selection when the open project is removed", async () => {
-    mockInvoke(baselineRoutes({ get_projects: ["alpha"] }));
+    mockInvoke(baselineRoutes({ get_project_summaries: [summary("alpha")] }));
     renderProjects();
     const card = await screen.findByRole("button", { name: /alpha/i });
     await userEvent.click(card);
     await screen.findByRole("heading", { level: 1, name: "alpha" });
     await act(async () => {
       window.dispatchEvent(
-        new CustomEvent("project-removed", { detail: { name: "alpha" } }),
+        new CustomEvent("project-removed", { detail: { name: "alpha", local_key: "key-alpha" } }),
       );
     });
     await waitFor(() => {
@@ -177,12 +189,12 @@ describe("Projects — characterization", () => {
 
   it("B7: delete (handleRemove) calls delete_project and clears selection", async () => {
     let deleteCalled = false;
-    let projectsList = ["alpha"];
+    let projectsList = [summary("alpha")];
     mockInvoke(
       baselineRoutes({
-        get_projects: () => [...projectsList],
+        get_project_summaries: () => [...projectsList],
         delete_project: (args: any) => {
-          if ((args as any)?.name === "alpha") {
+          if ((args as any)?.name === "key-alpha") {
             projectsList = [];
             deleteCalled = true;
           }

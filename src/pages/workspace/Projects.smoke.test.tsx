@@ -7,7 +7,7 @@ describe("Projects (smoke)", () => {
   beforeEach(() => {
     resetInvokeMock();
     mockInvoke({
-      get_projects: [],
+      get_project_summaries: [],
       list_agents: [],
       get_skills: [],
       list_mcp_server_configs: [],

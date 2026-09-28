@@ -7,21 +7,28 @@ import {
   AlertCircle, ChevronDown, FolderOpen, Layers, LayoutGrid, Plus, RefreshCw, Search, Table2,
 } from "lucide-react";
 import { relativeTime } from "../helpers";
-import type { Project } from "../types";
+import type { Project, ProjectSummary } from "../types";
+import { projectKeyOf, resolveProjectKey } from "../../../../lib/projectIdentity";
 
 /** One section in the grouped projects view (a named group, or ungrouped). */
 interface ProjectGroupSection {
   id: string;
   label: string;
+  /** Project local_keys. */
   projects: string[];
 }
 
 interface ProjectsOverviewProps {
+  /** Project local_keys, in display order. */
   projects: string[];
+  /** Registered projects, for display names and group-member lookup. */
+  summaries: ProjectSummary[];
   projectsLoading: boolean;
+  /** Keyed by local_key. */
   projectDetails: Map<string, Project>;
+  /** Keyed by local_key. */
   driftByProject: Record<string, boolean>;
-  onSelect: (name: string) => void;
+  onSelect: (projectKey: string) => void;
   onCreate: () => void;
   onSyncAll?: () => void;
   syncAllStatus?: "idle" | "syncing";
@@ -43,15 +50,17 @@ function ProjectStatusBadge({ drift, missingDir }: { drift: boolean | undefined;
 }
 
 function ProjectCard({
+  projectKey,
   name,
   project,
   drift,
   onSelect,
 }: {
+  projectKey: string;
   name: string;
   project: Project | undefined;
   drift: boolean | undefined;
-  onSelect: (name: string) => void;
+  onSelect: (projectKey: string) => void;
 }) {
   const isMissingDir = project?.directory_missing === true;
   const isConfigured = !!(project?.directory && (project?.agents?.length ?? 0) > 0);
@@ -78,7 +87,7 @@ function ProjectCard({
 
   return (
     <button
-      onClick={() => onSelect(name)}
+      onClick={() => onSelect(projectKey)}
       className="group w-full text-left bg-bg-input border border-border-strong/35 hover:border-border-strong/60 rounded-lg px-3 py-2.5 flex flex-col gap-1 transition-colors hover:bg-surface-hover"
     >
       {/*
@@ -232,7 +241,15 @@ function GroupSectionHeader({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function ProjectsOverview({ projects, projectsLoading, projectDetails, driftByProject, onSelect, onCreate, onSyncAll, syncAllStatus, filterGroup = null }: ProjectsOverviewProps) {
+export function ProjectsOverview({ projects, summaries, projectsLoading, projectDetails, driftByProject, onSelect, onCreate, onSyncAll, syncAllStatus, filterGroup = null }: ProjectsOverviewProps) {
+  // Groups still list member names on the wire; map them to keys here.
+  const nameByKey = new Map(summaries.map((s) => [projectKeyOf(s), s.name] as const));
+  const displayName = (key: string): string => nameByKey.get(key) ?? key;
+  const membersToKeys = useCallback(
+    (members: readonly string[]): string[] =>
+      members.map((m) => resolveProjectKey(summaries, m) ?? m),
+    [summaries],
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState<"alphabetical" | "created" | "updated" | "last_activity">("alphabetical");
   // Projects can be displayed as a card grid or a compact table. The choice is
@@ -265,7 +282,7 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
   /** Sections for the "Show Groups" layout (all groups + ungrouped). null = not loaded yet. */
   const [groupSections, setGroupSections] = useState<ProjectGroupSection[] | null>(null);
 
-  /** Load all grouped project names (union of every group's members). */
+  /** Load all grouped project keys (union of every group's members). */
   const loadAllGroupedNames = async (): Promise<Set<string>> => {
     const grouped = new Set<string>();
     try {
@@ -274,7 +291,7 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
         try {
           const raw: string = await invoke("read_group", { name });
           const g = JSON.parse(raw);
-          for (const p of (g.projects ?? [])) grouped.add(p);
+          for (const p of membersToKeys(g.projects ?? [])) grouped.add(p);
         } catch { /* skip */ }
       }
     } catch { /* skip */ }
@@ -292,7 +309,7 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
         try {
           const raw: string = await invoke("read_group", { name });
           const g = JSON.parse(raw);
-          const members = (g.projects ?? []).filter((p: string) => projectSet.has(p));
+          const members = membersToKeys(g.projects ?? []).filter((p) => projectSet.has(p));
           for (const p of members) inAnyGroup.add(p);
           if (members.length === 0) continue;
           sections.push({ id: name, label: name, projects: members });
@@ -304,7 +321,7 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
       sections.push({ id: "__ungrouped__", label: "Other Projects", projects: ungrouped });
     }
     return sections;
-  }, []);
+  }, [membersToKeys]);
 
   // Load group members when filterGroup changes
   useEffect(() => {
@@ -319,14 +336,14 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
         try {
           const raw: string = await invoke("read_group", { name: filterGroup });
           const g = JSON.parse(raw);
-          if (!cancelled) setGroupProjectNames(new Set(g.projects ?? []));
+          if (!cancelled) setGroupProjectNames(new Set(membersToKeys(g.projects ?? [])));
         } catch {
           if (!cancelled) setGroupProjectNames(new Set());
         }
       })();
     }
     return () => { cancelled = true; };
-  }, [filterGroup]);
+  }, [filterGroup, membersToKeys]);
 
   // Re-load group members when groups change externally
   useEffect(() => {
@@ -337,13 +354,13 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
       } else {
         invoke<string>("read_group", { name: filterGroup }).then((raw) => {
           const g = JSON.parse(raw);
-          setGroupProjectNames(new Set(g.projects ?? []));
+          setGroupProjectNames(new Set(membersToKeys(g.projects ?? [])));
         }).catch(() => setGroupProjectNames(new Set()));
       }
     };
     window.addEventListener("groups-updated", handler);
     return () => window.removeEventListener("groups-updated", handler);
-  }, [filterGroup]);
+  }, [filterGroup, membersToKeys]);
 
   // Load group sections when "Show Groups" is on (and not filtered to one group)
   const groupingActive = showGroups && !filterGroup;
@@ -383,19 +400,19 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
 
   const sortNames = (names: string[]) => {
     return [...names].sort((a, b) => {
-      if (sortOrder === "alphabetical") return a.localeCompare(b);
+      if (sortOrder === "alphabetical") return displayName(a).localeCompare(displayName(b));
       const aTime = getSortTimestamp(projectDetails.get(a), sortOrder);
       const bTime = getSortTimestamp(projectDetails.get(b), sortOrder);
       return bTime - aTime;
     });
   };
 
-  const matchesSearch = (name: string): boolean => {
+  const matchesSearch = (key: string): boolean => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return true;
-    const details = projectDetails.get(name);
+    const details = projectDetails.get(key);
     return (
-      name.toLowerCase().includes(query) ||
+      displayName(key).toLowerCase().includes(query) ||
       (details?.directory ?? "").toLowerCase().includes(query) ||
       (details?.agents ?? []).some((agent) => agent.toLowerCase().includes(query))
     );
@@ -423,12 +440,13 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
 
   const renderCardGrid = (names: string[]) => (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {names.map((name) => (
+      {names.map((key) => (
         <ProjectCard
-          key={name}
-          name={name}
-          project={projectDetails.get(name)}
-          drift={driftByProject[name]}
+          key={key}
+          projectKey={key}
+          name={displayName(key)}
+          project={projectDetails.get(key)}
+          drift={driftByProject[key]}
           onSelect={onSelect}
         />
       ))}
@@ -452,9 +470,10 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
           </tr>
         </thead>
         <tbody>
-          {names.map((name) => {
-            const project = projectDetails.get(name);
-            const drift = driftByProject[name];
+          {names.map((key) => {
+            const project = projectDetails.get(key);
+            const drift = driftByProject[key];
+            const name = displayName(key);
             // Mirror the per-card derivations so both views report identical counts
             // and an identical sync state. A project is only "synced/drifted" once
             // it is configured (has a directory and at least one agent); otherwise
@@ -474,8 +493,8 @@ export function ProjectsOverview({ projects, projectsLoading, projectDetails, dr
             const lastActivity = project?.last_activity ?? project?.updated_at ?? project?.created_at ?? null;
             return (
               <tr
-                key={name}
-                onClick={() => onSelect(name)}
+                key={key}
+                onClick={() => onSelect(key)}
                 className="group cursor-pointer border-b border-border-strong/20 last:border-b-0 transition-colors hover:bg-bg-input/70"
               >
                 <td className="px-3 py-2">

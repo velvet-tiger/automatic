@@ -33,7 +33,7 @@ function renderPanel(overrides: Partial<Parameters<typeof ContextsPanel>[0]> = {
     dirty: false,
     setDirty: vi.fn(),
     isCreating: false,
-    selectedName: "app",
+    selectedKey: "app",
     reloadProject: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
