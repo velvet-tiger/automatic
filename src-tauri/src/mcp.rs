@@ -2961,6 +2961,30 @@ mod tests {
     }
 
     #[test]
+    fn validate_project_accepts_names_after_registry_migration() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project = crate::core::Project {
+                name: "legacy".into(),
+                ..Default::default()
+            };
+            crate::core::save_project("legacy", &serde_json::to_string(&project).unwrap())
+                .expect("save");
+            crate::core::ensure_project_keys().expect("migrate");
+            let migrated = crate::core::read_project("legacy").expect("read");
+            let local_key = serde_json::from_str::<crate::core::Project>(&migrated)
+                .expect("parse")
+                .local_key;
+
+            validate_project("legacy").expect("the name is still valid");
+            assert!(
+                validate_project(&local_key).is_err(),
+                "the key is not a project name"
+            );
+        });
+    }
+
+    #[test]
     fn register_creates_registry_entry_and_project_config() {
         let home = tempfile::tempdir().expect("tempdir");
         let project_dir = home.path().join("workspace");

@@ -198,13 +198,16 @@ pub(crate) fn read_registry_keys(registry_path: &Path) -> Result<Option<ProjectK
 }
 
 /// Keys already stored for a project, resolved by [`resolve_stored_keys`]
-/// from its registry entry and its folder. `directory` may be empty or
-/// missing.
+/// from its registry entry and its folder. `registry_path` is `None` for a
+/// project with no entry yet. `directory` may be empty or missing.
 pub(crate) fn stored_project_keys(
-    registry_path: &Path,
+    registry_path: Option<&Path>,
     directory: &str,
 ) -> Result<ProjectKeys, String> {
-    let registry = read_registry_keys(registry_path)?;
+    let registry = match registry_path {
+        Some(path) => read_registry_keys(path)?,
+        None => None,
+    };
     let files = if directory.is_empty() {
         ProjectKeys::default()
     } else {
@@ -314,15 +317,19 @@ pub enum ProjectKeyBackfill {
     Completed {
         /// Registry names whose keys were minted.
         updated: Vec<String>,
+        /// Registry names whose file was renamed to `<local_key>.json`.
+        renamed: Vec<String>,
         /// Registry names that could not be backfilled, with the reason.
         failed: Vec<(String, String)>,
     },
 }
 
-/// Give every registered project an `id` and a `local_key`. Runs at startup.
+/// Give every registered project an `id` and a `local_key`, then name its
+/// registry file by the `local_key`. Runs at startup.
 ///
-/// Idempotent: a project that already has both keys is not written. One
-/// project's failure does not stop the rest; it is reported in `failed`.
+/// Idempotent: a project that already has both keys is not written, and a
+/// file already named by its key is not moved. One project's failure does
+/// not stop the rest; it is reported in `failed`.
 pub fn ensure_project_keys() -> Result<ProjectKeyBackfill, String> {
     let automatic_dir = get_automatic_dir()?;
     fs::create_dir_all(&automatic_dir)
@@ -332,28 +339,41 @@ pub fn ensure_project_keys() -> Result<ProjectKeyBackfill, String> {
         return Ok(ProjectKeyBackfill::LockHeld);
     };
 
-    let mut names = list_projects()?;
-    names.sort();
+    let names = list_projects()?;
     let mut updated = Vec::new();
+    let mut renamed = Vec::new();
     let mut failed = Vec::new();
     for name in names {
         match ensure_keys_for_project(&name) {
-            Ok(true) => updated.push(name),
+            Ok(true) => updated.push(name.clone()),
+            Ok(false) => {}
+            Err(e) => {
+                failed.push((name, e));
+                continue;
+            }
+        }
+        match rename_registry_file_to_key(&name) {
+            Ok(true) => renamed.push(name),
             Ok(false) => {}
             Err(e) => failed.push((name, e)),
         }
     }
-    Ok(ProjectKeyBackfill::Completed { updated, failed })
+    Ok(ProjectKeyBackfill::Completed {
+        updated,
+        renamed,
+        failed,
+    })
 }
 
 /// Mint and persist any missing key for one registry entry. Returns whether
 /// anything was written.
 fn ensure_keys_for_project(name: &str) -> Result<bool, String> {
-    let registry_path = get_projects_dir()?.join(format!("{}.json", name));
-    let directory = registry_directory_for(name)?.unwrap_or_default();
+    let entry = find_registry_entry(name)?
+        .ok_or_else(|| format!("Project '{}' not found", name))?;
+    let directory = entry.directory()?.unwrap_or_default();
     // Probe without `read_project`, whose enrichment write-back would touch
     // every project on every start even when nothing is missing.
-    if stored_project_keys(&registry_path, &directory)?.is_complete() {
+    if stored_project_keys(Some(&entry.path), &directory)?.is_complete() {
         return Ok(false);
     }
 
@@ -367,12 +387,85 @@ fn ensure_keys_for_project(name: &str) -> Result<bool, String> {
     if project.directory_missing {
         // Saving would recreate the folder. Cache the keys in the pointer;
         // the next read after the folder returns writes them into it.
-        write_registry_pointer(&registry_path, &project)?;
+        write_registry_pointer(&entry.path, &project)?;
     } else {
         let data = serde_json::to_string(&project)
             .map_err(|e| format!("Failed to serialize project '{}': {}", name, e))?;
         save_project(name, &data)?;
     }
+    Ok(true)
+}
+
+/// Move one legacy registry file, `<name>.json`, to `<local_key>.json`.
+/// Returns whether the file moved.
+///
+/// The stem was the legacy entry's name, so it is written into the `name`
+/// field first, in place, along with any key the pointer lacks. Then `fs::rename` moves the file in one step. A
+/// crash between the two leaves a legacy file whose `name` field matches
+/// its stem, which the next run picks up. A file already at the target is
+/// an error and both files are left alone.
+fn rename_registry_file_to_key(name: &str) -> Result<bool, String> {
+    let entry = find_registry_entry(name)?
+        .ok_or_else(|| format!("Project '{}' not found", name))?;
+    if entry.keyed {
+        return Ok(false);
+    }
+    let mut value = entry.contents.clone()?;
+    // The pointer may lack a key the folder's state file holds; the pointer
+    // is about to be named by it, so it must carry it.
+    let directory = entry.directory()?.unwrap_or_default();
+    let keys = stored_project_keys(Some(&entry.path), &directory)?;
+    let local_key = keys.local_key;
+    if local_key.is_empty() {
+        return Err(format!(
+            "{} has no local_key, so it cannot be renamed",
+            entry.path.display()
+        ));
+    }
+    if !is_valid_name(&local_key) {
+        return Err(format!(
+            "{} has an invalid local_key '{}'",
+            entry.path.display(),
+            local_key
+        ));
+    }
+    let target = entry.path.with_file_name(format!("{}.json", local_key));
+    if target.exists() {
+        return Err(format!(
+            "Cannot rename {} to {}: the target already exists. Both files were left unchanged.",
+            entry.path.display(),
+            target.display()
+        ));
+    }
+
+    let field = |value: &serde_json::Value, key: &str| {
+        value.get(key).and_then(|v| v.as_str()).map(str::to_string)
+    };
+    let name_stale = field(&value, "name").as_deref() != Some(entry.name.as_str());
+    let key_missing = field(&value, "local_key").as_deref() != Some(local_key.as_str());
+    let id_missing = field(&value, "id").unwrap_or_default().is_empty() && !keys.id.is_empty();
+    if name_stale || key_missing || id_missing {
+        let object = value.as_object_mut().ok_or_else(|| {
+            format!("{} is not a JSON object", entry.path.display())
+        })?;
+        object.insert("name".into(), entry.name.clone().into());
+        object.insert("local_key".into(), local_key.clone().into());
+        if id_missing {
+            object.insert("id".into(), keys.id.clone().into());
+        }
+        let pretty = serde_json::to_string_pretty(&value)
+            .map_err(|e| format!("Failed to serialize {}: {}", entry.path.display(), e))?;
+        fs::write(&entry.path, pretty)
+            .map_err(|e| format!("Failed to write {}: {}", entry.path.display(), e))?;
+    }
+    fs::rename(&entry.path, &target).map_err(|e| {
+        format!(
+            "Failed to rename {} to {}: {}",
+            entry.path.display(),
+            target.display(),
+            e
+        )
+    })?;
     Ok(true)
 }
 

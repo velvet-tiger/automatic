@@ -88,16 +88,28 @@ pub fn run_startup_housekeeping() {
     }
 
     // Give every registered project a committed `id` and a machine-local
-    // `local_key`. Runs before anything below re-syncs projects, so those
+    // `local_key`, and name its registry file by the `local_key`. Runs
+    // before the group scrub below, which needs names from the migrated
+    // files, and before anything below re-syncs projects, so those
     // saves already carry the keys. Idempotent, and locked because the GUI
     // and every `mcp-serve` process run this at the same time.
     match core::ensure_project_keys() {
         Ok(core::ProjectKeyBackfill::LockHeld) => eprintln!(
             "[automatic] project key backfill skipped: another process holds the lock"
         ),
-        Ok(core::ProjectKeyBackfill::Completed { updated, failed }) => {
+        Ok(core::ProjectKeyBackfill::Completed {
+            updated,
+            renamed,
+            failed,
+        }) => {
             if !updated.is_empty() {
                 eprintln!("[automatic] minted project keys for: {:?}", updated);
+            }
+            if !renamed.is_empty() {
+                eprintln!(
+                    "[automatic] renamed project registry files to their local keys: {:?}",
+                    renamed
+                );
             }
             for (name, e) in failed {
                 eprintln!("[automatic] project key backfill error for '{}': {}", name, e);

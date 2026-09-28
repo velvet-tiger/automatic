@@ -408,6 +408,41 @@ mod tests {
     }
 
     #[test]
+    fn migrated_registry_keeps_dev_server_configs_live() {
+        // Registry files are renamed to their local_key at startup.
+        // `list_projects` must still return names, or every config below
+        // would be classed as an orphan and deleted by `list_all_statuses`.
+        let tmp = tmp();
+        with_test_home(tmp.path().to_path_buf(), || {
+            let dir = tmp.path().join("site");
+            fs::create_dir_all(&dir).unwrap();
+            let site = crate::core::Project {
+                name: "site".into(),
+                directory: dir.to_str().unwrap().to_string(),
+                ..Default::default()
+            };
+            crate::core::save_project("site", &serde_json::to_string(&site).unwrap()).unwrap();
+            register_project("bare");
+            save_config("site", sample()).unwrap();
+            save_config("bare", sample()).unwrap();
+            save_config("ghost", sample()).unwrap();
+
+            crate::core::ensure_project_keys().unwrap();
+            let projects_dir = crate::core::get_projects_dir().unwrap();
+            assert!(!projects_dir.join("site.json").exists(), "registry was migrated");
+            assert!(!projects_dir.join("bare.json").exists(), "registry was migrated");
+
+            let live = crate::core::list_projects().unwrap();
+            let owners = classify_config_projects(&list_config_projects().unwrap(), &live);
+            assert_eq!(owners.live, names(&["bare", "site"]));
+            assert_eq!(owners.orphans, names(&["ghost"]));
+            remove_orphaned_configs(&owners.orphans);
+            assert_eq!(list_configs("site").unwrap().len(), 1);
+            assert_eq!(list_configs("bare").unwrap().len(), 1);
+        });
+    }
+
+    #[test]
     fn rename_project_moves_config_file() {
         let tmp = tmp();
         with_test_home(tmp.path().to_path_buf(), || {
