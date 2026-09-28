@@ -437,21 +437,21 @@ pub fn compute_instruction_hashes(project: &Project) -> BTreeMap<String, String>
 
 /// Record the current on-disk hashes for all instruction files into the
 /// project's config and persist to the registry.  Call after any operation
-/// that writes instruction files.
-pub fn record_instruction_hashes(project_name: &str, project: &mut Project) {
+/// that writes instruction files. Saved under the project's own identifier
+/// ([`project_ident`]), since its name may be shared.
+pub fn record_instruction_hashes(project: &mut Project) {
     project.instruction_file_hashes = compute_instruction_hashes(project);
 
     // Persist updated hashes to the registry.
     if let Ok(data) = serde_json::to_string_pretty(project) {
-        let _ = save_project(project_name, &data);
+        let _ = save_project(project_ident(project), &data);
     }
 }
 
 /// Update the stored hashes for only the instruction files Automatic just
 /// wrote, leaving unrelated files untouched so unresolved conflicts remain
-/// visible to drift detection.
+/// visible to drift detection. Saved under [`project_ident`].
 pub fn record_instruction_hashes_for_filenames(
-    project_name: &str,
     project: &mut Project,
     filenames: &[String],
 ) {
@@ -485,7 +485,7 @@ pub fn record_instruction_hashes_for_filenames(
     }
 
     if let Ok(data) = serde_json::to_string_pretty(project) {
-        let _ = save_project(project_name, &data);
+        let _ = save_project(project_ident(project), &data);
     }
 }
 
@@ -600,10 +600,7 @@ mod tests {
 
         let mut project =
             make_unified_project(dir.path().to_str().unwrap(), &["claude", "opencode"]);
-        let project_name = project.name.clone();
-
         record_instruction_hashes_for_filenames(
-            &project_name,
             &mut project,
             &["AGENTS.md".to_string()],
         );

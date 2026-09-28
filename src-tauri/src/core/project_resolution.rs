@@ -310,11 +310,9 @@ fn resolve_ident(
         many => {
             return match shared_id(many) {
                 Some(id) => Ok(Some(target_for_checkouts(id, many, current))),
-                None => Err(format!(
-                    "More than one project is named '{}'. Pass `project` with the local_key \
-                     of the one you mean:\n{}",
+                None => Err(ambiguous_name_error(
                     ident,
-                    candidate_lines(&many.iter().map(|s| (*s).clone()).collect::<Vec<_>>())
+                    &many.iter().map(|s| (*s).clone()).collect::<Vec<_>>(),
                 )),
             }
         }
@@ -357,6 +355,18 @@ fn unknown_project_error(ident: &str, summaries: &[ProjectSummary]) -> String {
         "Unknown project '{}'. Valid project names are: {}. \
          Call automatic_list_projects to confirm the correct name before retrying.",
         ident, list
+    )
+}
+
+/// The error for a name that several different projects share. Lists each
+/// candidate as `name — directory (local_key)` so the caller can name the
+/// one it means by its `local_key`. Shared by every by-name lookup: the
+/// registry resolver, the store-key resolver and MCP tool arguments.
+pub(crate) fn ambiguous_name_error(name: &str, candidates: &[ProjectSummary]) -> String {
+    format!(
+        "More than one project is named '{}'. Use the local_key of the one you mean:\n{}",
+        name,
+        candidate_lines(candidates)
     )
 }
 

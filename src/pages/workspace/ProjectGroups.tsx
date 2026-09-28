@@ -1,6 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { loadProjectSummaries, resolveProjectKey } from "../../lib/projectIdentity";
+import {
+  loadProjectSummaries,
+  membersWithoutProject,
+  projectKeyOf,
+  projectLabelFor,
+  projectLabels,
+  projectLabelText,
+  type ProjectLabel,
+} from "../../lib/projectIdentity";
+import { ProjectNameLabel } from "../../components/ProjectNameLabel";
 import type { ProjectSummary } from "./projects/types";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, Check, Layers, FolderOpen } from "lucide-react";
@@ -47,10 +56,10 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
   const [groups, setGroups] = useState<string[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [group, setGroup] = useState<ProjectGroup | null>(null);
-  // Group files list members by name, so this page works on names and maps
-  // a name to its local_key only to open the project.
-  const [allProjects, setAllProjects] = useState<string[]>([]);
+  // `read_group` lists members by local_key; names come from the summaries.
   const [summaries, setSummaries] = useState<ProjectSummary[]>([]);
+  const labels = useMemo(() => projectLabels(summaries), [summaries]);
+  const knownKeys = useMemo(() => new Set(summaries.map(projectKeyOf)), [summaries]);
 
   // Edit state
   const [isEditing, setIsEditing] = useState(false);
@@ -98,8 +107,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
   const loadAllProjects = async () => {
     try {
       const result = await loadProjectSummaries();
-      setSummaries(result);
-      setAllProjects(result.map((s) => s.name).sort((a, b) => a.localeCompare(b)));
+      setSummaries([...result].sort((a, b) => a.name.localeCompare(b.name)));
     } catch {
       // Non-fatal.
     }
@@ -214,12 +222,12 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
 
   // ── Project membership ────────────────────────────────────────────────────
 
-  const handleAddProject = async (projectName: string) => {
+  const handleAddProject = async (projectKey: string) => {
     if (!group) return;
-    if (group.projects.includes(projectName)) return;
+    if (group.projects.includes(projectKey)) return;
     const updated: ProjectGroup = {
       ...group,
-      projects: [...group.projects, projectName],
+      projects: [...group.projects, projectKey],
       updated_at: new Date().toISOString(),
     };
     // Sync ALL projects in the group, not just the newly added one.
@@ -228,16 +236,16 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
     await persistGroup(updated, updated.projects);
   };
 
-  const handleRemoveProject = async (projectName: string) => {
+  const handleRemoveProject = async (projectKey: string) => {
     if (!group) return;
     const updated: ProjectGroup = {
       ...group,
-      projects: group.projects.filter((p) => p !== projectName),
+      projects: membersWithoutProject(group.projects, projectKey, summaries),
       updated_at: new Date().toISOString(),
     };
-    // Sync all remaining projects (peer lists change) and the removed project
-    // (to remove the group block from its instruction files).
-    const toSync = [...updated.projects, projectName];
+    // Sync all remaining projects (peer lists change) and the removed
+    // checkouts (to remove the group block from their instruction files).
+    const toSync = [...group.projects];
     await persistGroup(updated, toSync);
   };
 
@@ -267,9 +275,10 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
 
   // ── Projects not yet in this group ───────────────────────────────────────
 
-  const availableProjects = allProjects.filter(
-    (p) => group && !group.projects.includes(p)
-  );
+  const availableProjects = summaries
+    .map(projectKeyOf)
+    .filter((key) => group && !group.projects.includes(key))
+    .map((key) => ({ key, label: projectLabelFor(labels, key) }));
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -469,28 +478,36 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
                 </p>
               ) : (
                 <ul className="space-y-1.5">
-                  {group.projects.map((projectName) => (
+                  {group.projects.map((member) => {
+                    // A member no registered project has (a deleted project)
+                    // is shown as stored so it can still be removed.
+                    const known = knownKeys.has(member);
+                    const label = projectLabelFor(labels, member);
+                    const text = projectLabelText(label);
+                    const canOpen = known && onNavigateToProject !== undefined;
+                    return (
                     <li
-                      key={projectName}
+                      key={member}
                       className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-bg-input border border-border-strong/30"
                     >
                       <FolderOpen size={13} className="text-text-muted shrink-0" />
                       <span
-                        className={`flex-1 text-[13px] text-text-base truncate ${onNavigateToProject ? "cursor-pointer hover:text-brand transition-colors" : ""}`}
-                        onClick={() => onNavigateToProject?.(resolveProjectKey(summaries, projectName) ?? projectName)}
-                        title={onNavigateToProject ? `Open ${projectName}` : projectName}
+                        className={`flex-1 text-[13px] text-text-base truncate ${canOpen ? "cursor-pointer hover:text-brand transition-colors" : ""}`}
+                        onClick={() => { if (canOpen) onNavigateToProject?.(member); }}
+                        title={canOpen ? `Open ${text}` : known ? text : `${text} (not a registered project)`}
                       >
-                        {projectName}
+                        <ProjectNameLabel label={label} />
                       </span>
                       <button
-                        onClick={() => handleRemoveProject(projectName)}
+                        onClick={() => handleRemoveProject(member)}
                         className="flex items-center justify-center w-[20px] h-[20px] rounded text-text-muted hover:bg-red-500/10 hover:text-red-400 transition-colors shrink-0"
-                        title={`Remove ${projectName} from group`}
+                        title={`Remove ${text} from group`}
                       >
                         <X size={11} />
                       </button>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )}
 
@@ -549,16 +566,18 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
 // ── AddProjectPicker ──────────────────────────────────────────────────────────
 
 interface AddProjectPickerProps {
-  projects: string[];
-  onAdd: (name: string) => void;
+  /** Projects to offer, by local_key, with their display labels. */
+  projects: { key: string; label: ProjectLabel }[];
+  onAdd: (projectKey: string) => void;
 }
 
 function AddProjectPicker({ projects, onAdd }: AddProjectPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
+  // Matches the folder hint too, so a repeated name can be narrowed down.
   const filtered = projects.filter((p) =>
-    p.toLowerCase().includes(query.toLowerCase())
+    projectLabelText(p.label).toLowerCase().includes(query.toLowerCase())
   );
 
   if (!open) {
@@ -593,18 +612,18 @@ function AddProjectPicker({ projects, onAdd }: AddProjectPickerProps) {
         {filtered.length === 0 && (
           <li className="px-3 py-2 text-[12px] text-text-muted">No matching projects.</li>
         )}
-        {filtered.map((name) => (
-          <li key={name}>
+        {filtered.map(({ key, label }) => (
+          <li key={key}>
             <button
               onClick={() => {
-                onAdd(name);
+                onAdd(key);
                 setOpen(false);
                 setQuery("");
               }}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-text-muted hover:bg-bg-sidebar hover:text-text-base transition-colors text-left"
             >
               <FolderOpen size={12} className="shrink-0" />
-              {name}
+              <ProjectNameLabel label={label} />
             </button>
           </li>
         ))}

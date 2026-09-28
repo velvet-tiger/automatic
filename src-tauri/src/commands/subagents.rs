@@ -61,11 +61,11 @@ pub fn delete_subagent(machine_name: String) -> Result<(), String> {
 pub fn get_projects_referencing_subagent(
     agent_machine_name: String,
 ) -> Result<Vec<core::ProjectRef>, String> {
-    let projects = core::list_projects()?;
+    let projects = core::list_project_idents()?;
     let mut referencing = Vec::new();
 
-    for project_name in projects {
-        let raw = core::read_project(&project_name)?;
+    for ident in projects {
+        let raw = core::read_project(&ident)?;
         if let Ok(project) = serde_json::from_str::<core::Project>(&raw) {
             let has_agent = project
                 .custom_agents
@@ -81,7 +81,7 @@ pub fn get_projects_referencing_subagent(
 
             if has_agent {
                 referencing.push(core::ProjectRef {
-                    name: project_name,
+                    name: project.name.clone(),
                     local_key: core::local_key_of(&project),
                     directory: project.directory,
                 });

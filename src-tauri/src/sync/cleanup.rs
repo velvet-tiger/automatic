@@ -65,7 +65,7 @@ pub fn remove_agent_from_project(
     project.updated_at = chrono::Utc::now().to_rfc3339();
     let project_str =
         serde_json::to_string_pretty(&project).map_err(|e| format!("Serialise error: {}", e))?;
-    crate::core::save_project(&project.name, &project_str)?;
+    crate::core::save_project(crate::core::project_ident(project), &project_str)?;
 
     if mode == RemovalMode::Remove && !project.agents.is_empty() {
         if let Err(e) = sync_project_without_autodetect(project) {

@@ -16,13 +16,13 @@ pub fn list_agents() -> Vec<agent::AgentInfo> {
 #[tauri::command]
 pub fn list_agents_with_projects() -> Result<String, String> {
     let agents = agent::all();
-    let project_names = core::list_projects().unwrap_or_default();
+    let project_idents = core::list_project_idents().unwrap_or_default();
 
     // Read all projects once
-    let projects: Vec<core::Project> = project_names
+    let projects: Vec<core::Project> = project_idents
         .iter()
-        .filter_map(|name| {
-            core::read_project(name)
+        .filter_map(|ident| {
+            core::read_project(ident)
                 .ok()
                 .and_then(|raw| serde_json::from_str::<core::Project>(&raw).ok())
         })

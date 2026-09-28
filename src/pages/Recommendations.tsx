@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { rowProjectKey } from "../lib/projectIdentity";
+import { loadProjectSummaries, projectLabelFor, projectLabels, rowProjectKey } from "../lib/projectIdentity";
+import { ProjectNameLabel } from "../components/ProjectNameLabel";
+import type { ProjectSummary } from "./workspace/projects/types";
 import { SELECTED_PROJECT_STORAGE_KEY } from "../lib/projectStorageMigration";
 import { AlertCircle, ArrowRight, ChevronDown, ChevronRight, Code, FileText, FolderOpen, Layers, Lightbulb, RefreshCw, Server, Sparkles, X } from "lucide-react";
 
@@ -115,12 +117,23 @@ export default function Recommendations({
 }: RecommendationsProps) {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(true);
+  // Every registered project, only to label duplicated names with their folder.
+  const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([]);
+  const labels = useMemo(() => projectLabels(projectSummaries), [projectSummaries]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const recs = await invoke<Recommendation[]>("list_all_pending_recommendations");
+      const [recs, summaries] = await Promise.all([
+        invoke<Recommendation[]>("list_all_pending_recommendations"),
+        loadProjectSummaries().catch((err: unknown) => {
+          // Non-fatal: headings fall back to plain project names.
+          console.error("Failed to load project summaries:", err);
+          return null;
+        }),
+      ]);
       setRecommendations(recs);
+      if (summaries) setProjectSummaries(summaries);
     } catch (e) {
       console.error("Failed to load recommendations:", e);
       setRecommendations([]);
@@ -149,7 +162,7 @@ export default function Recommendations({
 
   // Rows carry the display name in `project` and the local_key when the
   // project is registered. Group by key; show the name.
-  const projectLabels = new Map(recommendations.map((r) => [rowProjectKey(r), r.project] as const));
+  const projectNames = new Map(recommendations.map((r) => [rowProjectKey(r), r.project] as const));
 
   // Separate normal recs from AI suggestion rollup sources, grouped by project then kind.
   const groupedNormal = recommendations
@@ -229,7 +242,7 @@ export default function Recommendations({
             {[...allProjects].map((projectKey) => {
               const normalKindGroups = groupedNormal.get(projectKey) ?? new Map<string, Recommendation[]>();
               const aiRollup = aiRollupByProject.get(projectKey);
-              const projectName = projectLabels.get(projectKey) ?? projectKey;
+              const projectLabel = projectLabelFor(labels, projectKey, projectNames.get(projectKey));
 
               return (
                 <section key={projectKey}>
@@ -239,9 +252,10 @@ export default function Recommendations({
                     className="flex items-center gap-2 mb-3 group"
                   >
                     <FolderOpen size={13} className="text-text-muted group-hover:text-brand transition-colors" />
-                    <span className="text-[13px] font-semibold text-text-base group-hover:text-brand transition-colors">
-                      {projectName}
-                    </span>
+                    <ProjectNameLabel
+                      label={projectLabel}
+                      className="text-[13px] font-semibold text-text-base group-hover:text-brand transition-colors"
+                    />
                     <ArrowRight size={11} className="text-text-muted opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
                   </button>
 

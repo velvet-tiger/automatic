@@ -149,7 +149,7 @@ pub fn list_all_pending_recommendations(
 pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendation>, String> {
     // Recommendations are stored under the checkout's `local_key`; the
     // project must exist, as before.
-    let project = &crate::core::project_store_local_key(&crate::core::canonical_project_name(project)?)?;
+    let project = &crate::core::project_store_local_key(&crate::core::canonical_project_ident(project)?)?;
     use crate::agent;
     use std::path::Path;
 
@@ -1057,7 +1057,7 @@ fn persist_targeted_suggestions(
 pub async fn ai_suggest_skills(project: &str) -> Result<Vec<Recommendation>, String> {
     // Recommendations are stored under the checkout's `local_key`; the
     // project must exist, as before.
-    let project = &crate::core::project_store_local_key(&crate::core::canonical_project_name(project)?)?;
+    let project = &crate::core::project_store_local_key(&crate::core::canonical_project_ident(project)?)?;
     crate::core::ai::resolve_api_key(None)?;
 
     let raw = crate::core::read_project(project)?;
@@ -1178,7 +1178,7 @@ source, installs count, and a brief reason why each fits this project."#,
 pub async fn ai_suggest_mcp_servers(project: &str) -> Result<Vec<Recommendation>, String> {
     // Recommendations are stored under the checkout's `local_key`; the
     // project must exist, as before.
-    let project = &crate::core::project_store_local_key(&crate::core::canonical_project_name(project)?)?;
+    let project = &crate::core::project_store_local_key(&crate::core::canonical_project_ident(project)?)?;
     crate::core::ai::resolve_api_key(None)?;
 
     let raw = crate::core::read_project(project)?;

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -1033,8 +1032,8 @@ pub fn agent_folder_problem(
 /// that exists.
 fn registered_project_dirs() -> Result<Vec<PathBuf>, String> {
     let mut dirs = Vec::new();
-    for name in list_projects()? {
-        let Ok(raw) = read_project(&name) else { continue };
+    for ident in list_project_idents()? {
+        let Ok(raw) = read_project(&ident) else { continue };
         let Ok(project) = serde_json::from_str::<Project>(&raw) else { continue };
         if project.directory.trim().is_empty() {
             continue;
@@ -1173,12 +1172,13 @@ pub fn attach_context(target: &ContextTarget, slug: &str) -> Result<bool, String
     }
     match target {
         ContextTarget::Project(ident) => {
-            // Groups are keyed by name, so a `local_key` becomes the name.
-            let name = &canonical_project_name(ident)?;
-            let mut project = read_project_parsed(name)?;
-            reconcile_group_contexts(&mut project, &groups_for_project(name));
+            // One unique identifier for every call below: a name may be
+            // shared by another project.
+            let ident = &canonical_project_ident(ident)?;
+            let mut project = read_project_parsed(ident)?;
+            reconcile_group_contexts(&mut project, &groups_for_project(ident));
             let changed = attach_context_to_project(&mut project, slug);
-            write_project(name, &project)?;
+            write_project(ident, &project)?;
             Ok(changed)
         }
         ContextTarget::Group(name) => update_group(name, |group| attach_context_to_group(group, slug)),
@@ -1191,13 +1191,12 @@ pub fn attach_context(target: &ContextTarget, slug: &str) -> Result<bool, String
 pub fn detach_context(target: &ContextTarget, slug: &str) -> Result<bool, String> {
     match target {
         ContextTarget::Project(ident) => {
-            // Groups are keyed by name, so a `local_key` becomes the name.
-            let name = &canonical_project_name(ident)?;
-            let mut project = read_project_parsed(name)?;
-            reconcile_group_contexts(&mut project, &groups_for_project(name));
+            let ident = &canonical_project_ident(ident)?;
+            let mut project = read_project_parsed(ident)?;
+            reconcile_group_contexts(&mut project, &groups_for_project(ident));
             let changed = detach_context_from_project(&mut project, slug)?;
             if changed {
-                write_project(name, &project)?;
+                write_project(ident, &project)?;
             }
             Ok(changed)
         }
@@ -1222,16 +1221,16 @@ fn update_group(name: &str, apply: impl FnOnce(&mut ProjectGroup) -> bool) -> Re
 /// Save a group, then reconcile the contexts of every project that was a
 /// member before or is a member after. Returns the projects that changed.
 pub fn save_group_reconciling_contexts(name: &str, data: &str) -> Result<Vec<String>, String> {
-    let mut affected = group_member_names(name);
+    let mut affected = group_member_idents(name);
     save_group(name, data)?;
-    affected.extend(group_member_names(name));
+    affected.extend(group_member_idents(name));
     reconcile_group_contexts_for_projects(&affected)
 }
 
 /// Delete a group, then release the contexts it provided to its members.
 /// Returns the projects that changed.
 pub fn delete_group_reconciling_contexts(name: &str) -> Result<Vec<String>, String> {
-    let members = group_member_names(name);
+    let members = group_member_idents(name);
     delete_group(name)?;
     reconcile_group_contexts_for_projects(&members)
 }
@@ -1347,29 +1346,29 @@ fn release_group_context(project: &mut Project, member_groups: &[ProjectGroup], 
 ///
 /// Per-project failures are logged and skipped so one unreadable project
 /// does not leave the rest out of step.
-pub fn reconcile_group_contexts_for_projects(project_names: &[String]) -> Result<Vec<String>, String> {
+pub fn reconcile_group_contexts_for_projects(project_idents: &[String]) -> Result<Vec<String>, String> {
     let mut saved = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for name in project_names {
-        if !seen.insert(name.as_str()) {
+    for ident in project_idents {
+        if !seen.insert(ident.as_str()) {
             continue;
         }
-        let mut project = match read_project_parsed(name) {
+        let mut project = match read_project_parsed(ident) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("contexts reconcile: skipping project '{}': {}", name, e);
+                eprintln!("contexts reconcile: skipping project '{}': {}", ident, e);
                 continue;
             }
         };
-        let groups = groups_for_project(name);
+        let groups = groups_for_project(ident);
         if !reconcile_group_contexts(&mut project, &groups) {
             continue;
         }
-        if let Err(e) = write_project(name, &project) {
-            eprintln!("contexts reconcile: failed to save project '{}': {}", name, e);
+        if let Err(e) = write_project(ident, &project) {
+            eprintln!("contexts reconcile: failed to save project '{}': {}", ident, e);
             continue;
         }
-        saved.push(name.clone());
+        saved.push(ident.clone());
     }
     Ok(saved)
 }
@@ -1378,12 +1377,34 @@ pub fn reconcile_group_contexts_for_projects(project_names: &[String]) -> Result
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct ContextReferences {
+    /// Display names of the projects, sorted. Names can repeat (stage 6).
     pub projects: Vec<String>,
     pub groups: Vec<String>,
-    /// `local_key` of each name in `projects` that has one, keyed by name.
-    /// Filled by the Tauri commands only, so MCP output is unchanged.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub project_local_keys: BTreeMap<String, String>,
+    /// The same projects with their folder and `local_key`, in the same
+    /// order, so a list can address and label each one even when two share
+    /// a name.
+    #[serde(default)]
+    pub project_refs: Vec<ProjectRef>,
+}
+
+impl ContextReferences {
+    fn push_project(&mut self, project: &Project) {
+        self.project_refs.push(ProjectRef {
+            name: project.name.clone(),
+            directory: project.directory.clone(),
+            local_key: local_key_of(project),
+        });
+    }
+
+    /// Sort projects by name (then folder) and groups by name, and fill
+    /// `projects` from `project_refs`.
+    fn finish(mut self) -> Self {
+        self.project_refs
+            .sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.directory.cmp(&b.directory)));
+        self.projects = self.project_refs.iter().map(|p| p.name.clone()).collect();
+        self.groups.sort();
+        self
+    }
 }
 
 /// Remove (`new_slug = None`) or rename every reference to `old_slug` in
@@ -1419,11 +1440,11 @@ fn rewrite_context_references(
         }
     }
 
-    for name in list_projects()? {
-        let mut project = match read_project_parsed(&name) {
+    for ident in list_project_idents()? {
+        let mut project = match read_project_parsed(&ident) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("contexts: skipping unreadable project '{}': {}", name, e);
+                eprintln!("contexts: skipping unreadable project '{}': {}", ident, e);
                 continue;
             }
         };
@@ -1437,15 +1458,13 @@ fn rewrite_context_references(
         if !changed {
             continue;
         }
-        match write_project(&name, &project) {
-            Ok(()) => changes.projects.push(name),
-            Err(e) => eprintln!("contexts: failed to save project '{}': {}", name, e),
+        match write_project(&ident, &project) {
+            Ok(()) => changes.push_project(&project),
+            Err(e) => eprintln!("contexts: failed to save project '{}': {}", ident, e),
         }
     }
 
-    changes.projects.sort();
-    changes.groups.sort();
-    Ok(changes)
+    Ok(changes.finish())
 }
 
 /// Replace or remove `old` in `list`, dropping a duplicate when `new` is
@@ -1480,21 +1499,20 @@ pub fn find_context_references(slug: &str) -> Result<ContextReferences, String> 
             refs.groups.push(name);
         }
     }
-    for name in list_projects()? {
-        let listed = read_project_parsed(&name).is_ok_and(|p| p.contexts.iter().any(|c| c == slug));
-        if listed {
-            refs.projects.push(name);
+    for ident in list_project_idents()? {
+        if let Ok(project) = read_project_parsed(&ident) {
+            if project.contexts.iter().any(|c| c == slug) {
+                refs.push_project(&project);
+            }
         }
     }
-    refs.projects.sort();
-    refs.groups.sort();
-    Ok(refs)
+    Ok(refs.finish())
 }
 
-/// The member project names of a group, or an empty list when the group
-/// does not exist yet. Used to reconcile members before and after a group
-/// changes.
-pub fn group_member_names(name: &str) -> Vec<String> {
+/// The member projects of a group as identifiers (`local_key`s; see
+/// `read_group`), or an empty list when the group does not exist yet. Used
+/// to reconcile members before and after a group changes.
+pub fn group_member_idents(name: &str) -> Vec<String> {
     read_group(name)
         .ok()
         .and_then(|raw| serde_json::from_str::<ProjectGroup>(&raw).ok())
@@ -1502,9 +1520,9 @@ pub fn group_member_names(name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn read_project_parsed(name: &str) -> Result<Project, String> {
-    let raw = read_project(name)?;
-    serde_json::from_str::<Project>(&raw).map_err(|e| format!("Invalid project '{}': {}", name, e))
+fn read_project_parsed(ident: &str) -> Result<Project, String> {
+    let raw = read_project(ident)?;
+    serde_json::from_str::<Project>(&raw).map_err(|e| format!("Invalid project '{}': {}", ident, e))
 }
 
 fn write_project(name: &str, project: &Project) -> Result<(), String> {

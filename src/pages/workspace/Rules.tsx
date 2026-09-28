@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
@@ -11,6 +11,9 @@ import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { BuiltInBadge, ReadOnlyBadge, LockCell } from "../../components/ProtectionBadge";
 import { useBulkSelection } from "../../lib/useBulkSelection";
+import { loadProjectSummaries, projectLabelFor, projectLabels, projectLabelText } from "../../lib/projectIdentity";
+import { ProjectNameLabel } from "../../components/ProjectNameLabel";
+import type { ProjectSummary } from "./projects/types";
 import {
   type AssetSecurityScanRecord,
   getAssetSecurityDismissButtonClass,
@@ -88,9 +91,18 @@ export default function Rules() {
   const [referencingProjects, setReferencingProjects] = useState<{ key: string; name: string }[]>([]);
   const [projectSyncState, setProjectSyncState] = useState<Record<string, SyncState>>({});
   const [syncAllState, setSyncAllState] = useState<SyncState>("needs-sync");
+  // Every registered project, only to label duplicated names with their folder.
+  const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([]);
+  const labels = useMemo(() => projectLabels(projectSummaries), [projectSummaries]);
 
   useEffect(() => {
     loadRules();
+    loadProjectSummaries()
+      .then(setProjectSummaries)
+      .catch((err: unknown) => {
+        // Non-fatal: the usage panel falls back to plain project names.
+        console.error("Failed to load project summaries:", err);
+      });
   }, []);
 
   const loadRules = async () => {
@@ -777,13 +789,14 @@ export default function Rules() {
                     <ul className="space-y-1.5 max-h-[108px] overflow-y-auto custom-scrollbar">
                       {referencingProjects.map(({ key: projectKey, name: projectName }) => {
                         const state = projectSyncState[projectKey] ?? "needs-sync";
+                        const label = projectLabelFor(labels, projectKey, projectName);
                         return (
                           <li key={projectKey} className="flex items-center justify-between gap-3 py-1">
                             <div className="flex items-center gap-2 min-w-0">
                               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                                 state === "synced" ? "bg-success" : state === "error" ? "bg-danger" : "bg-warning"
                               }`} />
-                              <span className="text-[13px] text-text-base truncate">{projectName}</span>
+                              <ProjectNameLabel label={label} className="text-[13px] text-text-base truncate" />
                             </div>
                             {state !== "synced" && (
                               <button
@@ -796,7 +809,7 @@ export default function Rules() {
                                     ? "text-warning bg-warning/10 hover:bg-warning/20"
                                     : "text-text-muted hover:text-text-base hover:bg-bg-sidebar"
                                 } disabled:opacity-50 disabled:cursor-not-allowed`}
-                                title={`Push rule to ${projectName}`}
+                                title={`Push rule to ${projectLabelText(label)}`}
                               >
                                 <RefreshCw size={10} className={state === "syncing" ? "animate-spin" : ""} />
                                 {state === "error" ? "Failed" : "Update"}

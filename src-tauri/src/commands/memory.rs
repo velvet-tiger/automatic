@@ -65,7 +65,7 @@ pub fn clear_memories(
 /// `MEMORY.md` plus any topic files present.
 #[tauri::command]
 pub fn get_claude_memory(project: &str) -> Result<memory::ClaudeMemoryContent, String> {
-    let project = &crate::core::canonical_project_name(project)?;
+    let project = &crate::core::canonical_project_ident(project)?;
     let project_json = core::read_project(project)?;
     let p: crate::core::Project =
         serde_json::from_str(&project_json).map_err(|e| format!("Invalid project data: {}", e))?;

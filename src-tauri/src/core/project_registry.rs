@@ -17,9 +17,10 @@
 //! therefore shows up under its key until it is repaired.
 //!
 //! Names compare case-insensitively (Unicode lowercase), matching the Add
-//! Project wizard and the default macOS filesystem. Two entries that claim
-//! the same name are an error that names both files: the resolver never
-//! guesses between them.
+//! Project wizard and the default macOS filesystem. Two projects may share a
+//! name (stage 6), so a name that matches several entries is ambiguous: the
+//! lookup is an error listing each candidate's folder and `local_key`, and
+//! the resolver never guesses between them. A `local_key` is always unique.
 //!
 //! Cost: every lookup reads and parses every registry file. Entries are
 //! small and a user has tens of projects, not thousands.
@@ -68,6 +69,18 @@ impl RegistryEntry {
             .ok()
             .and_then(|v| string_field(v, key))
             .filter(|s| !s.is_empty())
+    }
+
+    /// The entry as an ambiguity-error candidate: its name, folder and
+    /// cached keys, without reading the folder. See
+    /// [`super::ambiguous_name_error`].
+    pub fn candidate(&self) -> super::ProjectSummary {
+        super::ProjectSummary {
+            local_key: self.local_key().unwrap_or_default().to_string(),
+            id: self.cached_id().unwrap_or_default().to_string(),
+            name: self.name.clone(),
+            directory: self.directory().ok().flatten().unwrap_or_default(),
+        }
     }
 
     /// The entry's `directory`, or `None` when it has none. An entry that
@@ -168,7 +181,8 @@ pub(crate) fn registry_names(entries: &[RegistryEntry]) -> Vec<String> {
 }
 
 /// Index of the entry named `name` in `entries`, ignoring case. Two or more
-/// matches are an error naming each file. Does no I/O.
+/// matches are an ambiguity error listing each candidate's folder and
+/// `local_key` (see [`super::ambiguous_name_error`]). Does no I/O.
 pub(crate) fn find_entry_index(entries: &[RegistryEntry], name: &str) -> Result<Option<usize>, String> {
     let matches: Vec<usize> = entries
         .iter()
@@ -180,24 +194,26 @@ pub(crate) fn find_entry_index(entries: &[RegistryEntry], name: &str) -> Result<
         [] => Ok(None),
         [only] => Ok(Some(*only)),
         many => {
-            let files: Vec<String> = many
-                .iter()
-                .map(|&i| entries[i].path.display().to_string())
-                .collect();
-            Err(format!(
-                "More than one project is named '{}'. Rename or remove one of these registry files: {}",
-                name,
-                files.join(", ")
-            ))
+            let candidates: Vec<super::ProjectSummary> =
+                many.iter().map(|&i| entries[i].candidate()).collect();
+            Err(super::ambiguous_name_error(name, &candidates))
         }
     }
+}
+
+/// The handle that finds exactly one entry: its `local_key`, or its name
+/// while it has no key. Use it to address a checkout whose name may repeat.
+pub(crate) fn entry_ident(entry: &RegistryEntry) -> String {
+    entry
+        .local_key()
+        .map_or_else(|| entry.name.clone(), str::to_string)
 }
 
 /// Index of the entry that `ident` identifies: the entry whose `local_key`
 /// equals `ident` exactly, else the entry named `ident` (ignoring case). See
 /// the module docs for why a key match wins. Two entries carrying the same
-/// `local_key`, or two entries with the name, are an error naming each file.
-/// Does no I/O.
+/// `local_key` are an error naming each file; two entries with the name are
+/// an ambiguity error listing each candidate. Does no I/O.
 pub(crate) fn resolve_entry_index(
     entries: &[RegistryEntry],
     ident: &str,
@@ -241,7 +257,9 @@ pub(crate) fn resolve_registry_entry(ident: &str) -> Result<Option<RegistryEntry
     resolve_registry_entry_in(&get_projects_dir()?, ident)
 }
 
-/// The registry entry named `name` in `projects_dir`, if any.
+/// The registry entry named `name` in `projects_dir`, if any. Test-only:
+/// production code resolves an identifier with [`resolve_registry_entry`].
+#[cfg(test)]
 pub(crate) fn find_registry_entry_in(
     projects_dir: &Path,
     name: &str,
@@ -255,17 +273,14 @@ pub(crate) fn scan_registry() -> Result<Vec<RegistryEntry>, String> {
     scan_registry_in(&get_projects_dir()?)
 }
 
-/// The registry entry named `name` in the user's projects directory, if any.
-pub(crate) fn find_registry_entry(name: &str) -> Result<Option<RegistryEntry>, String> {
-    find_registry_entry_in(&get_projects_dir()?, name)
-}
 
 /// Path for a registry entry that does not exist yet. A project with a
 /// `local_key` gets `<local_key>.json`. One without keeps the legacy
 /// `<name>.json` until the startup backfill mints its keys and renames it:
 /// ordinary saves never mint keys. A file already at the target belongs to
-/// another project, since no entry holds `name`, so it is an error rather
-/// than an overwrite.
+/// another project, so it is an error rather than an overwrite. Every create
+/// path mints a `local_key` first, so a new project that shares a name with
+/// an existing one never reaches the `<name>.json` branch.
 pub(crate) fn new_registry_path(
     projects_dir: &Path,
     name: &str,
@@ -365,13 +380,17 @@ mod tests {
     }
 
     #[test]
-    fn two_files_with_one_name_are_an_error_naming_both() {
+    fn a_name_two_entries_share_is_ambiguous_and_lists_both() {
         let tmp = tempfile::tempdir().unwrap();
-        write(tmp.path(), "k1.json", &json!({"name": "site", "local_key": "k1"}));
-        write(tmp.path(), "k2.json", &json!({"name": "SITE", "local_key": "k2"}));
+        write(tmp.path(), "k1.json", &json!({"name": "site", "local_key": "k1", "directory": "/one/site"}));
+        write(tmp.path(), "k2.json", &json!({"name": "SITE", "local_key": "k2", "directory": "/two/site"}));
 
         let err = find_registry_entry_in(tmp.path(), "site").unwrap_err();
-        assert!(err.contains("k1.json") && err.contains("k2.json"), "{err}");
+        assert!(err.contains("More than one project is named 'site'"), "{err}");
+        assert!(err.contains("site — /one/site (k1)"), "{err}");
+        assert!(err.contains("SITE — /two/site (k2)"), "{err}");
+        let entry = resolve_registry_entry_in(tmp.path(), "k2").unwrap().expect("a key stays unique");
+        assert_eq!(entry.name, "SITE");
         assert_eq!(
             registry_names(&scan_registry_in(tmp.path()).unwrap()),
             vec!["SITE", "site"],

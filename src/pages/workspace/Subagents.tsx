@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
 import { LineNumberedTextarea } from "../../components/LineNumberedTextarea";
@@ -10,6 +10,9 @@ import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { BuiltInBadge, ReadOnlyBadge, LockCell } from "../../components/ProtectionBadge";
 import { useBulkSelection } from "../../lib/useBulkSelection";
+import { loadProjectSummaries, projectLabelFor, projectLabels } from "../../lib/projectIdentity";
+import { ProjectNameLabel } from "../../components/ProjectNameLabel";
+import type { ProjectSummary } from "./projects/types";
 import { nextAvailableName } from "../../lib/uniqueName";
 import { validateLibraryName } from "../../lib/libraryNames";
 import { MarkdownPreview } from "../../components/MarkdownPreview";
@@ -400,12 +403,21 @@ export default function Subagents() {
   const [securityNotice, setSecurityNotice] = useState<string | null>(null);
   const [currentScan, setCurrentScan] = useState<AssetSecurityScanRecord | null>(null);
   const [referencingProjects, setReferencingProjects] = useState<ProjectRef[]>([]);
+  // Every registered project, only to label duplicated names with their folder.
+  const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([]);
+  const labels = useMemo(() => projectLabels(projectSummaries), [projectSummaries]);
   const [search, setSearch] = useState("");
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => {
     loadAgents();
+    loadProjectSummaries()
+      .then(setProjectSummaries)
+      .catch((err: unknown) => {
+        // Non-fatal: the usage panel falls back to plain project names.
+        console.error("Failed to load project summaries:", err);
+      });
   }, []);
 
   const loadAgents = async () => {
@@ -949,7 +961,10 @@ export default function Subagents() {
                     <ul className="space-y-1.5 max-h-[108px] overflow-y-auto custom-scrollbar">
                       {referencingProjects.map(project => (
                         <li key={project.local_key || project.name} className="flex items-center justify-between gap-3 py-1">
-                          <span className="text-[13px] text-text-base truncate">{project.name}</span>
+                          <ProjectNameLabel
+                            label={projectLabelFor(labels, project.local_key || project.name, project.name)}
+                            className="text-[13px] text-text-base truncate"
+                          />
                         </li>
                       ))}
                     </ul>

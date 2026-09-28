@@ -44,7 +44,7 @@ struct RebuildPreview {
 
 #[tauri::command]
 pub fn preview_rebuild_project(name: &str) -> Result<String, String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -111,7 +111,7 @@ pub fn preview_rebuild_project(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -119,12 +119,29 @@ pub fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())
 }
 
+/// Save a project and sync it. `name` is an identifier (a `local_key`, or a
+/// name). Returns the saved project's `local_key` (its name while it has no
+/// key), which the Add Project wizard uses to address the project it just
+/// created: the name may be shared with another project.
 #[tauri::command]
-pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<(), String> {
-    // An identifier that resolves to nothing is the name of a new project.
-    let name = &core::resolve_project_name(name)?.unwrap_or_else(|| name.to_string());
+pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<String, String> {
     let mut incoming: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
+    let creating = creating.unwrap_or(false);
+
+    // Add Project wizard: refuse a directory another project owns, then give
+    // the new project its identity keys before the first write. The name is
+    // not looked up: another project may already use it. From here on the
+    // new project is addressed by its fresh `local_key`.
+    let ident = if creating {
+        core::assert_can_create_project(name, &incoming.directory)?;
+        core::prepare_new_project_keys(&mut incoming)?;
+        core::project_ident(&incoming).to_string()
+    } else {
+        // An identifier that resolves to nothing is the name of a new project.
+        core::resolve_project_ident(name)?.unwrap_or_else(|| name.to_string())
+    };
+    let name = &ident;
 
     // Profiles: bring the project's lists in step with its attached profiles
     // before anything is persisted or synced. This one hook covers the
@@ -135,19 +152,14 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<()
     // so a stale editor copy cannot drop or duplicate a group's contexts.
     core::reconcile_group_contexts(&mut incoming, &core::groups_for_project(name));
 
-    // Add Project wizard: refuse to overwrite an existing project/directory,
-    // then give the new project its identity keys before the first write.
-    if creating.unwrap_or(false) {
-        core::assert_can_create_project(name, &incoming.directory)?;
-        core::prepare_new_project_keys(&mut incoming)?;
-    }
     let reconciled = serde_json::to_string_pretty(&incoming).map_err(|e| e.to_string())?;
     let data: &str = &reconciled;
 
     // No directory configured yet -- just persist to the registry and return.
     // There is nothing to sync until the user has pointed us at a real directory.
     if incoming.directory.is_empty() {
-        return core::save_project(name, data);
+        core::save_project(name, data)?;
+        return Ok(name.clone());
     }
 
     // Detect whether this is a brand-new project (no existing registry entry).
@@ -167,7 +179,7 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<()
         core::save_project(name, data)?;
 
         // Log project creation.
-        activity::log(name, ActivityEvent::ProjectCreated, "Project created", name);
+        activity::log(name, ActivityEvent::ProjectCreated, "Project created", &incoming.name);
 
         // Errors are intentionally swallowed: partial success (project saved
         // but no agent configs written because the directory has no AI tools)
@@ -356,7 +368,7 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<()
         });
     }
 
-    Ok(())
+    Ok(name.clone())
 }
 
 /// Background helper: run AI recommendations for a project, respecting the
@@ -390,12 +402,18 @@ pub fn inspect_project_directory(directory: &str) -> Result<core::DirectoryStatu
 
 /// Adopt an existing on-disk project config (`.automatic.json`, or a legacy
 /// `.automatic/project.json`) as a registered project. Returns the adopted
-/// project name.
+/// project's `{name, local_key}`: open it by the key, since another project
+/// may share the name.
 #[tauri::command]
-pub fn import_existing_project(directory: &str) -> Result<String, String> {
-    let name = core::import_existing_project(directory)?;
-    activity::log(&name, ActivityEvent::ProjectCreated, "Project imported", &name);
-    Ok(name)
+pub fn import_existing_project(directory: &str) -> Result<core::ImportedProject, String> {
+    let imported = core::import_existing_project(directory)?;
+    activity::log(
+        &imported.local_key,
+        ActivityEvent::ProjectCreated,
+        "Project imported",
+        &imported.name,
+    );
+    Ok(imported)
 }
 
 /// Delete the project config and state files in `<directory>` so the wizard
@@ -407,8 +425,17 @@ pub fn delete_project_config(directory: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
-    let old_name = &crate::core::canonical_project_name(old_name)?;
-    core::rename_project(old_name, new_name)?;
+    // Address the project by its unique identifier throughout: after the
+    // rename, the new name may be shared with another project.
+    let ident = &crate::core::canonical_project_ident(old_name)?;
+    let old_display_name = crate::core::canonical_project_name(ident)?;
+    core::rename_project(ident, new_name)?;
+    // A project without a key is addressed by its name, which just changed.
+    let ident = &if crate::core::is_project_key(ident) {
+        ident.clone()
+    } else {
+        new_name.to_string()
+    };
 
     // Memory, features, groups, activity, recommendations and dev servers
     // are keyed by `id` or `local_key`, which a rename does not change, so
@@ -416,18 +443,18 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     // yet) are moved under the key, or the new name for a project without
     // one, so a running server keeps its stop control (VEL-160).
     // Best-effort — the rename has already succeeded.
-    let store_key = crate::core::project_store_local_key(new_name)?;
-    if let Err(e) = crate::plugins::dev_servers::adopt_legacy_project(old_name, &store_key) {
+    let store_key = crate::core::project_store_local_key(ident)?;
+    if let Err(e) = crate::plugins::dev_servers::adopt_legacy_project(&old_display_name, &store_key) {
         eprintln!(
             "rename_project: could not move dev-server config '{}' -> '{}': {}",
-            old_name, store_key, e
+            old_display_name, store_key, e
         );
     }
 
     // Agent configs name the project by `id` in AUTOMATIC_PROJECT, and a
     // rename does not change it. A project with no id yet has its name
     // there, so only that case re-syncs.
-    let raw = core::read_project(new_name)?;
+    let raw = core::read_project(ident)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
     if project.id.is_empty() && !project.directory.is_empty() && !project.agents.is_empty() {
@@ -440,7 +467,7 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
                     if files.len() == 1 { "" } else { "s" }
                 );
                 activity::log(
-                    new_name,
+                    ident,
                     ActivityEvent::ProjectSynced,
                     "Synced agent configs",
                     &detail,
@@ -450,10 +477,10 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
         written?;
     }
     activity::log(
-        new_name,
+        ident,
         ActivityEvent::ProjectUpdated,
         "Project renamed",
-        &format!("{} → {}", old_name, new_name),
+        &format!("{} → {}", old_display_name, new_name),
     );
 
     Ok(())
@@ -462,7 +489,8 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn delete_project(name: &str) -> Result<(), String> {
     // Deleting an unknown project still clears what it left behind, as before.
-    let name = &core::resolve_project_name(name)?.unwrap_or_else(|| name.to_string());
+    let display_name = core::resolve_project_name(name)?;
+    let name = &core::resolve_project_ident(name)?.unwrap_or_else(|| name.to_string());
     // Resolve the store keys before the registry entry goes.
     let keys = core::project_store_keys(name)?;
     core::delete_project(name)?;
@@ -472,12 +500,20 @@ pub fn delete_project(name: &str) -> Result<(), String> {
     // registry file so no orphan is left in the global Tools > Servers view
     // (VEL-160), and a legacy file still named by the project's name.
     // Best-effort — the project delete has already succeeded.
-    let mut dev_server_keys = vec![keys.local_key.as_str()];
+    // The legacy file is left alone while another project still has the
+    // name: it may be that project's.
+    let mut dev_server_keys = vec![keys.local_key.clone()];
     if keys.local_key != *name {
-        dev_server_keys.push(name.as_str());
+        dev_server_keys.push(name.clone());
+    }
+    if let Some(display_name) = display_name {
+        let name_still_used = !matches!(core::resolve_project_name(&display_name), Ok(None));
+        if !name_still_used && !dev_server_keys.contains(&display_name) {
+            dev_server_keys.push(display_name);
+        }
     }
     for key in dev_server_keys {
-        if let Err(e) = crate::plugins::dev_servers::registry::remove_project(key) {
+        if let Err(e) = crate::plugins::dev_servers::registry::remove_project(&key) {
             eprintln!(
                 "delete_project: could not remove dev-server config '{}' for '{}': {}",
                 key, name, e
@@ -494,7 +530,7 @@ pub fn delete_project(name: &str) -> Result<(), String> {
 /// Returns an empty object when the file does not exist yet.
 #[tauri::command]
 pub fn get_project_docs(name: &str) -> Result<String, String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -506,7 +542,7 @@ pub fn get_project_docs(name: &str) -> Result<String, String> {
 /// Returns an empty string when the file does not exist yet.
 #[tauri::command]
 pub fn read_project_docs_raw(name: &str) -> Result<String, String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -527,7 +563,7 @@ pub fn read_project_docs_raw(name: &str) -> Result<String, String> {
 /// directory if it does not exist.
 #[tauri::command]
 pub fn save_project_docs_raw(name: &str, content: &str) -> Result<(), String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -541,7 +577,7 @@ pub fn save_project_docs_raw(name: &str, content: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn sync_project(name: &str) -> Result<String, String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -564,7 +600,7 @@ pub fn sync_project(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn rebuild_project(name: &str) -> Result<String, String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -574,7 +610,7 @@ pub fn rebuild_project(name: &str) -> Result<String, String> {
     core::save_project(name, &rebuilt_json)?;
 
     sync::rebuild_instruction_snapshots(&rebuilt);
-    core::record_instruction_hashes(name, &mut rebuilt);
+    core::record_instruction_hashes(&mut rebuilt);
 
     activity::log(
         name,
@@ -664,7 +700,7 @@ fn custom_skill_names(project: &core::Project) -> Vec<String> {
 /// [`crate::agent::RemovalEntry`]; Keep's preview is always empty.
 #[tauri::command]
 pub fn get_agent_cleanup_preview(name: &str, agent_id: &str, mode: &str) -> Result<String, String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let mode: crate::agent::RemovalMode = mode.parse()?;
     let raw = core::read_project(name)?;
     let project: core::Project =
@@ -679,7 +715,7 @@ pub fn get_agent_cleanup_preview(name: &str, agent_id: &str, mode: &str) -> Resu
 /// [`crate::agent::RemovalEntry`] describing what changed.
 #[tauri::command]
 pub fn remove_agent_from_project(name: &str, agent_id: &str, mode: &str) -> Result<String, String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let mode: crate::agent::RemovalMode = mode.parse()?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
@@ -694,7 +730,7 @@ pub fn remove_agent_from_project(name: &str, agent_id: &str, mode: &str) -> Resu
 /// agents and files are out of sync.  This is a read-only operation.
 #[tauri::command]
 pub fn check_project_drift(name: &str) -> Result<String, String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -710,7 +746,7 @@ pub fn check_project_drift(name: &str) -> Result<String, String> {
 /// This is a read-only operation.
 #[tauri::command]
 pub fn check_project_problems(name: &str) -> Result<String, String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -729,7 +765,7 @@ pub fn check_project_problems(name: &str) -> Result<String, String> {
 /// for a stale skill directory.
 #[tauri::command]
 pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -768,7 +804,7 @@ pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
 /// for a stale skill directory.
 #[tauri::command]
 pub fn remove_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -857,7 +893,7 @@ fn strip_instructions_header(content: &str) -> String {
 /// Favours the on-disk file over Automatic's stored copy.
 #[tauri::command]
 pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -984,7 +1020,7 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
 /// re-sync so agent copies/symlinks match.
 #[tauri::command]
 pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
-    let name = &crate::core::canonical_project_name(name)?;
+    let name = &crate::core::canonical_project_ident(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -1110,11 +1146,14 @@ pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Resul
 // These are used by skills, rules, mcp_servers, and skill_store modules when
 // a registry item is saved or deleted and projects referencing it need updating.
 
+/// Call `f` with each registered project and its unique identifier (its
+/// `local_key`, see `core::project_ident`). Save back with that identifier,
+/// never the name, which another project may share. Show `project.name`.
 pub(crate) fn with_each_project_mut<F>(mut f: F)
 where
     F: FnMut(&str, &mut core::Project),
 {
-    let project_names = match core::list_projects() {
+    let project_names = match core::list_project_idents() {
         Ok(names) => names,
         Err(e) => {
             eprintln!("Failed to list projects for config updates: {}", e);
@@ -1775,7 +1814,7 @@ fn detach_profile_from_projects_removes_provided_entries() {
     }
 
     #[test]
-    fn save_project_creating_true_rejects_existing_and_preserves_data() {
+    fn save_project_creating_true_rejects_a_taken_directory_and_preserves_data() {
         with_temp_home(|_| {
             let project_dir = tempdir().expect("project dir");
             let dir = project_dir.path().display().to_string();
@@ -1797,9 +1836,9 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let stub_json = serde_json::to_string_pretty(&stub).expect("stub json");
 
             let err = save_project("alpha", &stub_json, Some(true))
-                .expect_err("creating over existing project must fail");
+                .expect_err("creating over an existing project's directory must fail");
             assert!(
-                err.contains("The name 'alpha' is already used by the project at"),
+                err.contains("already registered as project 'alpha'"),
                 "unexpected error: {err}"
             );
 
@@ -1810,6 +1849,87 @@ fn detach_profile_from_projects_removes_provided_entries() {
                 vec!["keep-me".to_string()],
                 "failed create must not overwrite existing project data"
             );
+        });
+    }
+
+    /// Stage 6: a second project may take a name another project uses. The
+    /// create returns the new project's key, and the two stay independent.
+    #[test]
+    fn creating_a_project_with_a_taken_name_makes_a_separate_project() {
+        with_temp_home(|_| {
+            let first_dir = tempdir().expect("first dir");
+            let second_dir = tempdir().expect("second dir");
+            let stub = |dir: &std::path::Path, description: &str| {
+                serde_json::to_string(&core::Project {
+                    name: "website".to_string(),
+                    description: description.to_string(),
+                    directory: dir.display().to_string(),
+                    ..Default::default()
+                })
+                .unwrap()
+            };
+            let first = save_project("website", &stub(first_dir.path(), "first"), Some(true))
+                .expect("create the first");
+            let second = save_project("website", &stub(second_dir.path(), "second"), Some(true))
+                .expect("create the second under the same name");
+            assert_ne!(first, second);
+            assert!(core::is_project_key(&first) && core::is_project_key(&second));
+
+            let load = |key: &str| -> core::Project {
+                serde_json::from_str(&core::read_project(key).unwrap()).unwrap()
+            };
+            let (a, b) = (load(&first), load(&second));
+            assert_eq!((a.name.as_str(), a.description.as_str()), ("website", "first"));
+            assert_eq!((b.name.as_str(), b.description.as_str()), ("website", "second"));
+            assert_ne!(a.id, b.id, "unrelated folders are different projects");
+            assert_eq!(core::list_projects().unwrap(), vec!["website"]);
+            assert_eq!(core::list_project_idents().unwrap().len(), 2);
+
+            // Saving one by its key leaves the other alone.
+            let mut edited = a.clone();
+            edited.description = "first, edited".into();
+            save_project(&first, &serde_json::to_string(&edited).unwrap(), None).expect("save");
+            assert_eq!(load(&first).description, "first, edited");
+            assert_eq!(load(&second).description, "second");
+
+            // Memory is per project; activity per checkout.
+            super::super::memory::store_memory(&first, "k", "one", None).unwrap();
+            super::super::memory::store_memory(&second, "k", "two", None).unwrap();
+            assert_eq!(super::super::memory::get_project_memories(&first).unwrap()["k"].value, "one");
+            assert_eq!(super::super::memory::get_project_memories(&second).unwrap()["k"].value, "two");
+            let err = super::super::memory::store_memory("website", "k", "?", None)
+                .expect_err("a shared name is ambiguous");
+            assert!(err.contains(&first) && err.contains(&second), "{err}");
+
+            // Features are per project.
+            crate::plugins::build::commands::create_feature(
+                &first, "only first", None, None, None, None, None, None, None, None,
+            )
+            .expect("feature by key");
+            assert_eq!(crate::plugins::build::commands::list_features(&first, None, None).unwrap().len(), 1);
+            assert!(crate::plugins::build::commands::list_features(&second, None, None).unwrap().is_empty());
+
+            // Groups hold ids; each checkout shows under its own key.
+            core::save_group(
+                "g",
+                &serde_json::json!({"name": "g", "projects": [second.clone()]}).to_string(),
+            )
+            .unwrap();
+            assert_eq!(super::super::groups::groups_for_project(&second).unwrap(), vec!["g"]);
+            assert!(super::super::groups::groups_for_project(&first).unwrap().is_empty());
+            assert!(super::super::groups::groups_for_project("website").is_err());
+
+            // Drift and sync address one project each. With an agent, sync
+            // writes into that project's folder only.
+            let mut with_agent = load(&second);
+            with_agent.agents = vec!["claude".into()];
+            save_project(&second, &serde_json::to_string(&with_agent).unwrap(), None).expect("add agent");
+            sync_project(&second).expect("sync by key");
+            assert!(second_dir.path().join("CLAUDE.md").exists());
+            assert!(!first_dir.path().join("CLAUDE.md").exists());
+            check_project_drift(&first).expect("drift by key");
+            let err = check_project_drift("website").expect_err("ambiguous");
+            assert!(err.contains("More than one project is named 'website'"), "{err}");
         });
     }
 
@@ -2123,20 +2243,32 @@ mod identifier_tests {
     }
 
     #[test]
-    fn groups_store_ids_and_show_every_checkout_by_name() {
+    fn groups_store_ids_and_show_every_checkout_by_key() {
         with_site(|key| {
-            let group = serde_json::json!({"name": "g", "projects": ["site", "ghost"]});
+            let group = serde_json::json!({"name": "g", "projects": [key, "ghost", site_id()]});
             core::save_group("g", &group.to_string()).expect("save group");
             let raw: serde_json::Value = serde_json::from_str(
                 &std::fs::read_to_string(core::get_groups_dir().unwrap().join("g.json")).unwrap(),
             )
             .unwrap();
-            assert_eq!(raw["projects"], serde_json::json!([site_id(), "ghost"]));
+            assert_eq!(
+                raw["projects"],
+                serde_json::json!([site_id(), "ghost"]),
+                "a key becomes its id, an id stays, duplicates collapse, unknown values stay"
+            );
 
-            add_checkout("site-wt");
+            let worktree_key = add_checkout("site-wt");
             let read: core::ProjectGroup =
                 serde_json::from_str(&super::super::groups::read_group("g").unwrap()).unwrap();
-            assert_eq!(read.projects, vec!["site", "site-wt", "ghost"]);
+            assert_eq!(read.projects, vec![key.to_string(), worktree_key, "ghost".to_string()]);
+
+            // Saving what was read stores the same ids.
+            core::save_group("g", &serde_json::to_string(&read).unwrap()).expect("round trip");
+            let raw: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(core::get_groups_dir().unwrap().join("g.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(raw["projects"], serde_json::json!([site_id(), "ghost"]));
 
             assert_eq!(super::super::groups::groups_for_project(key).unwrap(), vec!["g"]);
             assert_eq!(super::super::groups::groups_for_project("site-wt").unwrap(), vec!["g"]);
@@ -2175,7 +2307,7 @@ mod identifier_tests {
         with_site(|key| {
             let id = site_id();
             super::super::memory::store_memory("site", "k", "v", None).unwrap();
-            core::save_group("g", &serde_json::json!({"name": "g", "projects": ["site"]}).to_string())
+            core::save_group("g", &serde_json::json!({"name": "g", "projects": [key]}).to_string())
                 .unwrap();
             let worktree_key = add_checkout("site-wt");
             let dev_dir = core::get_automatic_dir().unwrap().join("dev-servers");
@@ -2188,7 +2320,7 @@ mod identifier_tests {
             assert!(!dev_dir.join(format!("{key}.json")).exists(), "dev servers removed");
             let read: core::ProjectGroup =
                 serde_json::from_str(&super::super::groups::read_group("g").unwrap()).unwrap();
-            assert_eq!(read.projects, vec!["site-wt"], "another checkout keeps the id in the group");
+            assert_eq!(read.projects, vec![worktree_key.clone()], "another checkout keeps the id in the group");
 
             delete_project(&worktree_key).expect("delete the last checkout");
             let read: core::ProjectGroup =

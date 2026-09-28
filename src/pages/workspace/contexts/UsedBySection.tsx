@@ -1,14 +1,23 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, Folder, Layers, Plus, Search, X } from "lucide-react";
 import { ContextDialog, DialogError, PRIMARY_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from "./ContextDialog";
-import type { ContextReferences, ContextTarget } from "./types";
+import type { ContextProjectRef, ContextReferences, ContextTarget } from "./types";
 import type { ProjectSummary } from "../projects/types";
-import { loadProjectSummaries, projectKeyOf } from "../../../lib/projectIdentity";
+import {
+  loadProjectSummaries,
+  projectKeyOf,
+  projectLabelFor,
+  projectLabels,
+  projectLabelText,
+  type ProjectLabel,
+} from "../../../lib/projectIdentity";
+import { ProjectNameLabel } from "../../../components/ProjectNameLabel";
 
-/** The key for a referenced project name: its local_key when known, else the name. */
-function referencedProjectKey(refs: ContextReferences, name: string): string {
-  return refs.project_local_keys?.[name] ?? name;
+/** The referenced projects, each with the key that addresses it: its local_key, else its name. */
+function referencedProjects(refs: ContextReferences): { key: string; ref: ContextProjectRef }[] {
+  const list: ContextProjectRef[] = refs.project_refs ?? refs.projects.map((name) => ({ name, directory: "" }));
+  return list.map((ref) => ({ key: ref.local_key || ref.name, ref }));
 }
 
 interface UsedBySectionProps {
@@ -23,6 +32,9 @@ export function UsedBySection({ contextSlug, onNavigateToProject, onNavigateToGr
   const [refs, setRefs] = useState<ContextReferences>({ projects: [], groups: [] });
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Every registered project, only to label duplicated names with their folder.
+  const [summaries, setSummaries] = useState<ProjectSummary[]>([]);
+  const labels = useMemo(() => projectLabels(summaries), [summaries]);
 
   const load = async () => {
     try {
@@ -32,6 +44,15 @@ export function UsedBySection({ contextSlug, onNavigateToProject, onNavigateToGr
       setError(`Couldn't load where this is used: ${err}`);
     }
   };
+
+  useEffect(() => {
+    loadProjectSummaries()
+      .then(setSummaries)
+      .catch((err: unknown) => {
+        // Non-fatal: rows fall back to plain project names.
+        console.error("Failed to load project summaries:", err);
+      });
+  }, []);
 
   useEffect(() => {
     void load();
@@ -74,13 +95,12 @@ export function UsedBySection({ contextSlug, onNavigateToProject, onNavigateToGr
               onDetach={() => void detach({ type: "group", name })}
             />
           ))}
-          {refs.projects.map((name) => {
-            const key = referencedProjectKey(refs, name);
+          {referencedProjects(refs).map(({ key, ref }) => {
             return (
               <Row
                 key={`p:${key}`}
                 icon={<Folder size={13} className="text-text-muted" />}
-                label={name}
+                label={projectLabelFor(labels, key, ref.name)}
                 note="Project"
                 onOpen={() => onNavigateToProject?.(key)}
                 onDetach={() => void detach({ type: "project", name: key })}
@@ -112,19 +132,20 @@ function Row({
   onDetach,
 }: {
   icon: ReactNode;
-  label: string;
+  label: string | ProjectLabel;
   note: string;
   onOpen: () => void;
   onDetach: () => void;
 }) {
+  const text = typeof label === "string" ? label : projectLabelText(label);
   return (
     <li className="group flex items-center gap-2.5 px-3 py-2">
       {icon}
       <button onClick={onOpen} className="flex-1 min-w-0 text-left text-[13px] text-text-base hover:text-brand truncate transition-colors">
-        {label}
+        {typeof label === "string" ? label : <ProjectNameLabel label={label} />}
       </button>
       <span className="text-[11px] text-text-muted">{note}</span>
-      <button onClick={onDetach} className="p-1 text-text-muted hover:text-danger transition-colors" aria-label={`Detach from ${label}`} title="Detach">
+      <button onClick={onDetach} className="p-1 text-text-muted hover:text-danger transition-colors" aria-label={`Detach from ${text}`} title="Detach">
         <X size={12} />
       </button>
     </li>
@@ -148,6 +169,7 @@ function AttachDialog({
   const [selected, setSelected] = useState<ContextTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const labels = useMemo(() => projectLabels(projects), [projects]);
 
   useEffect(() => {
     void (async () => {
@@ -179,7 +201,7 @@ function AttachDialog({
   };
 
   /** `label` is shown; a project target's `name` holds its local_key. */
-  const option = (target: ContextTarget, isAttached: boolean, label: string = target.name) => {
+  const option = (target: ContextTarget, isAttached: boolean, label: string | ProjectLabel = target.name) => {
     const isSelected = selected?.type === target.type && selected.name === target.name;
     return (
       <li key={`${target.type}:${target.name}`}>
@@ -192,7 +214,11 @@ function AttachDialog({
           } disabled:cursor-default disabled:hover:bg-transparent`}
         >
           {target.type === "group" ? <Layers size={13} className="text-text-muted" /> : <Folder size={13} className="text-text-muted" />}
-          <span className="flex-1 text-[13px] text-text-base truncate">{label}</span>
+          {typeof label === "string" ? (
+            <span className="flex-1 text-[13px] text-text-base truncate">{label}</span>
+          ) : (
+            <ProjectNameLabel label={label} className="flex-1 text-[13px] text-text-base truncate" />
+          )}
           {isAttached && <span className="flex items-center gap-1 text-[11px] text-text-muted"><Check size={11} /> Attached</span>}
         </button>
       </li>
@@ -200,8 +226,8 @@ function AttachDialog({
   };
 
   const visibleGroups = groups.filter(match);
-  const visibleProjects = projects.filter((p) => match(p.name));
-  const attachedProjectKeys = new Set(attached.projects.map((name) => referencedProjectKey(attached, name)));
+  const visibleProjects = projects.filter((p) => match(projectLabelText(projectLabelFor(labels, projectKeyOf(p), p.name))));
+  const attachedProjectKeys = new Set(referencedProjects(attached).map(({ key }) => key));
 
   return (
     <ContextDialog
@@ -239,7 +265,7 @@ function AttachDialog({
           <p className="text-[11px] font-medium text-text-muted mb-1">Projects</p>
           <ul className="space-y-0.5">{visibleProjects.map((p) => {
             const key = projectKeyOf(p);
-            return option({ type: "project", name: key }, attachedProjectKeys.has(key), p.name);
+            return option({ type: "project", name: key }, attachedProjectKeys.has(key), projectLabelFor(labels, key, p.name));
           })}</ul>
         </div>
       )}

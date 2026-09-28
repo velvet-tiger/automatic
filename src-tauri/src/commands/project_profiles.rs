@@ -51,10 +51,10 @@ pub fn get_projects_referencing_profile(
     profile_name: &str,
 ) -> Result<Vec<core::ProjectRef>, String> {
     let mut referencing = Vec::new();
-    with_each_project_mut(|project_name, project| {
+    with_each_project_mut(|_, project| {
         if project.profiles.iter().any(|p| p == profile_name) {
             referencing.push(core::ProjectRef {
-                name: project_name.to_string(),
+                name: project.name.clone(),
                 directory: project.directory.clone(),
                 local_key: core::local_key_of(project),
             });
@@ -66,7 +66,7 @@ pub fn get_projects_referencing_profile(
 
 #[tauri::command]
 pub fn attach_profile_to_project(project_name: &str, profile_name: &str) -> Result<(), String> {
-    let project_name = &crate::core::canonical_project_name(project_name)?;
+    let project_name = &crate::core::canonical_project_ident(project_name)?;
     core::read_project_profile_parsed(profile_name)?;
 
     let raw = core::read_project(project_name)?;
@@ -88,7 +88,7 @@ pub fn attach_profile_to_project(project_name: &str, profile_name: &str) -> Resu
 
 #[tauri::command]
 pub fn detach_profile_from_project(project_name: &str, profile_name: &str) -> Result<(), String> {
-    let project_name = &crate::core::canonical_project_name(project_name)?;
+    let project_name = &crate::core::canonical_project_ident(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;

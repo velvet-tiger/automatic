@@ -38,8 +38,8 @@ pub struct ReadProjectParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct RegisterProjectParams {
-    /// The name for the new project. Must be unique — the call fails when a
-    /// project with this name is already registered.
+    /// The name for the new project. Another project may already use it;
+    /// the new project gets its own local_key.
     pub name: String,
     /// Absolute path to the project's working directory. The directory must
     /// already exist on disk.
@@ -736,7 +736,7 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
     // (open the existing project, or import/discard the orphan).
     match crate::core::inspect_project_directory(directory)? {
         crate::core::DirectoryStatus::Available => {}
-        crate::core::DirectoryStatus::RegisteredHere { name: existing } => {
+        crate::core::DirectoryStatus::RegisteredHere { name: existing, .. } => {
             return Err(format!(
                 "This directory is already registered as project '{}'. Open that project \
                  instead of creating it again.",
@@ -753,7 +753,9 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
         }
     }
 
-    // Belt-and-suspenders with inspect_project_directory: refuse duplicate names.
+    // Belt-and-suspenders with inspect_project_directory: validates the name
+    // and refuses a directory another project owns. Another project may
+    // already use the name (stage 6).
     crate::core::assert_can_create_project(name, directory)?;
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -774,10 +776,12 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
     crate::core::prepare_new_project_keys(&mut project)?;
     let data = serde_json::to_string(&project)
         .map_err(|e| format!("Failed to serialise project: {}", e))?;
-    crate::core::save_project(name, &data)?;
+    // By the fresh `local_key`: the name may belong to another project too.
+    let ident = crate::core::project_ident(&project).to_string();
+    crate::core::save_project(&ident, &data)?;
 
     crate::activity::log(
-        name,
+        &ident,
         crate::activity::ActivityEvent::ProjectCreated,
         "Project created",
         name,
@@ -787,7 +791,10 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
     // succeeded at this point, so a sync failure is reported as a warning
     // instead of failing the whole call (mirrors the GUI's new-project flow,
     // where partial success beats a hard error).
-    let mut report = format!("Registered project '{}'.\nDirectory: {}\n", name, directory);
+    let mut report = format!(
+        "Registered project '{}'.\nDirectory: {}\nlocal_key: {}\n",
+        name, directory, ident
+    );
     if !agents.is_empty() {
         report.push_str(&format!("Agents: {}\n", agents.join(", ")));
         match crate::sync::sync_project(&project) {
@@ -815,6 +822,54 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
     report.push_str("Call automatic_read_project to inspect the saved configuration.");
 
     Ok(report)
+}
+
+/// One peer in `automatic_get_related_projects`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RelatedPeer {
+    name: String,
+    directory: String,
+    /// Identifier to read the peer by: its `local_key`, or the stored value
+    /// for a member no registered project claims.
+    ident: String,
+}
+
+/// The peers a group's stored `members` name, leaving out `this` project
+/// (every checkout of its `id`). A member `id` expands to every checkout of
+/// that project, in the order `read_group` shows them. A legacy name only
+/// one project has resolves to it. Any other member is listed as stored
+/// with no folder, so nothing disappears.
+fn related_peers(
+    index: &crate::core::ProjectKeyIndex,
+    members: &[String],
+    this: &crate::core::ProjectSummary,
+) -> Vec<RelatedPeer> {
+    let is_this = |s: &crate::core::ProjectSummary| {
+        (!this.id.is_empty() && s.id == this.id)
+            || (!this.local_key.is_empty() && s.local_key == this.local_key)
+    };
+    let mut peers = Vec::new();
+    for member in members {
+        let keys = index.member_keys(member);
+        for key in keys {
+            match index.summaries().iter().find(|s| crate::core::checkout_ident(s) == key)
+                .or_else(|| index.resolve(&key))
+            {
+                Some(summary) if is_this(summary) => {}
+                Some(summary) => peers.push(RelatedPeer {
+                    name: summary.name.clone(),
+                    directory: summary.directory.clone(),
+                    ident: crate::core::checkout_ident(summary).to_string(),
+                }),
+                None => peers.push(RelatedPeer {
+                    name: key.clone(),
+                    directory: String::new(),
+                    ident: key,
+                }),
+            }
+        }
+    }
+    peers
 }
 
 // ── MCP Server Handler ──────────────────────────────────────────────────────
@@ -1093,12 +1148,12 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_register_project",
-        description = "Register a new project in Automatic. Requires a unique project name and \
+        description = "Register a new project in Automatic. Requires a project name and \
                        an absolute path to an existing directory on disk. Optionally provide a \
                        description and a list of agent tool ids (e.g. claude, cursor, codex) — \
                        when agents are given, their configuration files are synced into the \
-                       directory immediately. Fails when the name is already taken, the \
-                       directory is already registered to another project, or the directory \
+                       directory immediately. Another project may share the name. Fails when \
+                       the directory is already registered to another project, or the directory \
                        holds an unregistered Automatic config."
     )]
     async fn register_project(
@@ -1132,20 +1187,24 @@ impl AutomaticMcpServer {
             Ok(target) => target,
             Err(e) => return Ok(tool_error(e)),
         };
-        let this = target.representative();
-        let this_name = this.name.as_str();
+        let this = target.representative().clone();
         let this_dir = this.directory.as_str();
 
-        // Find every group this project belongs to.
-        let groups = crate::core::groups_for_project(this_name);
+        // Find every group this project belongs to. Members are stored as
+        // project ids.
+        let groups = crate::core::groups_for_project(crate::core::checkout_ident(&this));
 
         if groups.is_empty() {
             return Ok(CallToolResult::success(vec![Content::text(
                 "This project does not belong to any groups and has no related projects.",
             )]));
         }
+        let index = match crate::core::ProjectKeyIndex::load() {
+            Ok(index) => index,
+            Err(e) => return Ok(tool_error(format!("Failed to read the project registry: {}", e))),
+        };
 
-        // Collect unique peer project names across all groups, avoiding duplicates.
+        // Collect unique peer checkouts across all groups, avoiding duplicates.
         let mut seen = std::collections::HashSet::new();
         let mut output = String::new();
 
@@ -1159,38 +1218,32 @@ impl AutomaticMcpServer {
                 output.push('\n');
             }
 
-            let peers: Vec<&String> = group
-                .projects
-                .iter()
-                .filter(|p| p.as_str() != this_name)
-                .collect();
-
+            let peers = related_peers(&index, &group.projects, &this);
             if peers.is_empty() {
                 output.push_str("No other projects in this group yet.\n");
             } else {
-                for peer_name in peers {
-                    if !seen.insert(peer_name.clone()) {
+                for peer in peers {
+                    if !seen.insert(peer.ident.clone()) {
                         continue; // already included from another group
                     }
-                    let peer_project = crate::core::read_project(peer_name)
+                    let peer_desc = crate::core::read_project(&peer.ident)
                         .ok()
-                        .and_then(|raw| serde_json::from_str::<crate::core::Project>(&raw).ok());
-
-                    let (peer_desc, peer_dir) = peer_project
-                        .map(|p| (p.description, p.directory))
+                        .and_then(|raw| serde_json::from_str::<crate::core::Project>(&raw).ok())
+                        .map(|p| p.description)
                         .unwrap_or_default();
+                    let rel_path = crate::core::compute_relative_path(this_dir, &peer.directory);
 
-                    let rel_path = crate::core::compute_relative_path(this_dir, &peer_dir);
-
-                    let mut entry = format!("**{}**", peer_name);
+                    // Every peer lists its folder, so peers that share a name
+                    // stay distinguishable.
+                    let mut entry = format!("**{}**", peer.name);
                     if !peer_desc.trim().is_empty() {
                         entry.push_str(&format!(": {}", peer_desc.trim()));
                     }
                     if !rel_path.is_empty() {
                         entry.push_str(&format!("\nLocation: `{}`", rel_path));
                     }
-                    if !peer_dir.is_empty() {
-                        entry.push_str(&format!("\nAbsolute path: `{}`", peer_dir));
+                    if !peer.directory.is_empty() {
+                        entry.push_str(&format!("\nAbsolute path: `{}`", peer.directory));
                     }
                     output.push_str(&entry);
                     output.push('\n');
@@ -3500,7 +3553,40 @@ mod tests {
     }
 
     #[test]
-    fn register_rejects_duplicate_name() {
+    fn related_peers_show_every_checkout_with_its_folder() {
+        const ID_A: &str = "11111111-1111-4111-8111-111111111111";
+        const ID_B: &str = "22222222-2222-4222-8222-222222222222";
+        const ID_C: &str = "33333333-3333-4333-8333-333333333333";
+        let summary = |name: &str, id: &str, key: &str, dir: &str| crate::core::ProjectSummary {
+            local_key: key.into(),
+            id: id.into(),
+            name: name.into(),
+            directory: dir.into(),
+        };
+        let this = summary("api", ID_A, "aaaaaaaa-0000-4000-8000-000000000001", "/w/api");
+        let index = crate::core::ProjectKeyIndex::new(vec![
+            this.clone(),
+            summary("website", ID_B, "bbbbbbbb-0000-4000-8000-000000000001", "/w/consultmed/website"),
+            summary("website", ID_C, "cccccccc-0000-4000-8000-000000000001", "/w/_active/website"),
+        ]);
+        let members: Vec<String> =
+            [ID_A, ID_B, ID_C, "gone"].iter().map(|s| s.to_string()).collect();
+        let peers = related_peers(&index, &members, &this);
+        let shown: Vec<(&str, &str)> =
+            peers.iter().map(|p| (p.name.as_str(), p.directory.as_str())).collect();
+        assert_eq!(
+            shown,
+            vec![
+                ("website", "/w/consultmed/website"),
+                ("website", "/w/_active/website"),
+                ("gone", ""),
+            ],
+            "this project is left out; same-named peers keep their folders; unknown members stay"
+        );
+    }
+
+    #[test]
+    fn register_allows_a_name_another_project_uses() {
         let home = tempfile::tempdir().expect("tempdir");
         let ws1 = home.path().join("ws1");
         let ws2 = home.path().join("ws2");
@@ -3510,13 +3596,20 @@ mod tests {
         with_test_home(home.path().to_path_buf(), || {
             register_project_impl(&params("alpha", ws1.to_str().unwrap(), None))
                 .expect("first registration");
+            let report = register_project_impl(&params("alpha", ws2.to_str().unwrap(), None))
+                .expect("a shared name registers");
+            assert!(report.contains("local_key: "), "{report}");
 
-            let err = register_project_impl(&params("alpha", ws2.to_str().unwrap(), None))
-                .expect_err("duplicate name must be rejected");
-            assert!(
-                err.contains("The name 'alpha' is already used by the project at"),
-                "unexpected error: {err}"
-            );
+            let summaries = crate::core::get_project_summaries().expect("summaries");
+            assert_eq!(summaries.len(), 2);
+            assert!(summaries.iter().all(|s| s.name == "alpha"));
+            assert_ne!(summaries[0].id, summaries[1].id);
+            let dirs: Vec<&str> = summaries.iter().map(|s| s.directory.as_str()).collect();
+            assert!(dirs.contains(&ws1.to_str().unwrap()) && dirs.contains(&ws2.to_str().unwrap()));
+
+            let err = crate::core::resolve_project_target(Some("alpha"), &crate::core::CurrentProject::None, &summaries)
+                .expect_err("a shared name is ambiguous");
+            assert!(err.contains(&summaries[0].local_key) && err.contains(&summaries[1].local_key));
         });
     }
 

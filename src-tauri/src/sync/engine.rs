@@ -148,7 +148,7 @@ pub fn sync_project_without_autodetect(project: &mut Project) -> Result<Vec<Stri
 
     // Ensure the project config is written to the project directory
     if let Ok(proj_str) = serde_json::to_string_pretty(project) {
-        let _ = crate::core::save_project(&project.name, &proj_str);
+        let _ = crate::core::save_project(crate::core::project_ident(project), &proj_str);
     }
 
     sync_to_directory_inner(project, true)
@@ -699,7 +699,7 @@ fn sync_agent_configs_step(
     selected_servers: &serde_json::Map<String, serde_json::Value>,
     written_files: &mut Vec<String>,
 ) -> Result<Vec<InstructionTarget>, String> {
-    let project_groups = crate::core::groups_for_project(&project.name);
+    let project_groups = crate::core::groups_for_project(crate::core::project_ident(project));
     let mut cleaned_project_files = HashSet::new();
     let mut instruction_targets = Vec::new();
 
@@ -1048,7 +1048,7 @@ fn sync_instruction_target_file(
         .collect();
     let custom_rule_structs = project.custom_rules.clone();
     let file_path = dir.join(filename).display().to_string();
-    let project_groups = crate::core::groups_for_project(&project.name);
+    let project_groups = crate::core::groups_for_project(crate::core::project_ident(project));
     // Does this agent route library rules to its own rules directory
     // (.claude/rules/ or .cursor/rules/) instead of inline injection?
     let uses_agent_rules_dir = match agent_id {
@@ -1137,7 +1137,8 @@ fn record_instruction_state_step(
     written_instruction_files: &[String],
     effective_dir: &str,
 ) {
-    let project_name = project.name.clone();
+    // The project's own identifier: its name may be shared.
+    let project_ident = crate::core::project_ident(project).to_string();
 
     if effective_dir != project.directory {
         // Silent mode: compute hashes directly from the files in effective_dir and
@@ -1165,14 +1166,10 @@ fn record_instruction_state_step(
         }
         // Persist the real project (directory unchanged) with the updated hashes.
         if let Ok(data) = serde_json::to_string_pretty(project) {
-            let _ = crate::core::save_project(&project_name, &data);
+            let _ = crate::core::save_project(&project_ident, &data);
         }
     } else {
-        crate::core::record_instruction_hashes_for_filenames(
-            &project_name,
-            project,
-            written_instruction_files,
-        );
+        crate::core::record_instruction_hashes_for_filenames(project, written_instruction_files);
     }
 
     let mut snap_seen: HashSet<String> = HashSet::new();

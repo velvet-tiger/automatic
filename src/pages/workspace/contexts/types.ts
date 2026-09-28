@@ -69,11 +69,20 @@ export interface SourceListing {
   truncated?: boolean;
 }
 
+/** A project that references a context. Matches `core::ProjectRef`. */
+export interface ContextProjectRef {
+  name: string;
+  directory: string;
+  /** Absent while the project has no key yet; then `name` identifies it. */
+  local_key?: string;
+}
+
 export interface ContextReferences {
+  /** Display names, in the same order as `project_refs`. Names can repeat. */
   projects: string[];
   groups: string[];
-  /** `local_key` of each name in `projects` that has one, keyed by name. */
-  project_local_keys?: Record<string, string>;
+  /** The same projects with their folder and `local_key`. */
+  project_refs?: ContextProjectRef[];
 }
 
 /** Matches `core::ContextTarget` (`{"type": "project", "name": "..."}`). */

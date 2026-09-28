@@ -40,7 +40,15 @@ import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { BuiltInBadge, ReadOnlyBadge, LockCell } from "../../components/ProtectionBadge";
 import { useBulkSelection } from "../../lib/useBulkSelection";
-import { loadProjectSummaries, projectKeyOf } from "../../lib/projectIdentity";
+import {
+  loadProjectSummaries,
+  projectKeyOf,
+  projectLabelFor,
+  projectLabels,
+  projectLabelText,
+  type ProjectLabel,
+} from "../../lib/projectIdentity";
+import { ProjectNameLabel } from "../../components/ProjectNameLabel";
 import {
   type AssetSecurityScanRecord,
   formatAssetScanResult,
@@ -92,8 +100,8 @@ interface SkillCollection {
 }
 
 interface SkillUsedBy {
-  /** Projects using the skill: `key` is the local_key, `name` is shown. */
-  projects: { key: string; name: string }[];
+  /** Projects using the skill: `key` is the local_key, `label` is shown. */
+  projects: { key: string; label: ProjectLabel }[];
   templates: string[];
 }
 
@@ -722,9 +730,10 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
         )),
       ]);
 
+      const labels = projectLabels(projectSummaries);
       const usingProjects = projectDetails
         .filter(p => p && p.skills.includes(name))
-        .map(p => ({ key: p!.key, name: p!.name }));
+        .map(p => ({ key: p!.key, label: projectLabelFor(labels, p!.key, p!.name) }));
       const usingTemplates = templateDetails.filter(t => t && t.skills.includes(name)).map(t => t!.name);
       setSkillUsedBy({ projects: usingProjects, templates: usingTemplates });
 
@@ -1700,15 +1709,18 @@ export default function Skills({ initialSkill = null, onInitialSkillConsumed, on
                             <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-text-muted/70 tracking-wider uppercase">
                               Projects
                             </p>
-                            {skillUsedBy.projects.map(({ key, name }) => (
+                            {skillUsedBy.projects.map(({ key, label }) => (
                               <button
                                 key={`project-${key}`}
                                 onClick={() => onNavigateToProject?.(key)}
                                 className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-bg-sidebar/60 transition-colors group"
-                                title={`Open project: ${name}`}
+                                title={`Open project: ${projectLabelText(label)}`}
                               >
                                 <FolderOpen size={12} className="shrink-0 text-brand" />
-                                <span className="flex-1 text-[12px] text-text-base truncate group-hover:text-brand transition-colors">{name}</span>
+                                <ProjectNameLabel
+                                  label={label}
+                                  className="flex-1 text-[12px] text-text-base truncate group-hover:text-brand transition-colors"
+                                />
                               </button>
                             ))}
                           </div>

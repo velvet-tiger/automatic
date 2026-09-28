@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Bot, FolderOpen, AlertCircle, ArrowRight, CheckCircle2, XCircle, Settings2 } from "lucide-react";
 import { ICONS } from "../../lib/icons";
@@ -7,6 +7,9 @@ import type { AgentCapabilities, AgentOptions } from "../../components/AgentSele
 import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { GlobalMcpTab } from "./providers/GlobalMcpTab";
+import { loadProjectSummaries, projectLabelFor, projectLabels } from "../../lib/projectIdentity";
+import { ProjectNameLabel } from "../../components/ProjectNameLabel";
+import type { ProjectSummary } from "./projects/types";
 
 interface AgentProject {
   name: string;
@@ -126,10 +129,19 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
   const [cleanSnapshotsStatus, setCleanSnapshotsStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [cleanSnapshotsResult, setCleanSnapshotsResult] = useState<{ repos_gced: number; orphans_removed: number; tmp_pack_files_removed: number; bytes_freed: number } | null>(null);
   const [cleanSnapshotsError, setCleanSnapshotsError] = useState("");
+  // Every registered project, only to label duplicated names with their folder.
+  const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([]);
+  const labels = useMemo(() => projectLabels(projectSummaries), [projectSummaries]);
 
   useEffect(() => {
     loadAgents();
     loadDefaults();
+    loadProjectSummaries()
+      .then(setProjectSummaries)
+      .catch((err: unknown) => {
+        // Non-fatal: the Projects tab falls back to plain project names.
+        console.error("Failed to load project summaries:", err);
+      });
   }, []);
 
   useEffect(() => {
@@ -550,7 +562,9 @@ export default function Providers({ onNavigateToProject }: ProvidersProps = {}) 
                                 <FolderOpen size={15} className={ICONS.project.iconColor} />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="text-[13px] font-medium text-text-base">{p.name}</div>
+                                <div className="text-[13px] font-medium text-text-base">
+                                  <ProjectNameLabel label={projectLabelFor(labels, p.local_key || p.name, p.name)} />
+                                </div>
                                 {p.directory && (
                                   <div className="text-[11px] text-text-muted font-mono truncate mt-0.5">
                                     {p.directory}

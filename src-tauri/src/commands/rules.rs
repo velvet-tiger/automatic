@@ -55,7 +55,7 @@ pub struct RuleProjectStatus {
 #[tauri::command]
 pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectStatus>, String> {
     let mut referencing: Vec<RuleProjectStatus> = Vec::new();
-    with_each_project_mut(|project_name, project| {
+    with_each_project_mut(|_, project| {
         // Collect the file_rules entries that reference this rule.
         let referencing_entries: Vec<(&String, &Vec<String>)> = project
             .file_rules
@@ -107,7 +107,7 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
         });
 
         referencing.push(RuleProjectStatus {
-            name: project_name.to_string(),
+            name: project.name.clone(),
             local_key: core::local_key_of(project),
             synced,
         });
@@ -123,7 +123,7 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
 /// write — no manual injection is needed here.
 #[tauri::command]
 pub fn sync_rule_to_project(rule_name: &str, project_name: &str) -> Result<(), String> {
-    let project_name = &crate::core::canonical_project_name(project_name)?;
+    let project_name = &crate::core::canonical_project_ident(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -136,7 +136,7 @@ pub fn sync_rule_to_project(rule_name: &str, project_name: &str) -> Result<(), S
     if !references {
         return Err(format!(
             "Project '{}' does not reference rule '{}'",
-            project_name, rule_name
+            project.name, rule_name
         ));
     }
 

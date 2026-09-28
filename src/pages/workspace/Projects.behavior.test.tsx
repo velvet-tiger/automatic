@@ -218,6 +218,54 @@ describe("Projects — characterization", () => {
     });
   });
 
+  it("B8: two projects with one name show a folder hint; a unique name shows as before", async () => {
+    mockInvoke(
+      baselineRoutes({
+        get_project_summaries: [
+          { name: "website", local_key: "key-w1", id: "id-w1", directory: "/work/consultmed/website" },
+          { name: "website", local_key: "key-w2", id: "id-w2", directory: "/work/_active/website" },
+          summary("alpha"),
+        ],
+      }),
+    );
+    renderProjects();
+    expect(await screen.findByText("· consultmed/website")).toBeInTheDocument();
+    expect(screen.getByText("· _active/website")).toBeInTheDocument();
+    const alpha = screen.getByText("alpha");
+    expect(alpha.textContent).toBe("alpha");
+  });
+
+  it("B9: the wizard keeps a name another project uses, says so, and leaves Continue enabled", async () => {
+    mockInvoke(
+      baselineRoutes({
+        get_project_summaries: [
+          { name: "website", local_key: "key-w1", id: "id-w1", directory: "/work/consultmed/website" },
+        ],
+      }),
+    );
+    renderProjects();
+    await userEvent.click(await screen.findByRole("button", { name: /Add Project/i }));
+    await screen.findByRole("heading", { name: /Where is this project\?/i });
+    fireEvent.change(screen.getByPlaceholderText("/path/to/your/project"), {
+      target: { value: "/elsewhere/website" },
+    });
+    const nameField = await screen.findByLabelText("Project name");
+    await waitFor(() => expect(nameField).toHaveValue("website"));
+    expect(
+      await screen.findByText(
+        "Another project is also called \u201cwebsite\u201d (…/consultmed/website). You can keep this name.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Continue/i })).toBeEnabled();
+
+    // A free name clears the note; an invalid one still disables Continue.
+    fireEvent.change(nameField, { target: { value: "website-new" } });
+    await waitFor(() => expect(screen.queryByText(/also called/)).toBeNull());
+    expect(screen.getByRole("button", { name: /Continue/i })).toBeEnabled();
+    fireEvent.change(nameField, { target: { value: "" } });
+    expect(screen.getByRole("button", { name: /Continue/i })).toBeDisabled();
+  });
+
   // Behaviors NOT covered automatically (gaps for the manual GUI checklist):
   // - B5 alt: initialCreateWithTemplate prop → template-seeded wizard (needs templates loaded first; covered manually).
   // - save→list-refresh (full save flow involves many side-effects; covered manually).

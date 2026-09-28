@@ -345,12 +345,15 @@ pub fn ensure_project_keys() -> Result<ProjectKeyBackfill, String> {
         return Ok(ProjectKeyBackfill::LockHeld);
     };
 
-    let names = list_projects()?;
+    // Visit entries by file, not by name: two projects may share a name
+    // (stage 6), and a name lookup would refuse both.
+    let entries = scan_registry()?;
     let mut updated = Vec::new();
     let mut renamed = Vec::new();
     let mut failed = Vec::new();
-    for name in names {
-        match ensure_keys_for_project(&name) {
+    for entry in entries {
+        let name = entry.name.clone();
+        match ensure_keys_for_project(&entry.path) {
             Ok(true) => updated.push(name.clone()),
             Ok(false) => {}
             Err(e) => {
@@ -358,7 +361,7 @@ pub fn ensure_project_keys() -> Result<ProjectKeyBackfill, String> {
                 continue;
             }
         }
-        match rename_registry_file_to_key(&name) {
+        match rename_registry_file_to_key(&entry.path) {
             Ok(true) => renamed.push(name),
             Ok(false) => {}
             Err(e) => failed.push((name, e)),
@@ -383,11 +386,22 @@ pub fn ensure_project_keys() -> Result<ProjectKeyBackfill, String> {
     })
 }
 
-/// Mint and persist any missing key for one registry entry. Returns whether
-/// anything was written.
-fn ensure_keys_for_project(name: &str) -> Result<bool, String> {
-    let entry = find_registry_entry(name)?
-        .ok_or_else(|| format!("Project '{}' not found", name))?;
+/// The registry entry stored at `path`, read afresh.
+fn registry_entry_at(path: &Path) -> Result<RegistryEntry, String> {
+    scan_registry()?
+        .into_iter()
+        .find(|e| e.path == path)
+        .ok_or_else(|| format!("{} is no longer in the project registry", path.display()))
+}
+
+/// Mint and persist any missing key for the registry entry at `path`.
+/// Returns whether anything was written. An entry without a `local_key` is
+/// read and saved by its name, so one that shares its name with another
+/// entry is reported as ambiguous and left for the user.
+fn ensure_keys_for_project(path: &Path) -> Result<bool, String> {
+    let entry = registry_entry_at(path)?;
+    let ident = entry_ident(&entry);
+    let name = ident.as_str();
     let directory = entry.directory()?.unwrap_or_default();
     // Probe without `read_project`, whose enrichment write-back would touch
     // every project on every start even when nothing is missing.
@@ -414,17 +428,16 @@ fn ensure_keys_for_project(name: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Move one legacy registry file, `<name>.json`, to `<local_key>.json`.
-/// Returns whether the file moved.
+/// Move one legacy registry file, `<name>.json` at `path`, to
+/// `<local_key>.json`. Returns whether the file moved.
 ///
 /// The stem was the legacy entry's name, so it is written into the `name`
 /// field first, in place, along with any key the pointer lacks. Then `fs::rename` moves the file in one step. A
 /// crash between the two leaves a legacy file whose `name` field matches
 /// its stem, which the next run picks up. A file already at the target is
 /// an error and both files are left alone.
-fn rename_registry_file_to_key(name: &str) -> Result<bool, String> {
-    let entry = find_registry_entry(name)?
-        .ok_or_else(|| format!("Project '{}' not found", name))?;
+fn rename_registry_file_to_key(path: &Path) -> Result<bool, String> {
+    let entry = registry_entry_at(path)?;
     if entry.keyed {
         return Ok(false);
     }
@@ -663,7 +676,7 @@ mod tests {
             assert!(crate::activity::get_project_activity(&keys.local_key, 10).unwrap().len() >= 2);
             assert!(dev_dir.join(format!("{}.json", keys.local_key)).is_file());
             let group: ProjectGroup = serde_json::from_str(&read_group("g").unwrap()).unwrap();
-            assert_eq!(group.projects, vec!["legacy", "ghost"], "shown by name");
+            assert_eq!(group.projects, vec![keys.local_key.clone(), "ghost".to_string()], "shown by key");
 
             let ProjectKeyBackfill::Completed { stores, .. } = ensure_project_keys().unwrap() else {
                 panic!("lock unexpectedly held");
@@ -691,6 +704,46 @@ mod tests {
             let loaded: Project = serde_json::from_str(&raw).unwrap();
             assert!(loaded.id.is_empty(), "nothing is minted while locked");
             assert!(lock_path.exists(), "the other holder's lock is not removed");
+        });
+    }
+
+    #[test]
+    fn backfill_and_store_migration_accept_two_projects_with_one_name() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let mut keys = Vec::new();
+            for folder in ["one", "two"] {
+                let dir = home.path().join(folder).join("website");
+                fs::create_dir_all(&dir).unwrap();
+                let mut project = Project {
+                    name: "website".into(),
+                    directory: dir.to_str().unwrap().into(),
+                    ..Default::default()
+                };
+                prepare_new_project_keys(&mut project).unwrap();
+                save_project(&project.local_key.clone(), &serde_json::to_string(&project).unwrap())
+                    .unwrap();
+                keys.push(project.local_key);
+            }
+            // A third, unkeyed legacy entry gets its keys by file, not by
+            // the shared-name lookup.
+            save_project("solo", r#"{"name":"solo"}"#).unwrap();
+
+            let ProjectKeyBackfill::Completed { updated, failed, stores, .. } =
+                ensure_project_keys().unwrap()
+            else {
+                panic!("lock unexpectedly held");
+            };
+            assert!(failed.is_empty(), "{failed:?}");
+            assert_eq!(updated, vec!["solo".to_string()]);
+            assert!(stores.problems.is_empty(), "{:?}", stores.problems);
+            for key in &keys {
+                let loaded: Project = serde_json::from_str(&read_project(key).unwrap()).unwrap();
+                assert_eq!(loaded.name, "website");
+                assert_eq!(&loaded.local_key, key);
+            }
         });
     }
 }

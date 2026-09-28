@@ -80,8 +80,10 @@ pub fn is_project_key(value: &str) -> bool {
 /// Resolution order: `local_key`, then name (ignoring case), then `id`. An
 /// `id` shared by several checkouts resolves to the first checkout in
 /// registry order (by name, then file); only its `name` and `local_key`
-/// depend on that choice. A name two entries share passes through, as in
-/// `project_store_name`. A registry that cannot be read is an error.
+/// depend on that choice. A name several projects share is an ambiguity
+/// error listing each candidate (stage 6): passing it through would read or
+/// write a store under the bare name that neither project owns. A registry
+/// that cannot be read is an error.
 pub fn project_store_keys(ident: &str) -> Result<ProjectStoreKeys, String> {
     if !is_valid_name(ident) {
         return Ok(ProjectStoreKeys::unregistered(ident));
@@ -89,8 +91,21 @@ pub fn project_store_keys(ident: &str) -> Result<ProjectStoreKeys, String> {
     let entries = scan_registry()?;
     match resolve_entry_index(&entries, ident) {
         Ok(Some(i)) => return Ok(ProjectStoreKeys::of_summary(&project_summary(&entries[i]))),
-        Err(_) => return Ok(ProjectStoreKeys::unregistered(ident)),
         Ok(None) => {}
+        Err(e) => {
+            // Checkouts of one project (worktrees) may share a name. They
+            // share the `id` too, so resolve like an `id`: the first one.
+            let named: Vec<ProjectSummary> = entries
+                .iter()
+                .filter(|entry| same_project_name(&entry.name, ident))
+                .map(project_summary)
+                .collect();
+            let first_id = named.first().map(|s| s.id.as_str()).unwrap_or_default();
+            if first_id.is_empty() || named.iter().any(|s| s.id != first_id) {
+                return Err(e);
+            }
+            return Ok(ProjectStoreKeys::of_summary(&named[0]));
+        }
     }
     if is_project_key(ident) {
         // `scan_registry` sorts entries, so the first match is stable.
@@ -177,28 +192,53 @@ impl ProjectKeyIndex {
         }
     }
 
-    /// Names to show for one group member stored as `stored`. An `id` shows
-    /// every checkout of that project. Any other value (a legacy name, or an
-    /// `id` no registered project has) is shown unchanged, so nothing
-    /// silently disappears.
-    pub fn member_names(&self, stored: &str) -> Vec<String> {
-        let names: Vec<String> = self.checkouts_of_id(stored).map(|s| s.name.clone()).collect();
-        if names.is_empty() {
-            vec![stored.to_string()]
-        } else {
-            names
-        }
+    /// The project `ident` names for a group lookup: a `local_key`, else an
+    /// `id` (its first checkout), else a name exactly one project has.
+    pub fn resolve_for_group(&self, ident: &str) -> Option<&ProjectSummary> {
+        self.resolve(ident).or_else(|| {
+            self.summaries
+                .iter()
+                .find(|s| !ident.is_empty() && s.id == ident)
+        })
     }
 
-    /// The value to store for a group member given as `member` (a name, a
-    /// `local_key`, or an `id`). A project with an `id` is stored by it. A
-    /// value no project claims, or a project with no `id` yet, is stored
-    /// unchanged.
+    /// Identifiers to show for one group member stored as `stored`. An `id`
+    /// shows every checkout of that project as its `local_key` (or its name
+    /// while it has no key), ordered by name then directory. Any other value
+    /// (a legacy name, or an `id` no registered project has) is shown
+    /// unchanged, so nothing silently disappears.
+    pub fn member_keys(&self, stored: &str) -> Vec<String> {
+        let mut checkouts: Vec<&ProjectSummary> = self.checkouts_of_id(stored).collect();
+        if checkouts.is_empty() {
+            return vec![stored.to_string()];
+        }
+        checkouts.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.directory.cmp(&b.directory)));
+        checkouts.into_iter().map(|s| checkout_ident(s).to_string()).collect()
+    }
+
+    /// The value to store for a group member given as `member`: a
+    /// `local_key` becomes its project's `id`, and an `id` stays. Anything
+    /// else (a name, an unknown value, or a checkout with no `id` yet) is
+    /// stored unchanged. Names are not translated: the UI sends keys, and a
+    /// name may belong to several projects.
     pub fn member_id(&self, member: &str) -> String {
-        match self.resolve(member) {
+        match self.summaries.iter().find(|s| !s.local_key.is_empty() && s.local_key == member) {
             Some(s) if !s.id.is_empty() => s.id.clone(),
             _ => member.to_string(),
         }
+    }
+
+    /// Whether the group member stored as `stored` is the project `summary`
+    /// belongs to: its `id`, its `local_key`, or (a legacy member the
+    /// migration has not converted) its name when no other project has it.
+    pub fn member_is(&self, stored: &str, summary: &ProjectSummary) -> bool {
+        if (!summary.id.is_empty() && stored == summary.id)
+            || (!summary.local_key.is_empty() && stored == summary.local_key)
+        {
+            return true;
+        }
+        same_project_name(stored, &summary.name)
+            && self.resolve(stored).is_some_and(|only| only == summary)
     }
 
     /// Whether `value` is the `id` or `local_key` of a registered project.
@@ -218,24 +258,25 @@ impl ProjectKeyIndex {
     }
 }
 
-/// Translate a group's stored members to display names. See
-/// [`ProjectKeyIndex::member_names`]. Order follows the stored list; a name
+/// Translate a group's stored members to the identifiers the UI uses. See
+/// [`ProjectKeyIndex::member_keys`]. Order follows the stored list; a value
 /// appears once.
 pub fn group_members_for_display(index: &ProjectKeyIndex, stored: &[String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for member in stored {
-        for name in index.member_names(member) {
-            if !out.contains(&name) {
-                out.push(name);
+        for key in index.member_keys(member) {
+            if !out.contains(&key) {
+                out.push(key);
             }
         }
     }
     out
 }
 
-/// Translate a group's members, as the UI sends them, to stored values. See
-/// [`ProjectKeyIndex::member_id`]. Order follows the first occurrence; a
-/// value appears once, so two checkouts of one project collapse to one `id`.
+/// Translate a group's members, as the UI sends them (`local_key`s, or ids),
+/// to stored values. See [`ProjectKeyIndex::member_id`]. Order follows the
+/// first occurrence; a value appears once, so two checkouts of one project
+/// collapse to one `id`.
 pub fn group_members_for_storage(index: &ProjectKeyIndex, members: &[String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for member in members {
@@ -305,25 +346,58 @@ mod tests {
     }
 
     #[test]
-    fn group_members_round_trip_between_names_and_ids() {
+    fn group_members_round_trip_between_keys_and_ids() {
         let index = index();
-        let shown = group_members_for_display(&index, &strings(&[ID_A, "legacy", ID_B, "99999999-9999-4999-8999-999999999999"]));
+        const GHOST: &str = "99999999-9999-4999-8999-999999999999";
+        let shown = group_members_for_display(&index, &strings(&[ID_A, "legacy", ID_B, GHOST]));
         assert_eq!(
             shown,
-            strings(&["site", "site-worktree", "legacy", "api", "99999999-9999-4999-8999-999999999999"]),
-            "an id shows every checkout; unknown values stay"
+            strings(&[KEY_A1, KEY_A2, "legacy", KEY_B, GHOST]),
+            "an id shows every checkout's key; unknown values stay"
         );
         let stored = group_members_for_storage(&index, &shown);
         assert_eq!(
             stored,
-            strings(&[ID_A, "legacy", ID_B, "99999999-9999-4999-8999-999999999999"]),
+            strings(&[ID_A, "legacy", ID_B, GHOST]),
             "checkouts collapse to one id; unknown values stay"
         );
         assert_eq!(
-            group_members_for_storage(&index, &strings(&["SITE", KEY_B, "unkeyed"])),
-            strings(&[ID_A, ID_B, "unkeyed"]),
-            "a name ignores case, a key maps to its id, a project without an id keeps its name"
+            group_members_for_storage(&index, &strings(&[ID_B, KEY_A2, "site", "unkeyed", ID_B])),
+            strings(&[ID_B, ID_A, "site", "unkeyed"]),
+            "an id stays, a key maps to its id, names are not translated, duplicates collapse"
         );
+    }
+
+    #[test]
+    fn two_projects_with_one_name_keep_separate_members() {
+        const ID_C: &str = "33333333-3333-4333-8333-333333333333";
+        const KEY_C: &str = "cccccccc-0000-4000-8000-000000000001";
+        let mut two = ProjectKeyIndex::new(vec![
+            summary("website", ID_A, KEY_A1),
+            summary("website", ID_C, KEY_C),
+        ]);
+        two.summaries[0].directory = "/b/consultmed/website".into();
+        two.summaries[1].directory = "/a/_active/website".into();
+        assert_eq!(group_members_for_storage(&two, &strings(&[KEY_C])), strings(&[ID_C]));
+        assert_eq!(group_members_for_display(&two, &strings(&[ID_C])), strings(&[KEY_C]));
+        assert!(two.member_is(ID_A, &two.summaries[0]));
+        assert!(!two.member_is(ID_A, &two.summaries[1]));
+        assert!(
+            !two.member_is("website", &two.summaries[0]),
+            "a legacy name two projects share belongs to neither"
+        );
+        assert!(index().member_is("api", &index().summaries[2]), "a unique legacy name still matches");
+    }
+
+    #[test]
+    fn checkouts_of_an_id_are_listed_by_name_then_directory() {
+        let mut index = ProjectKeyIndex::new(vec![
+            summary("site", ID_A, KEY_A2),
+            summary("site", ID_A, KEY_A1),
+        ]);
+        index.summaries[0].directory = "/z".into();
+        index.summaries[1].directory = "/a".into();
+        assert_eq!(index.member_keys(ID_A), strings(&[KEY_A1, KEY_A2]));
     }
 
     #[test]

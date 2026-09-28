@@ -448,8 +448,8 @@ fn same_automatic_binary(a: &str, b: &str) -> bool {
 /// **Project assignment** — adds `"automatic"` to every registered project's
 /// `mcp_servers` list if not already present, then persists the project.
 ///
-/// **Returns** the names of all projects that have a configured directory and
-/// at least one agent.  The caller is responsible for re-syncing these
+/// **Returns** the identifiers (see `project_ident`) of all projects that
+/// have a configured directory and at least one agent.  The caller is responsible for re-syncing these
 /// projects in the background so that:
 /// - The `automatic` MCP server entry in each agent config file reflects the
 ///   current binary path (which changes between dev builds and release).
@@ -498,8 +498,8 @@ pub fn ensure_automatic_in_global_mcp() -> Result<Vec<String>, String> {
     // ── 3. Assign MCP server + skill to all projects, collect sync candidates
     let mut projects_to_sync: Vec<String> = Vec::new();
 
-    if let Ok(project_names) = super::list_projects() {
-        for name in project_names {
+    if let Ok(project_idents) = super::list_project_idents() {
+        for name in project_idents {
             if let Ok(raw) = super::read_project(&name) {
                 if let Ok(mut project) = serde_json::from_str::<super::Project>(&raw) {
                     let mut changed = false;

@@ -1,6 +1,6 @@
 // Extracted verbatim from Projects.tsx (behavior-preserving refactor).
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AgentIcon } from "../../../../components/AgentIcon";
 import {
@@ -8,7 +8,14 @@ import {
 } from "lucide-react";
 import { relativeTime } from "../helpers";
 import type { Project, ProjectSummary } from "../types";
-import { projectKeyOf, resolveProjectKey } from "../../../../lib/projectIdentity";
+import {
+  projectKeyOf,
+  projectLabelFor,
+  projectLabels,
+  projectLabelText,
+  type ProjectLabel,
+} from "../../../../lib/projectIdentity";
+import { ProjectNameLabel } from "../../../../components/ProjectNameLabel";
 
 /** One section in the grouped projects view (a named group, or ungrouped). */
 interface ProjectGroupSection {
@@ -49,15 +56,23 @@ function ProjectStatusBadge({ drift, missingDir }: { drift: boolean | undefined;
   return <span className="text-[11px] text-text-muted/30">Checking…</span>;
 }
 
+/** Group members from `read_group`: local_keys, or stored values no project has. */
+function groupMembers(group: { projects?: unknown }): string[] {
+  return Array.isArray(group.projects)
+    ? group.projects.filter((m): m is string => typeof m === "string")
+    : [];
+}
+
 function ProjectCard({
   projectKey,
-  name,
+  label,
   project,
   drift,
   onSelect,
 }: {
   projectKey: string;
-  name: string;
+  /** Name, plus a folder hint where another project has the same name. */
+  label: ProjectLabel;
   project: Project | undefined;
   drift: boolean | undefined;
   onSelect: (projectKey: string) => void;
@@ -104,7 +119,10 @@ function ProjectCard({
             )}
           </div>
           <div className="min-w-0">
-            <div className="text-[13px] font-medium text-text-base leading-snug truncate">{name}</div>
+            <ProjectNameLabel
+              label={label}
+              className="block text-[13px] font-medium text-text-base leading-snug truncate"
+            />
             {isConfigured ? (
               <ProjectStatusBadge drift={drift} missingDir={isMissingDir} />
             ) : (
@@ -242,14 +260,11 @@ function GroupSectionHeader({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function ProjectsOverview({ projects, summaries, projectsLoading, projectDetails, driftByProject, onSelect, onCreate, onSyncAll, syncAllStatus, filterGroup = null }: ProjectsOverviewProps) {
-  // Groups still list member names on the wire; map them to keys here.
   const nameByKey = new Map(summaries.map((s) => [projectKeyOf(s), s.name] as const));
   const displayName = (key: string): string => nameByKey.get(key) ?? key;
-  const membersToKeys = useCallback(
-    (members: readonly string[]): string[] =>
-      members.map((m) => resolveProjectKey(summaries, m) ?? m),
-    [summaries],
-  );
+  const labels = useMemo(() => projectLabels(summaries), [summaries]);
+  const labelFor = (key: string): ProjectLabel => projectLabelFor(labels, key, displayName(key));
+
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState<"alphabetical" | "created" | "updated" | "last_activity">("alphabetical");
   // Projects can be displayed as a card grid or a compact table. The choice is
@@ -291,7 +306,7 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
         try {
           const raw: string = await invoke("read_group", { name });
           const g = JSON.parse(raw);
-          for (const p of membersToKeys(g.projects ?? [])) grouped.add(p);
+          for (const p of groupMembers(g)) grouped.add(p);
         } catch { /* skip */ }
       }
     } catch { /* skip */ }
@@ -309,7 +324,7 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
         try {
           const raw: string = await invoke("read_group", { name });
           const g = JSON.parse(raw);
-          const members = membersToKeys(g.projects ?? []).filter((p) => projectSet.has(p));
+          const members = groupMembers(g).filter((p) => projectSet.has(p));
           for (const p of members) inAnyGroup.add(p);
           if (members.length === 0) continue;
           sections.push({ id: name, label: name, projects: members });
@@ -321,7 +336,7 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
       sections.push({ id: "__ungrouped__", label: "Other Projects", projects: ungrouped });
     }
     return sections;
-  }, [membersToKeys]);
+  }, []);
 
   // Load group members when filterGroup changes
   useEffect(() => {
@@ -336,14 +351,14 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
         try {
           const raw: string = await invoke("read_group", { name: filterGroup });
           const g = JSON.parse(raw);
-          if (!cancelled) setGroupProjectNames(new Set(membersToKeys(g.projects ?? [])));
+          if (!cancelled) setGroupProjectNames(new Set(groupMembers(g)));
         } catch {
           if (!cancelled) setGroupProjectNames(new Set());
         }
       })();
     }
     return () => { cancelled = true; };
-  }, [filterGroup, membersToKeys]);
+  }, [filterGroup]);
 
   // Re-load group members when groups change externally
   useEffect(() => {
@@ -354,13 +369,13 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
       } else {
         invoke<string>("read_group", { name: filterGroup }).then((raw) => {
           const g = JSON.parse(raw);
-          setGroupProjectNames(new Set(membersToKeys(g.projects ?? [])));
+          setGroupProjectNames(new Set(groupMembers(g)));
         }).catch(() => setGroupProjectNames(new Set()));
       }
     };
     window.addEventListener("groups-updated", handler);
     return () => window.removeEventListener("groups-updated", handler);
-  }, [filterGroup, membersToKeys]);
+  }, [filterGroup]);
 
   // Load group sections when "Show Groups" is on (and not filtered to one group)
   const groupingActive = showGroups && !filterGroup;
@@ -412,7 +427,7 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
     if (!query) return true;
     const details = projectDetails.get(key);
     return (
-      displayName(key).toLowerCase().includes(query) ||
+      projectLabelText(labelFor(key)).toLowerCase().includes(query) ||
       (details?.directory ?? "").toLowerCase().includes(query) ||
       (details?.agents ?? []).some((agent) => agent.toLowerCase().includes(query))
     );
@@ -444,7 +459,7 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
         <ProjectCard
           key={key}
           projectKey={key}
-          name={displayName(key)}
+          label={labelFor(key)}
           project={projectDetails.get(key)}
           drift={driftByProject[key]}
           onSelect={onSelect}
@@ -473,7 +488,7 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
           {names.map((key) => {
             const project = projectDetails.get(key);
             const drift = driftByProject[key];
-            const name = displayName(key);
+            const label = labelFor(key);
             // Mirror the per-card derivations so both views report identical counts
             // and an identical sync state. A project is only "synced/drifted" once
             // it is configured (has a directory and at least one agent); otherwise
@@ -503,9 +518,10 @@ export function ProjectsOverview({ projects, summaries, projectsLoading, project
                       <FolderOpen size={13} />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-[13px] font-medium text-text-base truncate group-hover:text-brand transition-colors">
-                        {name}
-                      </div>
+                      <ProjectNameLabel
+                        label={label}
+                        className="block text-[13px] font-medium text-text-base truncate group-hover:text-brand transition-colors"
+                      />
                       {directory && (
                         <div className="text-[11px] text-text-muted truncate">{directory}</div>
                       )}

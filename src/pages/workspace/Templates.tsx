@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { ICONS } from "../../lib/icons";
 import { useRecentlyAdded } from "../../lib/useRecentlyAdded";
 import { AuthorSection, type AuthorDescriptor } from "../../components/AuthorPanel";
@@ -12,7 +12,16 @@ import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { useBulkSelection } from "../../lib/useBulkSelection";
 import { invoke } from "@tauri-apps/api/core";
-import { loadProjectSummaries, projectKeyOf } from "../../lib/projectIdentity";
+import {
+  loadProjectSummaries,
+  projectKeyOf,
+  projectLabelFor,
+  projectLabels,
+  projectLabelText,
+  type ProjectLabel,
+} from "../../lib/projectIdentity";
+import { ProjectNameLabel } from "../../components/ProjectNameLabel";
+import type { ProjectSummary } from "./projects/types";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   Plus,
@@ -142,6 +151,8 @@ export default function Templates({
 
   // All projects (for "Applied to" + "Apply to project")
   const [allProjects, setAllProjects] = useState<Project[]>([]);
+  const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([]);
+  const labels = useMemo(() => projectLabels(projectSummaries), [projectSummaries]);
   const [showApplyPicker, setShowApplyPicker] = useState(false);
   const [applyStatus, setApplyStatus] = useState<string | null>(null);
   const [applyTargetProject, setApplyTargetProject] = useState<string | null>(null);
@@ -267,6 +278,7 @@ export default function Templates({
   const loadAllProjects = async () => {
     try {
       const summaries = await loadProjectSummaries();
+      setProjectSummaries(summaries);
       const loaded = await Promise.all(
         summaries.map(async (summary) => {
           const key = projectKeyOf(summary);
@@ -449,7 +461,13 @@ export default function Templates({
   // template from disk, so unsaved edits are not applied.
   const applyToProject = async (projectKey: string) => {
     if (!template || !selectedName) return;
-    const projectName = allProjects.find((p) => templateProjectKey(p) === projectKey)?.name ?? projectKey;
+    const projectName = projectLabelText(
+      projectLabelFor(
+        labels,
+        projectKey,
+        allProjects.find((p) => templateProjectKey(p) === projectKey)?.name,
+      ),
+    );
     try {
       const raw: string = await invoke("apply_templates_to_project", {
         projectName: projectKey,
@@ -1077,7 +1095,7 @@ export default function Templates({
                           onClick={() => onNavigateToProject?.(templateProjectKey(p))}
                           className="px-2.5 py-1 bg-bg-sidebar border border-border-strong/40 rounded-md text-[12px] text-text-base font-medium hover:border-border-strong hover:text-text-base hover:bg-bg-hover transition-colors cursor-pointer"
                         >
-                          {p.name}
+                          <ProjectNameLabel label={projectLabelFor(labels, templateProjectKey(p), p.name)} />
                         </button>
                       ))}
                     </div>
@@ -1127,6 +1145,7 @@ export default function Templates({
         <ApplyToProjectModal
           projects={[...allProjects].sort((a, b) => a.name.localeCompare(b.name))}
           appliedProjectKeys={appliedProjects.map(templateProjectKey)}
+          labels={labels}
           selected={applyTargetProject}
           onSelect={setApplyTargetProject}
           onCancel={() => {
@@ -1153,6 +1172,7 @@ function templateProjectKey(p: Project): string {
 function ApplyToProjectModal({
   projects,
   appliedProjectKeys,
+  labels,
   selected,
   onSelect,
   onCancel,
@@ -1161,6 +1181,8 @@ function ApplyToProjectModal({
   projects: Project[];
   /** local_keys of projects the template is already applied to. */
   appliedProjectKeys: string[];
+  /** Display labels keyed by local_key, so duplicated names show their folder. */
+  labels: ReadonlyMap<string, ProjectLabel>;
   /** local_key of the chosen project. */
   selected: string | null;
   onSelect: (projectKey: string) => void;
@@ -1169,8 +1191,9 @@ function ApplyToProjectModal({
 }) {
   const [filter, setFilter] = useState("");
   const trimmed = filter.trim().toLowerCase();
+  const labelOf = (p: Project): ProjectLabel => projectLabelFor(labels, templateProjectKey(p), p.name);
   const visible = trimmed
-    ? projects.filter((p) => p.name.toLowerCase().includes(trimmed))
+    ? projects.filter((p) => projectLabelText(labelOf(p)).toLowerCase().includes(trimmed))
     : projects;
 
   return (
@@ -1243,7 +1266,7 @@ function ApplyToProjectModal({
                     >
                       <Folder size={14} className={isSelected ? "text-brand flex-shrink-0" : "text-text-muted flex-shrink-0"} />
                       <div className="flex-1 min-w-0">
-                        <div className="text-[13px] font-medium text-text-base truncate">{p.name}</div>
+                        <div className="text-[13px] font-medium text-text-base truncate"><ProjectNameLabel label={labelOf(p)} /></div>
                         {p.directory && (
                           <div className="text-[11px] text-text-muted truncate">{p.directory}</div>
                         )}

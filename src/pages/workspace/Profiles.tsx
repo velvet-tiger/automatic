@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
@@ -25,7 +25,15 @@ import { AssetTable } from "../../components/AssetTable";
 import { AssetDrawer } from "../../components/AssetDrawer";
 import { useBulkSelection } from "../../lib/useBulkSelection";
 import type { HookEntry, ProjectProfile, UserCommandEntry } from "./projects/types";
-import { loadProjectSummaries, projectKeyOf } from "../../lib/projectIdentity";
+import {
+  loadProjectSummaries,
+  projectKeyOf,
+  projectLabelFor,
+  projectLabels,
+  projectLabelText,
+  type ProjectLabel,
+} from "../../lib/projectIdentity";
+import { ProjectNameLabel } from "../../components/ProjectNameLabel";
 import type { ProjectSummary } from "./projects/types";
 import { normaliseProfile } from "./projects/helpers";
 
@@ -114,6 +122,7 @@ export default function Profiles({
 
   const [referencingProjects, setReferencingProjects] = useState<ProjectRef[]>([]);
   const [allProjects, setAllProjects] = useState<ProjectSummary[]>([]);
+  const labels = useMemo(() => projectLabels(allProjects), [allProjects]);
   const [showAttachPicker, setShowAttachPicker] = useState(false);
   const [attachTarget, setAttachTarget] = useState<string | null>(null);
   const [attachStatus, setAttachStatus] = useState<string | null>(null);
@@ -382,7 +391,7 @@ export default function Profiles({
 
   const attachToProject = async (projectKey: string) => {
     if (!selectedName) return;
-    const projectName = allProjects.find((p) => projectKeyOf(p) === projectKey)?.name ?? projectKey;
+    const projectName = projectLabelText(projectLabelFor(labels, projectKey));
     try {
       await invoke("attach_profile_to_project", { projectName: projectKey, profileName: selectedName });
       await loadReferencingProjects(selectedName);
@@ -877,7 +886,7 @@ export default function Profiles({
                         title={p.directory || undefined}
                       >
                         <Folder size={12} className="text-text-muted flex-shrink-0" />
-                        <span className="text-[13px] text-text-base truncate">{p.name}</span>
+                        <ProjectNameLabel label={projectLabelFor(labels, refKey(p), p.name)} className="text-[13px] text-text-base truncate" />
                       </button>
                     </li>
                   ))}
@@ -892,6 +901,7 @@ export default function Profiles({
         <AttachToProjectModal
           projects={allProjects}
           attachedProjectKeys={referencingProjects.map(refKey)}
+          labels={labels}
           selected={attachTarget}
           onSelect={setAttachTarget}
           onCancel={() => {
@@ -913,6 +923,7 @@ export default function Profiles({
 function AttachToProjectModal({
   projects,
   attachedProjectKeys,
+  labels,
   selected,
   onSelect,
   onCancel,
@@ -921,6 +932,8 @@ function AttachToProjectModal({
   projects: ProjectSummary[];
   /** local_keys of projects the profile is already attached to. */
   attachedProjectKeys: string[];
+  /** Display labels keyed by local_key, so duplicated names show their folder. */
+  labels: ReadonlyMap<string, ProjectLabel>;
   /** local_key of the chosen project. */
   selected: string | null;
   onSelect: (projectKey: string) => void;
@@ -929,8 +942,9 @@ function AttachToProjectModal({
 }) {
   const [filter, setFilter] = useState("");
   const trimmed = filter.trim().toLowerCase();
+  const labelOf = (p: ProjectSummary): ProjectLabel => projectLabelFor(labels, projectKeyOf(p), p.name);
   const visible = trimmed
-    ? projects.filter((p) => p.name.toLowerCase().includes(trimmed))
+    ? projects.filter((p) => projectLabelText(labelOf(p)).toLowerCase().includes(trimmed))
     : projects;
 
   return (
@@ -1001,7 +1015,7 @@ function AttachToProjectModal({
                     >
                       <Folder size={14} className={isSelected ? "text-brand flex-shrink-0" : "text-text-muted flex-shrink-0"} />
                       <div className="flex-1 min-w-0">
-                        <div className="text-[13px] font-medium text-text-base truncate">{p.name}</div>
+                        <div className="text-[13px] font-medium text-text-base truncate"><ProjectNameLabel label={labelOf(p)} /></div>
                         {p.directory && (
                           <div className="text-[11px] text-text-muted truncate">{p.directory}</div>
                         )}

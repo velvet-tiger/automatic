@@ -616,7 +616,7 @@ impl ProfileContribution {
 
 /// A lightweight reference to a project: name + directory.
 /// Used when listing projects that reference a rule or agent.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ProjectRef {
     pub name: String,
     pub directory: String,

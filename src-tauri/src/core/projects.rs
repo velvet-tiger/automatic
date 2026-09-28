@@ -22,20 +22,45 @@ use super::*;
 // 2. Callers turn an identifier into the store's key with
 // `project_store_keys` (see `project_store_keys.rs`) before they reach one.
 
-/// Names of every registered project, sorted.
+/// Names of every registered project, sorted, each name once. Names can
+/// repeat (stage 6), so this is for display. To visit every project, use
+/// [`list_project_idents`].
 pub fn list_projects() -> Result<Vec<String>, String> {
     Ok(registry_names(&scan_registry()?))
 }
 
+/// One identifier per registered checkout, in registry order (by name, then
+/// file): its `local_key`, or its name while it has no key. Each finds
+/// exactly one entry, even when two projects share a name, so loops over
+/// every project use these rather than [`list_projects`].
+pub fn list_project_idents() -> Result<Vec<String>, String> {
+    Ok(scan_registry()?.iter().map(entry_ident).collect())
+}
+
+/// The identifier that finds `project`'s own registry entry: its
+/// `local_key`, or its name while it has no key. Pass this, never
+/// `project.name`, to `save_project` or `read_project` when saving back a
+/// project that was read: a name may belong to several projects.
+pub fn project_ident(project: &Project) -> &str {
+    if project.local_key.is_empty() {
+        &project.name
+    } else {
+        &project.local_key
+    }
+}
+
 // ── Project identifiers ──────────────────────────────────────────────────────
 //
-// Three ways to turn an identifier (a `local_key` or a name) into the name
-// that name-keyed stores use. Pick by what the caller did before stage 3b:
+// Ways to turn an identifier (a `local_key` or a name) into something else.
+// Names can repeat (stage 6), so a name that several projects share is an
+// ambiguity error listing each candidate, never the first match.
 //
-// - Commands that needed the project to exist use `canonical_project_name`.
-//   An unknown identifier is an error, exactly as `read_project` was.
+// - Commands that needed the project to exist use `canonical_project_ident`,
+//   which yields the checkout's unique identifier (its `local_key`). An
+//   unknown identifier is an error, exactly as `read_project` was.
+//   `canonical_project_name` yields the display name instead.
 // - Commands that create or tolerate a missing entry (save, delete) use
-//   `resolve_project_name` and keep the identifier when it is `None`.
+//   `resolve_project_ident` and keep the identifier when it is `None`.
 // - Store-only commands (memory, features, activity, recommendations, dev
 //   servers, group lookups) never consulted the registry, and accept any
 //   string so data for a deleted or never-registered project stays
@@ -62,18 +87,41 @@ pub fn canonical_project_name(ident: &str) -> Result<String, String> {
     resolve_project_name(ident)?.ok_or_else(|| format!("Project '{}' not found", ident))
 }
 
+/// The unique identifier (see [`project_ident`]) of the project `ident`
+/// identifies, or `None` when no entry matches. An invalid identifier
+/// matches nothing.
+pub fn resolve_project_ident(ident: &str) -> Result<Option<String>, String> {
+    if !is_valid_name(ident) {
+        return Ok(None);
+    }
+    Ok(resolve_registry_entry(ident)?.map(|e| entry_ident(&e)))
+}
+
+/// The unique identifier of the project `ident` identifies: its
+/// `local_key`, or its name while it has none. Commands call this once and
+/// pass the result to every later registry call, so a name shared by
+/// another project cannot send a later read or save to the wrong entry. An
+/// unknown or invalid identifier is an error with the text `read_project`
+/// uses.
+pub fn canonical_project_ident(ident: &str) -> Result<String, String> {
+    if !is_valid_name(ident) {
+        return Err("Invalid project name".into());
+    }
+    resolve_project_ident(ident)?.ok_or_else(|| format!("Project '{}' not found", ident))
+}
+
 /// The name a name-keyed store should use for `ident`. See the section
-/// comment above. An identifier that matches two projects by name is passed
-/// through too, because such a store never looked at the registry and so
-/// never failed on it. A registry that cannot be read is still an error.
+/// comment above. An identifier no entry matches is passed through. A name
+/// two projects share is an ambiguity error, as is a registry that cannot
+/// be read.
 pub fn project_store_name(ident: &str) -> Result<String, String> {
     if !is_valid_name(ident) {
         return Ok(ident.to_string());
     }
     let entries = scan_registry()?;
-    Ok(match resolve_entry_index(&entries, ident) {
-        Ok(Some(i)) => entries[i].name.clone(),
-        Ok(None) | Err(_) => ident.to_string(),
+    Ok(match resolve_entry_index(&entries, ident)? {
+        Some(i) => entries[i].name.clone(),
+        None => ident.to_string(),
     })
 }
 
@@ -156,17 +204,6 @@ pub fn local_key_of(project: &Project) -> Option<String> {
     Some(project.local_key.clone()).filter(|k| !k.is_empty())
 }
 
-/// Map from project name to `local_key` for every registered project that
-/// has one. Built once per call by the commands that tag rows naming a
-/// project with its key.
-pub fn project_local_keys_by_name() -> Result<std::collections::HashMap<String, String>, String> {
-    Ok(get_project_summaries()?
-        .into_iter()
-        .filter(|s| !s.local_key.is_empty())
-        .map(|s| (s.name, s.local_key))
-        .collect())
-}
-
 /// Read a project by identifier (a `local_key` or a name). The returned
 /// project's `name` is always the registry name, never the identifier.
 pub fn read_project(name: &str) -> Result<String, String> {
@@ -236,8 +273,9 @@ pub fn read_project(name: &str) -> Result<String, String> {
     // The name comes from the registry entry, never from the committed
     // config, which can differ (for example after a teammate renamed the
     // project and this machine pulled). Callers save back with
-    // `project.name`, so it must resolve to this same entry. It is never the
-    // entry's `local_key`: see `registry_entry_name`. Set after the
+    // `project_ident(&project)`, its `local_key`, because the name may be
+    // shared. It is never the entry's `local_key`: see
+    // `registry_entry_name`. Set after the
     // write-back so a read never rewrites the committed name on its own.
     project.name = name.to_string();
 
@@ -503,10 +541,10 @@ fn directories_equivalent(a: &str, b: &str) -> bool {
     }
 }
 
-/// Return the registry name of the project that owns `directory`, if any.
-/// A registry entry that cannot be parsed is an error, as it may own the
+/// The registry entry of the project that owns `directory`, if any. A
+/// registry entry that cannot be parsed is an error, as it may own the
 /// directory.
-pub fn find_project_by_directory(directory: &str) -> Result<Option<String>, String> {
+fn find_entry_by_directory(directory: &str) -> Result<Option<RegistryEntry>, String> {
     if directory.is_empty() {
         return Ok(None);
     }
@@ -515,36 +553,29 @@ pub fn find_project_by_directory(directory: &str) -> Result<Option<String>, Stri
             continue;
         };
         if directories_equivalent(&existing_dir, directory) {
-            return Ok(Some(entry.name));
+            return Ok(Some(entry));
         }
     }
     Ok(None)
 }
 
-/// Refuse to create a project that would overwrite an existing registry entry.
-/// Used by the Add Project wizard. Orphan on-disk configs — a
-/// `.automatic/project.json` with no registry entry — are handled upstream in
-/// the wizard via [`inspect_project_directory`], so this check does not
-/// consult the disk.
+/// Return the registry name of the project that owns `directory`, if any.
+/// A registry entry that cannot be parsed is an error, as it may own the
+/// directory.
+pub fn find_project_by_directory(directory: &str) -> Result<Option<String>, String> {
+    Ok(find_entry_by_directory(directory)?.map(|e| e.name))
+}
+
+/// Refuse to create a project in a directory that already belongs to one.
+/// Used by the Add Project wizard and MCP registration. A name is not
+/// checked beyond its format: two projects may share a name (stage 6), and
+/// only a directory is unique. Orphan on-disk configs — a
+/// `.automatic/project.json` with no registry entry — are handled upstream
+/// via [`inspect_project_directory`], so this check does not consult the
+/// disk.
 pub fn assert_can_create_project(name: &str, directory: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid project name".into());
-    }
-
-    if let Some(existing) = find_registry_entry(name)? {
-        // Name the other project's directory so the user can tell an
-        // unrelated project with the same folder name from this one. The
-        // lookup ignores case, so `Website` clashes with `website`.
-        return Err(match existing.directory()? {
-            Some(dir) => format!(
-                "The name '{}' is already used by the project at {}. Choose a different name.",
-                name, dir
-            ),
-            None => format!(
-                "The name '{}' is already used by another project. Choose a different name.",
-                name
-            ),
-        });
     }
 
     if directory.is_empty() {
@@ -570,8 +601,10 @@ pub fn assert_can_create_project(name: &str, directory: &str) -> Result<(), Stri
 pub enum DirectoryStatus {
     /// No on-disk config, no registry hit — safe to create.
     Available,
-    /// A registered project already points at this directory.
-    RegisteredHere { name: String },
+    /// A registered project already points at this directory. `local_key`
+    /// opens it even when another project shares its name; it is empty while
+    /// the project has no key, and then `name` is the identifier.
+    RegisteredHere { name: String, local_key: String },
     /// `.automatic/project.json` exists on disk but no registry entry
     /// references this directory. `name` is a best-effort read from the
     /// on-disk config's `name` field (falls back to the directory basename
@@ -587,8 +620,11 @@ pub fn inspect_project_directory(directory: &str) -> Result<DirectoryStatus, Str
         return Ok(DirectoryStatus::Available);
     }
 
-    if let Some(existing) = find_project_by_directory(directory)? {
-        return Ok(DirectoryStatus::RegisteredHere { name: existing });
+    if let Some(existing) = find_entry_by_directory(directory)? {
+        return Ok(DirectoryStatus::RegisteredHere {
+            local_key: existing.local_key().unwrap_or_default().to_string(),
+            name: existing.name,
+        });
     }
 
     let Some(config_path) = project_config_source_path(directory) else {
@@ -615,14 +651,24 @@ fn read_orphan_config_name(config_path: &std::path::Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// A project adopted by [`import_existing_project`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ImportedProject {
+    pub name: String,
+    /// The new checkout's key. Address the project by it: the name may be
+    /// shared with another project.
+    pub local_key: String,
+}
+
 /// Adopt an on-disk project config as a new registry entry. Reads the
 /// project files in `<directory>` (`.automatic.json`, or a legacy
-/// `.automatic/project.json`), refuses on invalid or colliding names, and
-/// writes the lightweight `{name, directory, id, local_key}` pointer to
-/// `~/.automatic/projects/{local_key}.json`. Returns the adopted project name.
-/// The on-disk config is left untouched here; the first `read_project`
-/// writes the keys into it.
-pub fn import_existing_project(directory: &str) -> Result<String, String> {
+/// `.automatic/project.json`), refuses an invalid name, and writes the
+/// lightweight `{name, directory, id, local_key}` pointer to
+/// `~/.automatic/projects/{local_key}.json`. A name another project already
+/// uses is allowed (stage 6). The caller has checked that no project owns
+/// the directory (see [`inspect_project_directory`]). The on-disk config is
+/// left untouched here; the first `read_project` writes the keys into it.
+pub fn import_existing_project(directory: &str) -> Result<ImportedProject, String> {
     if directory.is_empty() {
         return Err("A project directory is required to import.".into());
     }
@@ -646,10 +692,10 @@ pub fn import_existing_project(directory: &str) -> Result<String, String> {
     if !projects_dir.exists() {
         fs::create_dir_all(&projects_dir).map_err(|e| e.to_string())?;
     }
-    if find_registry_entry(name)?.is_some() {
+    if let Some(existing) = find_project_by_directory(directory)? {
         return Err(format!(
-            "A project named '{}' is already registered. Rename or remove it before importing.",
-            name
+            "This directory is already registered as project '{}'. Open that project instead of importing it again.",
+            existing
         ));
     }
 
@@ -666,7 +712,10 @@ pub fn import_existing_project(directory: &str) -> Result<String, String> {
     let registry_path = new_registry_path(&projects_dir, &name, &pointer.local_key)?;
     write_registry_pointer(&registry_path, &pointer)?;
 
-    Ok(name)
+    Ok(ImportedProject {
+        name,
+        local_key: pointer.local_key,
+    })
 }
 
 /// Delete the project config and state files in `<directory>` and, if the
@@ -683,8 +732,17 @@ pub fn delete_project_config(directory: &str) -> Result<(), String> {
 }
 
 /// Save a project. `name` is an identifier: an existing entry is found by
-/// its `local_key` or its name and keeps its registry name. An identifier
-/// that resolves to nothing creates a new entry named `name`.
+/// its `local_key` or its name and keeps its registry name. A name several
+/// projects share is an ambiguity error. An identifier that resolves to
+/// nothing creates a new entry: named `name`, or named by the incoming
+/// project's `name` when `name` is the incoming `local_key` (how create
+/// paths address a project whose name another project already uses).
+///
+/// Refuses a save addressed by name whose incoming `local_key` differs from
+/// the named entry's: the data belongs to another checkout (typically a new
+/// project that shares the name), and writing it would overwrite that
+/// project's entry. A save addressed by the entry's own `local_key` keeps
+/// the stored keys instead, as for an editor holding stale keys.
 pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid project name".into());
@@ -704,9 +762,29 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     // saving never renames (see `rename_project`). The lookup accepts a
     // `local_key` and ignores the case of a name.
     let existing = resolve_registry_entry(name)?;
-    let registry_name = existing
-        .as_ref()
-        .map_or_else(|| name.to_string(), |e| e.name.clone());
+    if let Some(entry) = &existing {
+        if let Some(stored_key) = entry.local_key().filter(|key| *key != name) {
+            if !project.local_key.is_empty() && project.local_key != stored_key {
+                return Err(format!(
+                    "Refusing to save: '{}' names the project at {}, but the data belongs to \
+                     another checkout (local_key {}). Save it by its own local_key.",
+                    name,
+                    entry.directory().ok().flatten().unwrap_or_else(|| entry.path.display().to_string()),
+                    project.local_key
+                ));
+            }
+        }
+    }
+    let registry_name = match &existing {
+        Some(entry) => entry.name.clone(),
+        None if !project.local_key.is_empty()
+            && name == project.local_key
+            && is_valid_name(&project.name) =>
+        {
+            project.name.clone()
+        }
+        None => name.to_string(),
+    };
     // Keys are resolved against the existing entry only. A new entry has no
     // stored keys, so its path comes from the incoming `local_key` below.
     let existing_path = existing.map(|e| e.path);
@@ -736,7 +814,7 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
 
     let registry_path = match existing_path {
         Some(path) => path,
-        None => new_registry_path(&projects_dir, name, &project.local_key)?,
+        None => new_registry_path(&projects_dir, &registry_name, &project.local_key)?,
     };
 
     if !project.directory.is_empty() {
@@ -761,10 +839,11 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
 
 /// Rename a project. A keyed registry entry is edited in place: only its
 /// `name` field changes, and the file keeps its `local_key` name. The
-/// in-directory config is rewritten with the new name too. Refuses a name
-/// that another entry holds, ignoring case; a case-only rename of the same
-/// entry is allowed. `old_name` is an identifier (a `local_key` or a name);
-/// `new_name` is always a name.
+/// in-directory config is rewritten with the new name too. A name another
+/// project uses is allowed (stage 6). A legacy entry, still named
+/// `<name>.json`, has to move, so it refuses a target file that already
+/// exists. `old_name` is an identifier (a `local_key` or a name); `new_name`
+/// is always a name.
 pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     if !is_valid_name(old_name) {
         return Err("Invalid current project name".into());
@@ -778,11 +857,13 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
 
     let entry = resolve_registry_entry(old_name)?
         .ok_or_else(|| format!("Project '{}' not found", old_name))?;
-    if let Some(other) = find_registry_entry(new_name)? {
-        if other.path != entry.path {
-            return Err(format!("A project named '{}' already exists", new_name));
-        }
-    }
+    // A legacy group member stored under the old name can only be claimed
+    // by this project when no other project has that name.
+    let old_name_is_shared = scan_registry()?
+        .iter()
+        .filter(|e| same_project_name(&e.name, &entry.name))
+        .count()
+        > 1;
     // A legacy entry is named by its file stem, so it has to move to take
     // the new name. Check the target before anything is written.
     let legacy_target = if entry.keyed {
@@ -790,13 +871,18 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     } else {
         let target = entry.path.with_file_name(format!("{}.json", new_name));
         if target.exists() && !same_file(&entry.path, &target)? {
-            return Err(format!("A project named '{}' already exists", new_name));
+            return Err(format!(
+                "Cannot rename: {} already exists. Restart Automatic so it can name this \
+                 project's registry file by its key, then rename it again.",
+                target.display()
+            ));
         }
         Some(target)
     };
 
-    // Read the full project (via read_project which resolves directory-based configs)
-    let raw = read_project(&entry.name)?;
+    // Read the full project (via read_project which resolves directory-based
+    // configs). By the entry's own identifier: its name may be shared.
+    let raw = read_project(&entry_ident(&entry))?;
     let mut project: Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
 
@@ -837,7 +923,9 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     // project has no `id` yet. Best-effort — see delete_project for the
     // rationale.
     let replacement = if project.id.is_empty() { new_name } else { project.id.as_str() };
-    if let Err(e) = rename_project_in_all_groups(&entry.name, replacement) {
+    if old_name_is_shared {
+        // Leave the legacy member alone: it may be the other project's.
+    } else if let Err(e) = rename_project_in_all_groups(&entry.name, replacement) {
         eprintln!(
             "rename_project: could not update group references '{}' -> '{}': {}",
             entry.name, replacement, e
@@ -899,8 +987,16 @@ pub fn delete_project(name: &str) -> Result<(), String> {
     // project file is already gone, so a failure here cannot be recovered by
     // re-running the delete — log and continue so the UI still sees a clean
     // delete result.
-    // A legacy member still stored by name goes too.
-    let mut stale = vec![name.to_string()];
+    // A legacy member still stored by name goes too, unless another
+    // project has that name and the member may be its.
+    let name_is_shared = match scan_registry() {
+        Ok(remaining) => remaining.iter().any(|e| same_project_name(&e.name, name)),
+        Err(_) => true,
+    };
+    let mut stale = Vec::new();
+    if !name_is_shared {
+        stale.push(name.to_string());
+    }
     if let Some(id) = id {
         match get_project_summaries() {
             Ok(remaining) if remaining.iter().any(|s| s.id == id) => {}
@@ -1374,55 +1470,26 @@ mod tests {
     // ── create guards (Add Project must not overwrite) ───────────────────
 
     #[test]
-    fn assert_can_create_rejects_existing_name() {
-        use crate::core::paths::with_test_home;
-
-        let home = tempfile::tempdir().expect("tempdir");
-        with_test_home(home.path().to_path_buf(), || {
-            let data = minimal_project("alpha");
-            save_project("alpha", &data).expect("save");
-
-            let err = assert_can_create_project("alpha", "")
-                .expect_err("duplicate name should be rejected");
-            assert_eq!(
-                err,
-                "The name 'alpha' is already used by another project. Choose a different name."
-            );
-        });
-    }
-
-    #[test]
-    fn assert_can_create_existing_name_error_names_the_other_directory() {
+    fn assert_can_create_allows_a_name_another_project_uses() {
         use crate::core::paths::with_test_home;
 
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
             let existing_dir = home.path().join("work").join("website");
             fs::create_dir_all(&existing_dir).expect("mkdir");
-            let existing = existing_dir.to_str().unwrap().to_string();
-
             let project = Project {
                 name: "website".to_string(),
-                directory: existing.clone(),
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: "2026-01-01T00:00:00Z".to_string(),
+                directory: existing_dir.to_str().unwrap().to_string(),
                 ..Default::default()
             };
-            let data = serde_json::to_string(&project).expect("serialize");
-            save_project("website", &data).expect("save");
+            save_project("website", &serde_json::to_string(&project).unwrap()).expect("save");
 
             let other_dir = home.path().join("personal").join("website");
             fs::create_dir_all(&other_dir).expect("mkdir");
-
-            let err = assert_can_create_project("website", other_dir.to_str().unwrap())
-                .expect_err("duplicate name should be rejected");
-            assert_eq!(
-                err,
-                format!(
-                    "The name 'website' is already used by the project at {}. Choose a different name.",
-                    existing
-                )
-            );
+            assert_can_create_project("website", other_dir.to_str().unwrap())
+                .expect("a shared name is allowed");
+            assert_can_create_project("WEBSITE", "").expect("any case");
+            assert!(assert_can_create_project("../x", "").is_err(), "format is still checked");
         });
     }
 
@@ -1515,7 +1582,10 @@ mod tests {
 
             let status = inspect_project_directory(&dir).expect("inspect");
             match status {
-                DirectoryStatus::RegisteredHere { name } => assert_eq!(name, "alpha"),
+                DirectoryStatus::RegisteredHere { name, local_key } => {
+                    assert_eq!(name, "alpha");
+                    assert_eq!(local_key, "", "a project without a key yet");
+                }
                 other => panic!("unexpected status: {:?}", other),
             }
         });
@@ -1588,12 +1658,13 @@ mod tests {
             )
             .expect("write config");
 
-            let name = import_existing_project(&dir).expect("import");
-            assert_eq!(name, "adopted");
+            let imported = import_existing_project(&dir).expect("import");
+            assert_eq!(imported.name, "adopted");
 
             // The registry pointer must now exist, be named by its
             // local_key, and point at this dir.
             let pointer = registry_file("adopted");
+            assert_eq!(pointer, registry_file(&imported.local_key));
             let raw = fs::read_to_string(&pointer).expect("read pointer");
             let value: serde_json::Value =
                 serde_json::from_str(&raw).expect("parse pointer");
@@ -1607,28 +1678,17 @@ mod tests {
     }
 
     #[test]
-    fn import_existing_project_rejects_name_collision() {
+    fn import_existing_project_allows_a_name_another_project_uses() {
         use crate::core::paths::with_test_home;
 
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
-            // Pre-register a project with the same name.
             let existing_dir = home.path().join("existing");
             fs::create_dir_all(&existing_dir).expect("mkdir");
-            let existing = Project {
-                name: "clash".to_string(),
-                directory: existing_dir.to_str().unwrap().to_string(),
-                created_at: "2026-01-01T00:00:00Z".to_string(),
-                updated_at: "2026-01-01T00:00:00Z".to_string(),
-                ..Default::default()
-            };
-            save_project(
-                "clash",
-                &serde_json::to_string(&existing).expect("serialize"),
-            )
-            .expect("save existing");
+            let existing = keyed_project("clash", &existing_dir);
+            save_project(&existing.local_key.clone(), &serde_json::to_string(&existing).unwrap())
+                .expect("save existing");
 
-            // Now try to import an orphan whose name collides.
             let project_dir = home.path().join("orphan-clash");
             let automatic_dir = project_dir.join(".automatic");
             fs::create_dir_all(&automatic_dir).expect("mkdir");
@@ -1639,7 +1699,13 @@ mod tests {
             .expect("write");
 
             let dir = project_dir.to_str().unwrap().to_string();
-            let err = import_existing_project(&dir).expect_err("collision should fail");
+            let imported = import_existing_project(&dir).expect("a shared name imports");
+            assert_eq!(imported.name, "clash");
+            assert_ne!(imported.local_key, existing.local_key);
+            assert_eq!(load(&imported.local_key).directory, dir);
+            assert_eq!(load(&existing.local_key).directory, existing.directory);
+
+            let err = import_existing_project(&dir).expect_err("the directory is taken now");
             assert!(err.contains("already registered"), "unexpected error: {err}");
         });
     }
@@ -1718,9 +1784,9 @@ mod tests {
         serde_json::from_str(&read_project(name).expect("read")).expect("parse")
     }
 
-    /// Registry file of the project named `name`, via the resolver.
+    /// Registry file of the project `name` identifies, via the resolver.
     fn registry_file(name: &str) -> PathBuf {
-        find_registry_entry(name)
+        resolve_registry_entry(name)
             .expect("resolve")
             .unwrap_or_else(|| panic!("no registry entry for '{name}'"))
             .path
@@ -1922,7 +1988,7 @@ mod tests {
             )
             .expect("write state");
 
-            let name = import_existing_project(dir.to_str().unwrap()).expect("import");
+            let name = import_existing_project(dir.to_str().unwrap()).expect("import").local_key;
             let pointer = read_json(&registry_file(&name));
             assert_eq!(pointer["id"], "committed-id");
             let local_key = pointer["local_key"].as_str().expect("local_key").to_string();
@@ -1965,7 +2031,7 @@ mod tests {
                 "the copy starts with the source checkout's local_key"
             );
 
-            let name = import_existing_project(copy_dir.to_str().unwrap()).expect("import");
+            let name = import_existing_project(copy_dir.to_str().unwrap()).expect("import").local_key;
             let pointer = read_json(&registry_file(&name));
             let pointer_key = pointer["local_key"].as_str().expect("local_key").to_string();
             assert_ne!(pointer_key, source.local_key);
@@ -1995,12 +2061,16 @@ mod tests {
             project.local_key = "key-a".into();
             save_project("stale", &serde_json::to_string(&project).unwrap()).expect("save");
 
-            // An editor still holding other keys saves.
+            // An editor still holding other keys saves, addressing the
+            // project by its key as the UI does.
             let mut incoming = project.clone();
             incoming.id = "id-b".into();
             incoming.local_key = "key-b".into();
             incoming.description = "edited".into();
-            save_project("stale", &serde_json::to_string(&incoming).unwrap()).expect("save");
+            save_project("key-a", &serde_json::to_string(&incoming).unwrap()).expect("save");
+            let err = save_project("stale", &serde_json::to_string(&incoming).unwrap())
+                .expect_err("by name, another checkout's data is refused");
+            assert!(err.contains("another checkout"), "{err}");
 
             assert_eq!(read_json(&dir.join(CONFIG_FILE_NAME))["id"], "id-a");
             let loaded = load("stale");
@@ -2224,7 +2294,8 @@ mod tests {
     fn keyed_project(name: &str, dir: &std::path::Path) -> Project {
         let mut project = project_with_dir(name, dir);
         prepare_new_project_keys(&mut project).expect("prepare");
-        save_project(name, &serde_json::to_string(&project).unwrap()).expect("save");
+        save_project(&project.local_key.clone(), &serde_json::to_string(&project).unwrap())
+            .expect("save");
         project
     }
 
@@ -2242,6 +2313,15 @@ mod tests {
     fn save_members(group: &str, members: &[&str]) {
         let data = serde_json::json!({"name": group, "projects": members});
         save_group(group, &data.to_string()).expect("save group");
+    }
+
+    /// Write a group file with `members` exactly as stored, as an older
+    /// build left it.
+    fn write_group_members(group: &str, members: &[&str]) {
+        let dir = get_groups_dir().unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        let data = serde_json::json!({"name": group, "projects": members});
+        fs::write(dir.join(format!("{group}.json")), data.to_string()).unwrap();
     }
 
     #[test]
@@ -2350,7 +2430,7 @@ mod tests {
     }
 
     #[test]
-    fn two_entries_with_one_name_are_an_error() {
+    fn a_name_two_entries_share_is_ambiguous_by_name_but_not_by_key() {
         use crate::core::paths::with_test_home;
 
         let home = tempfile::tempdir().expect("tempdir");
@@ -2363,16 +2443,21 @@ mod tests {
                 save_project("twin", &minimal_project("twin")).expect_err("save"),
                 delete_project("twin").expect_err("delete"),
                 rename_project("twin", "single").expect_err("rename"),
-                assert_can_create_project("TWIN", "").expect_err("create"),
+                canonical_project_ident("twin").expect_err("ident"),
+                canonical_project_name("TWIN").expect_err("name"),
+                crate::core::project_store_keys("twin").expect_err("store keys"),
             ] {
-                assert!(err.contains("k1.json") && err.contains("k2.json"), "{err}");
+                assert!(err.contains("More than one project is named"), "{err}");
+                assert!(err.contains("twin — no folder (k1)") && err.contains("Twin — no folder (k2)"), "{err}");
             }
             assert!(registry_stem_file("k1").exists() && registry_stem_file("k2").exists());
+            assert_can_create_project("TWIN", "").expect("a shared name can be created");
+            assert_eq!(load("k2").name, "Twin", "each is reachable by its key");
         });
     }
 
     #[test]
-    fn create_refuses_a_case_variant_of_an_existing_name() {
+    fn create_allows_a_case_variant_but_not_a_taken_directory() {
         use crate::core::paths::with_test_home;
 
         let home = tempfile::tempdir().expect("tempdir");
@@ -2383,10 +2468,32 @@ mod tests {
             let other = home.path().join("other");
             fs::create_dir_all(&other).expect("mkdir");
 
-            let err = assert_can_create_project("WebSite", other.to_str().unwrap())
-                .expect_err("case variant clashes");
-            assert!(err.contains("already used by the project at"), "{err}");
-            assert!(err.contains(dir.to_str().unwrap()), "{err}");
+            assert_can_create_project("WebSite", other.to_str().unwrap()).expect("case variant");
+            let err = assert_can_create_project("anything", dir.to_str().unwrap())
+                .expect_err("the directory is taken");
+            assert!(err.contains("already registered as project 'website'"), "{err}");
+        });
+    }
+
+    #[test]
+    fn inspect_returns_the_local_key_of_the_registered_project() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let one = home.path().join("one").join("website");
+            let two = home.path().join("two").join("website");
+            fs::create_dir_all(&one).expect("mkdir");
+            fs::create_dir_all(&two).expect("mkdir");
+            keyed_project("website", &one);
+            let second = keyed_project("website", &two);
+            match inspect_project_directory(two.to_str().unwrap()).expect("inspect") {
+                DirectoryStatus::RegisteredHere { name, local_key } => {
+                    assert_eq!(name, "website");
+                    assert_eq!(local_key, second.local_key, "the key tells the two apart");
+                }
+                other => panic!("unexpected status: {other:?}"),
+            }
         });
     }
 
@@ -2416,7 +2523,8 @@ mod tests {
             fs::create_dir_all(&dir).expect("mkdir");
             let project = keyed_project("before", &dir);
             let registry_path = registry_stem_file(&project.local_key);
-            save_members("g", &["before", "bystander"]);
+            // A legacy member still stored by name.
+            write_group_members("g", &["before", "bystander"]);
 
             rename_project("before", "after").expect("rename");
             assert_eq!(registry_file("after"), registry_path, "the file did not move");
@@ -2424,19 +2532,23 @@ mod tests {
             assert_eq!(read_json(&dir.join(CONFIG_FILE_NAME))["name"], "after");
             assert_eq!(list_projects().expect("list"), vec!["after".to_string()]);
             let loaded = load("after");
-            assert_eq!((loaded.id, loaded.local_key), (project.id, project.local_key));
-            assert_eq!(group_members("g"), vec!["after", "bystander"]);
+            assert_eq!((loaded.id, loaded.local_key.clone()), (project.id.clone(), project.local_key.clone()));
+            assert_eq!(
+                group_members("g"),
+                vec![project.local_key.clone(), "bystander".to_string()],
+                "the legacy name became the id, shown as the key"
+            );
 
             // A case-only rename of the same entry is allowed.
             rename_project("after", "After").expect("case-only rename");
             assert_eq!(registry_file("After"), registry_path);
             assert_eq!(list_projects().expect("list"), vec!["After".to_string()]);
-            assert_eq!(group_members("g"), vec!["After", "bystander"]);
+            assert_eq!(group_members("g"), vec![project.local_key, "bystander".to_string()]);
         });
     }
 
     #[test]
-    fn rename_refuses_a_name_another_entry_holds() {
+    fn rename_allows_a_name_another_entry_holds() {
         use crate::core::paths::with_test_home;
 
         let home = tempfile::tempdir().expect("tempdir");
@@ -2445,12 +2557,15 @@ mod tests {
             let b = home.path().join("b");
             fs::create_dir_all(&a).expect("mkdir");
             fs::create_dir_all(&b).expect("mkdir");
-            keyed_project("alpha", &a);
-            keyed_project("beta", &b);
+            let alpha = keyed_project("alpha", &a);
+            let beta = keyed_project("beta", &b);
 
-            let err = rename_project("alpha", "BETA").expect_err("clash");
-            assert!(err.contains("already exists"), "{err}");
-            assert_eq!(list_projects().expect("list"), vec!["alpha", "beta"]);
+            rename_project(&alpha.local_key, "BETA").expect("a shared name is allowed");
+            assert_eq!(list_projects().expect("list"), vec!["BETA", "beta"]);
+            assert_eq!(load(&alpha.local_key).name, "BETA");
+            assert_eq!(load(&alpha.local_key).directory, alpha.directory);
+            assert_eq!(load(&beta.local_key).directory, beta.directory);
+            assert!(read_project("beta").is_err(), "the shared name is now ambiguous");
         });
     }
 
@@ -2608,24 +2723,24 @@ mod tests {
 
             ensure_project_keys().expect("backfill");
             let raw = read_json(&get_groups_dir().unwrap().join("g.json"));
-            let ids = [load("with-dir").id, load("no-dir").id];
+            let (with_dir, no_dir) = (load("with-dir"), load("no-dir"));
             assert_eq!(
                 raw["projects"],
-                serde_json::json!([ids[0], ids[1], "deleted-long-ago"]),
+                serde_json::json!([with_dir.id, no_dir.id, "deleted-long-ago"]),
                 "the migration stored members by id and left the unknown name"
             );
             scrub_orphan_project_references().expect("scrub");
             assert_eq!(
                 group_members("g"),
-                vec!["with-dir", "no-dir", "deleted-long-ago"],
+                vec![with_dir.local_key.clone(), no_dir.local_key.clone(), "deleted-long-ago".to_string()],
                 "a name cannot be classified, so it stays"
             );
 
             // A deleted project's id is an orphan the scrub can prove.
             let dead = "99999999-9999-4999-8999-999999999999";
-            save_members("g", &["with-dir", dead]);
+            save_members("g", &[&with_dir.local_key, dead]);
             scrub_orphan_project_references().expect("scrub");
-            assert_eq!(group_members("g"), vec!["with-dir"]);
+            assert_eq!(group_members("g"), vec![with_dir.local_key]);
         });
     }
 
@@ -2642,7 +2757,8 @@ mod tests {
             let project = keyed_project("site", &dir);
             let key = project.local_key.clone();
             let registry_path = registry_stem_file(&key);
-            save_members("g", &["site"]);
+            // A legacy member still stored by name.
+            write_group_members("g", &["site"]);
 
             let by_key = load(&key);
             assert_eq!(by_key.name, "site", "a read by key returns the name");
@@ -2657,7 +2773,7 @@ mod tests {
 
             rename_project(&key, "renamed").expect("rename by key");
             assert_eq!(registry_file("renamed"), registry_path);
-            assert_eq!(group_members("g"), vec!["renamed"], "groups got the name, not the key");
+            assert_eq!(group_members("g"), vec![key.clone()], "the legacy name became the id");
 
             delete_project(&key).expect("delete by key");
             assert!(!registry_path.exists());
@@ -2697,16 +2813,18 @@ mod tests {
     }
 
     #[test]
-    fn store_name_passes_through_a_name_two_entries_share() {
+    fn store_name_refuses_a_name_two_entries_share() {
         use crate::core::paths::with_test_home;
 
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
             write_registry("k1", serde_json::json!({"name": "site", "local_key": "k1"}));
             write_registry("k2", serde_json::json!({"name": "SITE", "local_key": "k2"}));
-            assert_eq!(project_store_name("site").unwrap(), "site");
+            let err = project_store_name("site").unwrap_err();
+            assert!(err.contains("(k1)") && err.contains("(k2)"), "{err}");
             assert_eq!(project_store_name("k2").unwrap(), "SITE", "a key is still unique");
             assert!(canonical_project_name("site").is_err());
+            assert_eq!(canonical_project_ident("k1").unwrap(), "k1");
         });
     }
 
@@ -2841,20 +2959,30 @@ mod tests {
     }
 
     #[test]
-    fn local_keys_by_name_skips_projects_without_a_key() {
+    fn idents_find_every_checkout_even_when_names_repeat() {
         use crate::core::paths::with_test_home;
 
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
-            let dir = home.path().join("repo");
-            fs::create_dir_all(&dir).expect("mkdir");
-            let keyed = keyed_project("site", &dir);
+            let one = home.path().join("one");
+            let two = home.path().join("two");
+            fs::create_dir_all(&one).expect("mkdir");
+            fs::create_dir_all(&two).expect("mkdir");
+            let a = keyed_project("site", &one);
+            let b = keyed_project("site", &two);
             save_project("plain", &minimal_project("plain")).expect("save");
 
-            let keys = project_local_keys_by_name().expect("keys");
-            assert_eq!(keys.get("site"), Some(&keyed.local_key));
-            assert_eq!(keys.get("plain"), None);
-            assert_eq!(keys.len(), 1);
+            let mut idents = list_project_idents().expect("idents");
+            idents.sort();
+            let mut expected = vec![a.local_key.clone(), b.local_key.clone(), "plain".to_string()];
+            expected.sort();
+            assert_eq!(idents, expected, "a key where there is one, else the name");
+            assert_eq!(list_projects().expect("names"), vec!["plain", "site"]);
+            assert_eq!(project_ident(&load(&a.local_key)), a.local_key);
+            assert_eq!(project_ident(&load("plain")), "plain");
+            assert_eq!(canonical_project_ident(&b.local_key).unwrap(), b.local_key);
+            assert_eq!(canonical_project_ident("plain").unwrap(), "plain");
+            assert_eq!(resolve_project_ident("nope").unwrap(), None);
         });
     }
 }

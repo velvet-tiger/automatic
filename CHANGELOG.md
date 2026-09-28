@@ -8,6 +8,7 @@ All notable changes to Automatic are documented here.
 
 - Removing an agent from a project now asks what to do with its files. Remove deletes everything the agent uses in the project, including its own folders such as `.claude/` and `.junie/` and its own instruction file such as `CLAUDE.md`. Keep stops syncing the agent and leaves every file where it is. Before you confirm, the dialog lists each path it will delete and each shared file it will leave for your other agents. ([41829f2](https://github.com/velvet-tiger/automatic/commit/41829f2))
 - The library's sub-agent editor has separate fields for name, description, tools, model and colour, and its own editor for the prompt. Any other front matter goes in an Other settings box. Fields you don't touch are saved exactly as they were. The read-only view shows the same fields. ([5d9e796](https://github.com/velvet-tiger/automatic/commit/5d9e796), [029cb93](https://github.com/velvet-tiger/automatic/commit/029cb93))
+- Projects can share a name. Where names repeat, Automatic shows part of each project's folder path next to the name. A folder can still belong to only one project.
 - Hold Option (Alt on Windows and Linux) while dragging a project in the sidebar to add it to another group and keep it in its current one. A plain drag still moves it. ([987cf79](https://github.com/velvet-tiger/automatic/commit/987cf79))
 
 ### Changed
@@ -19,7 +20,7 @@ All notable changes to Automatic are documented here.
 
 ### Fixed
 
-- Adding a project whose folder name matches another project no longer stops you. The Add Project wizard has a name field that follows the folder name until you edit it, and suggests a free name such as `website-2` when yours is taken. ([46624f8](https://github.com/velvet-tiger/automatic/commit/46624f8), [a57a711](https://github.com/velvet-tiger/automatic/commit/a57a711))
+- Adding a project whose folder name matches another project no longer stops you. The Add Project wizard has a name field that follows the folder name until you edit it. ([46624f8](https://github.com/velvet-tiger/automatic/commit/46624f8), [a57a711](https://github.com/velvet-tiger/automatic/commit/a57a711))
 - Agents are told to track features only on projects that use the Build tool. The feature-tracking instructions moved out of the Automatic service rule into a new "Build: Feature Tracking" rule, and the `automatic-features` skill now comes with the Build plugin. Both are added to a project when it has the Build tool and removed when it doesn't. Existing projects catch up the next time Automatic starts. On projects without Build, the feature tools now return an error instead of saving features nobody can see. ([ed11630](https://github.com/velvet-tiger/automatic/commit/ed11630))
 - Duplicating a sub-agent gives the copy a `-copy` name instead of the original's name. ([029cb93](https://github.com/velvet-tiger/automatic/commit/029cb93))
 - Saving or syncing a project writes its configuration in the same order every time, so it no longer shows changes when nothing changed. ([a00eece](https://github.com/velvet-tiger/automatic/commit/a00eece))

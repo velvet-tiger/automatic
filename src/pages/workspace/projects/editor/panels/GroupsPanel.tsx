@@ -3,26 +3,23 @@
 import { ExternalLink, Layers, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 interface GroupsPanelProps {
-  /** The project's local_key, used to reload its memberships. */
-  projectKey: string;
   /**
-   * The project's display name. Group files still list members by name on
-   * the wire, so membership edits use it.
+   * The project's local_key. Groups list members by local_key, so it both
+   * reloads the memberships and edits them.
    */
-  projectName: string;
+  projectKey: string;
   projectGroupMemberships: string[];
   allGroups: string[];
   loadingGroups: boolean;
   reloadGroups: (projectKey: string) => Promise<void>;
-  onAddToGroup: (groupName: string, projectName: string) => Promise<void> | void;
-  onRemoveFromGroup: (groupName: string, projectName: string) => Promise<void> | void;
-  onRemoveFromAllGroups: (projectName: string) => Promise<void> | void;
+  onAddToGroup: (groupName: string, projectKey: string) => Promise<void> | void;
+  onRemoveFromGroup: (groupName: string, projectKey: string) => Promise<void> | void;
+  onRemoveFromAllGroups: (projectKey: string) => Promise<void> | void;
   onNavigateToGroup?: (groupName: string) => void;
 }
 
 export function GroupsPanel({
   projectKey,
-  projectName,
   projectGroupMemberships,
   allGroups,
   loadingGroups,
@@ -91,7 +88,7 @@ export function GroupsPanel({
                   <ExternalLink size={10} />
                 </button>
                 <button
-                  onClick={() => onRemoveFromGroup(groupName, projectName)}
+                  onClick={() => onRemoveFromGroup(groupName, projectKey)}
                   className="flex-shrink-0 p-1 text-text-muted hover:text-red-400 transition-colors"
                   title={`Remove from "${groupName}"`}
                 >
@@ -105,7 +102,7 @@ export function GroupsPanel({
         {/* Remove from all groups button */}
         {projectGroupMemberships.length > 1 && (
           <button
-            onClick={() => onRemoveFromAllGroups(projectName)}
+            onClick={() => onRemoveFromAllGroups(projectKey)}
             className="w-full flex items-center justify-center gap-2 px-4 py-2 text-[12px] text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
           >
             <Trash2 size={12} />
@@ -131,7 +128,7 @@ export function GroupsPanel({
                   {available.map((groupName) => (
                     <button
                       key={groupName}
-                      onClick={() => onAddToGroup(groupName, projectName)}
+                      onClick={() => onAddToGroup(groupName, projectKey)}
                       className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-surface-hover transition-colors"
                     >
                       <Plus size={12} className="text-text-muted flex-shrink-0" />

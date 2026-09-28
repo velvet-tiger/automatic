@@ -9,7 +9,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { handleExternalLinkClick } from "../../../../lib/externalLinks";
 import { useProjectNavLayout } from "../../../../lib/projectNavLayout";
-import { loadProjectSummaries } from "../../../../lib/projectIdentity";
+import {
+  loadProjectSummaries,
+  projectLabelFor,
+  projectLabels,
+  membersWithoutProject,
+  projectsNamed,
+  sharedNameNote,
+} from "../../../../lib/projectIdentity";
+import type { ProjectSummary } from "../types";
 import { SELECTED_PROJECT_STORAGE_KEY } from "../../../../lib/projectStorageMigration";
 import {
   trackProjectCreated,
@@ -146,37 +154,6 @@ function clearSelectedProject(): void {
   }
 }
 
-/**
- * The local_key of a project that was just created or imported under
- * `name`. Falls back to the name when the project has no key or cannot be
- * read back: every command also accepts the name, and the save itself has
- * already succeeded, so failing here would report a false error.
- */
-async function localKeyForProject(name: string): Promise<string> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(await invoke<string>("read_project", { name }));
-  } catch (err: unknown) {
-    console.warn(`Could not read the key of project '${name}'; addressing it by name:`, err);
-    return name;
-  }
-  if (typeof parsed === "object" && parsed !== null && "local_key" in parsed) {
-    const key = (parsed as { local_key: unknown }).local_key;
-    if (typeof key === "string" && key !== "") return key;
-  }
-  return name;
-}
-
-/** First `<name>-2`, `<name>-3`, ... not in `takenLower`. The set holds
- *  lowercased names because registry files collide case-insensitively on
- *  macOS. Terminates because the set is finite. */
-function suggestFreeProjectName(name: string, takenLower: ReadonlySet<string>): string {
-  for (let n = 2; ; n++) {
-    const candidate = `${name}-${n}`;
-    if (!takenLower.has(candidate.toLowerCase())) return candidate;
-  }
-}
-
 /** State of the open agent-removal dialog. */
 interface AgentRemovalDialog {
   idx: number;
@@ -252,13 +229,12 @@ export function ProjectEditor({
   const [dirty, setDirty] = useState(false);
   const [newName, setNewName] = useState("");
   // Wizard step 1 name handling. The name follows the folder basename until
-  // the user types in the name field. `nameTakenFolder` holds the folder name
-  // when it clashed and a free suggestion was applied instead.
+  // the user types in the name field.
   const [nameEdited, setNameEdited] = useState(false);
-  const [nameTakenFolder, setNameTakenFolder] = useState<string | null>(null);
-  // null while loading or when loading failed. The backend create check
-  // still rejects clashes, so the wizard only loses the early warning.
-  const [existingProjectNames, setExistingProjectNames] = useState<string[] | null>(null);
+  // Every registered project: labels the header when its name repeats, and
+  // lets the wizard say that a name is shared. Empty while loading or when
+  // loading failed; nothing depends on it for correctness.
+  const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([]);
   // Wizard state (used while isCreating === true)
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   const [wizardDiscovering, setWizardDiscovering] = useState(false);
@@ -266,75 +242,71 @@ export function ProjectEditor({
   const [wizardDefaultAgents, setWizardDefaultAgents] = useState<string[]>([]);
   /** Non-empty when the wizard was launched from a "New project from template" action. */
   const [wizardSourceTemplates, setWizardSourceTemplates] = useState<string[]>([]);
-  /** Tracks the name of the stub project saved during step 1 so it can be deleted on cancel. */
-  const wizardStubName = useRef<string | null>(null);
+  /**
+   * The local_key of the stub project saved during step 1, so it can be
+   * deleted on cancel and saved over at the end. A key, not the name: the
+   * name may be shared with another project.
+   */
+  const wizardStubKey = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Orphan-config dialog: open when the picked directory has an on-disk
   // project config (`.automatic.json`, or a legacy `.automatic/project.json`)
   // that is not registered in Automatic. The user
   // then chooses to import it, wipe it, or cancel.
+  // Set when wizard step 1 finds the chosen directory already registered,
+  // so the user can open that project. `local_key` addresses it even when
+  // another project shares its name; empty while it has no key.
+  const [registeredHere, setRegisteredHere] = useState<{ directory: string; name: string; local_key: string } | null>(null);
   const [orphanDialog, setOrphanDialog] = useState<{ directory: string; existingName: string; pendingName: string } | null>(null);
   const [orphanBusy, setOrphanBusy] = useState(false);
   const [orphanError, setOrphanError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameName, setRenameName] = useState("");
 
-  // Refresh the registered names whenever step 1 is shown, so a stub saved
-  // on an earlier pass and projects added elsewhere are both current.
+  // Refresh the registered projects when a project opens and whenever wizard
+  // step 1 is shown, so a stub saved on an earlier pass and projects added
+  // elsewhere are both current.
   useEffect(() => {
-    if (!isCreating || wizardStep !== 1) return;
+    if (isCreating && wizardStep !== 1) return;
     let cancelled = false;
     loadProjectSummaries()
       .then((summaries) => {
-        // The clash check compares display names, which stay unique until
-        // duplicate names are allowed.
-        if (!cancelled) setExistingProjectNames(summaries.map((s) => s.name));
+        if (!cancelled) setProjectSummaries(summaries);
       })
       .catch((err: unknown) => {
-        console.error("get_project_summaries failed; name clash warning disabled:", err);
-        if (!cancelled) setExistingProjectNames(null);
+        console.error("get_project_summaries failed; shared-name hints disabled:", err);
+        if (!cancelled) setProjectSummaries([]);
       });
     return () => {
       cancelled = true;
     };
-  }, [isCreating, wizardStep]);
-
-  // Lowercased registered names. The wizard's own stub is left out: after
-  // Back from step 2 it is registered, but it is this same project.
-  const takenProjectNames = useMemo(() => {
-    const stub = wizardStubName.current?.toLowerCase() ?? null;
-    return new Set(
-      (existingProjectNames ?? [])
-        .map((n) => n.toLowerCase())
-        .filter((n) => n !== stub),
-    );
-  }, [existingProjectNames]);
+  }, [isCreating, wizardStep, selectedKey, project?.name]);
 
   const wizardDirectory = isCreating ? (project?.directory ?? "") : "";
 
-  // Keep the name in step with the folder until the user edits it. A taken
-  // folder name is swapped for the first free suggestion so the user is not
-  // stuck on a name they did not choose.
+  // Keep the name in step with the folder until the user edits it. A name
+  // another project uses is kept: projects may share a name.
   useEffect(() => {
     if (!isCreating || wizardStep !== 1 || nameEdited) return;
-    const folder = folderBasename(wizardDirectory);
-    if (folder && takenProjectNames.has(folder.toLowerCase())) {
-      setNewName(suggestFreeProjectName(folder, takenProjectNames));
-      setNameTakenFolder(folder);
-    } else {
-      setNewName(folder);
-      setNameTakenFolder(null);
-    }
-  }, [isCreating, wizardStep, nameEdited, wizardDirectory, takenProjectNames]);
+    setNewName(folderBasename(wizardDirectory));
+  }, [isCreating, wizardStep, nameEdited, wizardDirectory]);
 
   const wizardTrimmedName = newName.trim();
   const wizardNameFormatProblem = projectNameFormatProblem(wizardTrimmedName);
-  const wizardNameTaken =
-    wizardNameFormatProblem === null && takenProjectNames.has(wizardTrimmedName.toLowerCase());
-  const wizardNameSuggestion =
-    wizardNameTaken ? suggestFreeProjectName(wizardTrimmedName, takenProjectNames) : null;
-  const wizardNameReady = wizardNameFormatProblem === null && !wizardNameTaken;
+  // The wizard's own stub is left out: after Back from step 2 it is
+  // registered, but it is this same project.
+  const wizardSharedNameNote =
+    wizardNameFormatProblem === null
+      ? sharedNameNote(wizardTrimmedName, projectsNamed(projectSummaries, wizardTrimmedName, wizardStubKey.current))
+      : null;
+  const wizardNameReady = wizardNameFormatProblem === null;
+
+  // The open project's folder hint, shown in the header only when another
+  // project has the same name.
+  const headerLabels = useMemo(() => projectLabels(projectSummaries), [projectSummaries]);
+  const headerHint =
+    !isCreating && selectedKey !== null ? projectLabelFor(headerLabels, selectedKey).hint : null;
 
   // Available items to pick from
   const [availableAgents, setAvailableAgents] = useState<AgentInfo[]>([]);
@@ -994,12 +966,12 @@ export function ProjectEditor({
   // navigates to a different top-level section via the sidebar).
   useEffect(() => {
     return () => {
-      const stub = wizardStubName.current;
+      const stub = wizardStubKey.current;
       if (stub) {
         // Fire-and-forget: best-effort deletion on unmount. We cannot await here
         // since React cleanup functions must be synchronous.
         invoke("delete_project", { name: stub }).catch(() => {});
-        wizardStubName.current = null;
+        wizardStubKey.current = null;
       }
     };
   }, []);
@@ -1247,13 +1219,14 @@ export function ProjectEditor({
   };
 
   /** Add this project to a group, save the group, then re-sync ALL projects
-   *  in the group so every project's peer list is updated. */
-  const handleAddToGroup = async (groupName: string, projectName: string) => {
+   *  in the group so every project's peer list is updated. Groups list
+   *  members by local_key. */
+  const handleAddToGroup = async (groupName: string, projectKey: string) => {
     try {
       const raw: string = await invoke("read_group", { name: groupName });
       const g = JSON.parse(raw);
-      if (!g.projects.includes(projectName)) {
-        g.projects.push(projectName);
+      if (!g.projects.includes(projectKey)) {
+        g.projects.push(projectKey);
         g.updated_at = new Date().toISOString();
         await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
         setProjectGroupMemberships((prev) => [...prev, groupName].sort((a, b) => a.localeCompare(b)));
@@ -1271,17 +1244,18 @@ export function ProjectEditor({
   };
 
   /** Remove this project from a group, save, then re-sync ALL remaining projects
-   *  (peer lists change) and the removed project (to strip its group block). */
-  const handleRemoveFromGroup = async (groupName: string, projectName: string) => {
+   *  (peer lists change) and the removed checkouts (to strip their group block). */
+  const handleRemoveFromGroup = async (groupName: string, projectKey: string) => {
     try {
       const raw: string = await invoke("read_group", { name: groupName });
       const g = JSON.parse(raw);
-      g.projects = g.projects.filter((p: string) => p !== projectName);
+      const before: string[] = g.projects;
+      g.projects = membersWithoutProject(before, projectKey, projectSummaries);
       g.updated_at = new Date().toISOString();
       await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
       setProjectGroupMemberships((prev) => prev.filter((n) => n !== groupName));
-      // Sync remaining projects (peer lists change) and the removed project.
-      const toSync = [...g.projects, projectName];
+      // Every member is a local_key, including the checkouts just removed.
+      const toSync = [...before, projectKey];
       for (const name of toSync) {
         invoke("sync_project", { name }).catch((e: unknown) => {
           console.warn(`Group sync: could not sync project '${name}':`, e);
@@ -1293,7 +1267,8 @@ export function ProjectEditor({
     }
   };
 
-  const handleRemoveFromAllGroups = async (projectName: string) => {
+  const handleRemoveFromAllGroups = async (projectKey: string) => {
+    const projectName = project?.name ?? projectKey;
     const confirmed = await ask(
       `Remove "${projectName}" from all ${projectGroupMemberships.length} group${projectGroupMemberships.length === 1 ? "" : "s"}?`,
       { title: "Remove from All Groups", kind: "warning" }
@@ -1301,19 +1276,18 @@ export function ProjectEditor({
     if (!confirmed) return;
 
     // Collect all projects that need to be synced (peers in each group + the removed project)
-    const toSync = new Set<string>([projectName]);
+    const toSync = new Set<string>([projectKey]);
     
     for (const groupName of projectGroupMemberships) {
       try {
         const raw: string = await invoke("read_group", { name: groupName });
         const g = JSON.parse(raw);
-        g.projects = g.projects.filter((p: string) => p !== projectName);
+        // Every member is synced: the peers' lists change, and the removed
+        // checkouts lose their group block.
+        for (const member of g.projects as string[]) toSync.add(member);
+        g.projects = membersWithoutProject(g.projects, projectKey, projectSummaries);
         g.updated_at = new Date().toISOString();
         await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
-        // Add remaining projects in this group - their peer lists need updating
-        for (const peer of g.projects) {
-          toSync.add(peer);
-        }
       } catch (err: any) {
         console.error(`Failed to remove from group ${groupName}:`, err);
       }
@@ -1963,12 +1937,15 @@ export function ProjectEditor({
     const folderName = project.directory
       ? project.directory.split("/").filter(Boolean).pop() ?? ""
       : "";
-    // The wizard saves under the chosen name, because no key exists yet. An
-    // existing project is addressed by its local_key and keeps its name.
+    // The wizard saves over the stub from step 1, addressed by its key: the
+    // name may be shared with another project. Without a stub, the save
+    // creates the project and the backend gives it a key. An existing
+    // project is addressed by its local_key and keeps its name.
     const displayName = isCreating
       ? (newName.trim() || folderName)
       : project.name;
-    const identifier = isCreating ? displayName : selectedKey;
+    const stubKey = isCreating ? wizardStubKey.current : null;
+    const identifier = isCreating ? (stubKey ?? displayName) : selectedKey;
     if (!identifier || !displayName) return;
     try {
       setSyncStatus("syncing");
@@ -2032,19 +2009,21 @@ export function ProjectEditor({
       }
       // save_project writes the project config AND syncs all agent configs
       // (skills, MCP servers) in one atomic backend call.
-      await invoke("save_project", {
+      // Returns the saved project's local_key (its name while it has none).
+      const savedKey = await invoke<string | undefined>("save_project", {
         name: identifier,
         data: JSON.stringify(toSave, null, 2),
+        ...(isCreating && stubKey === null ? { creating: true } : {}),
       });
       // From here on the project exists, so address it by its key.
-      const name = isCreating ? await localKeyForProject(identifier) : identifier;
+      const name = isCreating ? (savedKey || identifier) : identifier;
       setSelectedKey(name);
       writeSelectedProject(name);
       if (isCreating) {
         trackProjectCreated(displayName);
         // Clear the stub reference so the unmount cleanup does not delete the
         // project we just successfully saved.
-        wizardStubName.current = null;
+        wizardStubKey.current = null;
         setIsCreating(false);
         setProjectTab("summary");
         setProjectGroup("summary");
@@ -2213,13 +2192,12 @@ export function ProjectEditor({
     setIsCreating(true);
     setNewName("");
     setNameEdited(false);
-    setNameTakenFolder(null);
     setSelectedProjectTemplates(templates.map((t) => t.name));
     setShowProjectTemplatePicker(false);
     setWizardStep(1);
     setWizardDiscoveredAgents([]);
     setWizardDiscovering(false);
-    wizardStubName.current = null;
+    wizardStubKey.current = null;
   };
 
   /**
@@ -2233,8 +2211,8 @@ export function ProjectEditor({
    * next Continue is refused because the directory is already registered.
    */
   const backToDirectoryStep = async () => {
-    const stub = wizardStubName.current;
-    wizardStubName.current = null;
+    const stub = wizardStubKey.current;
+    wizardStubKey.current = null;
     setError(null);
     if (stub) {
       try {
@@ -2249,8 +2227,8 @@ export function ProjectEditor({
   };
 
   const cancelCreate = async () => {
-    const stub = wizardStubName.current;
-    wizardStubName.current = null;
+    const stub = wizardStubKey.current;
+    wizardStubKey.current = null;
     setIsCreating(false);
     setProject(null);
     setDirty(false);
@@ -2278,13 +2256,15 @@ export function ProjectEditor({
     try {
       const stub = { ...emptyProject(name), directory: dir, name };
       if (userId && !stub.created_by) stub.created_by = userId;
-      await invoke("save_project", {
+      // The create returns the new project's local_key. Everything after
+      // addresses the stub by it, since another project may share the name.
+      const stubKey = await invoke<string>("save_project", {
         name,
         data: JSON.stringify(stub, null, 2),
         creating: true,
       });
-      wizardStubName.current = name;
-      const raw: string = await invoke("autodetect_project_dependencies", { name });
+      wizardStubKey.current = stubKey;
+      const raw: string = await invoke("autodetect_project_dependencies", { name: stubKey });
       const detected = JSON.parse(raw) as Project;
       const currentProject = project ?? emptyProject(name);
       const mergedAgents = [
@@ -2334,15 +2314,17 @@ export function ProjectEditor({
     setOrphanBusy(true);
     setOrphanError(null);
     try {
-      const importedName: string = await invoke("import_existing_project", {
+      // Opened by its key: another project may share the name.
+      const imported = await invoke<{ name: string; local_key: string }>("import_existing_project", {
         directory: orphanDialog.directory,
       });
+      const importedName = imported.name;
+      const importedKey = imported.local_key || imported.name;
       setOrphanDialog(null);
       setProject(null);
       setDirty(false);
       setError(null);
       await reloadProjects();
-      const importedKey = await localKeyForProject(importedName);
       setIsCreating(false);
       setSelectedKey(importedKey);
       // Refresh the WorkspaceSidebar's cached project list so the newly imported
@@ -3010,6 +2992,9 @@ export function ProjectEditor({
                       title="Double-click to rename"
                     >
                       {project?.name ?? ""}
+                      {headerHint !== null && (
+                        <span className="font-normal text-text-muted"> · {headerHint}</span>
+                      )}
                     </h1>
                   )}
                   {/* Directory path — click to change */}
@@ -3385,7 +3370,6 @@ export function ProjectEditor({
                               onChange={(e) => {
                                 setNewName(e.target.value);
                                 setNameEdited(true);
-                                setNameTakenFolder(null);
                               }}
                               placeholder="my-project"
                               aria-invalid={!wizardNameReady}
@@ -3397,25 +3381,8 @@ export function ProjectEditor({
                                   only disables Continue; the message waits for an edit. */}
                               {wizardNameFormatProblem !== null && (nameEdited || wizardTrimmedName !== "") ? (
                                 <p className="text-danger">{wizardNameFormatProblem}</p>
-                              ) : wizardNameTaken && wizardNameSuggestion !== null ? (
-                                <p className="text-danger">
-                                  Another project already uses this name. Try &ldquo;
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setNewName(wizardNameSuggestion);
-                                      setNameEdited(true);
-                                    }}
-                                    className="font-medium text-brand hover:underline"
-                                  >
-                                    {wizardNameSuggestion}
-                                  </button>
-                                  &rdquo;.
-                                </p>
-                              ) : nameTakenFolder !== null ? (
-                                <p className="text-text-muted">
-                                  Another project already uses the folder name "{nameTakenFolder}". You can change this name.
-                                </p>
+                              ) : wizardSharedNameNote !== null ? (
+                                <p className="text-text-muted">{wizardSharedNameNote}</p>
                               ) : null}
                             </div>
                           </div>
@@ -3429,9 +3396,10 @@ export function ProjectEditor({
                               const name = wizardTrimmedName;
                               if (!dir || !wizardNameReady) return;
                               setError(null);
+                              setRegisteredHere(null);
                               setWizardDiscovering(true);
                               let status: { kind: "Available" }
-                                | { kind: "RegisteredHere"; name: string }
+                                | { kind: "RegisteredHere"; name: string; local_key: string }
                                 | { kind: "OrphanConfig"; name: string }
                                 | null = null;
                               try {
@@ -3443,9 +3411,8 @@ export function ProjectEditor({
                                 return;
                               }
                               if (status && status.kind === "RegisteredHere") {
-                                setError(
-                                  `This directory is already registered as project '${status.name}'. Open it from the project list.`
-                                );
+                                setError(`This directory is already registered as project '${status.name}'.`);
+                                setRegisteredHere({ directory: dir, name: status.name, local_key: status.local_key });
                                 setWizardDiscovering(false);
                                 return;
                               }
@@ -3470,6 +3437,21 @@ export function ProjectEditor({
                             ) : (
                               <><ArrowRight size={13} /> Continue</>
                             )}
+                          </button>
+                        )}
+
+                        {registeredHere !== null && registeredHere.directory === project.directory.trim() && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const key = registeredHere.local_key || registeredHere.name;
+                              setRegisteredHere(null);
+                              await cancelCreate();
+                              setSelectedKey(key);
+                            }}
+                            className="w-full text-center text-[12px] font-medium text-brand hover:underline"
+                          >
+                            Open &ldquo;{registeredHere.name}&rdquo; instead
                           </button>
                         )}
                       </div>
@@ -4157,7 +4139,6 @@ export function ProjectEditor({
                 {projectTab === "groups" && selectedKey && (
                   <GroupsPanel
                     projectKey={selectedKey}
-                    projectName={project?.name ?? selectedKey}
                     projectGroupMemberships={projectGroupMemberships}
                     allGroups={allGroups}
                     loadingGroups={loadingGroups}

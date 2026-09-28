@@ -1,10 +1,19 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight, Layers, LayoutGrid, Plus, Trash2 } from "lucide-react";
 import { trackProjectDeleted } from "../lib/analytics";
 import { resolveGroupDrop, UNGROUPED_DROP_TARGET } from "../lib/groupDrop";
-import { loadProjectSummaries, projectKeyOf, projectNameForKey, resolveProjectKey } from "../lib/projectIdentity";
+import {
+  loadProjectSummaries,
+  membersWithoutProject,
+  projectKeyOf,
+  projectLabelFor,
+  projectLabels,
+  projectLabelText,
+  projectNameForKey,
+} from "../lib/projectIdentity";
+import { ProjectNameLabel } from "./ProjectNameLabel";
 import type { ProjectSummary } from "../pages/workspace/projects/types";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -19,7 +28,7 @@ interface ProjectGroup {
 
 interface SidebarGroup {
   name: string;
-  /** Member project local_keys. The group file lists names. */
+  /** Member project local_keys, as `read_group` returns them. */
   projects: string[];
 }
 
@@ -103,11 +112,13 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
         try {
           const raw: string = await invoke("read_group", { name });
           const g = JSON.parse(raw);
+          // Members are local_keys. A value no registered project has (a
+          // deleted project) has no row to show, so it is left out here;
+          // the group file keeps it until the group is edited elsewhere.
+          const known = new Set(sortedKeys);
           loaded.push({
             name: g.name,
-            projects: ((g.projects ?? []) as string[])
-              .map((member) => resolveProjectKey(sorted, member))
-              .filter((key): key is string => key !== null),
+            projects: ((g.projects ?? []) as string[]).filter((member) => known.has(member)),
           });
         } catch {
           // Skip unreadable groups
@@ -143,8 +154,11 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
     window.dispatchEvent(new CustomEvent("project-removed", { detail: { name, local_key: localKey } }));
   };
 
-  /** Display name for a project key. Group files store names, so edits use it. */
+  /** Display name for a project key. */
   const nameForKey = (key: string): string => projectNameForKey(summaries, key) ?? key;
+  /** Name plus a folder hint where names repeat. */
+  const labels = useMemo(() => projectLabels(summaries), [summaries]);
+  const labelForKey = (key: string) => projectLabelFor(labels, key, nameForKey(key));
 
   // ── Derived data ─────────────────────────────────────────────────────────
   const groupedProjectNames = new Set(groups.flatMap((g) => g.projects));
@@ -187,12 +201,11 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
 
   // ── Drag: add project to group ───────────────────────────────────────────
   const addProjectToGroup = async (projectKey: string, groupName: string) => {
-    const projectName = nameForKey(projectKey);
     try {
       const raw: string = await invoke("read_group", { name: groupName });
       const g: ProjectGroup = JSON.parse(raw);
-      if (!g.projects.includes(projectName)) {
-        g.projects.push(projectName);
+      if (!g.projects.includes(projectKey)) {
+        g.projects.push(projectKey);
         g.updated_at = new Date().toISOString();
         await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
         for (const name of g.projects) {
@@ -205,16 +218,15 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   };
 
   const removeProjectFromGroup = async (projectKey: string, groupName: string) => {
-    const projectName = nameForKey(projectKey);
     try {
       const raw: string = await invoke("read_group", { name: groupName });
       const g: ProjectGroup = JSON.parse(raw);
-      g.projects = g.projects.filter((p: string) => p !== projectName);
+      const before = g.projects;
+      g.projects = membersWithoutProject(before, projectKey, summaries);
       g.updated_at = new Date().toISOString();
       await invoke("save_group", { name: groupName, data: JSON.stringify(g) });
-      // Remaining members are names from the group file; the removed
-      // project is addressed by its key.
-      const toSync = [...g.projects, projectKey];
+      // Every member is a local_key, including the checkouts just removed.
+      const toSync = [...before];
       for (const name of toSync) {
         invoke("sync_project", { name }).catch(() => {});
       }
@@ -237,7 +249,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
     const projectName = nameForKey(projectKey);
 
     const confirmed = await ask(
-      `Remove project "${projectName}" from Automatic?\n\n(This only removes the project from this app. Your actual project files will NOT be deleted.)`,
+      `Remove project "${projectLabelText(labelForKey(projectKey))}" from Automatic?\n\n(This only removes the project from this app. Your actual project files will NOT be deleted.)`,
       { title: "Remove Project", kind: "warning" },
     );
     if (!confirmed) return;
@@ -256,7 +268,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   // ── Drag handlers ────────────────────────────────────────────────────────
   const handleDragStart = (projectKey: string, sourceGroup: string | null, e: React.PointerEvent) => {
     e.preventDefault();
-    const projectName = nameForKey(projectKey);
+    const projectName = projectLabelText(labelForKey(projectKey));
     const startX = e.clientX;
     const startY = e.clientY;
 
@@ -321,7 +333,7 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
   // ── Render ───────────────────────────────────────────────────────────────
   const renderProjectRow = (projectKey: string, sourceGroup: string | null) => {
     const isActive = activeTab === "projects" && projectKey === activeProjectKey;
-    const projectName = nameForKey(projectKey);
+    const label = labelForKey(projectKey);
     return (
       <div key={projectKey} className="group/project relative">
         <button
@@ -336,14 +348,14 @@ export default function WorkspaceSidebar({ activeTab, onTabClick, onNavigateToPr
             window.addEventListener("pointerup", cancel, { once: true });
           }}
         >
-          {projectName}
+          <ProjectNameLabel label={label} />
         </button>
         <button
           type="button"
           onClick={(event) => void handleRemoveProject(projectKey, event)}
           className="pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-text-muted/50 opacity-0 transition-[background-color,color,opacity] hover:bg-danger/10 hover:text-danger group-hover/project:pointer-events-auto group-hover/project:opacity-100 group-focus-within/project:pointer-events-auto group-focus-within/project:opacity-100"
-          aria-label={`Remove ${projectName}`}
-          title={`Remove ${projectName}`}
+          aria-label={`Remove ${projectLabelText(label)}`}
+          title={`Remove ${projectLabelText(label)}`}
         >
           <Trash2 size={12} />
         </button>

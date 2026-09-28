@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertCircle, ArrowUpRight, ExternalLink, Loader2, Play, Server as ServerIcon, Square, X } from "lucide-react";
 import { openExternalUrl } from "../../lib/externalLinks";
-import { rowProjectKey } from "../../lib/projectIdentity";
+import { loadProjectSummaries, projectLabelFor, projectLabels, rowProjectKey } from "../../lib/projectIdentity";
+import { ProjectNameLabel } from "../../components/ProjectNameLabel";
+import type { ProjectSummary } from "../../pages/workspace/projects/types";
 import { formatServerUrlLabel, type DevServerStatus } from "./types";
 
 const STATUS_POLL_MS = 3000;
@@ -35,6 +37,9 @@ export default function DevServersOverview({ onNavigateToProject }: DevServersOv
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  // Every registered project, only to label duplicated names with their folder.
+  const [projectSummaries, setProjectSummaries] = useState<ProjectSummary[]>([]);
+  const labels = useMemo(() => projectLabels(projectSummaries), [projectSummaries]);
 
   const setBusy = (id: string, busy: boolean) => {
     setBusyIds((prev) => {
@@ -56,6 +61,16 @@ export default function DevServersOverview({ onNavigateToProject }: DevServersOv
     } finally {
       if (showSpinner) setLoading(false);
     }
+  }, []);
+
+  // Loaded once, outside the status poll: the project list rarely changes here.
+  useEffect(() => {
+    loadProjectSummaries()
+      .then(setProjectSummaries)
+      .catch((err: unknown) => {
+        // Non-fatal: headings fall back to plain project names.
+        console.error("Failed to load project summaries:", err);
+      });
   }, []);
 
   useEffect(() => {
@@ -140,7 +155,10 @@ export default function DevServersOverview({ onNavigateToProject }: DevServersOv
                   onClick={() => onNavigateToProject(projectKey)}
                   className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border-b border-border-strong/40 bg-bg-sidebar/40 hover:bg-bg-sidebar/70 transition-colors text-left"
                 >
-                  <span className="text-[12px] font-semibold text-text-base truncate">{servers[0]?.project ?? projectKey}</span>
+                  <ProjectNameLabel
+                    label={projectLabelFor(labels, projectKey, servers[0]?.project)}
+                    className="text-[12px] font-semibold text-text-base truncate"
+                  />
                   <ArrowUpRight size={12} className="text-text-muted shrink-0" />
                 </button>
                 <div className="divide-y divide-border-strong/20">

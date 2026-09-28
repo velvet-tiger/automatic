@@ -9,24 +9,42 @@ pub fn dispatch(action: ProjectsAction, opts: OutputOptions) -> Result<(), CliEr
     match action {
         ProjectsAction::List => list(opts),
         // `name` may be a project name or a `local_key`; the handlers work
-        // with the canonical name from here on.
+        // with the project's unique identifier from here on. A name two
+        // projects share is an error listing both.
         ProjectsAction::Show { name } => {
-            show(&core::canonical_project_name(&name).map_err(CliError::from)?, opts)
+            show(&core::canonical_project_ident(&name).map_err(CliError::from)?, opts)
         }
         ProjectsAction::Sync { name } => {
-            sync_project(&core::canonical_project_name(&name).map_err(CliError::from)?, opts)
+            sync_project(&core::canonical_project_ident(&name).map_err(CliError::from)?, opts)
         }
     }
 }
 
+/// One name per registered checkout. A name that repeats is shown with its
+/// folder and `local_key`, so the user can pass the key to `show` or `sync`.
 fn list(opts: OutputOptions) -> Result<(), CliError> {
-    let names = core::list_projects().map_err(CliError::from)?;
+    let summaries = core::get_project_summaries().map_err(CliError::from)?;
+    let names: Vec<String> = summaries.iter().map(|s| s.name.clone()).collect();
     emit(opts, &names, || {
-        if names.is_empty() {
-            "No projects.".to_string()
-        } else {
-            names.join("\n")
+        if summaries.is_empty() {
+            return "No projects.".to_string();
         }
+        summaries
+            .iter()
+            .map(|s| {
+                let repeated = summaries
+                    .iter()
+                    .filter(|o| o.name.to_lowercase() == s.name.to_lowercase())
+                    .count()
+                    > 1;
+                if repeated {
+                    format!("{} — {} ({})", s.name, s.directory, s.local_key)
+                } else {
+                    s.name.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     })
     .map_err(CliError::Io)
 }
@@ -65,13 +83,13 @@ fn sync_project(name: &str, opts: OutputOptions) -> Result<(), CliError> {
 
     let count = written.len();
     let message = if project.agents.is_empty() {
-        format!("No agents configured for project '{}', nothing synced", name)
+        format!("No agents configured for project '{}', nothing synced", project.name)
     } else {
         format!(
             "Synced {} file{} for project '{}'",
             count,
             if count == 1 { "" } else { "s" },
-            name
+            project.name
         )
     };
     if opts.json {
