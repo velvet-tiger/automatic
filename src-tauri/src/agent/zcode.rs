@@ -293,7 +293,7 @@ impl Agent for ZCode {
     /// Automatic versions, rather than deleting the whole file.
     /// `owned_config_paths` stays empty for the same reason — the default
     /// cleanup deletes every path listed there.
-    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+    fn cleanup_mcp_config(&self, dir: &Path, _managed_names: &[String]) -> Vec<String> {
         let path = dir.join(".zcode").join("config.json");
         if !path.exists() {
             return vec![];
@@ -553,7 +553,7 @@ mod tests {
         )
         .unwrap();
 
-        let removed = ZCode.cleanup_mcp_config(dir.path());
+        let removed = ZCode.cleanup_mcp_config(dir.path(), &[]);
         assert_eq!(removed.len(), 1);
 
         let content = fs::read_to_string(zcode_dir.join("config.json")).unwrap();
@@ -583,7 +583,7 @@ mod tests {
         )
         .unwrap();
 
-        let removed = ZCode.cleanup_mcp_config(dir.path());
+        let removed = ZCode.cleanup_mcp_config(dir.path(), &[]);
         assert_eq!(removed.len(), 1);
 
         let content = fs::read_to_string(zcode_dir.join("config.json")).unwrap();
@@ -608,7 +608,7 @@ mod tests {
         )
         .unwrap();
 
-        let removed = ZCode.cleanup_mcp_config(dir.path());
+        let removed = ZCode.cleanup_mcp_config(dir.path(), &[]);
         assert_eq!(removed.len(), 1);
 
         let content = fs::read_to_string(zcode_dir.join("config.json")).unwrap();
@@ -632,7 +632,7 @@ mod tests {
         )
         .unwrap();
 
-        let removed = ZCode.cleanup_mcp_config(dir.path());
+        let removed = ZCode.cleanup_mcp_config(dir.path(), &[]);
         assert_eq!(removed.len(), 1);
         assert!(!zcode_dir.join("config.json").exists());
     }
@@ -643,7 +643,7 @@ mod tests {
         let agents_md = dir.path().join("AGENTS.md");
         fs::write(&agents_md, "# shared\n").unwrap();
 
-        let removed = ZCode.cleanup_mcp_config(dir.path());
+        let removed = ZCode.cleanup_mcp_config(dir.path(), &[]);
         assert!(
             removed.is_empty(),
             "Z Code must not touch AGENTS.md on cleanup"

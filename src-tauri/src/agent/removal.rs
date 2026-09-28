@@ -106,6 +106,12 @@ struct PlannedEntry {
 #[derive(Debug, Clone, Default)]
 pub struct RemovalPlan {
     items: Vec<PlannedEntry>,
+    /// Names of MCP servers Automatic wrote for this project.  Threaded into
+    /// each `cleanup_mcp_config` call so the strip touches only the entries
+    /// Automatic owns; user-added servers in the same file survive.  Recorded
+    /// on the plan so `apply_removal_plan` acts on the same list the preview
+    /// used.
+    managed_mcp_servers: Vec<String>,
 }
 
 impl RemovalPlan {
@@ -223,12 +229,17 @@ fn make_entry(
 /// Plan what [`RemovalMode::Remove`] does when `agent` leaves the project in
 /// `dir` and `remaining_agent_ids` stay.  Read-only.
 ///
+/// `managed_mcp_servers` names the entries Automatic wrote to this project's
+/// shared MCP config files (e.g. `.vscode/mcp.json` for Copilot).  Strips
+/// touch only these names; user-added entries in the same file survive.
+///
 /// Refuses a project whose directory is the home directory.  There
 /// `.claude/` and the other owned directories hold the agents' global config.
 pub fn plan_agent_removal(
     agent: &dyn Agent,
     dir: &Path,
     remaining_agent_ids: &[String],
+    managed_mcp_servers: &[String],
 ) -> Result<RemovalPlan, String> {
     if is_home_dir(dir) {
         return Err(format!(
@@ -286,7 +297,8 @@ pub fn plan_agent_removal(
                 deleted.push(path);
             }
             Some(kind) => {
-                let changes = strip_changes.get_or_insert_with(|| dry_run_strips(agent, dir));
+                let changes = strip_changes
+                    .get_or_insert_with(|| dry_run_strips(agent, dir, managed_mcp_servers));
                 if changes.contains(&path) {
                     items.push(PlannedEntry {
                         entry: make_entry(&path, dir, RemovalAction::Strip, is_dir, vec![]),
@@ -298,7 +310,10 @@ pub fn plan_agent_removal(
     }
 
     items.extend(plan_empty_dirs(dir, &deleted));
-    Ok(RemovalPlan { items })
+    Ok(RemovalPlan {
+        items,
+        managed_mcp_servers: managed_mcp_servers.to_vec(),
+    })
 }
 
 /// Parent directories that hold nothing once `deleted` is gone, deepest
@@ -343,7 +358,11 @@ fn dir_empty_after_removal(dir: &Path, removed: &HashSet<PathBuf>) -> bool {
 /// Run the agent's strip operations against a copy of its merged files and
 /// return the real paths whose content would change.  The copy keeps each
 /// file at the same relative path, so the strip code sees the same layout.
-fn dry_run_strips(agent: &dyn Agent, dir: &Path) -> HashSet<PathBuf> {
+fn dry_run_strips(
+    agent: &dyn Agent,
+    dir: &Path,
+    managed_mcp_servers: &[String],
+) -> HashSet<PathBuf> {
     let mut changed = HashSet::new();
     let tmp = match tempfile::tempdir() {
         Ok(t) => t,
@@ -380,7 +399,7 @@ fn dry_run_strips(agent: &dyn Agent, dir: &Path) -> HashSet<PathBuf> {
         return changed;
     }
 
-    agent.cleanup_mcp_config(tmp.path());
+    agent.cleanup_mcp_config(tmp.path(), managed_mcp_servers);
     if let Err(e) = agent.sync_hooks(tmp.path(), &[]) {
         eprintln!("[automatic] removal preview: hook strip failed: {}", e);
     }
@@ -435,7 +454,10 @@ pub fn apply_removal_plan(
     };
     let mcp_strips = strips(StripKind::McpConfig);
     if !mcp_strips.is_empty() {
-        let touched: HashSet<String> = agent.cleanup_mcp_config(dir).into_iter().collect();
+        let touched: HashSet<String> = agent
+            .cleanup_mcp_config(dir, &plan.managed_mcp_servers)
+            .into_iter()
+            .collect();
         for idx in mcp_strips {
             let path = &plan.items[idx].entry.path;
             if !touched.contains(path) {

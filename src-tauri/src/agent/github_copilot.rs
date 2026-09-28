@@ -235,10 +235,11 @@ impl Agent for GitHubCopilot {
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
-    /// GitHub Copilot merges into `.vscode/mcp.json` which may contain VS Code
-    /// extension settings.  Strip only the `servers` key rather than deleting
-    /// the file.
-    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+    /// GitHub Copilot merges into `.vscode/mcp.json`, which also holds MCP
+    /// servers the user added in VS Code themselves.  Strip only the entries
+    /// Automatic manages (`managed_names`); every other key and every foreign
+    /// server survives.  Delete the file only when nothing is left.
+    fn cleanup_mcp_config(&self, dir: &Path, managed_names: &[String]) -> Vec<String> {
         let path = dir.join(".vscode").join("mcp.json");
         if !path.exists() {
             return vec![];
@@ -251,9 +252,26 @@ impl Agent for GitHubCopilot {
             Ok(Value::Object(m)) => m,
             _ => return vec![],
         };
-        if root.remove("servers").is_none() {
+
+        let mut changed = false;
+        let servers_removed_empty = match root.get_mut("servers") {
+            Some(Value::Object(servers)) => {
+                for name in managed_names {
+                    if servers.remove(name).is_some() {
+                        changed = true;
+                    }
+                }
+                servers.is_empty()
+            }
+            _ => false,
+        };
+        if servers_removed_empty {
+            root.remove("servers");
+        }
+        if !changed {
             return vec![];
         }
+
         if root.is_empty() {
             if fs::remove_file(&path).is_ok() {
                 return vec![path.display().to_string()];

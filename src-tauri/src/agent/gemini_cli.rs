@@ -189,7 +189,7 @@ impl Agent for GeminiCli {
     /// Gemini CLI merges into `.gemini/settings.json` which may contain user
     /// auth or model settings.  Strip only the `mcpServers` key rather than
     /// deleting the whole file.
-    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+    fn cleanup_mcp_config(&self, dir: &Path, _managed_names: &[String]) -> Vec<String> {
         let path = dir.join(".gemini").join("settings.json");
         if !path.exists() {
             return vec![];

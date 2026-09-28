@@ -178,7 +178,7 @@ impl Agent for Zed {
     /// Zed merges into `.zed/settings.json` which may contain user agent,
     /// font, and theme settings.  Strip only the `context_servers` key
     /// rather than deleting the whole file.
-    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+    fn cleanup_mcp_config(&self, dir: &Path, _managed_names: &[String]) -> Vec<String> {
         let path = dir.join(".zed").join("settings.json");
         if !path.exists() {
             return vec![];
@@ -410,7 +410,7 @@ mod tests {
         )
         .unwrap();
 
-        let removed = Zed.cleanup_mcp_config(dir.path());
+        let removed = Zed.cleanup_mcp_config(dir.path(), &[]);
         assert_eq!(removed.len(), 1);
 
         let content = fs::read_to_string(zed_dir.join("settings.json")).unwrap();
@@ -434,7 +434,7 @@ mod tests {
         )
         .unwrap();
 
-        let removed = Zed.cleanup_mcp_config(dir.path());
+        let removed = Zed.cleanup_mcp_config(dir.path(), &[]);
         assert_eq!(removed.len(), 1);
         assert!(!zed_dir.join("settings.json").exists());
     }

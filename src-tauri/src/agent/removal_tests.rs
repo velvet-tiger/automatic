@@ -42,10 +42,23 @@ fn remove_and_verify(
     root: &Path,
     remaining: &[&str],
 ) -> Vec<(String, RemovalAction)> {
+    remove_and_verify_with_managed(agent, root, remaining, &[])
+}
+
+fn remove_and_verify_with_managed(
+    agent: &dyn Agent,
+    root: &Path,
+    remaining: &[&str],
+    managed_mcp_servers: &[&str],
+) -> Vec<(String, RemovalAction)> {
     let remaining: Vec<String> = remaining.iter().map(|s| s.to_string()).collect();
+    let managed: Vec<String> = managed_mcp_servers
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let before = tree(root);
 
-    let plan = plan_agent_removal(agent, root, &remaining).unwrap();
+    let plan = plan_agent_removal(agent, root, &remaining, &managed).unwrap();
     let preview = plan.entries();
     let applied = apply_removal_plan(agent, root, &plan).unwrap();
     assert_eq!(
@@ -173,7 +186,7 @@ fn cursor_remove_keeps_agents_md_and_hub_while_codex_uses_them() {
             entry(".automatic/state", RemoveEmptyDir),
         ]
     );
-    let plan = plan_agent_removal(&Cursor, root, &["codex".to_string()]).unwrap();
+    let plan = plan_agent_removal(&Cursor, root, &["codex".to_string()], &[]).unwrap();
     assert!(
         plan.entries().iter().all(|e| e.action == KeepShared),
         "a second removal has nothing left to delete"
@@ -187,7 +200,7 @@ fn shared_entries_name_the_agents_still_using_them() {
     write(&root.join("AGENTS.md"), "# Shared");
 
     let remaining = vec!["codex".to_string(), "claude".to_string()];
-    let plan = plan_agent_removal(&Cursor, root, &remaining).unwrap();
+    let plan = plan_agent_removal(&Cursor, root, &remaining, &[]).unwrap();
     let entries = plan.entries();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].action, KeepShared);
@@ -279,7 +292,7 @@ fn copilot_remove_deletes_its_github_folders_and_strips_vscode_mcp() {
     );
     write(&root.join(".vscode/settings.json"), "{}");
 
-    let result = remove_and_verify(&GitHubCopilot, root, &[]);
+    let result = remove_and_verify_with_managed(&GitHubCopilot, root, &[], &["a"]);
 
     assert_eq!(
         result,
@@ -293,6 +306,77 @@ fn copilot_remove_deletes_its_github_folders_and_strips_vscode_mcp() {
     );
     assert!(root.join(".github/workflows/ci.yml").exists());
     assert!(root.join(".vscode/settings.json").exists());
+}
+
+/// The bug: removing Copilot used to drop the whole `servers` key from
+/// `.vscode/mcp.json`, taking servers the user added in VS Code with it.
+/// The fix strips only the entries Automatic manages; every foreign server
+/// survives.
+#[test]
+fn copilot_remove_keeps_user_added_servers_in_vscode_mcp() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".vscode/mcp.json"),
+        "{\"servers\":{\"automatic\":{\"type\":\"stdio\",\"command\":\"automatic\"},\
+         \"user-server\":{\"type\":\"stdio\",\"command\":\"user\"}},\
+         \"inputs\":[]}",
+    );
+
+    let result = remove_and_verify_with_managed(&GitHubCopilot, root, &[], &["automatic"]);
+
+    assert_eq!(result, vec![entry(".vscode/mcp.json", Strip)]);
+
+    let raw = fs::read_to_string(root.join(".vscode/mcp.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(
+        parsed["servers"]["user-server"]["command"].is_string(),
+        "user-added server must survive Copilot removal: {parsed}"
+    );
+    assert!(
+        parsed["servers"]["automatic"].is_null(),
+        "Automatic's own entry must be stripped: {parsed}"
+    );
+    assert!(parsed["inputs"].is_array(), "other keys survive: {parsed}");
+}
+
+/// When the file holds only user-added servers (nothing Automatic manages),
+/// removing Copilot must not report a Strip action, and the file must not
+/// change on disk.
+#[test]
+fn copilot_remove_reports_no_strip_when_only_user_servers_exist() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".vscode/mcp.json"),
+        "{\"servers\":{\"user-only\":{\"type\":\"stdio\",\"command\":\"u\"}}}",
+    );
+
+    let result = remove_and_verify_with_managed(&GitHubCopilot, root, &[], &["automatic"]);
+    assert!(result.is_empty(), "{result:?}");
+
+    let raw = fs::read_to_string(root.join(".vscode/mcp.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(parsed["servers"]["user-only"]["command"].is_string());
+}
+
+/// When every managed server is present and nothing else remains, the file
+/// is deleted whole — matching the pre-fix behaviour for the empty case.
+#[test]
+fn copilot_remove_deletes_file_when_no_user_entries_remain() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".vscode/mcp.json"),
+        "{\"servers\":{\"automatic\":{\"type\":\"stdio\",\"command\":\"a\"}}}",
+    );
+
+    let result = remove_and_verify_with_managed(&GitHubCopilot, root, &[], &["automatic"]);
+    assert_eq!(result, vec![entry(".vscode/mcp.json", Strip)]);
+    assert!(
+        !root.join(".vscode/mcp.json").exists(),
+        "file with nothing left must be deleted"
+    );
 }
 
 #[test]
@@ -370,7 +454,7 @@ fn deleting_the_hub_removes_skill_symlinks_not_their_targets() {
 fn nothing_on_disk_means_an_empty_plan() {
     let dir = tempdir().unwrap();
     for agent in all() {
-        let plan = plan_agent_removal(agent, dir.path(), &[]).unwrap();
+        let plan = plan_agent_removal(agent, dir.path(), &[], &[]).unwrap();
         assert!(
             plan.entries().is_empty(),
             "{} planned {:?}",
@@ -385,7 +469,7 @@ fn remove_is_refused_in_the_home_directory() {
     let home = tempdir().unwrap();
     crate::core::with_test_home(home.path().to_path_buf(), || {
         write(&home.path().join(".claude/settings.json"), "{}");
-        let err = plan_agent_removal(&ClaudeCode, home.path(), &[]).unwrap_err();
+        let err = plan_agent_removal(&ClaudeCode, home.path(), &[], &[]).unwrap_err();
         assert!(err.contains("home folder"), "{err}");
         assert!(home.path().join(".claude/settings.json").exists());
     });

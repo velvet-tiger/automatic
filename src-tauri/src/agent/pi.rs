@@ -269,7 +269,7 @@ mod tests {
         fs::write(&agents_md, "# shared\n").unwrap();
 
         let remaining = vec!["codex".to_string()];
-        let plan = super::super::plan_agent_removal(&Pi, dir.path(), &remaining).unwrap();
+        let plan = super::super::plan_agent_removal(&Pi, dir.path(), &remaining, &[]).unwrap();
         super::super::apply_removal_plan(&Pi, dir.path(), &plan).unwrap();
         assert!(agents_md.exists(), "Pi must not delete AGENTS.md while Codex uses it");
     }
@@ -281,7 +281,7 @@ mod tests {
         fs::create_dir(&pi_dir).unwrap();
         fs::write(pi_dir.join("mcp.json"), "{}").unwrap();
 
-        let plan = super::super::plan_agent_removal(&Pi, dir.path(), &[]).unwrap();
+        let plan = super::super::plan_agent_removal(&Pi, dir.path(), &[], &[]).unwrap();
         super::super::apply_removal_plan(&Pi, dir.path(), &plan).unwrap();
         assert!(!pi_dir.exists());
     }

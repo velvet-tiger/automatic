@@ -23,6 +23,20 @@ fn remaining_agents(project: &Project, agent_id: &str) -> Vec<String> {
         .collect()
 }
 
+/// Names of MCP server entries Automatic wrote for this project.  Mirrors
+/// [`sync::helpers::build_selected_servers`], which always injects
+/// `"automatic"` alongside the project's registered servers.
+fn managed_mcp_servers(project: &Project) -> Vec<String> {
+    let mut names = Vec::with_capacity(project.mcp_servers.len() + 1);
+    names.push("automatic".to_string());
+    for name in &project.mcp_servers {
+        if name != "automatic" {
+            names.push(name.clone());
+        }
+    }
+    names
+}
+
 /// Remove an agent from a project.
 ///
 /// - [`RemovalMode::Keep`] takes the agent off `project.agents` and saves the
@@ -53,7 +67,9 @@ pub fn remove_agent_from_project(
             })?;
             match agent::from_id(agent_id) {
                 Some(agent_instance) => {
-                    let plan = agent::plan_agent_removal(agent_instance, &dir, &remaining)?;
+                    let managed = managed_mcp_servers(project);
+                    let plan =
+                        agent::plan_agent_removal(agent_instance, &dir, &remaining, &managed)?;
                     agent::apply_removal_plan(agent_instance, &dir, &plan)
                 }
                 None => Ok(vec![]),
@@ -97,7 +113,8 @@ pub fn get_agent_cleanup_preview(
         return Ok(vec![]);
     };
     let remaining = remaining_agents(project, agent_id);
-    Ok(agent::plan_agent_removal(agent_instance, &dir, &remaining)?.entries())
+    let managed = managed_mcp_servers(project);
+    Ok(agent::plan_agent_removal(agent_instance, &dir, &remaining, &managed)?.entries())
 }
 
 #[cfg(test)]

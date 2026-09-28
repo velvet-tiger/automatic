@@ -443,7 +443,7 @@ mod tests {
         fs::write(&agents_md, "# Shared instructions\n").unwrap();
 
         let remaining = vec!["codex".to_string()];
-        let plan = super::super::plan_agent_removal(&Warp, dir.path(), &remaining).unwrap();
+        let plan = super::super::plan_agent_removal(&Warp, dir.path(), &remaining, &[]).unwrap();
         let removed = super::super::apply_removal_plan(&Warp, dir.path(), &plan).unwrap();
 
         assert!(
@@ -466,7 +466,7 @@ mod tests {
         fs::write(&warp_md, "# Warp context\n").unwrap();
         assert!(warp_md.exists());
 
-        let plan = super::super::plan_agent_removal(&Warp, dir.path(), &[]).unwrap();
+        let plan = super::super::plan_agent_removal(&Warp, dir.path(), &[], &[]).unwrap();
         let removed = super::super::apply_removal_plan(&Warp, dir.path(), &plan).unwrap();
         assert_eq!(
             removed.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),

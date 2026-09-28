@@ -202,7 +202,7 @@ impl Agent for CodexCli {
     /// Codex CLI merges into `.codex/config.toml` which may contain model or
     /// history settings set by the user.  Strip only the `[mcp_servers.*]`
     /// sections rather than deleting the whole file.
-    fn cleanup_mcp_config(&self, dir: &Path) -> Vec<String> {
+    fn cleanup_mcp_config(&self, dir: &Path, _managed_names: &[String]) -> Vec<String> {
         let path = dir.join(".codex").join("config.toml");
         if !path.exists() {
             return vec![];

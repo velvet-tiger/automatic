@@ -567,10 +567,15 @@ pub trait Agent: Send + Sync {
     /// the agent's [`owned_dirs`](Agent::owned_dirs).  Files the agent owns
     /// are deleted by the removal plan, not here.
     ///
+    /// `managed_names` names the server entries Automatic wrote for this
+    /// project — user-added servers in the same file must survive the strip.
+    /// The same list feeds both the removal preview and its apply, so what
+    /// the user sees is what removal does.
+    ///
     /// Returns the paths of files modified or deleted.
     ///
     /// Default: nothing to strip.
-    fn cleanup_mcp_config(&self, _dir: &Path) -> Vec<String> {
+    fn cleanup_mcp_config(&self, _dir: &Path, _managed_names: &[String]) -> Vec<String> {
         vec![]
     }
 
