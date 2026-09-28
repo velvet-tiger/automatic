@@ -33,7 +33,7 @@ Each feature has:
 
 ## MCP Tools
 
-All tools require a `project` parameter matching the project name registered in Automatic. Use `automatic_list_projects` if you are unsure of the correct name.
+Every tool acts on the current project, the one you are working in, when you omit `project`. Pass `project` only to track work in another project. It accepts a name, `local_key` or `id` from `automatic_list_projects`. All folders of one project, such as git worktrees, share one feature list.
 
 ---
 
@@ -42,7 +42,7 @@ All tools require a `project` parameter matching the project name registered in 
 List all features for a project, grouped by state. **Active and archived sets are mutually exclusive** — a single call returns one or the other, not both.
 
 ```
-project:          string          — project name
+project?:         string          — defaults to the current project
 state:            string (opt)    — filter to one state: backlog | todo | in_progress | review | complete | cancelled
 include_archived: boolean (opt)   — default false; pass true to list archived features instead of active ones
 ```
@@ -56,7 +56,7 @@ Returns titles, IDs, priorities, effort, and assignees. **Always call this at se
 Get full detail for a single feature, including its description and complete update history. Works for both active and archived features.
 
 ```
-project:    string  — project name
+project?:   string  — defaults to the current project
 feature_id: string  — UUID from list_features
 ```
 
@@ -69,7 +69,7 @@ The response includes an `Archived` field so you know immediately whether the fe
 Create a new feature. Defaults to the project backlog; pass `state` to create in another column.
 
 ```
-project:      string         — project name (required)
+project?:     string         — defaults to the current project
 title:        string         — short title (required)
 description:  string (opt)   — markdown specification
 state:        string (opt)   — backlog | todo | in_progress | review | complete | cancelled (default: backlog)
@@ -92,7 +92,7 @@ Returns the created feature including its `id`. **Save the id** — you will nee
 Update a feature's metadata fields. Omit any field to leave it unchanged.
 
 ```
-project:      string         — project name
+project?:     string         — defaults to the current project
 feature_id:   string         — UUID
 title:        string (opt)
 description:  string (opt)
@@ -112,7 +112,7 @@ effort:       string (opt)
 Transition a feature to a new lifecycle state.
 
 ```
-project:    string  — project name
+project?:   string  — defaults to the current project
 feature_id: string  — UUID
 state:      string  — backlog | todo | in_progress | review | complete | cancelled
 ```
@@ -126,7 +126,7 @@ state:      string  — backlog | todo | in_progress | review | complete | cance
 Archive a feature, hiding it from the Kanban board and from default `list_features` results. The feature's `state` is preserved unchanged so it can be restored to its original column when unarchived.
 
 ```
-project:    string  — project name
+project?:   string  — defaults to the current project
 feature_id: string  — UUID
 ```
 
@@ -139,7 +139,7 @@ feature_id: string  — UUID
 Restore an archived feature to active status. It reappears on the Kanban board in its original state column.
 
 ```
-project:    string  — project name
+project?:   string  — defaults to the current project
 feature_id: string  — UUID of an archived feature
 ```
 
@@ -152,7 +152,7 @@ feature_id: string  — UUID of an archived feature
 Append a markdown progress note to a feature's update log.
 
 ```
-project:    string        — project name
+project?:   string        — defaults to the current project
 feature_id: string        — UUID
 content:    string        — markdown text (required)
 author:     string (opt)  — agent id or name
@@ -169,7 +169,7 @@ Updates are append-only and timestamped. They appear in the Automatic UI so the 
 Permanently delete a feature and all its updates.
 
 ```
-project:    string  — project name
+project?:   string  — defaults to the current project
 feature_id: string  — UUID
 ```
 
@@ -184,7 +184,7 @@ Follow this sequence for every feature-driven session:
 ### 1. Orient
 
 ```
-automatic_list_features(project: "my-project", state: "todo")
+automatic_list_features(state: "todo")
 ```
 
 Identify the highest-priority feature to work on. If nothing is in `todo`, check `backlog` and ask the user which to start. Archived features will not appear — that is intentional.
@@ -192,7 +192,7 @@ Identify the highest-priority feature to work on. If nothing is in `todo`, check
 ### 2. Read the specification
 
 ```
-automatic_get_feature(project: "my-project", feature_id: "<id>")
+automatic_get_feature(feature_id: "<id>")
 ```
 
 Read the full description and all prior updates. Do not start work until you understand the full scope. Check the `Archived` field in the response — if `true`, confirm with the user before proceeding.
@@ -200,8 +200,8 @@ Read the full description and all prior updates. Do not start work until you und
 ### 3. Claim it
 
 ```
-automatic_set_feature_state(project: "my-project", feature_id: "<id>", state: "in_progress")
-automatic_update_feature(project: "my-project", feature_id: "<id>", assignee: "claude-code")
+automatic_set_feature_state(feature_id: "<id>", state: "in_progress")
+automatic_update_feature(feature_id: "<id>", assignee: "claude-code")
 ```
 
 Move to `in_progress` and set `assignee` to your agent identity before touching any code. This signals to the user (and other agents) that the work is active and who is responsible for it. Use the same identifier consistently across all calls in the session (e.g. `"claude-code"`, `"cursor"`, `"gpt-4o"`).
@@ -212,7 +212,6 @@ As you work, append updates after each meaningful step:
 
 ```
 automatic_add_feature_update(
-  project: "my-project",
   feature_id: "<id>",
   content: "Investigated the auth module. The existing `TokenService` at `src/services/token.ts` handles issuance but not validation. Will extend it rather than creating a new class.",
   author: "claude-code"
@@ -228,9 +227,8 @@ Log at minimum:
 ### 5. Request review
 
 ```
-automatic_set_feature_state(project: "my-project", feature_id: "<id>", state: "review")
+automatic_set_feature_state(feature_id: "<id>", state: "review")
 automatic_add_feature_update(
-  project: "my-project",
   feature_id: "<id>",
   content: "Implementation complete. Changes: `src/auth/middleware.ts` (new validation), `src/routes/api.ts` (middleware applied), `tests/auth.test.ts` (6 new tests, all passing). Ready for review.",
   author: "claude-code"
@@ -245,7 +243,6 @@ If you find additional work that was not part of the original feature:
 
 ```
 automatic_create_feature(
-  project: "my-project",
   title: "Refresh token expiry not enforced",
   description: "Found during auth implementation. Refresh tokens are issued without an expiry check on use...",
   priority: "high",

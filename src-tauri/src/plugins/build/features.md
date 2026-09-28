@@ -2,6 +2,8 @@
 
 This project uses Automatic's Build tool. Build tracks the project's work items as features, and the user sees them on the project's Build board. Use the feature tools below to keep that board current.
 
+The feature tools act on this project when you omit `project`.
+
 - Call `automatic_list_features` to see planned work. Filter by state (`backlog`, `todo`, `in_progress`, `review`, `complete`, `cancelled`). Pass `include_archived: true` to list archived features instead.
 - Before starting a task, call `automatic_set_feature_state` to move it to `in_progress`.
 - During work, call `automatic_add_feature_update` to log significant progress, decisions, or blockers. Updates are append-only and ordered newest-first.

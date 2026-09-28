@@ -22,15 +22,18 @@ pub struct ReadSkillParams {
     /// ~/.automatic/library/skills/, or in an external scan location such as
     /// ~/.agents/skills/ or ~/.claude/skills/)
     pub name: String,
-    /// Optional project name. When provided, project-local skills are searched first
-    /// before falling back to the managed library and external scan locations.
+    /// The project whose project-local skills are searched first, before the
+    /// managed library and external scan locations. Omit it to use the
+    /// current project, the one this agent is working in. Accepts a
+    /// local_key, an id or a name.
     pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ReadProjectParams {
-    /// The project name as registered in Automatic
-    pub name: String,
+    /// The project to read. Omit it to use the current project, the one this
+    /// agent is working in. Accepts a local_key, an id or a name.
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -57,14 +60,17 @@ pub struct SearchSkillsParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SyncProjectParams {
-    /// The project name to sync configs for
-    pub name: String,
+    /// The project to sync configs for. Omit it to use the current project,
+    /// the one this agent is working in. Accepts a local_key, an id or a
+    /// name.
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct StoreMemoryParams {
-    /// The project name
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The memory key (identifier)
     pub key: String,
     /// The memory value to store
@@ -75,40 +81,45 @@ pub struct StoreMemoryParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct GetMemoryParams {
-    /// The project name
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The memory key to retrieve
     pub key: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ListMemoriesParams {
-    /// The project name
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// Optional: filter keys by this substring (case-insensitive)
     pub pattern: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SearchMemoriesParams {
-    /// The project name
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// Search query to match against keys and values
     pub query: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct DeleteMemoryParams {
-    /// The project name
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The memory key to delete
     pub key: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ClearMemoriesParams {
-    /// The project name
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// Optional: only delete memories with keys matching this pattern (case-insensitive)
     pub pattern: Option<String>,
     /// Must be set to true to confirm deletion
@@ -117,14 +128,16 @@ pub struct ClearMemoriesParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ReadClaudeMemoryParams {
-    /// The project name as registered in Automatic
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct GetRelatedProjectsParams {
-    /// The project name as registered in Automatic
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
 }
 
 // ── Rule Tool Parameter Types ────────────────────────────────────────────────
@@ -167,8 +180,9 @@ pub struct DeleteRuleParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct AttachRuleParams {
-    /// The project name as registered in Automatic.
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The rule's machine name. Must already exist in the library.
     pub machine_name: String,
     /// Target instruction file key. Use a filename like `"CLAUDE.md"` or
@@ -181,8 +195,9 @@ pub struct AttachRuleParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct DetachRuleParams {
-    /// The project name as registered in Automatic.
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The rule's machine name. Mandatory rules cannot be detached.
     pub machine_name: String,
     /// Target instruction file key. Same semantics as `automatic_attach_rule`:
@@ -249,16 +264,18 @@ pub struct DeleteHookParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct AttachHookParams {
-    /// The project name as registered in Automatic.
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The hook's machine name. Must already exist in the library.
     pub machine_name: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct DetachHookParams {
-    /// The project name as registered in Automatic.
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The hook's machine name.
     pub machine_name: String,
 }
@@ -273,16 +290,18 @@ pub struct ReadProfileParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct AttachProfileParams {
-    /// The project name as registered in Automatic.
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The profile name. Must already exist in the library.
     pub profile: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct DetachProfileParams {
-    /// The project name as registered in Automatic.
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The profile name.
     pub profile: String,
 }
@@ -291,10 +310,15 @@ pub struct DetachProfileParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ListContextsParams {
-    /// Optional project name. When given, only the contexts attached to that
-    /// project are listed, each with the group that provides it (if any).
+    /// The project whose attached contexts to list, each with the group
+    /// that provides it (if any). Omit it to use the current project, the
+    /// one this agent is working in. Accepts a local_key, an id or a name.
     #[serde(default)]
     pub project: Option<String>,
+    /// List every context in the library instead of one project's. Ignores
+    /// `project`.
+    #[serde(default)]
+    pub all: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -325,11 +349,13 @@ pub struct ReadContextEntryParams {
 pub struct AttachContextParams {
     /// The context slug. Must already exist in the library.
     pub context: String,
-    /// Project name to attach to. Give exactly one of `project` or `group`.
+    /// Project to attach to: a local_key, an id or a name. Give `project`
+    /// or `group`, not both. Give neither to use the current project, the
+    /// one this agent is working in.
     #[serde(default)]
     pub project: Option<String>,
     /// Project group name to attach to. Every member project receives the
-    /// context. Give exactly one of `project` or `group`.
+    /// context. Give `project` or `group`, not both.
     #[serde(default)]
     pub group: Option<String>,
 }
@@ -428,8 +454,9 @@ pub struct RemoveContextSourceParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ListFeaturesParams {
-    /// The project name as registered in Automatic
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// Optional state filter: backlog, todo, in_progress, review, complete, or cancelled
     pub state: Option<String>,
     /// When true, returns only archived features. Defaults to false (active features only).
@@ -438,32 +465,36 @@ pub struct ListFeaturesParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ArchiveFeatureParams {
-    /// The project name as registered in Automatic
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The feature UUID to archive
     pub feature_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct UnarchiveFeatureParams {
-    /// The project name as registered in Automatic
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The feature UUID to unarchive
     pub feature_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct GetFeatureParams {
-    /// The project name as registered in Automatic
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The feature UUID
     pub feature_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct CreateFeatureParams {
-    /// The project name as registered in Automatic
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// Short title for the feature (required)
     pub title: String,
     /// Markdown description of the work to be done
@@ -486,8 +517,9 @@ pub struct CreateFeatureParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct UpdateFeatureParams {
-    /// The project name as registered in Automatic
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The feature UUID
     pub feature_id: String,
     /// New title (omit to leave unchanged)
@@ -508,8 +540,9 @@ pub struct UpdateFeatureParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SetFeatureStateParams {
-    /// The project name as registered in Automatic
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The feature UUID
     pub feature_id: String,
     /// New state: backlog, todo, in_progress, review, complete, or cancelled
@@ -518,16 +551,18 @@ pub struct SetFeatureStateParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct DeleteFeatureParams {
-    /// The project name as registered in Automatic
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The feature UUID to delete permanently
     pub feature_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct AddFeatureUpdateParams {
-    /// The project name as registered in Automatic
-    pub project: String,
+    /// The project to act on. Omit it to use the current project, the one
+    /// this agent is working in. Accepts a local_key, an id or a name.
+    pub project: Option<String>,
     /// The feature UUID to add an update to
     pub feature_id: String,
     /// Markdown content of the progress update
@@ -538,46 +573,51 @@ pub struct AddFeatureUpdateParams {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Read and parse a registered project, with error text ready for a tool
+/// Read and parse one checkout's project, with error text ready for a tool
 /// result.
-fn load_project(project_name: &str) -> Result<crate::core::Project, String> {
-    let raw = crate::core::read_project(project_name)
-        .map_err(|e| format!("Failed to read project '{}': {}", project_name, e))?;
+fn load_project(checkout: &crate::core::ProjectSummary) -> Result<crate::core::Project, String> {
+    let raw = crate::core::read_project(crate::core::checkout_ident(checkout))
+        .map_err(|e| format!("Failed to read project '{}': {}", checkout.name, e))?;
     serde_json::from_str(&raw)
-        .map_err(|e| format!("Failed to parse project '{}': {}", project_name, e))
+        .map_err(|e| format!("Failed to parse project '{}': {}", checkout.name, e))
 }
 
-fn describe_target(target: &crate::core::ContextTarget) -> String {
-    match target {
-        crate::core::ContextTarget::Project(name) => format!("project '{}'", name),
-        crate::core::ContextTarget::Group(name) => format!("group '{}'", name),
-    }
-}
-
-/// Serialise and save a project, with error text ready for a tool result.
-fn persist_project(project_name: &str, project: &crate::core::Project) -> Result<(), String> {
+/// Serialise and save one checkout's project, with error text ready for a
+/// tool result.
+fn persist_project(
+    checkout: &crate::core::ProjectSummary,
+    project: &crate::core::Project,
+) -> Result<(), String> {
     let json = serde_json::to_string(project)
-        .map_err(|e| format!("Failed to serialise project '{}': {}", project_name, e))?;
-    crate::core::save_project(project_name, &json)
-        .map_err(|e| format!("Failed to save project '{}': {}", project_name, e))
+        .map_err(|e| format!("Failed to serialise project '{}': {}", checkout.name, e))?;
+    crate::core::save_project(crate::core::checkout_ident(checkout), &json)
+        .map_err(|e| format!("Failed to save project '{}': {}", checkout.name, e))
 }
 
-/// Resolve the `project` / `group` pair of a context attach or detach call.
-fn context_target(params: &AttachContextParams) -> Result<crate::core::ContextTarget, String> {
-    match (&params.project, &params.group) {
-        (Some(project), None) => Ok(crate::core::ContextTarget::Project(validate_project(project)?)),
-        (None, Some(group)) => {
-            if !crate::core::list_groups()?.iter().any(|g| g == group) {
-                return Err(format!(
-                    "Unknown group '{}'. Call automatic_get_related_projects or ask the \
-                     user for the group name.",
-                    group
-                ));
-            }
-            Ok(crate::core::ContextTarget::Group(group.clone()))
-        }
-        _ => Err("Give exactly one of `project` or `group`.".to_string()),
-    }
+/// One `automatic_list_projects` row.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct ProjectListRow {
+    name: String,
+    local_key: String,
+    id: String,
+    directory: String,
+    current: bool,
+}
+
+fn project_list_rows(
+    summaries: &[crate::core::ProjectSummary],
+    current: &crate::core::CurrentProject,
+) -> Vec<ProjectListRow> {
+    summaries
+        .iter()
+        .map(|s| ProjectListRow {
+            name: s.name.clone(),
+            local_key: s.local_key.clone(),
+            id: s.id.clone(),
+            directory: s.directory.clone(),
+            current: current.includes(s),
+        })
+        .collect()
 }
 
 fn tool_json<T: Serialize>(value: &T) -> CallToolResult {
@@ -592,40 +632,6 @@ fn tool_json<T: Serialize>(value: &T) -> CallToolResult {
 
 fn tool_error(message: String) -> CallToolResult {
     CallToolResult::error(vec![Content::text(message)])
-}
-
-/// Validate the project for a feature tool call. Feature tracking needs the
-/// Build tool on the project, so this adds that check to `validate_project`.
-/// Returns the canonical project name, as `validate_project` does.
-fn validate_feature_project(project: &str) -> Result<String, String> {
-    let name = validate_project(project)?;
-    crate::plugins::build::require_feature_tracking(&name)?;
-    Ok(name)
-}
-
-/// Resolve a tool's `project` argument, which may be a `local_key` or a
-/// project name (see `core::resolve_project_name`), to the canonical project
-/// name. Tools that reach a store resolve the name once more with
-/// `core::project_store_keys`: memory and features are keyed by project
-/// `id`, so every checkout shares them. An unknown project is an `Err`
-/// listing the valid project names so the agent can self-correct
-/// immediately.
-fn validate_project(project: &str) -> Result<String, String> {
-    if let Some(name) = crate::core::resolve_project_name(project)? {
-        Ok(name)
-    } else {
-        let known = crate::core::list_projects().unwrap_or_default();
-        let list = if known.is_empty() {
-            "no projects registered yet".to_string()
-        } else {
-            known.join(", ")
-        };
-        Err(format!(
-            "Unknown project '{}'. Valid project names are: {}. \
-             Call automatic_list_projects to confirm the correct name before retrying.",
-            project, list
-        ))
-    }
 }
 
 /// Resolve the `file_rules` key for a rule attach/detach operation.
@@ -816,13 +822,97 @@ fn register_project_impl(params: &RegisterProjectParams) -> Result<String, Strin
 #[derive(Clone)]
 pub struct AutomaticMcpServer {
     tool_router: ToolRouter<Self>,
+    /// The project this `mcp-serve` process works for, resolved once at
+    /// startup. Tools use it when the `project` argument is omitted.
+    current_project: crate::core::CurrentProject,
+}
+
+/// How a tool's `project` argument becomes the project it acts on. The
+/// registry is read on every call, so a project registered, renamed or
+/// removed since startup is seen.
+impl AutomaticMcpServer {
+    /// Resolve `explicit`, or the current project when it is omitted.
+    fn project_target(&self, explicit: Option<&str>) -> Result<crate::core::ProjectTarget, String> {
+        let summaries = crate::core::get_project_summaries()
+            .map_err(|e| format!("Failed to read the project registry: {}", e))?;
+        crate::core::resolve_project_target(explicit, &self.current_project, &summaries)
+    }
+
+    /// For tools that read or write one checkout's configuration or folder.
+    /// A project id with several checkouts is an error listing them.
+    fn project_checkout(&self, explicit: Option<&str>) -> Result<crate::core::ProjectSummary, String> {
+        self.project_target(explicit)?.into_checkout()
+    }
+
+    /// For tools that reach a per-project store keyed by `id` (memory).
+    fn project_store_keys(
+        &self,
+        explicit: Option<&str>,
+    ) -> Result<crate::core::ProjectStoreKeys, String> {
+        Ok(self.project_target(explicit)?.store_keys())
+    }
+
+    /// As [`Self::project_store_keys`], and the project must have feature
+    /// tracking on. For a project with several checkouts the setting is
+    /// read from the first, as `project_store_keys` does for an `id`.
+    fn feature_store_keys(
+        &self,
+        explicit: Option<&str>,
+    ) -> Result<crate::core::ProjectStoreKeys, String> {
+        let target = self.project_target(explicit)?;
+        crate::plugins::build::require_feature_tracking(crate::core::checkout_ident(
+            target.representative(),
+        ))?;
+        Ok(target.store_keys())
+    }
+
+    /// Resolve the `project` / `group` pair of a context attach or detach
+    /// call, with a label for the result message. Neither given means the
+    /// current project.
+    fn context_target(
+        &self,
+        params: &AttachContextParams,
+    ) -> Result<(crate::core::ContextTarget, String), String> {
+        match (&params.project, &params.group) {
+            (Some(_), Some(_)) => Err("Give `project` or `group`, not both.".to_string()),
+            (None, Some(group)) => {
+                if !crate::core::list_groups()?.iter().any(|g| g == group) {
+                    return Err(format!(
+                        "Unknown group '{}'. Call automatic_get_related_projects or ask the \
+                         user for the group name.",
+                        group
+                    ));
+                }
+                Ok((
+                    crate::core::ContextTarget::Group(group.clone()),
+                    format!("group '{}'", group),
+                ))
+            }
+            (project, None) => {
+                let checkout = self.project_checkout(project.as_deref())?;
+                Ok((
+                    crate::core::ContextTarget::Project(
+                        crate::core::checkout_ident(&checkout).to_string(),
+                    ),
+                    format!("project '{}'", checkout.name),
+                ))
+            }
+        }
+    }
 }
 
 #[tool_router]
 impl AutomaticMcpServer {
+    /// A server with no current project. Every tool that acts on a project
+    /// then needs its `project` argument.
     pub fn new() -> Self {
+        Self::with_current_project(crate::core::CurrentProject::None)
+    }
+
+    pub fn with_current_project(current_project: crate::core::CurrentProject) -> Self {
         Self {
             tool_router: Self::tool_router(),
+            current_project,
         }
     }
 
@@ -876,10 +966,10 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_read_skill",
-        description = "Read the content of a specific skill. Pass `project` to also search \
-                       project-local skills (skills that exist only within a project directory, \
-                       not in the global registry). When `project` is given, local skills are \
-                       checked first; the global registry is used as a fallback."
+        description = "Read the content of a specific skill. Project-local skills (skills \
+                       that exist only within a project directory, not in the global registry) \
+                       of the current project, or of `project` when given, are checked first; \
+                       the global registry is used as a fallback."
     )]
     async fn read_skill(
         &self,
@@ -887,21 +977,31 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let name = &params.0.name;
 
-        // When a project is specified, try project-scoped custom skills first.
-        // Their content lives inline in the project JSON, so no disk read is needed.
-        if let Some(ref project_name) = params.0.project {
-            if let Ok(raw) = crate::core::read_project(project_name) {
-                if let Ok(project) = serde_json::from_str::<crate::core::Project>(&raw) {
-                    if let Some(custom) = project
-                        .custom_skills
-                        .as_ref()
-                        .and_then(|skills| skills.iter().find(|s| s.name == *name))
-                    {
-                        return Ok(CallToolResult::success(vec![Content::text(
-                            custom.content.clone(),
-                        )]));
-                    }
-                }
+        // Try the project's own custom skills first: the explicit `project`,
+        // else the current project. Their content lives inline in the
+        // project JSON, so no disk read is needed. An explicit project that
+        // does not resolve is an error; no project at all means the global
+        // registry only.
+        let target = match (&params.0.project, &self.current_project) {
+            (None, crate::core::CurrentProject::None) => None,
+            (explicit, _) => match self.project_target(explicit.as_deref()) {
+                Ok(target) => Some(target),
+                Err(e) => return Ok(tool_error(e)),
+            },
+        };
+        if let Some(target) = target {
+            let project = match load_project(target.representative()) {
+                Ok(project) => project,
+                Err(e) => return Ok(tool_error(e)),
+            };
+            if let Some(custom) = project
+                .custom_skills
+                .as_ref()
+                .and_then(|skills| skills.iter().find(|s| s.name == *name))
+            {
+                return Ok(CallToolResult::success(vec![Content::text(
+                    custom.content.clone(),
+                )]));
             }
         }
 
@@ -947,26 +1047,26 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_list_projects",
-        description = "List all project names registered in Automatic"
+        description = "List every project registered in Automatic. Each entry has `name`, \
+                       `local_key` (one checkout on this machine), `id` (the project, shared \
+                       by every checkout of it), `directory`, and `current`. `current` is true \
+                       for the project this agent is working in, which tools use when \
+                       `project` is omitted. When that is a project with several checkouts \
+                       and none contains the working directory, every checkout is marked. \
+                       Any of `local_key`, `id` or `name` can be passed as `project`."
     )]
     async fn list_projects(&self) -> Result<CallToolResult, McpError> {
-        match crate::core::list_projects() {
-            Ok(projects) => {
-                let json =
-                    serde_json::to_string_pretty(&projects).unwrap_or_else(|_| "[]".to_string());
-                Ok(CallToolResult::success(vec![Content::text(json)]))
-            }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Failed to list projects: {}",
-                e
-            ))])),
+        match crate::core::get_project_summaries() {
+            Ok(summaries) => Ok(tool_json(&project_list_rows(&summaries, &self.current_project))),
+            Err(e) => Ok(tool_error(format!("Failed to list projects: {}", e))),
         }
     }
 
     #[tool(
         name = "automatic_read_project",
         description = "Read the full configuration for a project (skills, MCP servers, agents, \
-                       directory, description). `profiles` lists the attached profiles and \
+                       directory, description). Omit `name` to read the current project. \
+                       `profiles` lists the attached profiles and \
                        `profile_contributions` records which entries each profile provides, \
                        including entries the project had before the profile was attached; \
                        those entries are owned by the profile and are re-attached on the \
@@ -978,12 +1078,16 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ReadProjectParams>,
     ) -> Result<CallToolResult, McpError> {
-        match crate::core::read_project(&params.0.name) {
+        let checkout = match self.project_checkout(params.0.name.as_deref()) {
+            Ok(checkout) => checkout,
+            Err(e) => return Ok(tool_error(e)),
+        };
+        match crate::core::read_project(crate::core::checkout_ident(&checkout)) {
             Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Err(e) => Ok(tool_error(format!(
                 "Failed to read project '{}': {}",
-                params.0.name, e
-            ))])),
+                checkout.name, e
+            ))),
         }
     }
 
@@ -1012,7 +1116,8 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_get_related_projects",
-        description = "Return all projects related to the given project via Project Groups, \
+        description = "Return all projects related to the current project, or to `project` \
+                       when given, via Project Groups, \
                        including each peer's name, description, directory, and relative path \
                        from this project's directory. Use this to discover sibling projects \
                        you can explore or reference."
@@ -1021,24 +1126,18 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<GetRelatedProjectsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
+        // Groups hold project ids, so a project with several checkouts is
+        // enough. Relative paths are computed from its first checkout.
+        let target = match self.project_target(params.0.project.as_deref()) {
+            Ok(target) => target,
+            Err(e) => return Ok(tool_error(e)),
         };
-
-        // Load the requesting project to get its directory for relative-path computation.
-        let this_dir = match crate::core::read_project(&params.0.project) {
-            Ok(raw) => serde_json::from_str::<crate::core::Project>(&raw)
-                .map(|p| p.directory)
-                .unwrap_or_default(),
-            Err(_) => String::new(),
-        };
+        let this = target.representative();
+        let this_name = this.name.as_str();
+        let this_dir = this.directory.as_str();
 
         // Find every group this project belongs to.
-        let groups = crate::core::groups_for_project(&params.0.project);
+        let groups = crate::core::groups_for_project(this_name);
 
         if groups.is_empty() {
             return Ok(CallToolResult::success(vec![Content::text(
@@ -1063,7 +1162,7 @@ impl AutomaticMcpServer {
             let peers: Vec<&String> = group
                 .projects
                 .iter()
-                .filter(|p| p.as_str() != params.0.project)
+                .filter(|p| p.as_str() != this_name)
                 .collect();
 
             if peers.is_empty() {
@@ -1081,7 +1180,7 @@ impl AutomaticMcpServer {
                         .map(|p| (p.description, p.directory))
                         .unwrap_or_default();
 
-                    let rel_path = crate::core::compute_relative_path(&this_dir, &peer_dir);
+                    let rel_path = crate::core::compute_relative_path(this_dir, &peer_dir);
 
                     let mut entry = format!("**{}**", peer_name);
                     if !peer_desc.trim().is_empty() {
@@ -1277,15 +1376,14 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AttachRuleParams>,
     ) -> Result<CallToolResult, McpError> {
-        let project_name = &params.0.project;
         let machine_name = &params.0.machine_name;
 
-        let project_name = &match validate_project(project_name) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
+        let checkout = match self.project_checkout(params.0.project.as_deref()) {
+            Ok(checkout) => checkout,
+            Err(e) => return Ok(tool_error(e)),
         };
+        let project_ident = crate::core::checkout_ident(&checkout);
+        let project_name = &checkout.name;
         if crate::core::read_rule(machine_name).is_err() {
             return Ok(CallToolResult::error(vec![Content::text(format!(
                 "Rule '{}' does not exist in the library. Call \
@@ -1294,7 +1392,7 @@ impl AutomaticMcpServer {
             ))]));
         }
 
-        let project_json = match crate::core::read_project(project_name) {
+        let project_json = match crate::core::read_project(project_ident) {
             Ok(j) => j,
             Err(e) => {
                 return Ok(CallToolResult::error(vec![Content::text(format!(
@@ -1336,7 +1434,7 @@ impl AutomaticMcpServer {
                 ))]));
             }
         };
-        match crate::core::save_project(project_name, &new_json) {
+        match crate::core::save_project(project_ident, &new_json) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Attached rule '{}' to project '{}' under '{}'. Call \
                  automatic_sync_project to write the change to disk.",
@@ -1363,15 +1461,14 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<DetachRuleParams>,
     ) -> Result<CallToolResult, McpError> {
-        let project_name = &params.0.project;
         let machine_name = &params.0.machine_name;
 
-        let project_name = &match validate_project(project_name) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
+        let checkout = match self.project_checkout(params.0.project.as_deref()) {
+            Ok(checkout) => checkout,
+            Err(e) => return Ok(tool_error(e)),
         };
+        let project_ident = crate::core::checkout_ident(&checkout);
+        let project_name = &checkout.name;
         if crate::core::is_mandatory_rule(machine_name) {
             return Ok(CallToolResult::error(vec![Content::text(format!(
                 "Cannot detach rule '{}' — it is required by Automatic and \
@@ -1380,7 +1477,7 @@ impl AutomaticMcpServer {
             ))]));
         }
 
-        let project_json = match crate::core::read_project(project_name) {
+        let project_json = match crate::core::read_project(project_ident) {
             Ok(j) => j,
             Err(e) => {
                 return Ok(CallToolResult::error(vec![Content::text(format!(
@@ -1429,7 +1526,7 @@ impl AutomaticMcpServer {
                 ))]));
             }
         };
-        match crate::core::save_project(project_name, &new_json) {
+        match crate::core::save_project(project_ident, &new_json) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Detached rule '{}' from project '{}' under '{}'. Call \
                  automatic_sync_project to write the change to disk.",
@@ -1681,15 +1778,14 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AttachHookParams>,
     ) -> Result<CallToolResult, McpError> {
-        let project_name = &params.0.project;
         let machine_name = &params.0.machine_name;
 
-        let project_name = &match validate_project(project_name) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
+        let checkout = match self.project_checkout(params.0.project.as_deref()) {
+            Ok(checkout) => checkout,
+            Err(e) => return Ok(tool_error(e)),
         };
+        let project_ident = crate::core::checkout_ident(&checkout);
+        let project_name = &checkout.name;
         if crate::core::read_hook(machine_name).is_err() {
             return Ok(CallToolResult::error(vec![Content::text(format!(
                 "Hook '{}' does not exist in the library. Call \
@@ -1698,7 +1794,7 @@ impl AutomaticMcpServer {
             ))]));
         }
 
-        let project_json = match crate::core::read_project(project_name) {
+        let project_json = match crate::core::read_project(project_ident) {
             Ok(j) => j,
             Err(e) => {
                 return Ok(CallToolResult::error(vec![Content::text(format!(
@@ -1734,7 +1830,7 @@ impl AutomaticMcpServer {
                 ))]));
             }
         };
-        match crate::core::save_project(project_name, &new_json) {
+        match crate::core::save_project(project_ident, &new_json) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Attached hook '{}' to project '{}'. Call \
                  automatic_sync_project to write the change to disk.",
@@ -1758,17 +1854,16 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<DetachHookParams>,
     ) -> Result<CallToolResult, McpError> {
-        let project_name = &params.0.project;
         let machine_name = &params.0.machine_name;
 
-        let project_name = &match validate_project(project_name) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
+        let checkout = match self.project_checkout(params.0.project.as_deref()) {
+            Ok(checkout) => checkout,
+            Err(e) => return Ok(tool_error(e)),
         };
+        let project_ident = crate::core::checkout_ident(&checkout);
+        let project_name = &checkout.name;
 
-        let project_json = match crate::core::read_project(project_name) {
+        let project_json = match crate::core::read_project(project_ident) {
             Ok(j) => j,
             Err(e) => {
                 return Ok(CallToolResult::error(vec![Content::text(format!(
@@ -1805,7 +1900,7 @@ impl AutomaticMcpServer {
                 ))]));
             }
         };
-        match crate::core::save_project(project_name, &new_json) {
+        match crate::core::save_project(project_ident, &new_json) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Detached hook '{}' from project '{}'. Call \
                  automatic_sync_project to write the change to disk.",
@@ -1888,15 +1983,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AttachProfileParams>,
     ) -> Result<CallToolResult, McpError> {
-        let project_name = &params.0.project;
         let profile_name = &params.0.profile;
 
-        let project_name = &match validate_project(project_name) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
+        let checkout = match self.project_checkout(params.0.project.as_deref()) {
+            Ok(checkout) => checkout,
+            Err(e) => return Ok(tool_error(e)),
         };
+        let project_name = &checkout.name;
         if crate::core::read_project_profile_parsed(profile_name).is_err() {
             return Ok(CallToolResult::error(vec![Content::text(format!(
                 "Profile '{}' does not exist in the library. Call \
@@ -1905,7 +1998,7 @@ impl AutomaticMcpServer {
             ))]));
         }
 
-        let mut project = match load_project(project_name) {
+        let mut project = match load_project(&checkout) {
             Ok(p) => p,
             Err(e) => return Ok(CallToolResult::error(vec![Content::text(e)])),
         };
@@ -1919,7 +2012,7 @@ impl AutomaticMcpServer {
         project.profiles.push(profile_name.to_string());
         crate::core::reconcile_project_profiles(&mut project);
 
-        match persist_project(project_name, &project) {
+        match persist_project(&checkout, &project) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Attached profile '{}' to project '{}'. Call \
                  automatic_sync_project to write the change to disk.",
@@ -1941,17 +2034,15 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<DetachProfileParams>,
     ) -> Result<CallToolResult, McpError> {
-        let project_name = &params.0.project;
         let profile_name = &params.0.profile;
 
-        let project_name = &match validate_project(project_name) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
+        let checkout = match self.project_checkout(params.0.project.as_deref()) {
+            Ok(checkout) => checkout,
+            Err(e) => return Ok(tool_error(e)),
         };
+        let project_name = &checkout.name;
 
-        let mut project = match load_project(project_name) {
+        let mut project = match load_project(&checkout) {
             Ok(p) => p,
             Err(e) => return Ok(CallToolResult::error(vec![Content::text(e)])),
         };
@@ -1967,7 +2058,7 @@ impl AutomaticMcpServer {
         }
         crate::core::reconcile_project_profiles(&mut project);
 
-        match persist_project(project_name, &project) {
+        match persist_project(&checkout, &project) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Detached profile '{}' from project '{}'. Call \
                  automatic_sync_project to write the change to disk.",
@@ -1985,33 +2076,40 @@ impl AutomaticMcpServer {
                        (documentation pages, local files, URLs, cloud sources) \
                        that agents read on demand. Returns `slug`, \
                        `display_name`, `description` and `location` (`local` or \
-                       `cloud`). Pass `project` to list only the contexts \
-                       attached to that project; each then carries `group` when \
-                       a project group provides it. Call automatic_read_context \
-                       next."
+                       `cloud`). Lists the contexts attached to the current \
+                       project, or to `project` when given; each then carries \
+                       `group` when a project group provides it. Pass \
+                       `all: true`, or run with no current project, to list \
+                       every context in the library. Call \
+                       automatic_read_context next."
     )]
     async fn list_contexts(
         &self,
         params: Parameters<ListContextsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let slugs = match &params.0.project {
-            Some(project) => {
-                let project = match validate_project(project) {
-                    Ok(name) => name,
-                    Err(e) => return Ok(tool_error(e)),
-                };
-                match load_project(&project) {
-                    Ok(p) => crate::core::project_context_entries(&p),
-                    Err(e) => return Ok(tool_error(e)),
-                }
-            }
-            None => match crate::core::list_contexts() {
+        // The whole library when asked for, or when nothing names a project
+        // (no argument and no current project), which is what this tool
+        // listed before it had a current project.
+        let whole_library = params.0.all.unwrap_or(false)
+            || (params.0.project.is_none()
+                && self.current_project == crate::core::CurrentProject::None);
+        let slugs = if whole_library {
+            match crate::core::list_contexts() {
                 Ok(slugs) => slugs
                     .into_iter()
                     .map(|slug| crate::core::ProjectContextEntry { slug, group: None })
                     .collect(),
                 Err(e) => return Ok(tool_error(format!("Failed to list contexts: {}", e))),
-            },
+            }
+        } else {
+            let checkout = match self.project_checkout(params.0.project.as_deref()) {
+                Ok(checkout) => checkout,
+                Err(e) => return Ok(tool_error(e)),
+            };
+            match load_project(&checkout) {
+                Ok(p) => crate::core::project_context_entries(&p),
+                Err(e) => return Ok(tool_error(e)),
+            }
         };
         let entries: Vec<serde_json::Value> = slugs
             .into_iter()
@@ -2125,7 +2223,8 @@ impl AutomaticMcpServer {
     #[tool(
         name = "automatic_attach_context",
         description = "Attach a context to a project or to a project group. \
-                       Give exactly one of `project` or `group`. A group's \
+                       Give `project`, `group`, or neither for the current \
+                       project. A group's \
                        contexts are added to every member project and recorded \
                        as provided by that group. Idempotent. Contexts are read \
                        through MCP only, so no sync is needed."
@@ -2134,7 +2233,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AttachContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let target = match context_target(&params.0) {
+        let (target, label) = match self.context_target(&params.0) {
             Ok(t) => t,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2142,13 +2241,11 @@ impl AutomaticMcpServer {
         match crate::core::attach_context(&target, slug) {
             Ok(true) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Attached context '{}' to {}.",
-                slug,
-                describe_target(&target)
+                slug, label
             ))])),
             Ok(false) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Context '{}' was already attached to {}.",
-                slug,
-                describe_target(&target)
+                slug, label
             ))])),
             Err(e) => Ok(tool_error(format!(
                 "Failed to attach context '{}': {}",
@@ -2160,7 +2257,8 @@ impl AutomaticMcpServer {
     #[tool(
         name = "automatic_detach_context",
         description = "Detach a context from a project or from a project group. \
-                       Give exactly one of `project` or `group`. A context a \
+                       Give `project`, `group`, or neither for the current \
+                       project. A context a \
                        group provides cannot be detached from a member project; \
                        detach it from the group instead. Idempotent."
     )]
@@ -2168,7 +2266,7 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AttachContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let target = match context_target(&params.0) {
+        let (target, label) = match self.context_target(&params.0) {
             Ok(t) => t,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2176,13 +2274,11 @@ impl AutomaticMcpServer {
         match crate::core::detach_context(&target, slug) {
             Ok(true) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Detached context '{}' from {}.",
-                slug,
-                describe_target(&target)
+                slug, label
             ))])),
             Ok(false) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Context '{}' was not attached to {}.",
-                slug,
-                describe_target(&target)
+                slug, label
             ))])),
             Err(e) => Ok(tool_error(format!(
                 "Failed to detach context '{}': {}",
@@ -2412,30 +2508,19 @@ impl AutomaticMcpServer {
 
     #[tool(
         name = "automatic_sync_project",
-        description = "Sync a project's MCP server configs to its directory for all configured agent tools. The project must have a directory path. A project with no agent tools configured syncs nothing; agents are never added by a sync."
+        description = "Sync a project's MCP server configs to its directory for all configured agent tools. Omit `name` to sync the current project. The project must have a directory path. A project with no agent tools configured syncs nothing; agents are never added by a sync."
     )]
     async fn sync_project(
         &self,
         params: Parameters<SyncProjectParams>,
     ) -> Result<CallToolResult, McpError> {
-        let raw = match crate::core::read_project(&params.0.name) {
-            Ok(r) => r,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Failed to read project '{}': {}",
-                    params.0.name, e
-                ))]));
-            }
+        let checkout = match self.project_checkout(params.0.name.as_deref()) {
+            Ok(checkout) => checkout,
+            Err(e) => return Ok(tool_error(e)),
         };
-
-        let project: crate::core::Project = match serde_json::from_str(&raw) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Invalid project data: {}",
-                    e
-                ))]));
-            }
+        let project = match load_project(&checkout) {
+            Ok(project) => project,
+            Err(e) => return Ok(tool_error(e)),
         };
 
         match crate::sync::sync_project(&project) {
@@ -2473,16 +2558,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<StoreMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Memory is keyed by project id, so every checkout of a project
+        // shares it and an id with several checkouts is enough.
+        let keys = match self.project_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2508,16 +2586,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<GetMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Memory is keyed by project id, so every checkout of a project
+        // shares it and an id with several checkouts is enough.
+        let keys = match self.project_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2538,16 +2609,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ListMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Memory is keyed by project id, so every checkout of a project
+        // shares it and an id with several checkouts is enough.
+        let keys = match self.project_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2568,16 +2632,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<SearchMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Memory is keyed by project id, so every checkout of a project
+        // shares it and an id with several checkouts is enough.
+        let keys = match self.project_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2598,16 +2655,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<DeleteMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Memory is keyed by project id, so every checkout of a project
+        // shares it and an id with several checkouts is enough.
+        let keys = match self.project_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2628,16 +2678,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ClearMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Memory is keyed by project id, so every checkout of a project
+        // shares it and an id with several checkouts is enough.
+        let keys = match self.project_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2667,40 +2710,22 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ReadClaudeMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
+        // Claude's auto-memory lives under one folder, so this needs one
+        // checkout.
+        let checkout = match self.project_checkout(params.0.project.as_deref()) {
+            Ok(checkout) => checkout,
+            Err(e) => return Ok(tool_error(e)),
         };
-
-        // Look up the project's directory
-        let project_json = match crate::core::read_project(&params.0.project) {
-            Ok(j) => j,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Failed to read project '{}': {}",
-                    params.0.project, e
-                ))]));
-            }
-        };
-
-        let project: crate::core::Project = match serde_json::from_str(&project_json) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Failed to parse project data: {}",
-                    e
-                ))]));
-            }
+        let project = match load_project(&checkout) {
+            Ok(project) => project,
+            Err(e) => return Ok(tool_error(e)),
         };
 
         match crate::memory::read_claude_memory(&project.directory) {
             Ok(content) => {
                 let mut output = format!(
                     "# Claude Auto-Memory for '{}'\n\nDirectory: {}\n\n",
-                    params.0.project, content.memory_dir
+                    checkout.name, content.memory_dir
                 );
 
                 match &content.memory_md {
@@ -2743,16 +2768,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ListFeaturesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_feature_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Features are keyed by project id, so every checkout of a project
+        // shares them and an id with several checkouts is enough.
+        let keys = match self.feature_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2765,7 +2783,7 @@ impl AutomaticMcpServer {
             Ok(features) => {
                 let output = crate::features::format_features_markdown(
                     &features,
-                    &params.0.project,
+                    &keys.name,
                     include_archived,
                 );
                 Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -2785,16 +2803,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<GetFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_feature_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Features are keyed by project id, so every checkout of a project
+        // shares them and an id with several checkouts is enough.
+        let keys = match self.feature_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2818,16 +2829,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<CreateFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_feature_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Features are keyed by project id, so every checkout of a project
+        // shares them and an id with several checkouts is enough.
+        let keys = match self.feature_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2866,16 +2870,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<UpdateFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_feature_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Features are keyed by project id, so every checkout of a project
+        // shares them and an id with several checkouts is enough.
+        let keys = match self.feature_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2917,16 +2914,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<SetFeatureStateParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_feature_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Features are keyed by project id, so every checkout of a project
+        // shares them and an id with several checkouts is enough.
+        let keys = match self.feature_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -2957,23 +2947,16 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<DeleteFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_feature_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Features are keyed by project id, so every checkout of a project
+        // shares them and an id with several checkouts is enough.
+        let keys = match self.feature_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
         match crate::features::delete_feature(&keys, &params.0.feature_id) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Feature '{}' deleted from project '{}'.",
-                params.0.feature_id, params.0.project
+                params.0.feature_id, keys.name
             ))])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to delete feature: {}",
@@ -2990,16 +2973,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ArchiveFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_feature_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Features are keyed by project id, so every checkout of a project
+        // shares them and an id with several checkouts is enough.
+        let keys = match self.feature_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -3023,16 +2999,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<UnarchiveFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_feature_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Features are keyed by project id, so every checkout of a project
+        // shares them and an id with several checkouts is enough.
+        let keys = match self.feature_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -3056,16 +3025,9 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AddFeatureUpdateParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mut params = params;
-        params.0.project = match validate_feature_project(&params.0.project) {
-            Ok(name) => name,
-            Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(e)]));
-            }
-        };
-        // Memory and features are keyed by project id, so every checkout
-        // of a project reads the same store.
-        let keys = match crate::core::project_store_keys(&params.0.project) {
+        // Features are keyed by project id, so every checkout of a project
+        // shares them and an id with several checkouts is enough.
+        let keys = match self.feature_store_keys(params.0.project.as_deref()) {
             Ok(keys) => keys,
             Err(e) => return Ok(tool_error(e)),
         };
@@ -3108,7 +3070,11 @@ impl ServerHandler for AutomaticMcpServer {
                 "Automatic is a desktop hub for AI coding agents. \
                  Use these tools to retrieve API keys, discover and search skills, list MCP \
                  server configs, inspect projects, read the contexts attached to a project, \
-                 track active sessions, and sync project configurations.",
+                 track active sessions, and sync project configurations. \
+                 Automatic knows which project this agent is working in. Omit the `project` \
+                 argument (`name` on automatic_read_project and automatic_sync_project) to act \
+                 on that project. Pass it only to act on a different project; it accepts a \
+                 local_key, an id or a name from automatic_list_projects.",
             )
             .with_server_info(server_info)
     }
@@ -3117,7 +3083,9 @@ impl ServerHandler for AutomaticMcpServer {
 // ── Entry Point ──────────────────────────────────────────────────────────────
 
 pub async fn run_mcp_server() -> Result<(), Box<dyn std::error::Error>> {
-    let server = AutomaticMcpServer::new();
+    // Resolved once. Agents start one `mcp-serve` per session, and the
+    // working directory and `AUTOMATIC_PROJECT` do not change during it.
+    let server = AutomaticMcpServer::with_current_project(crate::core::detect_current_project());
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
 
@@ -3141,7 +3109,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_project_accepts_names_after_registry_migration() {
+    fn project_argument_accepts_names_after_registry_migration() {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
             let project = crate::core::Project {
@@ -3156,17 +3124,16 @@ mod tests {
                 .expect("parse")
                 .local_key;
 
-            assert_eq!(validate_project("legacy").expect("the name is still valid"), "legacy");
-            assert_eq!(
-                validate_project(&local_key).expect("a local_key is accepted"),
-                "legacy",
-                "a key resolves to the canonical name"
-            );
+            let server = AutomaticMcpServer::new();
+            let by_name = server.project_checkout(Some("legacy")).expect("the name is still valid");
+            assert_eq!(by_name.name, "legacy");
+            let by_key = server.project_checkout(Some(&local_key)).expect("a local_key is accepted");
+            assert_eq!(by_key.name, "legacy", "a key resolves to the registered project");
         });
     }
 
     #[test]
-    fn validate_project_returns_the_canonical_name_or_lists_names() {
+    fn project_argument_resolves_to_the_registry_name_or_lists_names() {
         let home = tempfile::tempdir().expect("tempdir");
         with_test_home(home.path().to_path_buf(), || {
             let project = crate::core::Project {
@@ -3177,12 +3144,16 @@ mod tests {
             crate::core::save_project("Website", &serde_json::to_string(&project).unwrap())
                 .expect("save");
 
-            assert_eq!(validate_project("website").unwrap(), "Website");
+            let server = AutomaticMcpServer::new();
+            assert_eq!(server.project_checkout(Some("website")).unwrap().name, "Website");
             assert_eq!(
-                validate_project("5b1f0c7e-0000-4000-8000-000000000001").unwrap(),
+                server
+                    .project_checkout(Some("5b1f0c7e-0000-4000-8000-000000000001"))
+                    .unwrap()
+                    .name,
                 "Website"
             );
-            let err = validate_project("nope").unwrap_err();
+            let err = server.project_checkout(Some("nope")).unwrap_err();
             assert!(err.contains("Valid project names are: Website"), "{err}");
         });
     }
@@ -3206,7 +3177,7 @@ mod tests {
             for (ident, memory_key) in [(key, "by-key"), ("site", "by-name")] {
                 let result = tauri::async_runtime::block_on(server.store_memory(Parameters(
                     StoreMemoryParams {
-                        project: ident.into(),
+                        project: Some(ident.into()),
                         key: memory_key.into(),
                         value: "v".into(),
                         source: None,
@@ -3221,7 +3192,7 @@ mod tests {
             assert!(crate::memory::get_all_memories(key).unwrap().is_empty());
 
             let read = tauri::async_runtime::block_on(server.get_memory(Parameters(GetMemoryParams {
-                project: "site".into(),
+                project: Some("site".into()),
                 key: "by-key".into(),
             })))
             .expect("tool call");
@@ -3261,7 +3232,7 @@ mod tests {
             let server = AutomaticMcpServer::new();
             let listed = tauri::async_runtime::block_on(server.list_features(Parameters(
                 ListFeaturesParams {
-                    project: "site".into(),
+                    project: Some("site".into()),
                     state: None,
                     include_archived: None,
                 },
@@ -3302,12 +3273,188 @@ mod tests {
 
             let server = AutomaticMcpServer::new();
             let result = tauri::async_runtime::block_on(server.get_related_projects(Parameters(
-                GetRelatedProjectsParams { project: "site".into() },
+                GetRelatedProjectsParams { project: Some("site".into()) },
             )))
             .expect("tool call");
             let text = format!("{:?}", result.content);
             assert!(text.contains("**api**"), "{text}");
             assert!(!text.contains("0000000000c2"), "no id leaks: {text}");
+        });
+    }
+
+    // ── current project ─────────────────────────────────────────────────
+
+    const API_ID: &str = "5b1f0c7e-0000-4000-8000-0000000001a1";
+    const API_KEY: &str = "5b1f0c7e-0000-4000-8000-0000000001b1";
+    const SITE_ID: &str = "5b1f0c7e-0000-4000-8000-0000000001a2";
+    const SITE_KEY: &str = "5b1f0c7e-0000-4000-8000-0000000001b2";
+    const SITE_WT_KEY: &str = "5b1f0c7e-0000-4000-8000-0000000001b3";
+
+    fn save_checkout(name: &str, id: &str, local_key: &str) {
+        let project = crate::core::Project {
+            name: name.into(),
+            id: id.into(),
+            local_key: local_key.into(),
+            ..Default::default()
+        };
+        crate::core::save_project(name, &serde_json::to_string(&project).unwrap()).expect("save");
+    }
+
+    /// `api` has one checkout. `site` and `site-wt` are two checkouts of one
+    /// project (a folder and its worktree).
+    fn save_registry() -> Vec<crate::core::ProjectSummary> {
+        save_checkout("api", API_ID, API_KEY);
+        save_checkout("site", SITE_ID, SITE_KEY);
+        save_checkout("site-wt", SITE_ID, SITE_WT_KEY);
+        crate::core::get_project_summaries().expect("summaries")
+    }
+
+    /// The current project for `AUTOMATIC_PROJECT=env` run outside every
+    /// registered folder.
+    fn current_for(env: &str, summaries: &[crate::core::ProjectSummary]) -> crate::core::CurrentProject {
+        crate::core::resolve_current_project(
+            Some(env),
+            Some(std::path::Path::new("/nowhere")),
+            summaries,
+            |dir: &str| std::path::PathBuf::from(dir),
+        )
+    }
+
+    fn result_text(result: &CallToolResult) -> String {
+        result
+            .content
+            .iter()
+            .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn store(server: &AutomaticMcpServer, project: Option<&str>, key: &str) -> CallToolResult {
+        tauri::async_runtime::block_on(server.store_memory(Parameters(StoreMemoryParams {
+            project: project.map(String::from),
+            key: key.into(),
+            value: "v".into(),
+            source: None,
+        })))
+        .expect("tool call")
+    }
+
+    fn read(server: &AutomaticMcpServer, name: Option<&str>) -> CallToolResult {
+        tauri::async_runtime::block_on(
+            server.read_project(Parameters(ReadProjectParams { name: name.map(String::from) })),
+        )
+        .expect("tool call")
+    }
+
+    #[test]
+    fn an_omitted_project_uses_the_current_project() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let summaries = save_registry();
+            let server = AutomaticMcpServer::with_current_project(current_for(API_ID, &summaries));
+
+            let stored = store(&server, None, "k");
+            assert_ne!(stored.is_error, Some(true), "{}", result_text(&stored));
+            assert!(crate::memory::get_all_memories(API_ID).unwrap().contains_key("k"));
+
+            let project = read(&server, None);
+            assert_ne!(project.is_error, Some(true), "{}", result_text(&project));
+            assert!(result_text(&project).contains(API_KEY), "{}", result_text(&project));
+        });
+    }
+
+    #[test]
+    fn an_explicit_key_id_or_name_overrides_the_current_project() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let summaries = save_registry();
+            let server = AutomaticMcpServer::with_current_project(current_for(API_ID, &summaries));
+
+            for (ident, key) in [(SITE_WT_KEY, "by-key"), (SITE_ID, "by-id"), ("Site", "by-name")] {
+                let stored = store(&server, Some(ident), key);
+                assert_ne!(stored.is_error, Some(true), "{ident}: {}", result_text(&stored));
+            }
+            let site = crate::memory::get_all_memories(SITE_ID).unwrap();
+            assert!(["by-key", "by-id", "by-name"].iter().all(|k| site.contains_key(*k)), "{site:?}");
+            assert!(crate::memory::get_all_memories(API_ID).unwrap().is_empty());
+
+            let project = read(&server, Some(SITE_WT_KEY));
+            assert!(result_text(&project).contains("site-wt"), "{}", result_text(&project));
+        });
+    }
+
+    #[test]
+    fn memory_accepts_an_id_shared_by_several_checkouts() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let summaries = save_registry();
+            let current = current_for(SITE_ID, &summaries);
+            assert!(
+                matches!(current, crate::core::CurrentProject::Project { .. }),
+                "outside both checkouts only the id is known: {current:?}"
+            );
+            let server = AutomaticMcpServer::with_current_project(current);
+
+            let stored = store(&server, None, "shared");
+            assert_ne!(stored.is_error, Some(true), "{}", result_text(&stored));
+            assert!(crate::memory::get_all_memories(SITE_ID).unwrap().contains_key("shared"));
+        });
+    }
+
+    #[test]
+    fn a_checkout_tool_on_an_ambiguous_id_lists_each_checkout() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let summaries = save_registry();
+            let server =
+                AutomaticMcpServer::with_current_project(current_for(SITE_ID, &summaries));
+
+            let result = read(&server, None);
+            assert_eq!(result.is_error, Some(true));
+            let text = result_text(&result);
+            assert!(text.contains(&format!("site — no folder ({})", SITE_KEY)), "{text}");
+            assert!(text.contains(&format!("site-wt — no folder ({})", SITE_WT_KEY)), "{text}");
+
+            let explicit_id = AutomaticMcpServer::new();
+            let result = read(&explicit_id, Some(SITE_ID));
+            assert_eq!(result.is_error, Some(true), "an explicit shared id is ambiguous too");
+        });
+    }
+
+    #[test]
+    fn no_current_project_and_no_argument_is_a_helpful_error() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            save_registry();
+            let server = AutomaticMcpServer::new();
+            for result in [store(&server, None, "k"), read(&server, None)] {
+                assert_eq!(result.is_error, Some(true));
+                let text = result_text(&result);
+                assert!(text.contains("Pass `project`"), "{text}");
+                assert!(text.contains("automatic_list_projects"), "{text}");
+            }
+        });
+    }
+
+    #[test]
+    fn list_projects_returns_keys_and_marks_the_current_checkout() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let summaries = save_registry();
+            let server =
+                AutomaticMcpServer::with_current_project(current_for(SITE_WT_KEY, &summaries));
+
+            let result = tauri::async_runtime::block_on(server.list_projects()).expect("tool call");
+            let rows: Vec<serde_json::Value> =
+                serde_json::from_str(&result_text(&result)).expect("a JSON array");
+            assert_eq!(
+                rows,
+                vec![
+                    serde_json::json!({"name": "api", "local_key": API_KEY, "id": API_ID, "directory": "", "current": false}),
+                    serde_json::json!({"name": "site", "local_key": SITE_KEY, "id": SITE_ID, "directory": "", "current": false}),
+                    serde_json::json!({"name": "site-wt", "local_key": SITE_WT_KEY, "id": SITE_ID, "directory": "", "current": true}),
+                ]
+            );
         });
     }
 

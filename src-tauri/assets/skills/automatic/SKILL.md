@@ -27,6 +27,8 @@ Use the Automatic MCP tools when you need to:
 
 Automatic exposes the following tools via the `nexus` MCP server (configured as `nexus mcp-serve`):
 
+**The current project.** The server knows which project you are working in. Every tool that takes a `project` (or `name` on `automatic_read_project` and `automatic_sync_project`) uses that project when you omit it. Pass it only to act on another project. It accepts a project's `name`, `local_key` or `id` from `automatic_list_projects`. When a name or id matches several folders, the error lists each one with its `local_key`; pass that key.
+
 ### `automatic_list_skills`
 
 List all skill names currently registered in the user's skill registry (`~/.automatic/library/skills/`, with `~/.agents/skills/` and `~/.claude/skills/` scanned read-only).
@@ -40,7 +42,8 @@ List all skill names currently registered in the user's skill registry (`~/.auto
 Read the full `SKILL.md` content of a specific skill. This also automatically discovers and returns a list of any companion resources (scripts, templates, examples, etc.) bundled in the skill directory.
 
 ```
-name: string  — the skill directory name, e.g. "laravel-specialist"
+name: string      — the skill directory name, e.g. "laravel-specialist"
+project?: string  — search this project's own skills first; defaults to the current project
 ```
 
 **When to use:** After identifying a relevant skill via `automatic_list_skills`. Load and follow the skill's instructions for the current task.
@@ -69,18 +72,18 @@ Return all MCP server configurations stored in the Automatic registry (`~/.autom
 
 ### `automatic_list_projects`
 
-List all project names registered in Automatic.
+List every project registered in Automatic. Each entry has `name`, `local_key` (one folder on this machine), `id` (the project, shared by every folder of it, such as git worktrees), `directory`, and `current`. `current` marks the project you are working in.
 
-**When to use:** When you need to find out which projects the user has configured, before reading a specific project or syncing it.
+**When to use:** When you need to find out which projects the user has configured, or to act on a project other than the current one.
 
 ---
 
 ### `automatic_read_project`
 
-Read the full configuration for a named project: description, directory path, assigned skills, MCP servers, providers, configured agent tools, attached `profiles`, `profile_contributions` (which entries each profile provides, including entries the project had before it was attached), `contexts` (attached context slugs), and `group_context_contributions` (which of those contexts each project group provides).
+Read the full configuration for a project: description, directory path, assigned skills, MCP servers, providers, configured agent tools, attached `profiles`, `profile_contributions` (which entries each profile provides, including entries the project had before it was attached), `contexts` (attached context slugs), and `group_context_contributions` (which of those contexts each project group provides).
 
 ```
-name: string  — the project name as registered in Automatic
+name?: string  — defaults to the current project
 ```
 
 **When to use:** When you need to understand a project's configured context (e.g. which skills and MCP servers apply, or where the project directory is) before performing work in it.
@@ -110,8 +113,8 @@ name: string  — the profile name
 Attach a profile to a project, or detach it. Attaching records every entry the profile lists as the profile's contribution: missing entries are added to the project and entries the project already had are adopted. Detaching removes every entry the profile provides, including entries the project had before it was attached.
 
 ```
-project: string  — the project name as registered in Automatic
-profile: string  — the profile name
+project?: string  — defaults to the current project
+profile: string   — the profile name
 ```
 
 **When to use:** After the user asks for a project to follow a profile. Neither call syncs to disk — call `automatic_sync_project` afterwards. Do not remove a profile-owned rule or hook with `automatic_detach_rule` / `automatic_detach_hook`; it is re-attached on the next save.
@@ -120,13 +123,16 @@ profile: string  — the profile name
 
 ### `automatic_list_contexts`
 
-List contexts. A context is a named collection of reference material that agents read on demand: documentation pages, local files, URLs, or sources in the Automatic cloud. Nothing from a context is written into the project.
+List the contexts attached to a project. A context is a named collection of reference material that agents read on demand: documentation pages, local files, URLs, or sources in the Automatic cloud. Nothing from a context is written into the project. Each entry carries `group` when a project group provides it.
 
 ```
-project?: string  — only list contexts attached to this project; each then carries `group` when a project group provides it
+project?: string  — defaults to the current project
+all?: boolean     — list every context in the library instead
 ```
 
-**When to use:** At the start of work in a project, pass `project` to find the reference material the user attached to it.
+With no current project and no `project`, every context in the library is listed.
+
+**When to use:** At the start of work in a project, to find the reference material the user attached to it.
 
 ---
 
@@ -156,11 +162,11 @@ path: string     — the entry path (read only)
 
 ### `automatic_attach_context` / `automatic_detach_context`
 
-Attach a context to a project or a project group, or detach it. Give exactly one of `project` or `group`. A group's contexts reach every member project. A context a group provides cannot be detached from a member project; detach it from the group.
+Attach a context to a project or a project group, or detach it. Give `project` or `group`, not both. Give neither to use the current project. A group's contexts reach every member project. A context a group provides cannot be detached from a member project; detach it from the group.
 
 ```
 context: string   — the context slug
-project?: string  — the project name
+project?: string  — defaults to the current project
 group?: string    — the project group name
 ```
 
@@ -224,7 +230,7 @@ agents: string[]           — optional agent tool ids, e.g. ["claude", "cursor"
 Sync a project's MCP server configs and skill references to its directory for all configured agent tools (Claude Code, Cursor, OpenCode, etc.).
 
 ```
-name: string  — the project name as registered in Automatic
+name?: string  — defaults to the current project
 ```
 
 **When to use:** After the user updates a project's configuration (skills, MCP servers, agents) in Automatic and wants the changes written to the project directory.
@@ -243,12 +249,14 @@ List active Claude Code sessions tracked by the Nexus hooks. Each entry includes
 
 Automatic provides a persistent key-value store for agents to retain context, user preferences, and learnings over time on a per-project basis.
 
-- **`automatic_store_memory`**: Stores a memory entry. Takes `project`, `key`, `value`, and optional `source`.
-- **`automatic_get_memory`**: Retrieves a specific memory entry by its `project` and `key`.
-- **`automatic_list_memories`**: Lists all stored memory keys for a `project`, optionally filtered by a `pattern`.
-- **`automatic_search_memories`**: Searches both keys and values for a `query` string within a `project`.
-- **`automatic_delete_memory`**: Deletes a specific memory entry by `project` and `key`.
-- **`automatic_clear_memories`**: Clears all memories for a `project` (requires `confirm: true` and optional `pattern`).
+Every memory tool takes an optional `project`, which defaults to the current project. All folders of one project share its memory.
+
+- **`automatic_store_memory`**: Stores a memory entry. Takes `key`, `value`, and optional `source`.
+- **`automatic_get_memory`**: Retrieves a specific memory entry by its `key`.
+- **`automatic_list_memories`**: Lists all stored memory keys, optionally filtered by a `pattern`.
+- **`automatic_search_memories`**: Searches both keys and values for a `query` string.
+- **`automatic_delete_memory`**: Deletes a specific memory entry by `key`.
+- **`automatic_clear_memories`**: Clears all memories (requires `confirm: true` and optional `pattern`).
 
 **When to use:** Proactively store memory when you learn a significant project-specific rule, a user preference, or architectural decision that you (or other agents) will need in future sessions. Search memories at the start of complex tasks to see if previous guidance applies.
 
@@ -264,9 +272,9 @@ The `automatic_*_feature` tools track work items on a project's Build board. The
 
 1. **On session start** — call `automatic_list_skills` to see what skills are available. If a skill matches the current task domain, call `automatic_read_skill` to load it and view its companion resources. Optionally call `automatic_search_memories` to retrieve past learnings for the current project.
 
-2. **Check the project's contexts** — call `automatic_list_contexts` with the project name, and consult relevant contexts before making project-specific decisions about conventions, architecture, product behaviour, or wording.
+2. **Check the project's contexts** — call `automatic_list_contexts`, and consult relevant contexts before making project-specific decisions about conventions, architecture, product behaviour, or wording.
 
-3. **For project configuration** — call `automatic_list_projects` to find the relevant project, then `automatic_read_project` to load its configured skills, MCP servers, agents, and directory.
+3. **For project configuration** — call `automatic_read_project` to load the current project's configured skills, MCP servers, agents, and directory. To work on another project, find it with `automatic_list_projects` first.
 
 4. **For project setup** — call `automatic_list_mcp_servers` to see registered servers, then `automatic_sync_project` to apply the configuration.
 

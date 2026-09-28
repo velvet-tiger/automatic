@@ -101,6 +101,8 @@ pub fn feature_tracking_unavailable(
 ///
 /// Reads the project and the plugin state. Returns `Err` with an
 /// agent-facing message when either read fails or Build is not enabled.
+/// `project_name` is an identifier (a `local_key` or a name); the message
+/// names the project by its registry name.
 pub fn require_feature_tracking(project_name: &str) -> Result<(), String> {
     let raw = crate::core::read_project(project_name)
         .map_err(|e| format!("Failed to read project '{}': {}", project_name, e))?;
@@ -108,7 +110,7 @@ pub fn require_feature_tracking(project_name: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to parse project '{}': {}", project_name, e))?;
     let plugin_enabled = crate::core::is_app_plugin_enabled("build")
         .map_err(|e| format!("Failed to read plugin state: {}", e))?;
-    match feature_tracking_unavailable(project_name, &project.tools, plugin_enabled) {
+    match feature_tracking_unavailable(&project.name, &project.tools, plugin_enabled) {
         Some(message) => Err(message),
         None => Ok(()),
     }

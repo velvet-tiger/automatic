@@ -7,7 +7,7 @@ use crate::core::{self, Project, ProjectMode};
 
 use super::autodetect::{autodetect_inner, AgentAdoption};
 use super::helpers::{
-    build_selected_servers, build_skill_contents, clean_project_file,
+    automatic_project_env_value, build_selected_servers, build_skill_contents, clean_project_file,
     collect_custom_asset_conflicts, conflicting_names, extract_agent_machine_name,
     load_mcp_server_configs, sync_custom_agents, sync_user_agents, CustomAssetKind,
 };
@@ -224,7 +224,11 @@ fn sync_to_directory_inner(
     // identical output.
     let mcp_config = load_mcp_server_configs()?;
     let enabled_mcp_servers = project.enabled_mcp_servers();
-    let selected_servers = build_selected_servers(&project.name, &enabled_mcp_servers, &mcp_config);
+    let selected_servers = build_selected_servers(
+        automatic_project_env_value(project),
+        &enabled_mcp_servers,
+        &mcp_config,
+    );
 
     // Read all skill contents from the global skill registry, then append
     // project-scoped custom skills — deduplicating any custom_skill whose

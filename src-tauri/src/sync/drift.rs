@@ -8,8 +8,9 @@ use crate::agent;
 use crate::core::{Project, ProjectMode};
 
 use super::helpers::{
-    build_selected_servers, build_skill_contents, collect_custom_asset_conflicts,
-    extract_agent_machine_name, load_mcp_server_configs, CustomAssetConflict, CustomAssetKind,
+    automatic_project_env_value, build_selected_servers, build_skill_contents,
+    collect_custom_asset_conflicts, extract_agent_machine_name, load_mcp_server_configs,
+    CustomAssetConflict, CustomAssetKind,
 };
 
 // ── Problems types ────────────────────────────────────────────────────────────
@@ -262,7 +263,11 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
     // (strips internal `_` fields, substitutes OAuth proxy configs).
     let mcp_config = load_mcp_server_configs()?;
     let enabled_mcp_servers = project.enabled_mcp_servers();
-    let selected_servers = build_selected_servers(&project.name, &enabled_mcp_servers, &mcp_config);
+    let selected_servers = build_selected_servers(
+        automatic_project_env_value(project),
+        &enabled_mcp_servers,
+        &mcp_config,
+    );
 
     // Build skill contents with dedup: library-backed skills win over stale
     // custom_skills snapshots.
@@ -2457,5 +2462,43 @@ mod tests {
         assert!(report.has_problems, "expected a user-scope conflict for github");
         assert_eq!(report.problems.len(), 1);
         assert_eq!(report.problems[0].resources, vec!["github".to_string()]);
+    }
+
+    /// Agent configs written before stage 5 hold the project name in
+    /// `AUTOMATIC_PROJECT`. The expectation is now the project id, so such a
+    /// config drifts once, and is clean after the next sync writes the id.
+    #[test]
+    fn a_legacy_name_in_automatic_project_drifts_once_then_is_clean() {
+        use crate::core::Project;
+
+        let project_dir = tempdir().unwrap();
+        let project = Project {
+            name: "site".to_string(),
+            id: "5b1f0c7e-0000-4000-8000-0000000000e1".to_string(),
+            local_key: "5b1f0c7e-0000-4000-8000-0000000000e2".to_string(),
+            directory: project_dir.path().display().to_string(),
+            ..Default::default()
+        };
+        let no_servers = Map::new();
+        let legacy = build_selected_servers(&project.name, &[], &no_servers);
+        let expected =
+            build_selected_servers(automatic_project_env_value(&project), &[], &no_servers);
+        assert_eq!(
+            expected["automatic"]["env"]["AUTOMATIC_PROJECT"],
+            project.id.as_str(),
+            "the expectation names the project by id"
+        );
+
+        let dir = project_dir.path().to_path_buf();
+        ClaudeCode.write_mcp_config(project_dir.path(), &legacy).unwrap();
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_mcp_drift(&ClaudeCode, &dir, &expected, &mut files);
+        assert_eq!(files.len(), 1, "the legacy name drifts");
+        assert_eq!((files[0].path.as_str(), files[0].reason.as_str()), (".mcp.json", "modified"));
+
+        ClaudeCode.write_mcp_config(project_dir.path(), &expected).unwrap();
+        let mut files: Vec<DriftedFile> = Vec::new();
+        collect_mcp_drift(&ClaudeCode, &dir, &expected, &mut files);
+        assert!(files.is_empty(), "clean after the sync writes the id: {:?}", files.len());
     }
 }

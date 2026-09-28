@@ -424,11 +424,13 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
         );
     }
 
-    // Re-sync agent configs so AUTOMATIC_PROJECT reflects the new name.
+    // Agent configs name the project by `id` in AUTOMATIC_PROJECT, and a
+    // rename does not change it. A project with no id yet has its name
+    // there, so only that case re-syncs.
     let raw = core::read_project(new_name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
-    if !project.directory.is_empty() && !project.agents.is_empty() {
+    if project.id.is_empty() && !project.directory.is_empty() && !project.agents.is_empty() {
         let written = sync::sync_project(&project);
         if let Ok(ref files) = written {
             if !files.is_empty() {

@@ -30,7 +30,7 @@ fn canonical_servers() -> Map<String, Value> {
         json!({
             "command": "/usr/local/bin/automatic",
             "args": ["mcp-serve"],
-            "env": { "AUTOMATIC_PROJECT": "demo" },
+            "env": { "AUTOMATIC_PROJECT": "5b1f0c7e-0000-4000-8000-0000000000de" },
             "_builtin": true,
         }),
     );
@@ -127,7 +127,7 @@ fn literal_env_values_are_written_verbatim() {
         };
 
         assert!(
-            content.contains("demo"),
+            content.contains("5b1f0c7e-0000-4000-8000-0000000000de"),
             "{}: concrete env values must survive the write:\n{content}",
             agent.id()
         );
@@ -483,7 +483,7 @@ fn codex_forwards_inherited_env_vars_instead_of_writing_a_placeholder() {
     );
     // A concrete value still belongs in the env table.
     assert!(content.contains("[mcp_servers.automatic.env]"));
-    assert!(content.contains(r#""AUTOMATIC_PROJECT" = "demo""#));
+    assert!(content.contains(r#""AUTOMATIC_PROJECT" = "5b1f0c7e-0000-4000-8000-0000000000de""#));
 }
 
 #[test]

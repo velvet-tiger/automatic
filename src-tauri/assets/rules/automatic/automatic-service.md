@@ -2,20 +2,22 @@
 
 This project is managed by Automatic, a desktop hub that provides skills, rules, hooks, memory, and MCP server configs to agents via an MCP interface. The Automatic MCP server is always available in this project.
 
+The server knows which project you are working in. Omit the `project` argument (`name` on `automatic_read_project` and `automatic_sync_project`) to act on this project. Pass it only to act on another project. It accepts a name, `local_key` or `id` from `automatic_list_projects`.
+
 ## Session Start
 
 1. Call `automatic_list_skills` to discover available skills. If any match the current task domain, call `automatic_read_skill` to load instructions and companion resources.
-2. Call `automatic_search_memories` with relevant keywords for this project to retrieve past learnings, conventions, and decisions.
-3. Call `automatic_read_project` with this project's name to understand the configured skills, MCP servers, agents, and directory.
-4. Call `automatic_list_contexts` with this project's name. Each context is reference material the user attached for this project, such as coding standards, product docs, or decisions. Read each description, and keep the list in mind for the rest of the session.
+2. Call `automatic_search_memories` with relevant keywords to retrieve past learnings, conventions, and decisions.
+3. Call `automatic_read_project` to understand the configured skills, MCP servers, agents, and directory.
+4. Call `automatic_list_contexts`. Each context is reference material the user attached for this project, such as coding standards, product docs, or decisions. Read each description, and keep the list in mind for the rest of the session.
 
 ## During Work
 
 - **Skills** — Follow loaded skill instructions. Skills may include companion scripts, templates, or reference docs in their directory.
 - **MCP Servers** — Call `automatic_list_mcp_servers` to see what servers are registered. Call `automatic_sync_project` after configuration changes.
 - **Skill Discovery** — Call `automatic_search_skills` to find community skills on skills.sh when you need specialised guidance not covered by installed skills.
-- **Related Projects** — Before searching the filesystem or asking the user for sibling projects, call `automatic_get_related_projects` with this project's name. It returns peer projects (name, description, directory, and the relative path from this project) for every Project Group this project belongs to. This is the authoritative source — related projects are intentionally not written into the instruction file.
-- **Other Projects** — Call `automatic_list_projects` to see every project name registered in Automatic.
+- **Related Projects** — Before searching the filesystem or asking the user for sibling projects, call `automatic_get_related_projects`. It returns peer projects (name, description, directory, and the relative path from this project) for every Project Group this project belongs to. This is the authoritative source — related projects are intentionally not written into the instruction file.
+- **Other Projects** — Call `automatic_list_projects` to see every project registered in Automatic. Each entry has `name`, `local_key`, `id` and `directory`, and `current` marks this project.
 - **Registering Projects** — Call `automatic_register_project` with a unique name and an absolute directory path to bring a new project under Automatic management. Optionally pass agent ids (e.g. `claude`) to sync their config files immediately. The call is refused when the directory already belongs to a registered project or holds an unregistered Automatic config — ask the user how to proceed in those cases.
 
 ## Rules
@@ -51,7 +53,7 @@ Profiles are live bundles of library references (skills, MCP servers, providers,
 
 Contexts hold what the user wants agents to know about this project. Before you decide on conventions, architecture, product behaviour, or wording, check whether an attached context covers it. The context wins over your assumptions and over general best practice.
 
-- `automatic_list_contexts` — pass `project` to list the contexts attached to this project. Each carries `group` when a project group provides it.
+- `automatic_list_contexts` — lists the contexts attached to this project. Pass `all: true` to list every context in the library. Each attached context carries `group` when a project group provides it.
 - Read on demand: `automatic_read_context` shows a context's sources. `automatic_list_context_entries` lists a source's entries. Pages can sit in folders, so paths look like `guides/setup.md`. `automatic_read_context_entry` reads one entry. Read only what the task needs.
 - If a context and the code disagree, say so to the user. Don't silently pick one.
 - If a read fails (for example, a cloud context when the user is signed out), tell the user and carry on without it.

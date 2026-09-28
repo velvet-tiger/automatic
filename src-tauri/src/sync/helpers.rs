@@ -377,6 +377,23 @@ pub(crate) fn clean_project_file(dir: &PathBuf, filename: &str) -> Result<Option
     }
 }
 
+/// The `AUTOMATIC_PROJECT` value for a project's agent configs: the
+/// project `id`. The id is committed with the repo and agent configs such
+/// as `.mcp.json` are often committed too, so a machine-local `local_key`
+/// would be wrong on every other machine. `mcp-serve` uses the working
+/// directory to pick between checkouts that share an id.
+///
+/// A project with no id yet (its startup backfill failed) gets its name,
+/// which `mcp-serve` still resolves. Its configs drift once the id exists,
+/// and the next sync writes the id.
+pub(crate) fn automatic_project_env_value(project: &crate::core::Project) -> &str {
+    if project.id.is_empty() {
+        &project.name
+    } else {
+        &project.id
+    }
+}
+
 pub(crate) fn add_unique(items: &mut Vec<String>, value: &str) -> bool {
     if items.iter().any(|v| v == value) {
         false
@@ -393,8 +410,12 @@ pub(crate) fn add_unique(items: &mut Vec<String>, value: &str) -> bool {
 ///
 /// Both `engine.rs` and `drift.rs` must use this function to ensure the
 /// expected config matches what is actually written to disk.
+///
+/// `automatic_project` is the value of the `automatic` entry's
+/// `AUTOMATIC_PROJECT` env var. Callers pass
+/// [`automatic_project_env_value`].
 pub(crate) fn build_selected_servers(
-    project_name: &str,
+    automatic_project: &str,
     server_names: &[String],
     mcp_config: &Map<String, Value>,
 ) -> Map<String, Value> {
@@ -408,7 +429,7 @@ pub(crate) fn build_selected_servers(
             "command": automatic_binary,
             "args": ["mcp-serve"],
             "env": {
-                "AUTOMATIC_PROJECT": project_name
+                "AUTOMATIC_PROJECT": automatic_project
             }
         }),
     );
@@ -822,5 +843,25 @@ mod tests {
             hand_written_path.exists(),
             "hand-written .github/agents/mine.agent.md must survive the stale sweep"
         );
+    }
+
+    #[test]
+    fn automatic_project_is_the_id_or_the_name_without_one() {
+        let mut project = crate::core::Project {
+            name: "site".to_string(),
+            id: "5b1f0c7e-0000-4000-8000-0000000000f1".to_string(),
+            local_key: "5b1f0c7e-0000-4000-8000-0000000000f2".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(automatic_project_env_value(&project), project.id);
+        let servers = build_selected_servers(automatic_project_env_value(&project), &[], &Map::new());
+        assert_eq!(
+            servers["automatic"]["env"]["AUTOMATIC_PROJECT"],
+            project.id.as_str(),
+            "the committed id, never the machine-local local_key"
+        );
+
+        project.id.clear();
+        assert_eq!(automatic_project_env_value(&project), "site");
     }
 }
