@@ -5,16 +5,21 @@ use super::{CliError, MemoryAction};
 use crate::memory as memory_store;
 
 pub fn dispatch(action: MemoryAction, opts: OutputOptions) -> Result<(), CliError> {
+    // Memory is keyed by project name. A `local_key` becomes its project's
+    // name; any other string is used as given, as before.
+    let store_name = |project: &str| crate::core::project_store_name(project).map_err(CliError::from);
     match action {
-        MemoryAction::List { project, pattern } => list(&project, pattern.as_deref(), opts),
-        MemoryAction::Get { project, key } => get(&project, &key, opts),
+        MemoryAction::List { project, pattern } => {
+            list(&store_name(&project)?, pattern.as_deref(), opts)
+        }
+        MemoryAction::Get { project, key } => get(&store_name(&project)?, &key, opts),
         MemoryAction::Set {
             project,
             key,
             value,
             source,
-        } => set(&project, &key, &value, &source, opts),
-        MemoryAction::Search { project, query } => search(&project, &query, opts),
+        } => set(&store_name(&project)?, &key, &value, &source, opts),
+        MemoryAction::Search { project, query } => search(&store_name(&project)?, &query, opts),
     }
 }
 

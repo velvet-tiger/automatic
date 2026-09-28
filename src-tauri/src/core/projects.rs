@@ -14,21 +14,168 @@ use super::*;
 // the startup backfill renames them (see `project_registry`). When a project
 // has no directory yet, the full config lives in the registry file.
 //
-// Everything outside this module addresses projects by name. The functions
-// here resolve a name to its registry file through `find_registry_entry`.
+// Callers address a project by an identifier: its `local_key` or its name
+// (stage 3b, step 1). The functions here resolve an identifier to its
+// registry file through `resolve_registry_entry`. Stores outside the
+// registry (groups, memory, features, activity, recommendations, dev
+// servers) are still keyed by name, so callers turn an identifier into the
+// canonical name with `canonical_project_name` or `project_store_name`
+// before they reach one.
 
 /// Names of every registered project, sorted.
 pub fn list_projects() -> Result<Vec<String>, String> {
     Ok(registry_names(&scan_registry()?))
 }
 
+// ── Project identifiers ──────────────────────────────────────────────────────
+//
+// Three ways to turn an identifier (a `local_key` or a name) into the name
+// that name-keyed stores use. Pick by what the caller did before stage 3b:
+//
+// - Commands that needed the project to exist use `canonical_project_name`.
+//   An unknown identifier is an error, exactly as `read_project` was.
+// - Commands that create or tolerate a missing entry (save, delete) use
+//   `resolve_project_name` and keep the identifier when it is `None`.
+// - Store-only commands (memory, features, activity, recommendations, dev
+//   servers, group lookups) never consulted the registry, and accept any
+//   string so data for a deleted or never-registered project stays
+//   reachable. They use `project_store_name`, which canonicalises an
+//   identifier that resolves and passes any other string through unchanged.
+//   A key therefore never reaches a store unless no project has it.
+
+/// The registry name of the project `ident` identifies, or `None` when no
+/// entry matches. An invalid identifier matches nothing.
+pub fn resolve_project_name(ident: &str) -> Result<Option<String>, String> {
+    if !is_valid_name(ident) {
+        return Ok(None);
+    }
+    Ok(resolve_registry_entry(ident)?.map(|e| e.name))
+}
+
+/// The registry name of the project `ident` identifies. An unknown or
+/// invalid identifier is an error with the same text `read_project` uses.
+pub fn canonical_project_name(ident: &str) -> Result<String, String> {
+    if !is_valid_name(ident) {
+        return Err("Invalid project name".into());
+    }
+    resolve_project_name(ident)?.ok_or_else(|| format!("Project '{}' not found", ident))
+}
+
+/// The name a name-keyed store should use for `ident`. See the section
+/// comment above. An identifier that matches two projects by name is passed
+/// through too, because such a store never looked at the registry and so
+/// never failed on it. A registry that cannot be read is still an error.
+pub fn project_store_name(ident: &str) -> Result<String, String> {
+    if !is_valid_name(ident) {
+        return Ok(ident.to_string());
+    }
+    let entries = scan_registry()?;
+    Ok(match resolve_entry_index(&entries, ident) {
+        Ok(Some(i)) => entries[i].name.clone(),
+        Ok(None) | Err(_) => ident.to_string(),
+    })
+}
+
+/// One registered project as a list shows it. See [`get_project_summaries`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProjectSummary {
+    /// Empty until the startup backfill has minted it.
+    pub local_key: String,
+    /// Empty until the startup backfill has minted it.
+    pub id: String,
+    pub name: String,
+    /// Empty for a project with no folder yet.
+    pub directory: String,
+}
+
+/// Every registered project with its keys, sorted by name.
+///
+/// Unlike `read_project` this writes nothing: it reads the registry entry
+/// and the folder's config and state files only. Keys follow the stage 2
+/// precedence (`resolve_stored_keys`): `id` from the folder's config, then
+/// the registry cache; `local_key` from the registry, then the state file.
+/// An entry that cannot be parsed is listed by name with no keys, as
+/// `list_projects` lists it. A folder whose files cannot be read falls back
+/// to the keys the registry caches, and the failure is logged.
+pub fn get_project_summaries() -> Result<Vec<ProjectSummary>, String> {
+    get_project_summaries_in(&get_projects_dir()?)
+}
+
+pub(crate) fn get_project_summaries_in(
+    projects_dir: &std::path::Path,
+) -> Result<Vec<ProjectSummary>, String> {
+    // `scan_registry_in` sorts by name, then path.
+    let entries = scan_registry_in(projects_dir)?;
+    Ok(entries.iter().map(project_summary).collect())
+}
+
+fn project_summary(entry: &RegistryEntry) -> ProjectSummary {
+    let directory = match entry.directory() {
+        Ok(dir) => dir.unwrap_or_default(),
+        Err(e) => {
+            eprintln!("get_project_summaries: skipping keys of '{}': {}", entry.name, e);
+            return ProjectSummary {
+                local_key: String::new(),
+                id: String::new(),
+                name: entry.name.clone(),
+                directory: String::new(),
+            };
+        }
+    };
+    let cached = ProjectKeys {
+        id: entry.cached_id().unwrap_or_default().to_string(),
+        local_key: entry.local_key().unwrap_or_default().to_string(),
+    };
+    let files = if directory.is_empty() {
+        ProjectKeys::default()
+    } else {
+        match read_project_files(&directory, &entry.name) {
+            Ok(project) => project.map(|p| ProjectKeys::of(&p)).unwrap_or_default(),
+            Err(e) => {
+                eprintln!(
+                    "get_project_summaries: could not read the files of '{}', using the registry's keys: {}",
+                    entry.name, e
+                );
+                ProjectKeys::default()
+            }
+        }
+    };
+    let keys = resolve_stored_keys(&files, Some(&cached));
+    ProjectSummary {
+        local_key: keys.local_key,
+        id: keys.id,
+        name: entry.name.clone(),
+        directory,
+    }
+}
+
+/// A project's `local_key` for a row that names it, or `None` while the
+/// project has no key yet.
+pub fn local_key_of(project: &Project) -> Option<String> {
+    Some(project.local_key.clone()).filter(|k| !k.is_empty())
+}
+
+/// Map from project name to `local_key` for every registered project that
+/// has one. Built once per call by the commands that tag rows naming a
+/// project with its key.
+pub fn project_local_keys_by_name() -> Result<std::collections::HashMap<String, String>, String> {
+    Ok(get_project_summaries()?
+        .into_iter()
+        .filter(|s| !s.local_key.is_empty())
+        .map(|s| (s.name, s.local_key))
+        .collect())
+}
+
+/// Read a project by identifier (a `local_key` or a name). The returned
+/// project's `name` is always the registry name, never the identifier.
 pub fn read_project(name: &str) -> Result<String, String> {
     if !is_valid_name(name) {
         return Err("Invalid project name".into());
     }
     let entry =
-        find_registry_entry(name)?.ok_or_else(|| format!("Project '{}' not found", name))?;
-    // The registry's name, not the argument: a lookup ignores case.
+        resolve_registry_entry(name)?.ok_or_else(|| format!("Project '{}' not found", name))?;
+    // The registry's name, not the argument: a lookup ignores case and the
+    // argument may be a `local_key`.
     let name = entry.name.as_str();
     let registry_path = &entry.path;
 
@@ -534,6 +681,9 @@ pub fn delete_project_config(directory: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Save a project. `name` is an identifier: an existing entry is found by
+/// its `local_key` or its name and keeps its registry name. An identifier
+/// that resolves to nothing creates a new entry named `name`.
 pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid project name".into());
@@ -550,8 +700,9 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
     }
 
     // An existing entry is written where it is and keeps its registry name:
-    // saving never renames (see `rename_project`). The lookup ignores case.
-    let existing = find_registry_entry(name)?;
+    // saving never renames (see `rename_project`). The lookup accepts a
+    // `local_key` and ignores the case of a name.
+    let existing = resolve_registry_entry(name)?;
     let registry_name = existing
         .as_ref()
         .map_or_else(|| name.to_string(), |e| e.name.clone());
@@ -611,7 +762,8 @@ pub fn save_project(name: &str, data: &str) -> Result<(), String> {
 /// `name` field changes, and the file keeps its `local_key` name. The
 /// in-directory config is rewritten with the new name too. Refuses a name
 /// that another entry holds, ignoring case; a case-only rename of the same
-/// entry is allowed.
+/// entry is allowed. `old_name` is an identifier (a `local_key` or a name);
+/// `new_name` is always a name.
 pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
     if !is_valid_name(old_name) {
         return Err("Invalid current project name".into());
@@ -623,7 +775,7 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let entry = find_registry_entry(old_name)?
+    let entry = resolve_registry_entry(old_name)?
         .ok_or_else(|| format!("Project '{}' not found", old_name))?;
     if let Some(other) = find_registry_entry(new_name)? {
         if other.path != entry.path {
@@ -703,11 +855,13 @@ fn same_file(a: &std::path::Path, b: &std::path::Path) -> Result<bool, String> {
     Ok(ca == cb)
 }
 
+/// Delete a project by identifier (a `local_key` or a name). An identifier
+/// that resolves to nothing still clears group references to it.
 pub fn delete_project(name: &str) -> Result<(), String> {
     if !is_valid_name(name) {
         return Err("Invalid project name".into());
     }
-    let entry = find_registry_entry(name)?;
+    let entry = resolve_registry_entry(name)?;
     // Group references use the registry's spelling of the name.
     let name = entry.as_ref().map_or(name, |e| e.name.as_str());
 
@@ -761,7 +915,7 @@ mod test_helpers {
             fs::create_dir_all(projects_dir).map_err(|e| e.to_string())?;
         }
 
-        let registry_path = match find_registry_entry_in(projects_dir, name)? {
+        let registry_path = match resolve_registry_entry_in(projects_dir, name)? {
             Some(entry) => entry.path,
             None => new_registry_path(projects_dir, name, &project.local_key)?,
         };
@@ -780,7 +934,7 @@ mod test_helpers {
         if !is_valid_name(name) {
             return Err("Invalid project name".into());
         }
-        let entry = find_registry_entry_in(projects_dir, name)?
+        let entry = resolve_registry_entry_in(projects_dir, name)?
             .ok_or_else(|| format!("Project '{}' not found", name))?;
         let name = entry.name.as_str();
 
@@ -814,7 +968,7 @@ mod test_helpers {
         if !is_valid_name(name) {
             return Err("Invalid project name".into());
         }
-        if let Some(entry) = find_registry_entry_in(projects_dir, name)? {
+        if let Some(entry) = resolve_registry_entry_in(projects_dir, name)? {
             let registry_path = entry.path;
             if let Ok(raw) = fs::read_to_string(&registry_path) {
                 if let Ok(project) = serde_json::from_str::<Project>(&raw) {
@@ -2425,6 +2579,235 @@ mod tests {
             assert_eq!(live, vec!["no-dir", "with-dir"]);
             scrub_orphan_project_references(&live).expect("scrub");
             assert_eq!(group_members("g"), vec!["with-dir", "no-dir"]);
+        });
+    }
+
+    // ── identifiers (project identity plan, stage 3b step 1) ────────────
+
+    #[test]
+    fn read_save_rename_delete_by_local_key_hit_the_named_entry() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let project = keyed_project("site", &dir);
+            let key = project.local_key.clone();
+            let registry_path = registry_stem_file(&key);
+            save_members("g", &["site"]);
+
+            let by_key = load(&key);
+            assert_eq!(by_key.name, "site", "a read by key returns the name");
+            assert_eq!(by_key.local_key, key);
+
+            let mut edited = by_key;
+            edited.description = "via key".into();
+            save_project(&key, &serde_json::to_string(&edited).unwrap()).expect("save by key");
+            assert_eq!(load("site").description, "via key");
+            assert_eq!(fs::read_dir(get_projects_dir().unwrap()).unwrap().count(), 1);
+            assert_eq!(read_json(&registry_path)["name"], "site", "no key became a name");
+
+            rename_project(&key, "renamed").expect("rename by key");
+            assert_eq!(registry_file("renamed"), registry_path);
+            assert_eq!(group_members("g"), vec!["renamed"], "groups got the name, not the key");
+
+            delete_project(&key).expect("delete by key");
+            assert!(!registry_path.exists());
+            assert!(group_members("g").is_empty());
+        });
+    }
+
+    #[test]
+    fn identifier_helpers_resolve_keys_and_names() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let project = keyed_project("Website", &dir);
+
+            assert_eq!(canonical_project_name(&project.local_key).unwrap(), "Website");
+            assert_eq!(canonical_project_name("website").unwrap(), "Website");
+            assert_eq!(
+                canonical_project_name("nope").unwrap_err(),
+                "Project 'nope' not found",
+                "same text read_project uses"
+            );
+            assert_eq!(resolve_project_name("nope").unwrap(), None);
+            assert_eq!(resolve_project_name("../x").unwrap(), None);
+
+            assert_eq!(project_store_name(&project.local_key).unwrap(), "Website");
+            assert_eq!(project_store_name("website").unwrap(), "Website");
+            assert_eq!(
+                project_store_name("orphan").unwrap(),
+                "orphan",
+                "an unknown identifier passes through unchanged"
+            );
+            assert_eq!(project_store_name("").unwrap(), "");
+        });
+    }
+
+    #[test]
+    fn store_name_passes_through_a_name_two_entries_share() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            write_registry("k1", serde_json::json!({"name": "site", "local_key": "k1"}));
+            write_registry("k2", serde_json::json!({"name": "SITE", "local_key": "k2"}));
+            assert_eq!(project_store_name("site").unwrap(), "site");
+            assert_eq!(project_store_name("k2").unwrap(), "SITE", "a key is still unique");
+            assert!(canonical_project_name("site").is_err());
+        });
+    }
+
+    #[test]
+    fn summaries_list_every_entry_sorted_with_keys() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let keyed = keyed_project("zeta", &dir);
+            save_project("alpha", &minimal_project("alpha")).expect("save");
+            fs::write(get_projects_dir().unwrap().join("broken.json"), "{ nope").unwrap();
+
+            let summaries = get_project_summaries().expect("summaries");
+            assert_eq!(
+                summaries,
+                vec![
+                    ProjectSummary {
+                        local_key: String::new(),
+                        id: String::new(),
+                        name: "alpha".into(),
+                        directory: String::new(),
+                    },
+                    ProjectSummary {
+                        local_key: String::new(),
+                        id: String::new(),
+                        name: "broken".into(),
+                        directory: String::new(),
+                    },
+                    ProjectSummary {
+                        local_key: keyed.local_key.clone(),
+                        id: keyed.id.clone(),
+                        name: "zeta".into(),
+                        directory: dir.to_str().unwrap().to_string(),
+                    },
+                ]
+            );
+            let json = serde_json::to_value(&summaries[2]).unwrap();
+            assert_eq!(
+                json,
+                serde_json::json!({
+                    "local_key": keyed.local_key,
+                    "id": keyed.id,
+                    "name": "zeta",
+                    "directory": dir.to_str().unwrap(),
+                })
+            );
+        });
+    }
+
+    #[test]
+    fn summaries_never_write() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let project = keyed_project("site", &dir);
+            // A pointer and folder files that `read_project` would rewrite:
+            // the pointer lacks `id`, and the config lacks enrichment.
+            let pointer = registry_stem_file(&project.local_key);
+            fs::write(
+                &pointer,
+                serde_json::json!({
+                    "name": "site",
+                    "directory": dir.to_str().unwrap(),
+                    "local_key": project.local_key,
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let snapshot = |path: &std::path::Path| fs::read(path).unwrap();
+            let files = [
+                pointer.clone(),
+                dir.join(CONFIG_FILE_NAME),
+                dir.join(".automatic").join("project.json"),
+            ];
+            let before: Vec<Vec<u8>> = files.iter().map(|f| snapshot(f)).collect();
+
+            let summaries = get_project_summaries().expect("summaries");
+            assert_eq!(summaries[0].id, project.id, "id comes from the folder's config");
+
+            let after: Vec<Vec<u8>> = files.iter().map(|f| snapshot(f)).collect();
+            assert_eq!(before, after, "no file was rewritten");
+        });
+    }
+
+    #[test]
+    fn summaries_follow_the_stage_2_key_precedence() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let project = keyed_project("site", &dir);
+            let pointer = registry_stem_file(&project.local_key);
+            let mut config = read_json(&dir.join(CONFIG_FILE_NAME));
+            let state_path = dir.join(".automatic").join("project.json");
+            let mut state = read_json(&state_path);
+
+            // id: the folder's config beats the registry cache.
+            let mut value = read_json(&pointer);
+            value["id"] = "cached-id".into();
+            fs::write(&pointer, value.to_string()).unwrap();
+            config["id"] = "config-id".into();
+            fs::write(dir.join(CONFIG_FILE_NAME), config.to_string()).unwrap();
+            // local_key: the registry beats the state file.
+            state["local_key"] = "copied-key".into();
+            fs::write(&state_path, state.to_string()).unwrap();
+
+            let summary = &get_project_summaries().expect("summaries")[0];
+            assert_eq!(summary.id, "config-id");
+            assert_eq!(summary.local_key, project.local_key);
+
+            // Without a committed id, the registry's cached id is used.
+            config.as_object_mut().unwrap().remove("id");
+            fs::write(dir.join(CONFIG_FILE_NAME), config.to_string()).unwrap();
+            assert_eq!(get_project_summaries().unwrap()[0].id, "cached-id");
+
+            // Without a pointer key, the state file's key is used.
+            let mut value = read_json(&pointer);
+            value.as_object_mut().unwrap().remove("local_key");
+            let legacy = get_projects_dir().unwrap().join("site.json");
+            fs::write(&legacy, value.to_string()).unwrap();
+            fs::remove_file(&pointer).unwrap();
+            assert_eq!(get_project_summaries().unwrap()[0].local_key, "copied-key");
+        });
+    }
+
+    #[test]
+    fn local_keys_by_name_skips_projects_without_a_key() {
+        use crate::core::paths::with_test_home;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let dir = home.path().join("repo");
+            fs::create_dir_all(&dir).expect("mkdir");
+            let keyed = keyed_project("site", &dir);
+            save_project("plain", &minimal_project("plain")).expect("save");
+
+            let keys = project_local_keys_by_name().expect("keys");
+            assert_eq!(keys.get("site"), Some(&keyed.local_key));
+            assert_eq!(keys.get("plain"), None);
+            assert_eq!(keys.len(), 1);
         });
     }
 }

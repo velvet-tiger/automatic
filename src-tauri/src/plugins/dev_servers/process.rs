@@ -229,6 +229,7 @@ fn status_from_config(project: &str, config: &ServerConfig) -> DevServerStatus {
     DevServerStatus {
         id: config.id.clone(),
         project: project.to_string(),
+        local_key: None,
         name: config.name.clone(),
         package_manager: config.package_manager,
         script: config.script.clone(),
@@ -252,6 +253,7 @@ fn status_from_running(id: &str, running: &mut RunningServer) -> DevServerStatus
     DevServerStatus {
         id: id.to_string(),
         project: running.project.clone(),
+        local_key: None,
         name: running.config.name.clone(),
         package_manager: running.config.package_manager,
         script: running.config.script.clone(),

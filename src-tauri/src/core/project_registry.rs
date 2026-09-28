@@ -23,6 +23,15 @@
 //!
 //! Cost: every lookup reads and parses every registry file. Entries are
 //! small and a user has tens of projects, not thousands.
+//!
+//! **Identifiers (stage 3b, step 1).** Commands accept a project
+//! *identifier*: a `local_key` or a name. [`resolve_entry_index`] tries the
+//! `local_key` first, as an exact match against each entry's pointer field
+//! (a keyed entry's stem is its `local_key`, and a legacy entry may already
+//! carry one). Only then does it fall back to the case-insensitive name
+//! lookup. A string that is one project's `local_key` and another project's
+//! name therefore resolves to the key's project. Keys are UUID v4 strings,
+//! so this does not collide with human-chosen names in practice.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -42,6 +51,25 @@ pub(crate) struct RegistryEntry {
 }
 
 impl RegistryEntry {
+    /// The `local_key` the entry's file carries, if any. `None` for an
+    /// entry that could not be parsed or has no key yet.
+    pub fn local_key(&self) -> Option<&str> {
+        self.string_field("local_key")
+    }
+
+    /// The `id` cached in the entry's file, if any.
+    pub fn cached_id(&self) -> Option<&str> {
+        self.string_field("id")
+    }
+
+    fn string_field(&self, key: &str) -> Option<&str> {
+        self.contents
+            .as_ref()
+            .ok()
+            .and_then(|v| string_field(v, key))
+            .filter(|s| !s.is_empty())
+    }
+
     /// The entry's `directory`, or `None` when it has none. An entry that
     /// could not be parsed is an error, so a caller cannot mistake a damaged
     /// entry for one without a directory.
@@ -163,6 +191,54 @@ pub(crate) fn find_entry_index(entries: &[RegistryEntry], name: &str) -> Result<
             ))
         }
     }
+}
+
+/// Index of the entry that `ident` identifies: the entry whose `local_key`
+/// equals `ident` exactly, else the entry named `ident` (ignoring case). See
+/// the module docs for why a key match wins. Two entries carrying the same
+/// `local_key`, or two entries with the name, are an error naming each file.
+/// Does no I/O.
+pub(crate) fn resolve_entry_index(
+    entries: &[RegistryEntry],
+    ident: &str,
+) -> Result<Option<usize>, String> {
+    let key_matches: Vec<usize> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.local_key() == Some(ident))
+        .map(|(i, _)| i)
+        .collect();
+    match key_matches.as_slice() {
+        [] => find_entry_index(entries, ident),
+        [only] => Ok(Some(*only)),
+        many => {
+            let files: Vec<String> = many
+                .iter()
+                .map(|&i| entries[i].path.display().to_string())
+                .collect();
+            Err(format!(
+                "More than one registry file carries the local key '{}': {}",
+                ident,
+                files.join(", ")
+            ))
+        }
+    }
+}
+
+/// The registry entry that `ident` (a `local_key` or a name) identifies in
+/// `projects_dir`, if any.
+pub(crate) fn resolve_registry_entry_in(
+    projects_dir: &Path,
+    ident: &str,
+) -> Result<Option<RegistryEntry>, String> {
+    let mut entries = scan_registry_in(projects_dir)?;
+    Ok(resolve_entry_index(&entries, ident)?.map(|i| entries.swap_remove(i)))
+}
+
+/// The registry entry that `ident` (a `local_key` or a name) identifies in
+/// the user's projects directory, if any.
+pub(crate) fn resolve_registry_entry(ident: &str) -> Result<Option<RegistryEntry>, String> {
+    resolve_registry_entry_in(&get_projects_dir()?, ident)
 }
 
 /// The registry entry named `name` in `projects_dir`, if any.
@@ -301,6 +377,62 @@ mod tests {
             vec!["SITE", "site"],
             "listing still shows both"
         );
+    }
+
+    #[test]
+    fn resolve_matches_a_local_key_exactly() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "k1.json", &json!({"name": "site", "local_key": "k1"}));
+        let entry = resolve_registry_entry_in(tmp.path(), "k1").unwrap().expect("key match");
+        assert_eq!(entry.name, "site");
+        assert!(
+            resolve_registry_entry_in(tmp.path(), "K1").unwrap().is_none(),
+            "keys compare exactly"
+        );
+    }
+
+    #[test]
+    fn resolve_matches_a_legacy_pointer_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "legacy.json", &json!({"name": "legacy", "local_key": "k9"}));
+        let entry = resolve_registry_entry_in(tmp.path(), "k9").unwrap().expect("pointer key");
+        assert_eq!(entry.name, "legacy");
+        assert!(!entry.keyed);
+    }
+
+    #[test]
+    fn resolve_falls_back_to_a_case_insensitive_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "k1.json", &json!({"name": "Website", "local_key": "k1"}));
+        let entry = resolve_registry_entry_in(tmp.path(), "website").unwrap().expect("name");
+        assert_eq!(entry.name, "Website");
+    }
+
+    #[test]
+    fn resolve_prefers_a_key_over_a_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "k1.json", &json!({"name": "first", "local_key": "k1"}));
+        write(tmp.path(), "k2.json", &json!({"name": "k1", "local_key": "k2"}));
+        let entry = resolve_registry_entry_in(tmp.path(), "k1").unwrap().expect("match");
+        assert_eq!(entry.name, "first", "the key wins over the other project's name");
+        assert_eq!(entry.path, tmp.path().join("k1.json"));
+    }
+
+    #[test]
+    fn resolve_of_an_unknown_identifier_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "k1.json", &json!({"name": "site", "local_key": "k1"}));
+        assert!(resolve_registry_entry_in(tmp.path(), "nope").unwrap().is_none());
+        assert!(resolve_registry_entry_in(tmp.path(), "").unwrap().is_none());
+    }
+
+    #[test]
+    fn resolve_refuses_a_key_carried_by_two_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "k1.json", &json!({"name": "a", "local_key": "k1"}));
+        write(tmp.path(), "b.json", &json!({"name": "b", "local_key": "k1"}));
+        let err = resolve_registry_entry_in(tmp.path(), "k1").unwrap_err();
+        assert!(err.contains("k1.json") && err.contains("b.json"), "{err}");
     }
 
     #[test]

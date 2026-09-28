@@ -35,10 +35,14 @@ pub fn list_agents_with_projects() -> Result<String, String> {
                 .iter()
                 .filter(|p| p.agents.iter().any(|id| id == a.id()))
                 .map(|p| {
-                    serde_json::json!({
+                    let mut row = serde_json::json!({
                         "name": p.name,
                         "directory": p.directory,
-                    })
+                    });
+                    if let Some(key) = core::local_key_of(p) {
+                        row["local_key"] = serde_json::Value::String(key);
+                    }
+                    row
                 })
                 .collect();
 

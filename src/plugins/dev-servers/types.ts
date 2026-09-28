@@ -18,6 +18,8 @@ export interface ServerConfig {
 export interface DevServerStatus {
   id: string;
   project: string;
+  /** The project's `local_key`, when it is registered and has one. */
+  local_key?: string;
   name: string;
   package_manager: PackageManager;
   script: string;

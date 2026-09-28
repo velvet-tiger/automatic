@@ -72,6 +72,8 @@ export interface SourceListing {
 export interface ContextReferences {
   projects: string[];
   groups: string[];
+  /** `local_key` of each name in `projects` that has one, keyed by name. */
+  project_local_keys?: Record<string, string>;
 }
 
 /** Matches `core::ContextTarget` (`{"type": "project", "name": "..."}`). */

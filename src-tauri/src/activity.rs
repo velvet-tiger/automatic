@@ -25,6 +25,11 @@ use std::path::PathBuf;
 pub struct ActivityEntry {
     pub id: i64,
     pub project: String,
+    /// The `local_key` of the project named by `project`. Not stored: the
+    /// commands fill it from the registry. `None` for a project that is no
+    /// longer registered or has no key yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_key: Option<String>,
     pub event: String,
     pub label: String,
     pub detail: String,
@@ -203,6 +208,7 @@ pub fn get_project_activity(project: &str, limit: usize) -> Result<Vec<ActivityE
         .query_map(params![project, limit as i64], |row| {
             Ok(ActivityEntry {
                 id: row.get(0)?,
+                local_key: None,
                 project: row.get(1)?,
                 event: row.get(2)?,
                 label: row.get(3)?,
@@ -241,6 +247,7 @@ pub fn get_project_activity_paged(
         .query_map(params![project, limit as i64, offset as i64], |row| {
             Ok(ActivityEntry {
                 id: row.get(0)?,
+                local_key: None,
                 project: row.get(1)?,
                 event: row.get(2)?,
                 label: row.get(3)?,
@@ -287,6 +294,7 @@ pub fn get_all_activity(limit: usize) -> Result<Vec<ActivityEntry>, String> {
         .query_map(params![limit as i64], |row| {
             Ok(ActivityEntry {
                 id: row.get(0)?,
+                local_key: None,
                 project: row.get(1)?,
                 event: row.get(2)?,
                 label: row.get(3)?,
@@ -342,6 +350,7 @@ fn read_from(conn: &Connection, project: &str, limit: usize) -> Result<Vec<Activ
         .query_map(params![project, limit as i64], |row| {
             Ok(ActivityEntry {
                 id: row.get(0)?,
+                local_key: None,
                 project: row.get(1)?,
                 event: row.get(2)?,
                 label: row.get(3)?,

@@ -56,6 +56,7 @@ pub fn get_projects_referencing_profile(
             referencing.push(core::ProjectRef {
                 name: project_name.to_string(),
                 directory: project.directory.clone(),
+                local_key: core::local_key_of(project),
             });
         }
     });
@@ -65,6 +66,7 @@ pub fn get_projects_referencing_profile(
 
 #[tauri::command]
 pub fn attach_profile_to_project(project_name: &str, profile_name: &str) -> Result<(), String> {
+    let project_name = &crate::core::canonical_project_name(project_name)?;
     core::read_project_profile_parsed(profile_name)?;
 
     let raw = core::read_project(project_name)?;
@@ -86,6 +88,7 @@ pub fn attach_profile_to_project(project_name: &str, profile_name: &str) -> Resu
 
 #[tauri::command]
 pub fn detach_profile_from_project(project_name: &str, profile_name: &str) -> Result<(), String> {
+    let project_name = &crate::core::canonical_project_name(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;

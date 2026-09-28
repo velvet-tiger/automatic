@@ -7,6 +7,7 @@ use crate::core;
 /// Each entry: { filename, agents: ["Claude Code", ...] }
 #[tauri::command]
 pub fn get_project_file_info(name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -77,6 +78,7 @@ pub fn get_project_file_info(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn read_project_file(name: &str, filename: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -124,6 +126,7 @@ pub fn read_project_file(name: &str, filename: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_project_file(name: &str, filename: &str, content: &str) -> Result<(), String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -147,6 +150,7 @@ pub fn save_project_file(name: &str, filename: &str, content: &str) -> Result<()
 /// resolution UI.
 #[tauri::command]
 pub fn adopt_instruction_file(name: &str, filename: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -173,6 +177,7 @@ pub fn adopt_instruction_file(name: &str, filename: &str) -> Result<String, Stri
 /// conflict resolution UI.
 #[tauri::command]
 pub fn overwrite_instruction_file(name: &str, filename: &str) -> Result<(), String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -229,6 +234,7 @@ pub struct UnifiedInspection {
 /// another's via the next save.
 #[tauri::command]
 pub fn inspect_unified_candidates(name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -314,6 +320,7 @@ pub fn inspect_unified_candidates(name: &str) -> Result<String, String> {
 /// projects with no instruction-capable agents without forcing a picker.
 #[tauri::command]
 pub fn switch_to_unified_mode(name: &str, source_filename: &str) -> Result<(), String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -359,6 +366,7 @@ pub fn switch_to_unified_mode(name: &str, source_filename: &str) -> Result<(), S
 /// prompt notes that the file will be shared across all configured agents.
 #[tauri::command]
 pub async fn ai_generate_instruction(name: &str, filename: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -466,6 +474,7 @@ pub async fn ai_update_instruction(
     filename: &str,
     current_content: &str,
 ) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -547,6 +556,7 @@ pub async fn ai_update_instruction(
 /// can treat it as a new note without an extra existence check).
 #[tauri::command]
 pub fn read_doc_note(name: &str, note_name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -572,6 +582,7 @@ pub fn read_doc_note(name: &str, note_name: &str) -> Result<String, String> {
 /// Creates the `.automatic/docs/` directory if it does not exist.
 #[tauri::command]
 pub fn save_doc_note(name: &str, note_name: &str, content: &str) -> Result<(), String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -596,6 +607,7 @@ pub fn save_doc_note(name: &str, note_name: &str, content: &str) -> Result<(), S
 /// Returns `Ok(())` if the file did not exist (idempotent).
 #[tauri::command]
 pub fn delete_doc_note(name: &str, note_name: &str) -> Result<(), String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -621,6 +633,7 @@ pub fn delete_doc_note(name: &str, note_name: &str) -> Result<(), String> {
 /// Serialised as a JSON array of [`InstructionFileConflict`] objects.
 #[tauri::command]
 pub fn get_instruction_file_conflicts(name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;

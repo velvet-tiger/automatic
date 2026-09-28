@@ -318,9 +318,22 @@ export interface ProjectProfile {
 /** Per kind, resource name → the profile that provides it. */
 export type ProfileLockMap = Record<ProfileResourceKind, Record<string, string>>;
 
+/** One registered project, as returned by `get_project_summaries`. */
+export interface ProjectSummary {
+  /** Identity of this checkout. Empty until the startup backfill mints it. */
+  local_key: string;
+  /** Permanent project identity. Empty until the startup backfill mints it. */
+  id: string;
+  name: string;
+  /** Empty for a project with no folder yet. */
+  directory: string;
+}
+
 export interface ActivityEntry {
   id: number;
   project: string;
+  /** The project's `local_key`, when it is registered and has one. */
+  local_key?: string;
   event: string;
   label: string;
   detail: string;
@@ -330,6 +343,8 @@ export interface ActivityEntry {
 export interface ProjectRecommendation {
   id: number;
   project: string;
+  /** The project's `local_key`, when it is registered and has one. */
+  local_key?: string;
   kind: string;
   title: string;
   body: string;

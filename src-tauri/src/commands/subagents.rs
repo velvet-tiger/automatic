@@ -82,6 +82,7 @@ pub fn get_projects_referencing_subagent(
             if has_agent {
                 referencing.push(core::ProjectRef {
                     name: project_name,
+                    local_key: core::local_key_of(&project),
                     directory: project.directory,
                 });
             }

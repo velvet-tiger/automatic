@@ -620,6 +620,10 @@ impl ProfileContribution {
 pub struct ProjectRef {
     pub name: String,
     pub directory: String,
+    /// The project's `local_key`, so a list can address it by key. `None`
+    /// while the project has no key yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_key: Option<String>,
 }
 
 #[cfg(test)]

@@ -8,8 +8,14 @@ use crate::sync;
 pub fn dispatch(action: ProjectsAction, opts: OutputOptions) -> Result<(), CliError> {
     match action {
         ProjectsAction::List => list(opts),
-        ProjectsAction::Show { name } => show(&name, opts),
-        ProjectsAction::Sync { name } => sync_project(&name, opts),
+        // `name` may be a project name or a `local_key`; the handlers work
+        // with the canonical name from here on.
+        ProjectsAction::Show { name } => {
+            show(&core::canonical_project_name(&name).map_err(CliError::from)?, opts)
+        }
+        ProjectsAction::Sync { name } => {
+            sync_project(&core::canonical_project_name(&name).map_err(CliError::from)?, opts)
+        }
     }
 }
 

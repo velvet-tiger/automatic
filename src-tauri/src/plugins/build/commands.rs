@@ -8,6 +8,7 @@ pub fn list_features(
     state: Option<&str>,
     include_archived: Option<bool>,
 ) -> Result<Vec<Feature>, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::list_features(
         project,
         state,
@@ -17,6 +18,7 @@ pub fn list_features(
 
 #[tauri::command]
 pub fn get_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::get_feature(project, feature_id)
 }
 
@@ -25,6 +27,7 @@ pub fn get_feature_with_updates(
     project: &str,
     feature_id: &str,
 ) -> Result<FeatureWithUpdates, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::get_feature_with_updates(project, feature_id)
 }
 
@@ -41,6 +44,7 @@ pub fn create_feature(
     created_by: Option<&str>,
     state: Option<&str>,
 ) -> Result<Feature, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::create_feature(
         project,
         title,
@@ -61,11 +65,13 @@ pub fn update_feature(
     feature_id: &str,
     patch: FeaturePatch,
 ) -> Result<Feature, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::update_feature(project, feature_id, patch)
 }
 
 #[tauri::command]
 pub fn set_feature_state(project: &str, feature_id: &str, state: &str) -> Result<Feature, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::set_feature_state(project, feature_id, state)
 }
 
@@ -76,21 +82,25 @@ pub fn move_feature(
     new_state: &str,
     new_position: i64,
 ) -> Result<(), String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::move_feature(project, feature_id, new_state, new_position)
 }
 
 #[tauri::command]
 pub fn delete_feature(project: &str, feature_id: &str) -> Result<(), String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::delete_feature(project, feature_id)
 }
 
 #[tauri::command]
 pub fn archive_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::archive_feature(project, feature_id)
 }
 
 #[tauri::command]
 pub fn unarchive_feature(project: &str, feature_id: &str) -> Result<Feature, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::unarchive_feature(project, feature_id)
 }
 
@@ -101,10 +111,12 @@ pub fn add_feature_update(
     content: &str,
     author: Option<&str>,
 ) -> Result<FeatureUpdate, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::add_feature_update(project, feature_id, content, author)
 }
 
 #[tauri::command]
 pub fn get_feature_updates(project: &str, feature_id: &str) -> Result<Vec<FeatureUpdate>, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::plugins::build::features::get_feature_updates(project, feature_id)
 }

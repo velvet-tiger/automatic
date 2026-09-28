@@ -565,10 +565,7 @@ fn persist_project(project_name: &str, project: &crate::core::Project) -> Result
 /// Resolve the `project` / `group` pair of a context attach or detach call.
 fn context_target(params: &AttachContextParams) -> Result<crate::core::ContextTarget, String> {
     match (&params.project, &params.group) {
-        (Some(project), None) => {
-            validate_project(project)?;
-            Ok(crate::core::ContextTarget::Project(project.clone()))
-        }
+        (Some(project), None) => Ok(crate::core::ContextTarget::Project(validate_project(project)?)),
         (None, Some(group)) => {
             if !crate::core::list_groups()?.iter().any(|g| g == group) {
                 return Err(format!(
@@ -597,21 +594,26 @@ fn tool_error(message: String) -> CallToolResult {
     CallToolResult::error(vec![Content::text(message)])
 }
 
-/// Verify that `project` is a registered project name.
-/// Returns `Ok(())` on success, or an `Err` with a helpful message listing
-/// the valid project names so the agent can self-correct immediately.
 /// Validate the project for a feature tool call. Feature tracking needs the
 /// Build tool on the project, so this adds that check to `validate_project`.
-fn validate_feature_project(project: &str) -> Result<(), String> {
-    validate_project(project)?;
-    crate::plugins::build::require_feature_tracking(project)
+/// Returns the canonical project name, as `validate_project` does.
+fn validate_feature_project(project: &str) -> Result<String, String> {
+    let name = validate_project(project)?;
+    crate::plugins::build::require_feature_tracking(&name)?;
+    Ok(name)
 }
 
-fn validate_project(project: &str) -> Result<(), String> {
-    let known = crate::core::list_projects().unwrap_or_default();
-    if known.iter().any(|p| p == project) {
-        Ok(())
+/// Resolve a tool's `project` argument, which may be a `local_key` or a
+/// project name (see `core::resolve_project_name`), to the canonical project
+/// name. Tools must use the returned name from here on: memory, features,
+/// groups and the other stores are keyed by name, so a key must never reach
+/// them. An unknown project is an `Err` listing the valid project names so
+/// the agent can self-correct immediately.
+fn validate_project(project: &str) -> Result<String, String> {
+    if let Some(name) = crate::core::resolve_project_name(project)? {
+        Ok(name)
     } else {
+        let known = crate::core::list_projects().unwrap_or_default();
         let list = if known.is_empty() {
             "no projects registered yet".to_string()
         } else {
@@ -1018,9 +1020,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<GetRelatedProjectsParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
 
         // Load the requesting project to get its directory for relative-path computation.
         let this_dir = match crate::core::read_project(&params.0.project) {
@@ -1273,9 +1279,12 @@ impl AutomaticMcpServer {
         let project_name = &params.0.project;
         let machine_name = &params.0.machine_name;
 
-        if let Err(e) = validate_project(project_name) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let project_name = &match validate_project(project_name) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         if crate::core::read_rule(machine_name).is_err() {
             return Ok(CallToolResult::error(vec![Content::text(format!(
                 "Rule '{}' does not exist in the library. Call \
@@ -1356,9 +1365,12 @@ impl AutomaticMcpServer {
         let project_name = &params.0.project;
         let machine_name = &params.0.machine_name;
 
-        if let Err(e) = validate_project(project_name) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let project_name = &match validate_project(project_name) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         if crate::core::is_mandatory_rule(machine_name) {
             return Ok(CallToolResult::error(vec![Content::text(format!(
                 "Cannot detach rule '{}' — it is required by Automatic and \
@@ -1671,9 +1683,12 @@ impl AutomaticMcpServer {
         let project_name = &params.0.project;
         let machine_name = &params.0.machine_name;
 
-        if let Err(e) = validate_project(project_name) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let project_name = &match validate_project(project_name) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         if crate::core::read_hook(machine_name).is_err() {
             return Ok(CallToolResult::error(vec![Content::text(format!(
                 "Hook '{}' does not exist in the library. Call \
@@ -1745,9 +1760,12 @@ impl AutomaticMcpServer {
         let project_name = &params.0.project;
         let machine_name = &params.0.machine_name;
 
-        if let Err(e) = validate_project(project_name) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let project_name = &match validate_project(project_name) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
 
         let project_json = match crate::core::read_project(project_name) {
             Ok(j) => j,
@@ -1872,9 +1890,12 @@ impl AutomaticMcpServer {
         let project_name = &params.0.project;
         let profile_name = &params.0.profile;
 
-        if let Err(e) = validate_project(project_name) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let project_name = &match validate_project(project_name) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         if crate::core::read_project_profile_parsed(profile_name).is_err() {
             return Ok(CallToolResult::error(vec![Content::text(format!(
                 "Profile '{}' does not exist in the library. Call \
@@ -1922,9 +1943,12 @@ impl AutomaticMcpServer {
         let project_name = &params.0.project;
         let profile_name = &params.0.profile;
 
-        if let Err(e) = validate_project(project_name) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let project_name = &match validate_project(project_name) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
 
         let mut project = match load_project(project_name) {
             Ok(p) => p,
@@ -1971,10 +1995,11 @@ impl AutomaticMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let slugs = match &params.0.project {
             Some(project) => {
-                if let Err(e) = validate_project(project) {
-                    return Ok(tool_error(e));
-                }
-                match load_project(project) {
+                let project = match validate_project(project) {
+                    Ok(name) => name,
+                    Err(e) => return Ok(tool_error(e)),
+                };
+                match load_project(&project) {
                     Ok(p) => crate::core::project_context_entries(&p),
                     Err(e) => return Ok(tool_error(e)),
                 }
@@ -2447,9 +2472,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<StoreMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::memory::store_memory(
             &params.0.project,
             &params.0.key,
@@ -2472,9 +2501,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<GetMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::memory::get_memory(&params.0.project, &params.0.key) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -2492,9 +2525,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ListMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::memory::list_memories(&params.0.project, params.0.pattern.as_deref()) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -2512,9 +2549,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<SearchMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::memory::search_memories(&params.0.project, &params.0.query) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -2532,9 +2573,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<DeleteMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::memory::delete_memory(&params.0.project, &params.0.key) {
             Ok(result) => Ok(CallToolResult::success(vec![Content::text(result)])),
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -2552,9 +2597,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ClearMemoriesParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::memory::clear_memories(
             &params.0.project,
             params.0.pattern.as_deref(),
@@ -2581,9 +2630,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ReadClaudeMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
 
         // Look up the project's directory
         let project_json = match crate::core::read_project(&params.0.project) {
@@ -2653,9 +2706,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ListFeaturesParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_feature_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_feature_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         let include_archived = params.0.include_archived.unwrap_or(false);
         match crate::features::list_features(
             &params.0.project,
@@ -2685,9 +2742,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<GetFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_feature_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_feature_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::features::get_feature_with_updates(&params.0.project, &params.0.feature_id) {
             Ok(fw) => {
                 let output = crate::features::format_feature_detail_markdown(&fw);
@@ -2708,9 +2769,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<CreateFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_feature_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_feature_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         let p = params.0;
         match crate::features::create_feature(
             &p.project,
@@ -2746,9 +2811,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<UpdateFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_feature_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_feature_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         let p = params.0;
         let patch = crate::features::FeaturePatch {
             title: p.title,
@@ -2787,9 +2856,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<SetFeatureStateParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_feature_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_feature_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::features::set_feature_state(
             &params.0.project,
             &params.0.feature_id,
@@ -2817,9 +2890,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<DeleteFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_feature_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_feature_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::features::delete_feature(&params.0.project, &params.0.feature_id) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Feature '{}' deleted from project '{}'.",
@@ -2840,9 +2917,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<ArchiveFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_feature_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_feature_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::features::archive_feature(&params.0.project, &params.0.feature_id) {
             Ok(feature) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Feature '{}' archived. State '{}' is preserved for later restoration.",
@@ -2863,9 +2944,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<UnarchiveFeatureParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_feature_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_feature_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::features::unarchive_feature(&params.0.project, &params.0.feature_id) {
             Ok(feature) => Ok(CallToolResult::success(vec![Content::text(format!(
                 "Feature '{}' unarchived and restored to state '{}'.",
@@ -2886,9 +2971,13 @@ impl AutomaticMcpServer {
         &self,
         params: Parameters<AddFeatureUpdateParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(e) = validate_feature_project(&params.0.project) {
-            return Ok(CallToolResult::error(vec![Content::text(e)]));
-        }
+        let mut params = params;
+        params.0.project = match validate_feature_project(&params.0.project) {
+            Ok(name) => name,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(e)]));
+            }
+        };
         match crate::features::add_feature_update(
             &params.0.project,
             &params.0.feature_id,
@@ -2976,10 +3065,65 @@ mod tests {
                 .expect("parse")
                 .local_key;
 
-            validate_project("legacy").expect("the name is still valid");
+            assert_eq!(validate_project("legacy").expect("the name is still valid"), "legacy");
+            assert_eq!(
+                validate_project(&local_key).expect("a local_key is accepted"),
+                "legacy",
+                "a key resolves to the canonical name"
+            );
+        });
+    }
+
+    #[test]
+    fn validate_project_returns_the_canonical_name_or_lists_names() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project = crate::core::Project {
+                name: "Website".into(),
+                local_key: "5b1f0c7e-0000-4000-8000-000000000001".into(),
+                ..Default::default()
+            };
+            crate::core::save_project("Website", &serde_json::to_string(&project).unwrap())
+                .expect("save");
+
+            assert_eq!(validate_project("website").unwrap(), "Website");
+            assert_eq!(
+                validate_project("5b1f0c7e-0000-4000-8000-000000000001").unwrap(),
+                "Website"
+            );
+            let err = validate_project("nope").unwrap_err();
+            assert!(err.contains("Valid project names are: Website"), "{err}");
+        });
+    }
+
+    #[test]
+    fn memory_tool_given_a_local_key_stores_under_the_name() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let key = "5b1f0c7e-0000-4000-8000-000000000002";
+            let project = crate::core::Project {
+                name: "site".into(),
+                local_key: key.into(),
+                ..Default::default()
+            };
+            crate::core::save_project("site", &serde_json::to_string(&project).unwrap())
+                .expect("save");
+
+            let server = AutomaticMcpServer::new();
+            let result = tauri::async_runtime::block_on(server.store_memory(Parameters(
+                StoreMemoryParams {
+                    project: key.into(),
+                    key: "k".into(),
+                    value: "v".into(),
+                    source: None,
+                },
+            )))
+            .expect("tool call");
+            assert_ne!(result.is_error, Some(true), "{:?}", result.content);
+            assert!(crate::memory::get_memory("site", "k").unwrap().contains('v'));
             assert!(
-                validate_project(&local_key).is_err(),
-                "the key is not a project name"
+                crate::memory::get_all_memories(key).unwrap().is_empty(),
+                "nothing is stored under the key"
             );
         });
     }

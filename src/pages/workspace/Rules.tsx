@@ -37,6 +37,8 @@ interface Rule {
 
 interface RuleProjectStatus {
   name: string;
+  /** The project's `local_key`, when it is registered and has one. */
+  local_key?: string;
   synced: boolean;
 }
 

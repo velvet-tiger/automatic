@@ -12,6 +12,14 @@ pub fn get_projects() -> Result<Vec<String>, String> {
     core::list_projects()
 }
 
+/// Every registered project as `{local_key, id, name, directory}`, sorted by
+/// name. Reads only; unlike `read_project` it never writes project files.
+#[tauri::command]
+pub fn get_project_summaries() -> Result<Vec<core::ProjectSummary>, String> {
+    core::get_project_summaries()
+}
+
+/// Read a project by identifier: its `local_key` or its name.
 #[tauri::command]
 pub fn read_project(name: &str) -> Result<String, String> {
     core::read_project(name)
@@ -36,6 +44,7 @@ struct RebuildPreview {
 
 #[tauri::command]
 pub fn preview_rebuild_project(name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -102,6 +111,7 @@ pub fn preview_rebuild_project(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -111,6 +121,8 @@ pub fn autodetect_project_dependencies(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<(), String> {
+    // An identifier that resolves to nothing is the name of a new project.
+    let name = &core::resolve_project_name(name)?.unwrap_or_else(|| name.to_string());
     let mut incoming: core::Project =
         serde_json::from_str(data).map_err(|e| format!("Invalid project data: {}", e))?;
 
@@ -393,6 +405,7 @@ pub fn delete_project_config(directory: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
+    let old_name = &crate::core::canonical_project_name(old_name)?;
     core::rename_project(old_name, new_name)?;
 
     // Keep the dev-servers plugin's registry file and running processes
@@ -443,6 +456,8 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn delete_project(name: &str) -> Result<(), String> {
+    // Deleting an unknown project still clears what it left behind, as before.
+    let name = &core::resolve_project_name(name)?.unwrap_or_else(|| name.to_string());
     core::delete_project(name)?;
 
     // Drop the dev-servers plugin's per-project registry file so no
@@ -464,6 +479,7 @@ pub fn delete_project(name: &str) -> Result<(), String> {
 /// Returns an empty object when the file does not exist yet.
 #[tauri::command]
 pub fn get_project_docs(name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -475,6 +491,7 @@ pub fn get_project_docs(name: &str) -> Result<String, String> {
 /// Returns an empty string when the file does not exist yet.
 #[tauri::command]
 pub fn read_project_docs_raw(name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -495,6 +512,7 @@ pub fn read_project_docs_raw(name: &str) -> Result<String, String> {
 /// directory if it does not exist.
 #[tauri::command]
 pub fn save_project_docs_raw(name: &str, content: &str) -> Result<(), String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -508,6 +526,7 @@ pub fn save_project_docs_raw(name: &str, content: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn sync_project(name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -530,6 +549,7 @@ pub fn sync_project(name: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn rebuild_project(name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -629,6 +649,7 @@ fn custom_skill_names(project: &core::Project) -> Vec<String> {
 /// [`crate::agent::RemovalEntry`]; Keep's preview is always empty.
 #[tauri::command]
 pub fn get_agent_cleanup_preview(name: &str, agent_id: &str, mode: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let mode: crate::agent::RemovalMode = mode.parse()?;
     let raw = core::read_project(name)?;
     let project: core::Project =
@@ -643,6 +664,7 @@ pub fn get_agent_cleanup_preview(name: &str, agent_id: &str, mode: &str) -> Resu
 /// [`crate::agent::RemovalEntry`] describing what changed.
 #[tauri::command]
 pub fn remove_agent_from_project(name: &str, agent_id: &str, mode: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let mode: crate::agent::RemovalMode = mode.parse()?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
@@ -657,6 +679,7 @@ pub fn remove_agent_from_project(name: &str, agent_id: &str, mode: &str) -> Resu
 /// agents and files are out of sync.  This is a read-only operation.
 #[tauri::command]
 pub fn check_project_drift(name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -672,6 +695,7 @@ pub fn check_project_drift(name: &str) -> Result<String, String> {
 /// This is a read-only operation.
 #[tauri::command]
 pub fn check_project_problems(name: &str) -> Result<String, String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -690,6 +714,7 @@ pub fn check_project_problems(name: &str) -> Result<String, String> {
 /// for a stale skill directory.
 #[tauri::command]
 pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -728,6 +753,7 @@ pub fn adopt_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
 /// for a stale skill directory.
 #[tauri::command]
 pub fn remove_stale_skill(name: &str, skill_name: &str) -> Result<(), String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -816,6 +842,7 @@ fn strip_instructions_header(content: &str) -> String {
 /// Favours the on-disk file over Automatic's stored copy.
 #[tauri::command]
 pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -942,6 +969,7 @@ pub fn adopt_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<()
 /// re-sync so agent copies/symlinks match.
 #[tauri::command]
 pub fn overwrite_custom_asset(name: &str, kind: &str, asset_name: &str) -> Result<(), String> {
+    let name = &crate::core::canonical_project_name(name)?;
     let raw = core::read_project(name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -1878,6 +1906,161 @@ fn detach_profile_from_projects_removes_provided_entries() {
             let raw = core::read_project("alpha").expect("read");
             let loaded: core::Project = serde_json::from_str(&raw).expect("parse");
             assert_eq!(loaded.skills, vec!["new".to_string()]);
+        });
+    }
+}
+
+/// Commands accept a `local_key` or a name, and name-keyed stores always
+/// receive the name (project identity plan, stage 3b step 1).
+#[cfg(test)]
+mod identifier_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    /// Run `test` with a private Automatic home and one registered project,
+    /// `site`, that has no folder. Passes the project's `local_key`.
+    fn with_site(test: impl FnOnce(&str)) {
+        let home = tempdir().expect("temp home");
+        crate::core::with_test_home(home.path().to_path_buf(), || {
+            let mut project = core::Project {
+                name: "site".into(),
+                ..Default::default()
+            };
+            core::fill_missing_project_keys(&mut project);
+            core::save_project("site", &serde_json::to_string(&project).unwrap())
+                .expect("save project");
+            test(&project.local_key);
+        });
+    }
+
+    fn activity_projects() -> Vec<String> {
+        let entries = crate::activity::get_all_activity(100).expect("activity");
+        entries.into_iter().map(|e| e.project).collect()
+    }
+
+    #[test]
+    fn projects_command_given_a_key_logs_activity_under_the_name() {
+        with_site(|key| {
+            adopt_stale_skill(key, "my-skill").expect("adopt by key");
+
+            let project: core::Project =
+                serde_json::from_str(&core::read_project("site").unwrap()).unwrap();
+            assert_eq!(project.skills, vec!["my-skill".to_string()]);
+            assert_eq!(activity_projects(), vec!["site".to_string()]);
+
+            // The activity command takes the key too, and tags the rows.
+            let raw = super::super::activity::get_project_activity(key, 0).expect("by key");
+            let rows: Vec<crate::activity::ActivityEntry> = serde_json::from_str(&raw).unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].project, "site");
+            assert_eq!(rows[0].local_key.as_deref(), Some(key));
+        });
+    }
+
+    #[test]
+    fn activity_rows_for_an_orphan_carry_no_key() {
+        with_site(|_| {
+            crate::activity::log("ghost", crate::activity::ActivityEvent::ProjectUpdated, "x", "");
+            let raw = super::super::activity::get_all_activity(0).expect("all");
+            let rows: Vec<crate::activity::ActivityEntry> = serde_json::from_str(&raw).unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].local_key, None);
+            assert!(!raw.contains("local_key"), "None is not serialised");
+        });
+    }
+
+    #[test]
+    fn memory_command_given_a_key_stores_under_the_name() {
+        with_site(|key| {
+            super::super::memory::store_memory(key, "k", "v", None).expect("store by key");
+            assert!(crate::memory::get_all_memories("site").unwrap().contains_key("k"));
+            assert!(crate::memory::get_all_memories(key).unwrap().is_empty());
+            let db = super::super::memory::get_project_memories(key).expect("read by key");
+            assert!(db.contains_key("k"));
+        });
+    }
+
+    #[test]
+    fn memory_command_with_an_unknown_identifier_behaves_as_before() {
+        with_site(|_| {
+            super::super::memory::store_memory("orphan", "k", "v", None).expect("store");
+            assert!(crate::memory::get_all_memories("orphan").unwrap().contains_key("k"));
+            assert!(crate::memory::get_all_memories("site").unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn feature_command_given_a_key_creates_under_the_name() {
+        with_site(|key| {
+            let feature = crate::plugins::build::commands::create_feature(
+                key, "via key", None, None, None, None, None, None, None, None,
+            )
+            .expect("create by key");
+            assert_eq!(feature.project, "site");
+            let listed = crate::plugins::build::features::list_features("site", None, false)
+                .expect("list by name");
+            assert_eq!(listed.len(), 1);
+            assert!(crate::plugins::build::features::list_features(key, None, false)
+                .expect("list by key")
+                .is_empty());
+        });
+    }
+
+    #[test]
+    fn groups_for_project_accepts_a_key() {
+        with_site(|key| {
+            let group = serde_json::json!({"name": "g", "projects": ["site"]});
+            core::save_group("g", &group.to_string()).expect("save group");
+            assert_eq!(super::super::groups::groups_for_project(key).unwrap(), vec!["g"]);
+            assert_eq!(super::super::groups::groups_for_project("site").unwrap(), vec!["g"]);
+            assert!(super::super::groups::groups_for_project("orphan").unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn delete_command_given_a_key_removes_the_project() {
+        with_site(|key| {
+            delete_project(key).expect("delete by key");
+            assert!(core::list_projects().unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn registry_commands_reject_an_unknown_identifier_as_before() {
+        with_site(|_| {
+            assert_eq!(
+                check_project_drift("nope").unwrap_err(),
+                "Project 'nope' not found"
+            );
+        });
+    }
+
+    #[test]
+    fn get_project_summaries_command_returns_keys() {
+        with_site(|key| {
+            let summaries = get_project_summaries().expect("summaries");
+            assert_eq!(summaries.len(), 1);
+            assert_eq!(summaries[0].name, "site");
+            assert_eq!(summaries[0].local_key, key);
+        });
+    }
+
+    #[test]
+    fn hook_and_profile_refs_carry_the_key() {
+        with_site(|key| {
+            let mut project: core::Project =
+                serde_json::from_str(&core::read_project("site").unwrap()).unwrap();
+            project.hooks.push("h".into());
+            project.profiles.push("p".into());
+            core::save_project("site", &serde_json::to_string(&project).unwrap()).unwrap();
+
+            let hooks = super::super::hooks::get_projects_referencing_hook("h").unwrap();
+            assert_eq!(hooks[0].name, "site");
+            assert_eq!(hooks[0].local_key.as_deref(), Some(key));
+            let profiles =
+                super::super::project_profiles::get_projects_referencing_profile("p").unwrap();
+            assert_eq!(profiles[0].name, "site");
+            assert_eq!(profiles[0].local_key.as_deref(), Some(key));
         });
     }
 }

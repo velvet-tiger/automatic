@@ -60,6 +60,7 @@ pub fn delete_hook(machine_name: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn attach_hook_to_project(project_name: &str, hook_name: &str) -> Result<(), String> {
+    let project_name = &crate::core::canonical_project_name(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -82,6 +83,7 @@ pub fn attach_hook_to_project(project_name: &str, hook_name: &str) -> Result<(),
 
 #[tauri::command]
 pub fn detach_hook_from_project(project_name: &str, hook_name: &str) -> Result<(), String> {
+    let project_name = &crate::core::canonical_project_name(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
@@ -105,6 +107,9 @@ pub fn detach_hook_from_project(project_name: &str, hook_name: &str) -> Result<(
 #[derive(serde::Serialize)]
 pub struct HookProjectStatus {
     pub name: String,
+    /// The project's `local_key`; `None` while it has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_key: Option<String>,
 }
 
 #[tauri::command]
@@ -114,6 +119,7 @@ pub fn get_projects_referencing_hook(hook_name: &str) -> Result<Vec<HookProjectS
         if project.hooks.iter().any(|h| h == hook_name) {
             referencing.push(HookProjectStatus {
                 name: project_name.to_string(),
+                local_key: core::local_key_of(project),
             });
         }
     });

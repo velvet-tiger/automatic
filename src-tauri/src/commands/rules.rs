@@ -42,6 +42,9 @@ pub fn delete_rule(machine_name: &str) -> Result<(), String> {
 #[derive(serde::Serialize)]
 pub struct RuleProjectStatus {
     pub name: String,
+    /// The project's `local_key`; `None` while it has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_key: Option<String>,
     /// `true` if the on-disk instruction file(s) already contain the current
     /// rule content; `false` if a re-sync is needed.
     pub synced: bool,
@@ -105,6 +108,7 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
 
         referencing.push(RuleProjectStatus {
             name: project_name.to_string(),
+            local_key: core::local_key_of(project),
             synced,
         });
     });
@@ -119,6 +123,7 @@ pub fn get_projects_referencing_rule(rule_name: &str) -> Result<Vec<RuleProjectS
 /// write — no manual injection is needed here.
 #[tauri::command]
 pub fn sync_rule_to_project(rule_name: &str, project_name: &str) -> Result<(), String> {
+    let project_name = &crate::core::canonical_project_name(project_name)?;
     let raw = core::read_project(project_name)?;
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;

@@ -267,6 +267,7 @@ pub fn run() {
             get_global_mcp_status,
             get_featured_community,
             get_projects,
+            get_project_summaries,
             read_project,
             preview_rebuild_project,
             autodetect_project_dependencies,

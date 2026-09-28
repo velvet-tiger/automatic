@@ -7,18 +7,32 @@ use serde_json::{json, Value};
 
 // ── Recommendations ───────────────────────────────────────────────────────────
 
+/// Fill each row's `local_key` from the registry, scanned once per call.
+/// Rows for a project that is no longer registered keep `None`.
+fn with_local_keys(mut recs: Vec<Recommendation>) -> Result<Vec<Recommendation>, String> {
+    let keys = crate::core::project_local_keys_by_name()?;
+    for rec in &mut recs {
+        rec.local_key = keys.get(&rec.project).cloned();
+    }
+    Ok(recs)
+}
+
 /// Add a new recommendation for a project.
 ///
 /// Returns the `id` of the newly created row.
 #[tauri::command]
-pub fn add_recommendation(params: AddRecommendationParams) -> Result<i64, String> {
+pub fn add_recommendation(mut params: AddRecommendationParams) -> Result<i64, String> {
+    params.project = crate::core::project_store_name(&params.project)?;
     crate::recommendations::add_recommendation(params)
 }
 
 /// Fetch a single recommendation by its numeric id.
 #[tauri::command]
 pub fn get_recommendation(id: i64) -> Result<Recommendation, String> {
-    crate::recommendations::get_recommendation(id)
+    let rec = crate::recommendations::get_recommendation(id)?;
+    with_local_keys(vec![rec])?
+        .pop()
+        .ok_or_else(|| format!("Recommendation {} vanished while its key was looked up", id))
 }
 
 /// List recommendations for a project with optional filters.
@@ -33,13 +47,14 @@ pub fn list_recommendations(
     kind: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<Recommendation>, String> {
+    let project = &crate::core::project_store_name(project)?;
     let filter = ListRecommendationsFilter {
         status: status.as_deref().map(RecommendationStatus::from_str),
         kind,
         source: None,
         limit,
     };
-    crate::recommendations::list_recommendations(project, filter)
+    with_local_keys(crate::recommendations::list_recommendations(project, filter)?)
 }
 
 /// Dismiss a recommendation (sets status → "dismissed").
@@ -68,6 +83,7 @@ pub fn delete_recommendation(id: i64) -> Result<(), String> {
 /// Returns the number of rows deleted.
 #[tauri::command]
 pub fn clear_recommendations(project: &str, status: Option<String>) -> Result<usize, String> {
+    let project = &crate::core::project_store_name(project)?;
     let s = status.as_deref().map(RecommendationStatus::from_str);
     crate::recommendations::clear_recommendations(project, s)
 }
@@ -75,6 +91,7 @@ pub fn clear_recommendations(project: &str, status: Option<String>) -> Result<us
 /// Return pending / dismissed / actioned counts for a project.
 #[tauri::command]
 pub fn count_recommendations(project: &str) -> Result<RecommendationCounts, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::recommendations::count_recommendations(project)
 }
 
@@ -88,7 +105,8 @@ pub fn list_recommendations_by_source(
     project: &str,
     source: &str,
 ) -> Result<Vec<Recommendation>, String> {
-    crate::recommendations::list_recommendations(
+    let project = &crate::core::project_store_name(project)?;
+    with_local_keys(crate::recommendations::list_recommendations(
         project,
         crate::recommendations::ListRecommendationsFilter {
             status: Some(RecommendationStatus::Pending),
@@ -96,7 +114,7 @@ pub fn list_recommendations_by_source(
             source: Some(source.to_string()),
             limit: None,
         },
-    )
+    )?)
 }
 
 /// Return all pending recommendations across every project, ordered by
@@ -106,7 +124,9 @@ pub fn list_recommendations_by_source(
 pub fn list_all_pending_recommendations(
     limit: Option<usize>,
 ) -> Result<Vec<Recommendation>, String> {
-    crate::recommendations::list_all_pending_recommendations(limit.unwrap_or(50))
+    with_local_keys(crate::recommendations::list_all_pending_recommendations(
+        limit.unwrap_or(50),
+    )?)
 }
 
 /// Evaluate a project's configuration and upsert system-generated
@@ -123,6 +143,7 @@ pub fn list_all_pending_recommendations(
 /// Returns the list of current pending recommendations after evaluation.
 #[tauri::command]
 pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendation>, String> {
+    let project = &crate::core::canonical_project_name(project)?;
     use crate::agent;
     use std::path::Path;
 
@@ -236,7 +257,7 @@ pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendat
     crate::recommendations::clear_system_recommendations_by_kind(project, "context_file")?;
 
     // Return all current pending recommendations for this project.
-    crate::recommendations::list_recommendations(
+    with_local_keys(crate::recommendations::list_recommendations(
         project,
         crate::recommendations::ListRecommendationsFilter {
             status: Some(RecommendationStatus::Pending),
@@ -244,7 +265,7 @@ pub fn evaluate_project_recommendations(project: &str) -> Result<Vec<Recommendat
             source: None,
             limit: None,
         },
-    )
+    )?)
 }
 
 // ── AI-led recommendations ─────────────────────────────────────────────────────
@@ -490,6 +511,7 @@ pub struct AiRecommendationsResult {
 /// to decide whether to show "last updated" metadata.
 #[tauri::command]
 pub fn get_ai_recommendations_timestamp(project: &str) -> Result<Option<String>, String> {
+    let project = &crate::core::project_store_name(project)?;
     crate::recommendations::get_ai_recommendations_timestamp(project)
 }
 
@@ -509,6 +531,7 @@ pub async fn ai_generate_project_recommendations(
     project: &str,
     force: Option<bool>,
 ) -> Result<AiRecommendationsResult, String> {
+    let project = &crate::core::project_store_name(project)?;
     let force = force.unwrap_or(false);
 
     // Throttle check — skip if run within 24 h and not forced.
@@ -525,7 +548,7 @@ pub async fn ai_generate_project_recommendations(
         let last_run_at =
             crate::recommendations::get_ai_recommendations_timestamp(project)?.unwrap_or_default();
         return Ok(AiRecommendationsResult {
-            recommendations: recs,
+            recommendations: with_local_keys(recs)?,
             last_run_at,
         });
     }
@@ -800,7 +823,7 @@ will have the highest impact given the project's evident tech stack and workflow
     )?;
 
     Ok(AiRecommendationsResult {
-        recommendations: recs,
+        recommendations: with_local_keys(recs)?,
         last_run_at,
     })
 }
@@ -1026,6 +1049,7 @@ fn persist_targeted_suggestions(
 /// Returns all current pending recommendations for the project after the run.
 #[tauri::command]
 pub async fn ai_suggest_skills(project: &str) -> Result<Vec<Recommendation>, String> {
+    let project = &crate::core::canonical_project_name(project)?;
     crate::core::ai::resolve_api_key(None)?;
 
     let raw = crate::core::read_project(project)?;
@@ -1144,6 +1168,7 @@ source, installs count, and a brief reason why each fits this project."#,
 /// Returns all current pending recommendations for the project after the run.
 #[tauri::command]
 pub async fn ai_suggest_mcp_servers(project: &str) -> Result<Vec<Recommendation>, String> {
+    let project = &crate::core::canonical_project_name(project)?;
     crate::core::ai::resolve_api_key(None)?;
 
     let raw = crate::core::read_project(project)?;

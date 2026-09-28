@@ -64,6 +64,8 @@ function RecRow({ icon, title, badge, body, linkLabel, onLinkClick, secondaryLin
 interface Recommendation {
   id: number;
   project: string;
+  /** The project's `local_key`, when it is registered and has one. */
+  local_key?: string;
   kind: string;
   title: string;
   body: string;

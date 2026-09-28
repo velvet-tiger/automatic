@@ -27,6 +27,7 @@ pub fn delete_group(name: &str) -> Result<(), String> {
 /// Return the names of all groups that contain the given project.
 #[tauri::command]
 pub fn groups_for_project(project_name: &str) -> Result<Vec<String>, String> {
+    let project_name = &crate::core::project_store_name(project_name)?;
     let groups = core::groups_for_project(project_name);
     Ok(groups.into_iter().map(|g| g.name).collect())
 }

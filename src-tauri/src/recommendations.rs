@@ -96,6 +96,11 @@ pub struct Recommendation {
     pub id: i64,
     /// The project this recommendation belongs to.
     pub project: String,
+    /// The `local_key` of the project named by `project`. Not stored: the
+    /// commands fill it from the registry. `None` for a project that is no
+    /// longer registered or has no key yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_key: Option<String>,
     /// Category of the recommendation (e.g. "skill", "mcp_server", "agent", "rule").
     pub kind: String,
     /// Short headline shown in the UI.
@@ -202,6 +207,7 @@ fn row_to_recommendation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recommenda
     Ok(Recommendation {
         id: row.get(0)?,
         project: row.get(1)?,
+        local_key: None,
         kind: row.get(2)?,
         title: row.get(3)?,
         body: row.get(4)?,

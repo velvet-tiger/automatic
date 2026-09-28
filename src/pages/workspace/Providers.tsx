@@ -11,6 +11,8 @@ import { GlobalMcpTab } from "./providers/GlobalMcpTab";
 interface AgentProject {
   name: string;
   directory: string;
+  /** The project's `local_key`, when it is registered and has one. */
+  local_key?: string;
 }
 
 /** Describes a single toggleable default option for a particular agent. */

@@ -32,17 +32,31 @@ pub fn save_context(context: core::Context) -> Result<core::Context, String> {
 
 #[tauri::command]
 pub fn delete_context(slug: &str) -> Result<core::ContextReferences, String> {
-    core::delete_context(slug)
+    with_local_keys(core::delete_context(slug)?)
 }
 
 #[tauri::command]
 pub fn rename_context(old_slug: &str, new_slug: &str) -> Result<core::ContextReferences, String> {
-    core::rename_context(old_slug, new_slug)
+    with_local_keys(core::rename_context(old_slug, new_slug)?)
 }
 
 #[tauri::command]
 pub fn get_context_references(slug: &str) -> Result<core::ContextReferences, String> {
-    core::find_context_references(slug)
+    with_local_keys(core::find_context_references(slug)?)
+}
+
+/// Fill `project_local_keys` for each project name in `refs` that is
+/// registered and has a key. The registry is scanned once per call.
+fn with_local_keys(
+    mut refs: core::ContextReferences,
+) -> Result<core::ContextReferences, String> {
+    let keys = core::project_local_keys_by_name()?;
+    refs.project_local_keys = refs
+        .projects
+        .iter()
+        .filter_map(|name| keys.get(name).map(|key| (name.clone(), key.clone())))
+        .collect();
+    Ok(refs)
 }
 
 #[tauri::command]

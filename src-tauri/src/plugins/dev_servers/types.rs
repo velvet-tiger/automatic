@@ -74,6 +74,11 @@ pub enum LogStream {
 pub struct DevServerStatus {
     pub id: String,
     pub project: String,
+    /// The `local_key` of the project named by `project`. Filled by the
+    /// commands from the registry; `None` for an unregistered project or one
+    /// with no key yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_key: Option<String>,
     pub name: String,
     pub package_manager: PackageManager,
     pub script: String,

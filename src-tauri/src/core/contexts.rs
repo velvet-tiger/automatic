@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -1171,7 +1172,9 @@ pub fn attach_context(target: &ContextTarget, slug: &str) -> Result<bool, String
         return Err(format!("Context '{}' does not exist", slug));
     }
     match target {
-        ContextTarget::Project(name) => {
+        ContextTarget::Project(ident) => {
+            // Groups are keyed by name, so a `local_key` becomes the name.
+            let name = &canonical_project_name(ident)?;
             let mut project = read_project_parsed(name)?;
             reconcile_group_contexts(&mut project, &groups_for_project(name));
             let changed = attach_context_to_project(&mut project, slug);
@@ -1187,7 +1190,9 @@ pub fn attach_context(target: &ContextTarget, slug: &str) -> Result<bool, String
 /// their groups still provides it. Returns `false` when it was not attached.
 pub fn detach_context(target: &ContextTarget, slug: &str) -> Result<bool, String> {
     match target {
-        ContextTarget::Project(name) => {
+        ContextTarget::Project(ident) => {
+            // Groups are keyed by name, so a `local_key` becomes the name.
+            let name = &canonical_project_name(ident)?;
             let mut project = read_project_parsed(name)?;
             reconcile_group_contexts(&mut project, &groups_for_project(name));
             let changed = detach_context_from_project(&mut project, slug)?;
@@ -1375,6 +1380,10 @@ pub fn reconcile_group_contexts_for_projects(project_names: &[String]) -> Result
 pub struct ContextReferences {
     pub projects: Vec<String>,
     pub groups: Vec<String>,
+    /// `local_key` of each name in `projects` that has one, keyed by name.
+    /// Filled by the Tauri commands only, so MCP output is unchanged.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub project_local_keys: BTreeMap<String, String>,
 }
 
 /// Remove (`new_slug = None`) or rename every reference to `old_slug` in
