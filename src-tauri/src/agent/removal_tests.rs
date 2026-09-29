@@ -63,21 +63,50 @@ fn remove_and_verify_with_managed(
     let plan = plan_agent_removal(agent, root, &remaining, &managed).unwrap();
     let preview = plan.entries();
     let applied = apply_removal_plan(agent, root, &plan).unwrap();
+
+    // Applied is a subset of preview, in the same order.  Every entry in
+    // applied appears in preview and describes work that actually took
+    // effect.  A preview entry missing from applied is a silent no-op —
+    // a soft-delete parent whose strip preserved user content.
+    let applied_paths: std::collections::HashSet<String> =
+        applied.iter().map(|e| e.path.clone()).collect();
+    let applied_sequence: Vec<&RemovalEntry> = preview
+        .iter()
+        .filter(|e| applied_paths.contains(&e.path))
+        .collect();
+    let applied_expected: Vec<RemovalEntry> = applied_sequence.into_iter().cloned().collect();
     assert_eq!(
-        applied, preview,
-        "removal must do exactly what the preview lists"
+        applied, applied_expected,
+        "apply must return preview entries that took effect, in preview order"
     );
 
     let after = tree(root);
     for entry in &preview {
         let path = PathBuf::from(&entry.path);
+        let took_effect = applied_paths.contains(&entry.path);
         match entry.action {
             RemovalAction::Delete | RemovalAction::RemoveEmptyDir => {
-                assert!(
-                    fs::symlink_metadata(&path).is_err(),
-                    "{} should be gone",
-                    entry.path
-                )
+                if took_effect {
+                    assert!(
+                        fs::symlink_metadata(&path).is_err(),
+                        "{} should be gone",
+                        entry.path
+                    )
+                } else {
+                    // Only a soft-delete parent may survive; it must still
+                    // exist on disk with content — the strip preserved
+                    // something the user cares about.
+                    assert!(
+                        entry.is_dir,
+                        "{} is not a directory but was skipped",
+                        entry.path
+                    );
+                    assert!(
+                        fs::symlink_metadata(&path).is_ok(),
+                        "{} was skipped from delete but is gone",
+                        entry.path
+                    );
+                }
             }
             RemovalAction::Strip => assert_ne!(
                 before.get(&path),
@@ -94,7 +123,9 @@ fn remove_and_verify_with_managed(
         }
     }
 
-    // Nothing outside the plan may change.
+    // Nothing outside the plan may change.  A soft-delete parent that
+    // survived counts as "covered" because the preview lists it as Delete
+    // and only its non-Automatic content may remain.
     let covered = |path: &Path| {
         preview.iter().any(|entry| {
             let planned = Path::new(&entry.path);
@@ -252,6 +283,11 @@ fn junie_remove_deletes_dot_junie_whole_including_user_files() {
 fn codex_remove_deletes_agents_md_once_no_remaining_agent_reads_it() {
     let dir = tempdir().unwrap();
     let root = dir.path();
+    // `.codex/config.toml` holds only the user's hand-edited model setting;
+    // no `[mcp_servers.*]` blocks means the strip has nothing to remove and
+    // the file must survive Remove (VEL-174).  `.codex/` becomes a
+    // soft-delete parent for the same reason and stays behind with the
+    // file.  Codex's own sub-agent directory still goes.
     write(&root.join(".codex/config.toml"), "model = \"x\"\n");
     write(&root.join(".codex/agents/reviewer.toml"), "name = \"r\"\n");
     write(&root.join("AGENTS.md"), "# Instructions");
@@ -267,7 +303,20 @@ fn codex_remove_deletes_agents_md_once_no_remaining_agent_reads_it() {
             entry(".codex", Delete),
             entry("AGENTS.md", Delete),
             entry(".agents/skills", Delete),
+            entry(".codex/agents", Delete),
         ]
+    );
+    assert!(
+        root.join(".codex/config.toml").exists(),
+        "user-authored .codex/config.toml must survive"
+    );
+    assert!(
+        root.join(".codex").exists(),
+        ".codex/ survives when a strip preserves user content inside it"
+    );
+    assert!(
+        !root.join(".codex/agents").exists(),
+        "Codex's sub-agent directory still goes"
     );
     assert!(
         root.join(".agents/mcp_config.json").exists(),
@@ -381,18 +430,21 @@ fn copilot_remove_deletes_file_when_no_user_entries_remain() {
     );
 }
 
-// Cleanup-strip tests for Codex CLI, Gemini CLI, and Zed.  Each of these
-// three agents owns its entire `.codex` / `.gemini` / `.zed` directory,
-// so the removal flow deletes the whole folder and never reaches
-// `cleanup_mcp_config`.  These tests therefore call `cleanup_mcp_config`
-// directly to validate the function's contract: when the file is shared
-// with a user-editable one, strip only the entries `managed_names` lists.
+// End-to-end Remove tests for Codex CLI, Gemini CLI, and Zed.  Each of
+// these three agents owns its `.codex` / `.gemini` / `.zed` directory
+// outright, but the shared config file inside — `.codex/config.toml`,
+// `.gemini/settings.json`, `.zed/settings.json` — is a merged MCP target
+// that may hold user hand-edits alongside Automatic's entries.  VEL-174
+// requires Remove to strip only the managed entries and let a
+// user-preserved file (and its parent directory) survive.  These tests
+// exercise the full plan + apply flow via `remove_and_verify_with_managed`
+// so a regression at either layer trips a failure.
 
 /// Codex mirror of `copilot_remove_keeps_user_added_servers_in_vscode_mcp`.
 /// `.codex/config.toml` may hold `[mcp_servers.*]` blocks the user added by
-/// hand alongside their own model/history settings.  Cleanup must strip
-/// only the blocks Automatic manages, leaving user blocks and every other
-/// top-level key intact.
+/// hand alongside their own model/history settings.  Remove must strip
+/// only the blocks Automatic manages, leave user blocks and every other
+/// top-level key intact, and keep `.codex/` on disk with the file.
 #[test]
 fn codex_remove_keeps_user_added_servers_in_codex_config_toml() {
     let dir = tempdir().unwrap();
@@ -408,8 +460,15 @@ fn codex_remove_keeps_user_added_servers_in_codex_config_toml() {
          command = \"user\"\n",
     );
 
-    let removed = CodexCli.cleanup_mcp_config(root, &["automatic".to_string()]);
-    assert_eq!(removed.len(), 1, "expected the config file to be reported");
+    let result = remove_and_verify_with_managed(&CodexCli, root, &[], &["automatic"]);
+
+    assert_eq!(
+        result,
+        vec![
+            entry(".codex", Delete),
+            entry(".codex/config.toml", Strip),
+        ]
+    );
 
     let raw = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
     assert!(
@@ -428,10 +487,15 @@ fn codex_remove_keeps_user_added_servers_in_codex_config_toml() {
         raw.contains("model = \"gpt-5\""),
         "other top-level keys survive: {raw}"
     );
+    assert!(
+        root.join(".codex").exists(),
+        ".codex/ must survive when user content stays inside"
+    );
 }
 
-/// When `.codex/config.toml` holds only user-added servers, Cleanup must
-/// report no change, and the file must be untouched on disk.
+/// When `.codex/config.toml` holds only user-added servers, Remove reports
+/// no Strip (the parent's Delete is a silent no-op) and the file is
+/// untouched on disk.
 #[test]
 fn codex_remove_reports_no_strip_when_only_user_servers_exist() {
     let dir = tempdir().unwrap();
@@ -439,15 +503,21 @@ fn codex_remove_reports_no_strip_when_only_user_servers_exist() {
     let before = "[mcp_servers.user-only]\ncommand = \"u\"\n";
     write(&root.join(".codex/config.toml"), before);
 
-    let removed = CodexCli.cleanup_mcp_config(root, &["automatic".to_string()]);
-    assert!(removed.is_empty(), "{removed:?}");
+    let result = remove_and_verify_with_managed(&CodexCli, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![entry(".codex", Delete)],
+        "the soft-delete parent is planned but takes no effect: {result:?}"
+    );
 
     let raw = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
     assert_eq!(raw, before, "user-only file must not change: {raw}");
+    assert!(root.join(".codex").exists());
 }
 
 /// When every `[mcp_servers.*]` in `.codex/config.toml` is managed and no
-/// other content remains, Cleanup deletes the file whole.
+/// other content remains, the strip deletes the file whole and `.codex/`
+/// is then removed as an empty directory.
 #[test]
 fn codex_remove_deletes_file_when_no_user_entries_remain() {
     let dir = tempdir().unwrap();
@@ -457,18 +527,28 @@ fn codex_remove_deletes_file_when_no_user_entries_remain() {
         "[mcp_servers.automatic]\ncommand = \"a\"\n",
     );
 
-    let removed = CodexCli.cleanup_mcp_config(root, &["automatic".to_string()]);
-    assert_eq!(removed.len(), 1);
+    let result = remove_and_verify_with_managed(&CodexCli, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![
+            entry(".codex", Delete),
+            entry(".codex/config.toml", Strip),
+        ]
+    );
     assert!(
         !root.join(".codex/config.toml").exists(),
         "file with nothing left must be deleted"
+    );
+    assert!(
+        !root.join(".codex").exists(),
+        ".codex/ must go once the strip empties it"
     );
 }
 
 /// Gemini mirror of `copilot_remove_keeps_user_added_servers_in_vscode_mcp`.
 /// `.gemini/settings.json` may hold user-added servers under `mcpServers`
-/// alongside their auth/model settings.  Cleanup must strip only entries
-/// Automatic manages, leaving user servers and other top-level keys intact.
+/// alongside their auth/model settings.  Remove must strip only entries
+/// Automatic manages and keep `.gemini/` on disk with the file.
 #[test]
 fn gemini_remove_keeps_user_added_servers_in_gemini_settings() {
     let dir = tempdir().unwrap();
@@ -480,8 +560,14 @@ fn gemini_remove_keeps_user_added_servers_in_gemini_settings() {
          \"theme\":\"dark\"}",
     );
 
-    let removed = GeminiCli.cleanup_mcp_config(root, &["automatic".to_string()]);
-    assert_eq!(removed.len(), 1);
+    let result = remove_and_verify_with_managed(&GeminiCli, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![
+            entry(".gemini", Delete),
+            entry(".gemini/settings.json", Strip),
+        ]
+    );
 
     let raw = fs::read_to_string(root.join(".gemini/settings.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -498,10 +584,14 @@ fn gemini_remove_keeps_user_added_servers_in_gemini_settings() {
         "dark",
         "other keys survive: {parsed}"
     );
+    assert!(
+        root.join(".gemini").exists(),
+        ".gemini/ must survive when user content stays inside"
+    );
 }
 
-/// When `.gemini/settings.json` holds only user-added servers, Cleanup
-/// must report no change, and the file must be untouched on disk.
+/// When `.gemini/settings.json` holds only user-added servers, Remove
+/// reports no Strip and the file is untouched.
 #[test]
 fn gemini_remove_reports_no_strip_when_only_user_servers_exist() {
     let dir = tempdir().unwrap();
@@ -509,15 +599,20 @@ fn gemini_remove_reports_no_strip_when_only_user_servers_exist() {
     let before = "{\"mcpServers\":{\"user-only\":{\"command\":\"u\"}}}";
     write(&root.join(".gemini/settings.json"), before);
 
-    let removed = GeminiCli.cleanup_mcp_config(root, &["automatic".to_string()]);
-    assert!(removed.is_empty(), "{removed:?}");
+    let result = remove_and_verify_with_managed(&GeminiCli, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![entry(".gemini", Delete)],
+        "the soft-delete parent is planned but takes no effect: {result:?}"
+    );
 
     let raw = fs::read_to_string(root.join(".gemini/settings.json")).unwrap();
     assert_eq!(raw, before, "user-only file must not change: {raw}");
+    assert!(root.join(".gemini").exists());
 }
 
 /// When every entry under `mcpServers` is managed and nothing else remains,
-/// Cleanup deletes `.gemini/settings.json` whole.
+/// the strip deletes `.gemini/settings.json` and `.gemini/` goes with it.
 #[test]
 fn gemini_remove_deletes_file_when_no_user_entries_remain() {
     let dir = tempdir().unwrap();
@@ -527,18 +622,28 @@ fn gemini_remove_deletes_file_when_no_user_entries_remain() {
         "{\"mcpServers\":{\"automatic\":{\"command\":\"a\"}}}",
     );
 
-    let removed = GeminiCli.cleanup_mcp_config(root, &["automatic".to_string()]);
-    assert_eq!(removed.len(), 1);
+    let result = remove_and_verify_with_managed(&GeminiCli, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![
+            entry(".gemini", Delete),
+            entry(".gemini/settings.json", Strip),
+        ]
+    );
     assert!(
         !root.join(".gemini/settings.json").exists(),
         "file with nothing left must be deleted"
+    );
+    assert!(
+        !root.join(".gemini").exists(),
+        ".gemini/ must go once the strip empties it"
     );
 }
 
 /// Zed mirror of `copilot_remove_keeps_user_added_servers_in_vscode_mcp`.
 /// `.zed/settings.json` may hold user-added servers under `context_servers`
-/// alongside their agent/font/theme settings.  Cleanup must strip only
-/// entries Automatic manages.
+/// alongside their agent/font/theme settings.  Remove must strip only
+/// entries Automatic manages and keep `.zed/` on disk with the file.
 #[test]
 fn zed_remove_keeps_user_added_servers_in_zed_settings() {
     let dir = tempdir().unwrap();
@@ -550,8 +655,14 @@ fn zed_remove_keeps_user_added_servers_in_zed_settings() {
          \"ui_font_size\":16}",
     );
 
-    let removed = Zed.cleanup_mcp_config(root, &["automatic".to_string()]);
-    assert_eq!(removed.len(), 1);
+    let result = remove_and_verify_with_managed(&Zed, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![
+            entry(".zed", Delete),
+            entry(".zed/settings.json", Strip),
+        ]
+    );
 
     let raw = fs::read_to_string(root.join(".zed/settings.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -568,10 +679,14 @@ fn zed_remove_keeps_user_added_servers_in_zed_settings() {
         16,
         "other keys survive: {parsed}"
     );
+    assert!(
+        root.join(".zed").exists(),
+        ".zed/ must survive when user content stays inside"
+    );
 }
 
-/// When `.zed/settings.json` holds only user-added servers, Cleanup must
-/// report no change, and the file must be untouched on disk.
+/// When `.zed/settings.json` holds only user-added servers, Remove
+/// reports no Strip and the file is untouched.
 #[test]
 fn zed_remove_reports_no_strip_when_only_user_servers_exist() {
     let dir = tempdir().unwrap();
@@ -579,15 +694,20 @@ fn zed_remove_reports_no_strip_when_only_user_servers_exist() {
     let before = "{\"context_servers\":{\"user-only\":{\"command\":\"u\"}}}";
     write(&root.join(".zed/settings.json"), before);
 
-    let removed = Zed.cleanup_mcp_config(root, &["automatic".to_string()]);
-    assert!(removed.is_empty(), "{removed:?}");
+    let result = remove_and_verify_with_managed(&Zed, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![entry(".zed", Delete)],
+        "the soft-delete parent is planned but takes no effect: {result:?}"
+    );
 
     let raw = fs::read_to_string(root.join(".zed/settings.json")).unwrap();
     assert_eq!(raw, before, "user-only file must not change: {raw}");
+    assert!(root.join(".zed").exists());
 }
 
 /// When every entry under `context_servers` is managed and nothing else
-/// remains, Cleanup deletes `.zed/settings.json` whole.
+/// remains, the strip deletes `.zed/settings.json` and `.zed/` goes too.
 #[test]
 fn zed_remove_deletes_file_when_no_user_entries_remain() {
     let dir = tempdir().unwrap();
@@ -597,11 +717,261 @@ fn zed_remove_deletes_file_when_no_user_entries_remain() {
         "{\"context_servers\":{\"automatic\":{\"command\":\"a\"}}}",
     );
 
-    let removed = Zed.cleanup_mcp_config(root, &["automatic".to_string()]);
-    assert_eq!(removed.len(), 1);
+    let result = remove_and_verify_with_managed(&Zed, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![
+            entry(".zed", Delete),
+            entry(".zed/settings.json", Strip),
+        ]
+    );
     assert!(
         !root.join(".zed/settings.json").exists(),
         "file with nothing left must be deleted"
+    );
+    assert!(
+        !root.join(".zed").exists(),
+        ".zed/ must go once the strip empties it"
+    );
+}
+
+// VEL-174 hand-edit preservation regression tests.  Each seeds the shared
+// merged-MCP file with a mix of managed entries, user-added entries, and
+// an agent-specific top-level key that Automatic never touches.  After
+// Remove, only the managed entries are gone and the parent directory
+// survives.
+
+/// `.codex/config.toml` with hand edits and a Codex-specific top-level
+/// section must survive Remove — only Automatic's `[mcp_servers.*]` block
+/// disappears, and `.codex/` stays on disk.
+#[test]
+fn codex_remove_keeps_hand_edited_config_toml_and_owned_dir() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".codex/config.toml"),
+        "# User's notes on Codex configuration.\n\
+         model = \"gpt-5-pro\"\n\
+         approval_policy = \"on-request\"\n\
+         \n\
+         [history]\n\
+         persistence = \"save-all\"\n\
+         \n\
+         [mcp_servers.automatic]\n\
+         command = \"automatic\"\n\
+         \n\
+         [mcp_servers.user-server]\n\
+         command = \"user\"\n",
+    );
+
+    let result = remove_and_verify_with_managed(&CodexCli, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![
+            entry(".codex", Delete),
+            entry(".codex/config.toml", Strip),
+        ]
+    );
+
+    let raw = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert!(!raw.contains("[mcp_servers.automatic]"), "{raw}");
+    assert!(raw.contains("[mcp_servers.user-server]"), "{raw}");
+    assert!(raw.contains("model = \"gpt-5-pro\""), "{raw}");
+    assert!(raw.contains("approval_policy"), "{raw}");
+    assert!(raw.contains("[history]"), "{raw}");
+    assert!(raw.contains("# User's notes"), "user comment survives: {raw}");
+    assert!(
+        root.join(".codex").exists(),
+        ".codex/ must survive the Remove"
+    );
+}
+
+/// `.gemini/settings.json` with hand edits and a Gemini-specific top-level
+/// key (`ide.theme`) must survive Remove.
+#[test]
+fn gemini_remove_keeps_hand_edited_settings_and_owned_dir() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".gemini/settings.json"),
+        "{\
+            \"mcpServers\":{\
+                \"automatic\":{\"command\":\"automatic\"},\
+                \"user-server\":{\"command\":\"user\",\"env\":{\"K\":\"v\"}}\
+            },\
+            \"ide\":{\"theme\":\"solarized\",\"fontSize\":15},\
+            \"telemetry\":{\"enabled\":false}\
+         }",
+    );
+
+    let result = remove_and_verify_with_managed(&GeminiCli, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![
+            entry(".gemini", Delete),
+            entry(".gemini/settings.json", Strip),
+        ]
+    );
+
+    let raw = fs::read_to_string(root.join(".gemini/settings.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(parsed["mcpServers"]["automatic"].is_null(), "{parsed}");
+    assert!(
+        parsed["mcpServers"]["user-server"]["command"].is_string(),
+        "{parsed}"
+    );
+    assert_eq!(
+        parsed["mcpServers"]["user-server"]["env"]["K"]
+            .as_str()
+            .unwrap(),
+        "v",
+        "user's env survives: {parsed}"
+    );
+    assert_eq!(
+        parsed["ide"]["theme"].as_str().unwrap(),
+        "solarized",
+        "user's ide.theme survives: {parsed}"
+    );
+    assert_eq!(
+        parsed["ide"]["fontSize"].as_u64().unwrap(),
+        15,
+        "user's ide.fontSize survives: {parsed}"
+    );
+    assert_eq!(
+        parsed["telemetry"]["enabled"].as_bool().unwrap(),
+        false,
+        "unrelated top-level keys survive: {parsed}"
+    );
+    assert!(
+        root.join(".gemini").exists(),
+        ".gemini/ must survive the Remove"
+    );
+}
+
+/// `.zed/settings.json` with hand edits and a Zed-specific top-level key
+/// (`buffer_font_family`, `theme`) must survive Remove.
+#[test]
+fn zed_remove_keeps_hand_edited_settings_and_owned_dir() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".zed/settings.json"),
+        "{\
+            \"context_servers\":{\
+                \"automatic\":{\"command\":\"automatic\"},\
+                \"user-server\":{\"command\":\"user\"}\
+            },\
+            \"buffer_font_family\":\"JetBrains Mono\",\
+            \"theme\":\"One Dark\",\
+            \"ui_font_size\":16\
+         }",
+    );
+
+    let result = remove_and_verify_with_managed(&Zed, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![
+            entry(".zed", Delete),
+            entry(".zed/settings.json", Strip),
+        ]
+    );
+
+    let raw = fs::read_to_string(root.join(".zed/settings.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(parsed["context_servers"]["automatic"].is_null(), "{parsed}");
+    assert!(
+        parsed["context_servers"]["user-server"]["command"].is_string(),
+        "{parsed}"
+    );
+    assert_eq!(
+        parsed["buffer_font_family"].as_str().unwrap(),
+        "JetBrains Mono",
+        "user's font family survives: {parsed}"
+    );
+    assert_eq!(
+        parsed["theme"].as_str().unwrap(),
+        "One Dark",
+        "user's theme survives: {parsed}"
+    );
+    assert_eq!(
+        parsed["ui_font_size"].as_u64().unwrap(),
+        16,
+        "user's ui_font_size survives: {parsed}"
+    );
+    assert!(root.join(".zed").exists(), ".zed/ must survive the Remove");
+}
+
+// Regression: the delete-if-empty path still deletes `.codex/`, `.gemini/`,
+// and `.zed/` when the strip empties the shared file and nothing else is
+// inside.  A behaviour change in the strip that leaves residue behind would
+// trip these tests.
+
+#[test]
+fn codex_remove_deletes_owned_dir_when_only_automatic_content_inside() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".codex/config.toml"),
+        "[mcp_servers.automatic]\ncommand = \"automatic\"\n",
+    );
+
+    let result = remove_and_verify_with_managed(&CodexCli, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![
+            entry(".codex", Delete),
+            entry(".codex/config.toml", Strip),
+        ]
+    );
+    assert!(
+        !root.join(".codex").exists(),
+        ".codex/ must be deleted when it holds only Automatic content"
+    );
+}
+
+#[test]
+fn gemini_remove_deletes_owned_dir_when_only_automatic_content_inside() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".gemini/settings.json"),
+        "{\"mcpServers\":{\"automatic\":{\"command\":\"automatic\"}}}",
+    );
+
+    let result = remove_and_verify_with_managed(&GeminiCli, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![
+            entry(".gemini", Delete),
+            entry(".gemini/settings.json", Strip),
+        ]
+    );
+    assert!(
+        !root.join(".gemini").exists(),
+        ".gemini/ must be deleted when it holds only Automatic content"
+    );
+}
+
+#[test]
+fn zed_remove_deletes_owned_dir_when_only_automatic_content_inside() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".zed/settings.json"),
+        "{\"context_servers\":{\"automatic\":{\"command\":\"automatic\"}}}",
+    );
+
+    let result = remove_and_verify_with_managed(&Zed, root, &[], &["automatic"]);
+    assert_eq!(
+        result,
+        vec![
+            entry(".zed", Delete),
+            entry(".zed/settings.json", Strip),
+        ]
+    );
+    assert!(
+        !root.join(".zed").exists(),
+        ".zed/ must be deleted when it holds only Automatic content"
     );
 }
 

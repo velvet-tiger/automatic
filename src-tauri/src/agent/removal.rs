@@ -100,6 +100,11 @@ enum StripKind {
 struct PlannedEntry {
     entry: RemovalEntry,
     strip: Option<StripKind>,
+    /// True for a `Delete` on an owned directory that also holds a strip
+    /// target — apply must first strip the file inside, then delete the
+    /// directory only if it ends up empty.  A strip that keeps user content
+    /// leaves the file behind, and the directory survives with it.
+    soft_delete: bool,
 }
 
 /// The full effect of removing one agent in [`RemovalMode::Remove`].
@@ -266,16 +271,30 @@ pub fn plan_agent_removal(
             .collect()
     };
 
+    let all_candidates = candidates(agent, dir);
+    // Owned dirs that hold a merged MCP strip target on disk cannot be wiped
+    // whole — the target file may carry user hand-edits alongside Automatic's
+    // entries.  Apply runs the strip first (see VEL-174), which preserves the
+    // user's content, and then deletes the dir only if the strip left it
+    // empty.  Hook-only strip targets don't trigger this: those owned dirs
+    // are wiped whole as before, keeping the pre-VEL-174 behaviour for
+    // agents such as Claude Code.
+    let soft_delete_dirs = compute_soft_delete_dirs(agent, dir, &all_candidates);
+
     let mut items: Vec<PlannedEntry> = Vec::new();
     let mut deleted: Vec<PathBuf> = Vec::new();
-    let mut strip_changes: Option<HashSet<PathBuf>> = None;
+    let mut strip_changes: Option<StripChanges> = None;
 
-    for candidate in candidates(agent, dir) {
+    for candidate in all_candidates {
         let path = candidate.path;
         let Some(is_dir) = path_kind(&path) else {
             continue;
         };
         if inside_any(&path, &deleted) {
+            // A hard delete on a parent will remove this subtree; skip
+            // planning it separately.  Soft-delete parents are not in
+            // `deleted`, so their subpaths reach this loop and get their
+            // own entries.
             continue;
         }
 
@@ -284,25 +303,35 @@ pub fn plan_agent_removal(
             items.push(PlannedEntry {
                 entry: make_entry(&path, dir, RemovalAction::KeepShared, is_dir, users),
                 strip: None,
+                soft_delete: false,
             });
             continue;
         }
 
         match candidate.strip {
             None => {
+                let soft = is_dir && soft_delete_dirs.contains(&path);
                 items.push(PlannedEntry {
                     entry: make_entry(&path, dir, RemovalAction::Delete, is_dir, vec![]),
                     strip: None,
+                    soft_delete: soft,
                 });
-                deleted.push(path);
+                if !soft {
+                    // Only a hard delete subsumes subpaths.  A soft-delete
+                    // parent must let its Automatic-owned subpaths (e.g.
+                    // `.codex/agents/`) plan their own Delete entries so
+                    // they still get removed when the parent survives.
+                    deleted.push(path);
+                }
             }
             Some(kind) => {
                 let changes = strip_changes
                     .get_or_insert_with(|| dry_run_strips(agent, dir, managed_mcp_servers));
-                if changes.contains(&path) {
+                if changes.changes(&path, kind) {
                     items.push(PlannedEntry {
                         entry: make_entry(&path, dir, RemovalAction::Strip, is_dir, vec![]),
                         strip: Some(kind),
+                        soft_delete: false,
                     });
                 }
             }
@@ -314,6 +343,33 @@ pub fn plan_agent_removal(
         items,
         managed_mcp_servers: managed_mcp_servers.to_vec(),
     })
+}
+
+/// Owned directories that host an MCP-strip candidate present on disk.  A
+/// soft-delete parent must delete only when the strip empties it, so a user
+/// hand-edited `.codex/config.toml`, `.gemini/settings.json` or
+/// `.zed/settings.json` survives Remove alongside the parent directory.
+fn compute_soft_delete_dirs(
+    agent: &dyn Agent,
+    _dir: &Path,
+    all_candidates: &[Candidate],
+) -> HashSet<PathBuf> {
+    let owned: Vec<PathBuf> = agent.owned_dirs(_dir);
+    let mut soft: HashSet<PathBuf> = HashSet::new();
+    for cand in all_candidates {
+        if cand.strip != Some(StripKind::McpConfig) {
+            continue;
+        }
+        if path_kind(&cand.path).is_none() {
+            continue;
+        }
+        for od in &owned {
+            if cand.path.starts_with(od) && cand.path != *od {
+                soft.insert(od.clone());
+            }
+        }
+    }
+    soft
 }
 
 /// Parent directories that hold nothing once `deleted` is gone, deepest
@@ -334,6 +390,7 @@ fn plan_empty_dirs(dir: &Path, deleted: &[PathBuf]) -> Vec<PlannedEntry> {
             out.push(PlannedEntry {
                 entry: make_entry(candidate, dir, RemovalAction::RemoveEmptyDir, true, vec![]),
                 strip: None,
+                soft_delete: false,
             });
             parent = candidate.parent();
         }
@@ -355,14 +412,54 @@ fn dir_empty_after_removal(dir: &Path, removed: &HashSet<PathBuf>) -> bool {
     }
 }
 
-/// Run the agent's strip operations against a copy of its merged files and
-/// return the real paths whose content would change.  The copy keeps each
-/// file at the same relative path, so the strip code sees the same layout.
-fn dry_run_strips(
-    agent: &dyn Agent,
-    dir: &Path,
-    managed_mcp_servers: &[String],
-) -> HashSet<PathBuf> {
+/// Per-kind dry-run result: the paths each strip kind would actually
+/// change.  A file is only emitted as a Strip for a given kind when THAT
+/// kind's strip touches it — a cosmetic hook rewrite must not trip a
+/// Strip on a file whose MCP entries have nothing to remove, and vice
+/// versa.
+struct StripChanges {
+    mcp: HashSet<PathBuf>,
+    hooks: HashSet<PathBuf>,
+}
+
+impl StripChanges {
+    fn changes(&self, path: &Path, kind: StripKind) -> bool {
+        match kind {
+            StripKind::McpConfig => self.mcp.contains(path),
+            StripKind::Hooks => self.hooks.contains(path),
+        }
+    }
+}
+
+/// Run the agent's strip operations against copies of its merged files and
+/// report, per kind, which real paths each strip would change.  The copies
+/// keep the same relative layout so the strip code sees the same shape.
+fn dry_run_strips(agent: &dyn Agent, dir: &Path, managed_mcp_servers: &[String]) -> StripChanges {
+    let mut merged: Vec<PathBuf> = agent.mcp_merge_inputs(dir);
+    if let Some(HookConfigTarget::Merged { path, .. }) = agent.hook_config_target(dir) {
+        if !merged.contains(&path) {
+            merged.push(path);
+        }
+    }
+
+    let mcp = dry_run_one_kind(dir, &merged, |root| {
+        agent.cleanup_mcp_config(root, managed_mcp_servers);
+    });
+    let hooks = dry_run_one_kind(dir, &merged, |root| {
+        if let Err(e) = agent.sync_hooks(root, &[]) {
+            eprintln!("[automatic] removal preview: hook strip failed: {}", e);
+        }
+    });
+    StripChanges { mcp, hooks }
+}
+
+/// Copy each `merged` file into a fresh temp tree at the same relative
+/// path, run `apply_one`, and return the real paths whose bytes changed
+/// (a deletion counts as a change).
+fn dry_run_one_kind<F>(dir: &Path, merged: &[PathBuf], apply_one: F) -> HashSet<PathBuf>
+where
+    F: FnOnce(&Path),
+{
     let mut changed = HashSet::new();
     let tmp = match tempfile::tempdir() {
         Ok(t) => t,
@@ -372,17 +469,12 @@ fn dry_run_strips(
         }
     };
 
-    let mut merged: Vec<PathBuf> = agent.mcp_merge_inputs(dir);
-    if let Some(HookConfigTarget::Merged { path, .. }) = agent.hook_config_target(dir) {
-        merged.push(path);
-    }
-
     let mut copies: Vec<(PathBuf, PathBuf, Vec<u8>)> = Vec::new();
     for real in merged {
         let Ok(relative) = real.strip_prefix(dir) else {
             continue;
         };
-        let Ok(bytes) = fs::read(&real) else {
+        let Ok(bytes) = fs::read(real) else {
             continue;
         };
         let copy = tmp.path().join(relative);
@@ -392,17 +484,14 @@ fn dry_run_strips(
             }
         }
         if fs::write(&copy, &bytes).is_ok() {
-            copies.push((real, copy, bytes));
+            copies.push((real.clone(), copy, bytes));
         }
     }
     if copies.is_empty() {
         return changed;
     }
 
-    agent.cleanup_mcp_config(tmp.path(), managed_mcp_servers);
-    if let Err(e) = agent.sync_hooks(tmp.path(), &[]) {
-        eprintln!("[automatic] removal preview: hook strip failed: {}", e);
-    }
+    apply_one(tmp.path());
 
     for (real, copy, before) in copies {
         let after = fs::read(&copy).ok();
@@ -422,28 +511,27 @@ fn remove_path(path: &Path, is_dir: bool) -> Result<(), String> {
     result.map_err(|e| format!("{}: {}", path.display(), e))
 }
 
-/// Carry out `plan`.  Deletions run first, then strips, then the emptied
-/// directories are removed.  Returns the entries that took effect, in plan
-/// order.  When any step fails the error lists every failure; the steps that
-/// succeeded stay done.
+/// Carry out `plan`.  Strips run first so user hand-edits inside a
+/// to-be-deleted owned directory survive; then the deletes, with a
+/// soft-delete parent (see [`PlannedEntry::soft_delete`]) only removed when
+/// the strip left it empty; finally the emptied parent directories.  Returns
+/// the entries that actually took effect, in plan order.  A soft-delete
+/// parent whose strip preserved user content silently drops off the returned
+/// list — the parent survives with the file the user cares about.  When any
+/// step fails the error lists every failure; the steps that succeeded stay
+/// done.
 pub fn apply_removal_plan(
     agent: &dyn Agent,
     dir: &Path,
     plan: &RemovalPlan,
 ) -> Result<Vec<RemovalEntry>, String> {
     let mut failed: HashSet<usize> = HashSet::new();
+    let mut skipped: HashSet<usize> = HashSet::new();
     let mut errors: Vec<String> = Vec::new();
 
-    for (idx, item) in plan.items.iter().enumerate() {
-        if item.entry.action != RemovalAction::Delete {
-            continue;
-        }
-        if let Err(e) = remove_path(Path::new(&item.entry.path), item.entry.is_dir) {
-            failed.insert(idx);
-            errors.push(e);
-        }
-    }
-
+    // Phase 1 — strips.  Run before any delete so files inside a soft-delete
+    // parent (e.g. `.codex/config.toml` inside `.codex/`) get a chance to
+    // preserve user content before the parent decides whether to disappear.
     let strips = |kind: StripKind| {
         plan.items
             .iter()
@@ -477,6 +565,40 @@ pub fn apply_removal_plan(
         }
     }
 
+    // Phase 2 — deletes.  A soft-delete directory is removed only if strips
+    // left it empty; otherwise the delete is a silent no-op so user content
+    // survives (VEL-174).  Hard deletes run as before.
+    for (idx, item) in plan.items.iter().enumerate() {
+        if item.entry.action != RemovalAction::Delete {
+            continue;
+        }
+        let path = Path::new(&item.entry.path);
+        if item.soft_delete {
+            match dir_is_empty(path) {
+                Ok(true) => {
+                    if let Err(e) = fs::remove_dir(path) {
+                        failed.insert(idx);
+                        errors.push(format!("{}: {}", item.entry.path, e));
+                    }
+                }
+                Ok(false) => {
+                    // Strip preserved user content; parent stays.
+                    skipped.insert(idx);
+                }
+                Err(_) => {
+                    // The directory already disappeared (e.g. strip removed
+                    // the last file and something else pruned it).  Treat as
+                    // "nothing to do" rather than an error.
+                    skipped.insert(idx);
+                }
+            }
+        } else if let Err(e) = remove_path(path, item.entry.is_dir) {
+            failed.insert(idx);
+            errors.push(e);
+        }
+    }
+
+    // Phase 3 — parent directories left empty by the deletes.
     for (idx, item) in plan.items.iter().enumerate() {
         if item.entry.action != RemovalAction::RemoveEmptyDir {
             continue;
@@ -500,9 +622,16 @@ pub fn apply_removal_plan(
         .items
         .iter()
         .enumerate()
-        .filter(|(idx, _)| !failed.contains(idx))
+        .filter(|(idx, _)| !failed.contains(idx) && !skipped.contains(idx))
         .map(|(_, item)| item.entry.clone())
         .collect())
+}
+
+/// Whether the directory holds no entries — a symlinked or vanished
+/// directory returns an error so the caller can decide what to do.
+fn dir_is_empty(path: &Path) -> std::io::Result<bool> {
+    let mut entries = fs::read_dir(path)?;
+    Ok(entries.next().is_none())
 }
 
 #[cfg(test)]
