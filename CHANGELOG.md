@@ -4,6 +4,8 @@ All notable changes to Automatic are documented here.
 
 ## [Unreleased]
 
+## [1.31.0] - 2026-09-29
+
 ### Added
 
 - Removing an agent from a project now asks what to do with its files. Remove deletes everything the agent uses in the project, including its own folders such as `.claude/` and `.junie/` and its own instruction file such as `CLAUDE.md`. Keep stops syncing the agent and leaves every file where it is. Before you confirm, the dialog lists each path it will delete and each shared file it will leave for your other agents. ([41829f2](https://github.com/velvet-tiger/automatic/commit/41829f2))
@@ -20,6 +22,7 @@ All notable changes to Automatic are documented here.
 
 ### Fixed
 
+- Removing Codex, Gemini, Zed or Copilot from a project now deletes only the MCP servers Automatic added. Servers you added yourself and every other setting in `.codex/config.toml`, `.gemini/settings.json`, `.zed/settings.json` and `.vscode/mcp.json` stay. The agent's folder is removed only if nothing is left in it. ([38cf773](https://github.com/velvet-tiger/automatic/commit/38cf773), [b882c08](https://github.com/velvet-tiger/automatic/commit/b882c08), [6b947d5](https://github.com/velvet-tiger/automatic/commit/6b947d5))
 - Adding a project whose folder name matches another project no longer stops you. The Add Project wizard has a name field that follows the folder name until you edit it. ([46624f8](https://github.com/velvet-tiger/automatic/commit/46624f8), [a57a711](https://github.com/velvet-tiger/automatic/commit/a57a711))
 - Agents are told to track features only on projects that use the Build tool. The feature-tracking instructions moved out of the Automatic service rule into a new "Build: Feature Tracking" rule, and the `automatic-features` skill now comes with the Build plugin. Both are added to a project when it has the Build tool and removed when it doesn't. Existing projects catch up the next time Automatic starts. On projects without Build, the feature tools now return an error instead of saving features nobody can see. ([ed11630](https://github.com/velvet-tiger/automatic/commit/ed11630))
 - Duplicating a sub-agent gives the copy a `-copy` name instead of the original's name. ([029cb93](https://github.com/velvet-tiger/automatic/commit/029cb93))
