@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { X } from "lucide-react";
-import { computeLineDiff, buildSideBySideDiffRows, type DiffLine } from "../diff";
+import { SideBySideDiff, DiffColumnAction } from "../SideBySideDiff";
 
 export interface ContentConflictModalProps {
   /** Header eyebrow, e.g. "Instruction File Conflict" or "Project Skill Conflict". */
@@ -49,51 +49,6 @@ export function ContentConflictModal({
   }, [onClose]);
 
   const hasAutomaticContent = automaticContent.trim().length > 0;
-  const diffLines = useMemo(
-    () => (hasAutomaticContent ? computeLineDiff(automaticContent, diskContent) : null),
-    [automaticContent, diskContent, hasAutomaticContent],
-  );
-  const sideBySideRows = useMemo(
-    () => (diffLines ? buildSideBySideDiffRows(diffLines) : []),
-    [diffLines],
-  );
-  const addedCount = diffLines?.filter((line) => line.type === "added").length ?? 0;
-  const removedCount = diffLines?.filter((line) => line.type === "removed").length ?? 0;
-  const diskLineCount = diskContent.split("\n").length;
-  const automaticLineCount = hasAutomaticContent ? automaticContent.split("\n").length : 0;
-  const noDiff = diffLines ? addedCount === 0 && removedCount === 0 : false;
-
-  const renderDiffCell = (line: DiffLine | null, side: "left" | "right") => {
-    const isBlank = line == null;
-    const lineNumber = side === "left" ? line?.lineNo.a : line?.lineNo.b;
-    const isChanged = line != null && line.type !== "same";
-    const toneClass = isBlank
-      ? "bg-bg-base/30 text-text-subtle/40"
-      : line.type === "added"
-        ? "bg-success/10 text-success"
-        : line.type === "removed"
-          ? "bg-danger/10 text-danger"
-          : "bg-bg-base text-text-muted";
-
-    return (
-      <div
-        className={`grid grid-cols-[3rem_1fr] border-b border-border-strong/20 last:border-b-0 ${toneClass}`}
-      >
-        <div className="select-none border-r border-border-strong/20 px-2 py-1 text-right text-[11px] text-border-strong">
-          {lineNumber ?? ""}
-        </div>
-        <div
-          className={`px-3 py-1 whitespace-pre-wrap break-words leading-relaxed ${
-            isChanged && side === "left" && line?.type === "removed"
-              ? "decoration-danger/40 line-through"
-              : ""
-          } ${isBlank ? "italic" : ""}`}
-        >
-          {isBlank ? " " : line?.content || " "}
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div
@@ -130,125 +85,27 @@ export function ContentConflictModal({
             {modifiedMessage ?? "has been modified outside Automatic."}
           </p>
 
-          <div className="rounded-lg border border-border-strong/40 overflow-hidden">
-            {!hasAutomaticContent ? (
-              <>
-                <div className="bg-bg-input px-3 py-2 flex items-center justify-between border-b border-border-strong/30">
-                  <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
-                    Side-By-Side Comparison
-                  </span>
-                  <span className="text-[11px] text-text-muted">Automatic is empty on the left</span>
-                </div>
-                <div className="grid grid-cols-1 xl:grid-cols-2 max-h-[28rem] overflow-y-auto">
-                  <div className="border-b border-border-strong/30 xl:border-b-0 xl:border-r xl:border-border-strong/30">
-                    <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border-strong/20 bg-danger/5 px-3 py-2">
-                      <span className="text-[11px] font-medium uppercase tracking-wider text-danger">
-                        Automatic
-                      </span>
-                      <span className="text-[11px] text-text-muted">0 lines</span>
-                    </div>
-                    <div className="bg-bg-base px-3 py-4 text-[12px] font-mono leading-relaxed text-text-subtle italic">
-                      empty
-                    </div>
-                  </div>
-                  <div>
-                    <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border-strong/20 bg-success/5 px-3 py-2">
-                      <span className="text-[11px] font-medium uppercase tracking-wider text-success">
-                        On Disk
-                      </span>
-                      <span className="text-[11px] text-text-muted">
-                        {diskLineCount} line{diskLineCount !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    <pre className="bg-bg-base p-3 text-[12px] font-mono whitespace-pre-wrap leading-relaxed text-text-muted">
-                      {diskContent.trim() || <em className="not-italic text-text-subtle">empty</em>}
-                    </pre>
-                  </div>
-                </div>
-              </>
-            ) : noDiff ? (
-              <>
-                <div className="bg-bg-input px-3 py-2 flex items-center justify-between border-b border-border-strong/30">
-                  <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
-                    Automatic And Disk Match
-                  </span>
-                  <span className="text-[11px] text-text-muted">
-                    {diskLineCount} line{diskLineCount !== 1 ? "s" : ""}
-                  </span>
-                </div>
-                <pre className="max-h-72 overflow-y-auto bg-bg-base p-3 text-[12px] font-mono whitespace-pre-wrap leading-relaxed text-text-muted">
-                  {diskContent.trim() || <em className="not-italic text-text-subtle">empty</em>}
-                </pre>
-              </>
-            ) : (
-              <>
-                <div className="bg-bg-input px-3 py-2 flex items-center justify-between border-b border-border-strong/30">
-                  <span className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
-                    Side-By-Side Diff
-                  </span>
-                  <span className="text-[11px] text-text-muted flex items-center gap-2">
-                    {addedCount > 0 && <span className="text-success">+{addedCount}</span>}
-                    {removedCount > 0 && <span className="text-danger">−{removedCount}</span>}
-                    <span className="text-border-strong/60">·</span>
-                    <span>
-                      {automaticLineCount} vs {diskLineCount} lines
-                    </span>
-                  </span>
-                </div>
-                <div className="grid grid-cols-1 xl:grid-cols-2 max-h-[28rem] overflow-y-auto">
-                  <div className="border-b border-border-strong/30 xl:border-b-0 xl:border-r xl:border-border-strong/30">
-                    <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border-strong/20 bg-danger/5 px-3 py-2">
-                      <span className="text-[11px] font-medium uppercase tracking-wider text-danger">
-                        Automatic
-                      </span>
-                      <span className="text-[11px] text-text-muted">
-                        {automaticLineCount} line{automaticLineCount !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    <div className="font-mono text-[12px]">
-                      {sideBySideRows.map((row, idx) => (
-                        <div key={`left-${idx}`}>{renderDiffCell(row.left, "left")}</div>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border-strong/20 bg-success/5 px-3 py-2">
-                      <span className="text-[11px] font-medium uppercase tracking-wider text-success">
-                        On Disk
-                      </span>
-                      <span className="text-[11px] text-text-muted">
-                        {diskLineCount} line{diskLineCount !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    <div className="font-mono text-[12px]">
-                      {sideBySideRows.map((row, idx) => (
-                        <div key={`right-${idx}`}>{renderDiffCell(row.right, "right")}</div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
+          <SideBySideDiff
+            leftLabel="Automatic"
+            rightLabel="On Disk"
+            leftContent={automaticContent}
+            rightContent={diskContent}
+            favoured="right"
+          />
 
-          <div className="grid grid-cols-1 gap-2">
-            <button
-              onClick={() => onAdopt(diskContent)}
-              className="flex flex-col items-start gap-0.5 px-4 py-3 rounded-lg border border-success/30 bg-success/5 hover:bg-success/10 hover:border-success/50 transition-colors text-left"
-            >
-              <span className="text-[13px] font-medium text-success">{adoptTitle}</span>
-              <span className="text-[12px] text-text-muted">{adoptDescription}</span>
-            </button>
-
-            <button
+          <div className="grid grid-cols-2 gap-2">
+            <DiffColumnAction
+              tone="danger"
+              title={overwriteTitle}
+              description={hasAutomaticContent ? overwriteDescription : overwriteDescriptionEmpty}
               onClick={onOverwrite}
-              className="flex flex-col items-start gap-0.5 px-4 py-3 rounded-lg border border-danger/30 bg-danger/5 hover:bg-danger/10 hover:border-danger/50 transition-colors text-left"
-            >
-              <span className="text-[13px] font-medium text-danger">{overwriteTitle}</span>
-              <span className="text-[12px] text-text-muted">
-                {hasAutomaticContent ? overwriteDescription : overwriteDescriptionEmpty}
-              </span>
-            </button>
+            />
+            <DiffColumnAction
+              tone="success"
+              title={adoptTitle}
+              description={adoptDescription}
+              onClick={() => onAdopt(diskContent)}
+            />
           </div>
         </div>
 

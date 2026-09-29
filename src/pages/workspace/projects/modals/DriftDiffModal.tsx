@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { X } from "lucide-react";
-import { computeLineDiff } from "../diff";
+import { SideBySideDiff, DiffColumnAction } from "../SideBySideDiff";
 import type { DriftedFile } from "../types";
 
 interface DriftDiffModalProps {
@@ -15,9 +15,7 @@ interface DriftDiffModalProps {
 }
 
 export function DriftDiffModal({ file, agentLabel, projectKey, onClose, onResolved }: DriftDiffModalProps) {
-  const diffLines = file.expected != null && file.actual != null
-    ? computeLineDiff(file.expected, file.actual)
-    : null;
+  const hasDiff = file.expected != null && file.actual != null;
 
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
 
@@ -81,7 +79,7 @@ export function DriftDiffModal({ file, agentLabel, projectKey, onClose, onResolv
     >
       <div
         className="flex flex-col bg-bg-sidebar border border-border-strong/40 rounded-xl shadow-2xl overflow-hidden"
-        style={{ width: "min(900px, 90vw)", maxHeight: "80vh" }}
+        style={{ width: "min(1100px, 94vw)", maxHeight: "85vh" }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border-strong flex-shrink-0">
@@ -107,64 +105,30 @@ export function DriftDiffModal({ file, agentLabel, projectKey, onClose, onResolv
           </button>
         </div>
 
-        {/* Legend */}
-        {diffLines && (
-          <div className="flex items-center gap-4 px-5 py-2 border-b border-border-strong flex-shrink-0 bg-bg-input">
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded-sm bg-success/20 border border-success/40" />
-              <span className="text-[11px] text-text-muted">On disk (current)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded-sm bg-danger/20 border border-danger/40" />
-              <span className="text-[11px] text-text-muted">Automatic would generate (expected)</span>
-            </div>
-          </div>
-        )}
-
         {/* Diff body */}
         <div className="overflow-auto flex-1 font-mono text-[12px]">
-          {diffLines ? (
-            <table className="w-full border-collapse">
-              <tbody>
-                {diffLines.map((line, idx) => (
-                  <tr
-                    key={idx}
-                    className={
-                      line.type === "added"
-                        ? "bg-success/10 hover:bg-success/15"
-                        : line.type === "removed"
-                        ? "bg-danger/10 hover:bg-danger/15"
-                        : "hover:bg-surface-hover"
-                    }
-                  >
-                    {/* Line number: expected (a) */}
-                    <td className="select-none text-right text-border-strong px-3 py-0.5 w-12 border-r border-border-strong min-w-[3rem]">
-                      {line.lineNo.a ?? ""}
-                    </td>
-                    {/* Line number: actual (b) */}
-                    <td className="select-none text-right text-border-strong px-3 py-0.5 w-12 border-r border-border-strong min-w-[3rem]">
-                      {line.lineNo.b ?? ""}
-                    </td>
-                    {/* Sign */}
-                    <td className={`select-none px-2 py-0.5 w-5 text-center font-bold ${
-                      line.type === "added" ? "text-success" : line.type === "removed" ? "text-danger" : "text-border-strong"
-                    }`}>
-                      {line.type === "added" ? "+" : line.type === "removed" ? "−" : " "}
-                    </td>
-                    {/* Content */}
-                    <td className={`px-3 py-0.5 whitespace-pre ${
-                      line.type === "added"
-                        ? "text-success"
-                        : line.type === "removed"
-                        ? "text-danger"
-                        : "text-text-muted"
-                    }`}>
-                      {line.content}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {hasDiff ? (
+            // A sync overwrites disk, so Automatic's side (left) is the one kept.
+            <div className="px-5 py-4 space-y-4 font-sans">
+              <SideBySideDiff
+                leftLabel="Automatic"
+                rightLabel="On Disk"
+                leftContent={file.expected ?? ""}
+                rightContent={file.actual ?? ""}
+                favoured="left"
+              />
+              {projectKey && (
+                <div className="grid grid-cols-2 gap-2">
+                  <DiffColumnAction
+                    tone="success"
+                    title={actionInProgress === "overwrite" ? "Syncing..." : "Overwrite with Automatic (re-sync)"}
+                    description="Sync the project so this file matches Automatic's content."
+                    onClick={handleSyncOverwrite}
+                    disabled={actionInProgress !== null}
+                  />
+                </div>
+              )}
+            </div>
           ) : file.reason === "stale" && file.actual ? (
             /* Stale skill with on-disk content: show a header + content preview */
             <div className="flex flex-col h-full">
