@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::agent;
-use crate::core::{Project, ProjectMode};
+use crate::core::{Project, ProjectMode, ProjectSummary};
 
 use super::helpers::{
     automatic_project_env_value, build_selected_servers, build_skill_contents,
@@ -268,6 +268,11 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         &enabled_mcp_servers,
         &mcp_config,
     );
+    let summaries = crate::core::get_project_summaries()?;
+    let alternate_servers: Vec<Map<String, Value>> = equivalent_project_idents(project, &summaries)
+        .iter()
+        .map(|ident| build_selected_servers(ident, &enabled_mcp_servers, &mcp_config))
+        .collect();
 
     // Build skill contents with dedup: library-backed skills win over stale
     // custom_skills snapshots.
@@ -331,10 +336,11 @@ pub fn check_project_drift(project: &Project) -> Result<DriftReport, String> {
         if let Some(agent_instance) = agent::from_id(agent_id) {
             let mut files: Vec<DriftedFile> = Vec::new();
 
-            collect_mcp_drift(
+            collect_mcp_drift_accepting(
                 agent_instance,
                 &effective_dir,
                 &selected_servers,
+                &alternate_servers,
                 &mut files,
             );
             // Pass custom skill names as local so modified custom skills are
@@ -657,6 +663,55 @@ fn collect_shadowing_legacy_instruction_conflicts(
     }
 
     conflicts
+}
+
+/// `AUTOMATIC_PROJECT` values other than the project `id` that `mcp-serve`
+/// resolves to this same project: its `local_key`, and its name when no
+/// other project shares it. Agent configs written before projects had ids
+/// name the project this way, and they still work.
+fn equivalent_project_idents(project: &Project, summaries: &[ProjectSummary]) -> Vec<String> {
+    let current = automatic_project_env_value(project);
+    let name_is_shared = summaries.iter().any(|s| {
+        s.name == project.name
+            && s.local_key != project.local_key
+            && (project.id.is_empty() || s.id != project.id)
+    });
+    let mut idents: Vec<String> = Vec::new();
+    if !project.local_key.is_empty() {
+        idents.push(project.local_key.clone());
+    }
+    if !name_is_shared && !project.name.is_empty() {
+        idents.push(project.name.clone());
+    }
+    idents.retain(|ident| ident != current);
+    idents.dedup();
+    idents
+}
+
+/// Like [`collect_mcp_drift`], but a config that matches the expectation
+/// built from any of `alternates` is not drift. The alternates differ from
+/// `servers` only in the `AUTOMATIC_PROJECT` value, so a config that still
+/// names its project by name or `local_key` is left alone until a sync
+/// rewrites it for another reason.
+fn collect_mcp_drift_accepting(
+    agent_instance: &dyn agent::Agent,
+    dir: &PathBuf,
+    servers: &Map<String, Value>,
+    alternates: &[Map<String, Value>],
+    out: &mut Vec<DriftedFile>,
+) {
+    let mut drifted: Vec<DriftedFile> = Vec::new();
+    collect_mcp_drift(agent_instance, dir, servers, &mut drifted);
+    if !drifted.is_empty() {
+        for alternate in alternates {
+            let mut alternate_drift: Vec<DriftedFile> = Vec::new();
+            collect_mcp_drift(agent_instance, dir, alternate, &mut alternate_drift);
+            if alternate_drift.is_empty() {
+                return;
+            }
+        }
+    }
+    out.append(&mut drifted);
 }
 
 /// Collect MCP config drift entries for one agent into `out`.
@@ -2464,23 +2519,33 @@ mod tests {
         assert_eq!(report.problems[0].resources, vec!["github".to_string()]);
     }
 
-    /// Agent configs written before stage 5 hold the project name in
-    /// `AUTOMATIC_PROJECT`. The expectation is now the project id, so such a
-    /// config drifts once, and is clean after the next sync writes the id.
-    #[test]
-    fn a_legacy_name_in_automatic_project_drifts_once_then_is_clean() {
-        use crate::core::Project;
-
-        let project_dir = tempdir().unwrap();
-        let project = Project {
+    fn identity_project() -> Project {
+        Project {
             name: "site".to_string(),
             id: "5b1f0c7e-0000-4000-8000-0000000000e1".to_string(),
             local_key: "5b1f0c7e-0000-4000-8000-0000000000e2".to_string(),
-            directory: project_dir.path().display().to_string(),
             ..Default::default()
-        };
+        }
+    }
+
+    fn summary_of(project: &Project, name: &str, id: &str, local_key: &str) -> ProjectSummary {
+        ProjectSummary {
+            local_key: local_key.to_string(),
+            id: id.to_string(),
+            name: name.to_string(),
+            directory: format!("/work/{}", project.name),
+        }
+    }
+
+    /// Agent configs written before projects had ids hold the project name
+    /// or `local_key` in `AUTOMATIC_PROJECT`. `mcp-serve` resolves both, so
+    /// they are not drift. Any other value still is.
+    #[test]
+    fn a_legacy_name_or_local_key_in_automatic_project_is_not_drift() {
+        use crate::agent::{ClaudeCode, OpenCode};
+
+        let project = identity_project();
         let no_servers = Map::new();
-        let legacy = build_selected_servers(&project.name, &[], &no_servers);
         let expected =
             build_selected_servers(automatic_project_env_value(&project), &[], &no_servers);
         assert_eq!(
@@ -2488,17 +2553,74 @@ mod tests {
             project.id.as_str(),
             "the expectation names the project by id"
         );
+        let own = summary_of(&project, &project.name, &project.id, &project.local_key);
+        let alternates: Vec<Map<String, Value>> = equivalent_project_idents(&project, &[own])
+            .iter()
+            .map(|ident| build_selected_servers(ident, &[], &no_servers))
+            .collect();
+        assert_eq!(alternates.len(), 2, "the local key and the name");
 
-        let dir = project_dir.path().to_path_buf();
-        ClaudeCode.write_mcp_config(project_dir.path(), &legacy).unwrap();
-        let mut files: Vec<DriftedFile> = Vec::new();
-        collect_mcp_drift(&ClaudeCode, &dir, &expected, &mut files);
-        assert_eq!(files.len(), 1, "the legacy name drifts");
-        assert_eq!((files[0].path.as_str(), files[0].reason.as_str()), (".mcp.json", "modified"));
+        let agents: [(&dyn agent::Agent, &str); 2] =
+            [(&ClaudeCode, ".mcp.json"), (&OpenCode, "opencode.json")];
+        for (agent_instance, file) in agents {
+            for legacy_value in [project.name.as_str(), project.local_key.as_str()] {
+                let dir = tempdir().unwrap();
+                let legacy = build_selected_servers(legacy_value, &[], &no_servers);
+                agent_instance.write_mcp_config(dir.path(), &legacy).unwrap();
+                let mut files: Vec<DriftedFile> = Vec::new();
+                collect_mcp_drift_accepting(
+                    agent_instance,
+                    &dir.path().to_path_buf(),
+                    &expected,
+                    &alternates,
+                    &mut files,
+                );
+                assert!(files.is_empty(), "{file} naming {legacy_value} is not drift");
+            }
 
-        ClaudeCode.write_mcp_config(project_dir.path(), &expected).unwrap();
-        let mut files: Vec<DriftedFile> = Vec::new();
-        collect_mcp_drift(&ClaudeCode, &dir, &expected, &mut files);
-        assert!(files.is_empty(), "clean after the sync writes the id: {:?}", files.len());
+            let dir = tempdir().unwrap();
+            let stranger = build_selected_servers("someone-else", &[], &no_servers);
+            agent_instance.write_mcp_config(dir.path(), &stranger).unwrap();
+            let mut files: Vec<DriftedFile> = Vec::new();
+            collect_mcp_drift_accepting(
+                agent_instance,
+                &dir.path().to_path_buf(),
+                &expected,
+                &alternates,
+                &mut files,
+            );
+            assert_eq!(files.len(), 1, "{file} naming another project drifts");
+            assert_eq!(files[0].path, file);
+        }
+    }
+
+    /// A name that another project also uses does not resolve, so a config
+    /// carrying it is broken and must drift.
+    #[test]
+    fn a_shared_name_is_not_an_equivalent_project_ident() {
+        let project = identity_project();
+        let own = summary_of(&project, "site", &project.id, &project.local_key);
+        let other = summary_of(
+            &project,
+            "site",
+            "5b1f0c7e-0000-4000-8000-0000000000f1",
+            "5b1f0c7e-0000-4000-8000-0000000000f2",
+        );
+        assert_eq!(
+            equivalent_project_idents(&project, &[own.clone(), other]),
+            vec![project.local_key.clone()]
+        );
+
+        let second_checkout = summary_of(
+            &project,
+            "site",
+            &project.id,
+            "5b1f0c7e-0000-4000-8000-0000000000f3",
+        );
+        assert_eq!(
+            equivalent_project_idents(&project, &[own, second_checkout]),
+            vec![project.local_key.clone(), "site".to_string()],
+            "another checkout of the same project does not make the name ambiguous"
+        );
     }
 }
