@@ -1467,12 +1467,15 @@ pub(crate) fn collect_new_skills_from_extra_dirs(agent: &dyn Agent) -> Vec<(Stri
 /// so global-scope tests can redirect reads and writes into a tempdir via
 /// [`crate::core::paths::with_test_home`].  The override is thread-local; every
 /// test that installs one must do its work on the same thread (cargo's default
-/// per-test threading is fine).
+/// per-test threading is fine).  Without an override, tests get
+/// [`crate::core::default_test_home`], never the real `~`.
 pub(crate) fn home_dir() -> Option<PathBuf> {
     #[cfg(test)]
-    if let Some(home) = crate::core::test_home_override() {
-        return Some(home);
-    }
+    return Some(
+        crate::core::test_home_override().unwrap_or_else(crate::core::default_test_home),
+    );
+
+    #[cfg(not(test))]
     dirs::home_dir()
 }
 

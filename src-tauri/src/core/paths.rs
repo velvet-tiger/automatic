@@ -8,10 +8,9 @@ use std::cell::RefCell;
 
 pub(crate) fn home_dir() -> Result<PathBuf, String> {
     #[cfg(test)]
-    if let Some(path) = TEST_HOME_OVERRIDE.with(|override_path| override_path.borrow().clone()) {
-        return Ok(path);
-    }
+    return Ok(test_home_override().unwrap_or_else(default_test_home));
 
+    #[cfg(not(test))]
     dirs::home_dir().ok_or("Could not find home directory".to_string())
 }
 
@@ -229,6 +228,29 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn test_home_override() -> Option<PathBuf> {
     TEST_HOME_OVERRIDE.with(|override_path| override_path.borrow().clone())
+}
+
+/// Home directory for a test that installed no override.
+///
+/// Tests must never see the developer's real `~`. A test that saves a
+/// project without [`with_test_home`] used to write it into the real
+/// `~/.automatic-dev/projects/`, where it showed up in `make dev` as a
+/// project pointing at a deleted temp folder. This folder is shared by the
+/// whole test process, so such tests stay isolated from the real home but
+/// not from each other.
+#[cfg(test)]
+pub(crate) fn default_test_home() -> PathBuf {
+    static DEFAULT_TEST_HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DEFAULT_TEST_HOME
+        .get_or_init(|| {
+            let dir = std::env::temp_dir()
+                .join(format!("automatic-test-home-{}", std::process::id()));
+            fs::create_dir_all(&dir).unwrap_or_else(|e| {
+                panic!("could not create the default test home {}: {}", dir.display(), e)
+            });
+            dir
+        })
+        .clone()
 }
 
 #[cfg(test)]
