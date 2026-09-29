@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import type { AgentOptions } from "../../../../components/AgentSelector";
 import { AgentIcon } from "../../../../components/AgentIcon";
 import { useCurrentUser } from "../../../../contexts/ProfileContext";
@@ -152,6 +152,22 @@ function clearSelectedProject(): void {
   } catch (err: unknown) {
     console.warn("Could not clear the selected project:", err);
   }
+}
+
+/**
+ * Render backend problem text, where `backtick-wrapped` spans are commands or
+ * paths, with those spans as inline code.
+ */
+function renderInlineCode(text: string): ReactNode[] {
+  return text.split(/(`[^`]+`)/).map((part, i) =>
+    part.length > 2 && part.startsWith("`") && part.endsWith("`") ? (
+      <code key={i} className="font-mono text-[10px] bg-danger/10 border border-danger/20 rounded px-1 py-px select-all">
+        {part.slice(1, -1)}
+      </code>
+    ) : (
+      part
+    ),
+  );
 }
 
 /** State of the open agent-removal dialog. */
@@ -905,11 +921,22 @@ export function ProjectEditor({
       if (driftCheckInFlight.current) return;
       driftCheckInFlight.current = true;
       try {
-        const [rawDrift, rawProblems] = await Promise.all([
+        // Settled separately so a failing drift check cannot leave a stale
+        // problems banner on screen, and the reverse.
+        const [driftResult, problemsResult] = await Promise.allSettled([
           invoke<string>("check_project_drift", { name }),
           invoke<string>("check_project_problems", { name }),
         ]);
-        const report = JSON.parse(rawDrift) as DriftReport;
+        if (problemsResult.status === "fulfilled") {
+          setProblemsReport(JSON.parse(problemsResult.value) as ProjectProblemsReport);
+        } else {
+          console.error(`check_project_problems failed for ${name}:`, problemsResult.reason);
+        }
+        if (driftResult.status === "rejected") {
+          console.error(`check_project_drift failed for ${name}:`, driftResult.reason);
+          return;
+        }
+        const report = JSON.parse(driftResult.value) as DriftReport;
         setDriftReport(report);
         setDriftByProject((prev) => ({ ...prev, [name]: report.drifted }));
 
@@ -934,10 +961,8 @@ export function ProjectEditor({
             return customConflicts[0]!;
           });
         }
-
-        setProblemsReport(JSON.parse(rawProblems) as ProjectProblemsReport);
-      } catch {
-        // Silently ignore drift/problems check errors (e.g. directory gone)
+      } catch (err) {
+        console.error(`Drift/problems check failed for ${name}:`, err);
       } finally {
         driftCheckInFlight.current = false;
       }
@@ -957,8 +982,8 @@ export function ProjectEditor({
     try {
       const raw = await invoke<string>("check_project_problems", { name });
       setProblemsReport(JSON.parse(raw) as ProjectProblemsReport);
-    } catch {
-      // Same silent policy as the polling loop.
+    } catch (err) {
+      console.error(`check_project_problems failed for ${name}:`, err);
     }
   };
 
@@ -3163,7 +3188,17 @@ export function ProjectEditor({
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
                           <div className="text-[12px] font-semibold text-danger mb-0.5">{problem.title}</div>
-                          <div className="text-[11px] text-danger/80 leading-snug">{problem.description}</div>
+                          <div className="text-[11px] text-danger/80 leading-snug">{renderInlineCode(problem.description)}</div>
+                          {problem.solution && problem.solution.length > 0 && (
+                            <div className="mt-1.5">
+                              <div className="text-[11px] font-semibold text-danger/90">How to fix</div>
+                              <ul className="mt-0.5 space-y-0.5 list-disc pl-4 text-[11px] text-danger/80 leading-snug">
+                                {problem.solution.map((step) => (
+                                  <li key={step}>{renderInlineCode(step)}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                           {problem.resources.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {problem.resources.map((r) => (

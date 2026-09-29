@@ -229,12 +229,14 @@ export interface DriftReport {
   custom_conflicts?: CustomAssetConflict[];
 }
 
-export type ProjectProblemKind = "mcp_user_scope_conflict";
+export type ProjectProblemKind = "mcp_user_scope_conflict" | "silent_mode_stale_root_mcp";
 
 export interface ProjectProblem {
   kind: ProjectProblemKind;
   title: string;
   description: string;
+  /** Fix steps, one per entry. Backtick-wrapped text is a command or path. */
+  solution?: string[];
   reference_url?: string;
   agents: string[];
   resources: string[];

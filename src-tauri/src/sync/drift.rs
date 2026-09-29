@@ -19,10 +19,15 @@ use super::helpers::{
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectProblemKind {
-    /// An MCP server defined in the project's local config also exists at the
-    /// user (global) scope for the same agent.  Claude Code will use the
-    /// user-scoped entry and ignore the project-local one.
+    /// An MCP server in the project's managed list also exists at the user
+    /// (global) scope for an agent that reads project-local MCP config.  The
+    /// agent uses the user-scoped entry and ignores the project-local one.
     McpUserScopeConflict,
+    /// The project is in Silent mode, but an agent's MCP config in the project
+    /// root lists servers the project does not manage.  Silent mode never
+    /// writes the root, so the agent keeps loading those servers until the
+    /// user edits the file.
+    SilentModeStaleRootMcp,
 }
 
 /// A single actionable problem in a project's configuration.
@@ -34,6 +39,10 @@ pub struct ProjectProblem {
     pub title: String,
     /// Human-readable explanation of what is wrong and why it matters.
     pub description: String,
+    /// Steps the user can take to fix the problem, one per entry.  Text
+    /// wrapped in backticks is a command or path and renders as code.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub solution: Vec<String>,
     /// Optional reference URL with more context.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference_url: Option<String>,
@@ -55,119 +64,277 @@ pub struct ProjectProblemsReport {
 /// Check for known configuration problems in a project.
 ///
 /// Currently detects:
-/// - MCP server names in the project's managed list (`project.mcp_servers`)
-///   that also exist at the Claude Code user scope (`~/.claude.json`).  Claude
-///   Code gives the user-scoped entry priority and silently ignores the
-///   project-local one, which can cause unexpected behaviour.  Only names the
-///   project actually manages are surfaced, so removing an item from the list
-///   in the UI clears its warning.
+/// - MCP servers in the project's managed list that also exist at user scope
+///   for an agent with project-local MCP config.  All such conflicts are
+///   reported as one problem, with fix steps for each affected agent.
+/// - In Silent mode, servers listed in an agent's root MCP config that the
+///   project does not manage.
 ///
 /// This is a read-only operation — nothing is written.
 pub fn check_project_problems(project: &Project) -> Result<ProjectProblemsReport, String> {
     let mut problems: Vec<ProjectProblem> = Vec::new();
 
-    if project.directory.is_empty() || project.agents.is_empty() {
-        return Ok(ProjectProblemsReport {
-            has_problems: false,
-            problems,
-        });
+    if !project.directory.is_empty() && !project.agents.is_empty() {
+        let dir = PathBuf::from(&project.directory);
+        if dir.exists() {
+            problems.extend(user_scope_conflict_problem(project));
+            if project.mode == ProjectMode::Silent {
+                problems.extend(silent_stale_root_mcp_problem(project, &dir));
+            }
+        }
     }
 
-    let dir = PathBuf::from(&project.directory);
-    if !dir.exists() {
-        return Ok(ProjectProblemsReport {
-            has_problems: false,
-            problems,
-        });
+    Ok(ProjectProblemsReport {
+        has_problems: !problems.is_empty(),
+        problems,
+    })
+}
+
+/// One agent's user-scope conflicts: the servers involved and where the
+/// user-scoped copies live.
+struct UserScopeConflict {
+    agent_id: &'static str,
+    agent_label: &'static str,
+    config_path: Option<PathBuf>,
+    servers: Vec<String>,
+}
+
+/// Build the single user-scope conflict problem, or `None` if there is none.
+///
+/// Only names in `project.mcp_servers` count.  Reading `.mcp.json` from disk
+/// would surface legacy or user-authored entries the project no longer
+/// references, and in Silent mode Automatic never touches the root file, so
+/// such a warning could never be cleared through the UI.
+fn user_scope_conflict_problem(project: &Project) -> Option<ProjectProblem> {
+    let managed: HashSet<&str> = project.mcp_servers.iter().map(String::as_str).collect();
+    if managed.is_empty() {
+        return None;
     }
 
-    // Only consider servers Automatic actually manages for this project.
-    // Reading `.mcp.json` from disk would surface legacy or user-authored
-    // entries the project's list no longer references — and in Silent mode
-    // Automatic never touches root `.mcp.json` at all, so a stale entry there
-    // could never be cleared through the UI.  Tying the check to
-    // `project.mcp_servers` keeps the warning actionable: removing the item
-    // from the list clears it.
-    let managed_server_names: HashSet<String> = project.mcp_servers.iter().cloned().collect();
-    if managed_server_names.is_empty() {
-        return Ok(ProjectProblemsReport {
-            has_problems: false,
-            problems,
-        });
-    }
-
-    // Check each agent that supports project-local MCP config.
+    let mut conflicts: Vec<UserScopeConflict> = Vec::new();
     for agent_id in &project.agents {
         let Some(agent_instance) = agent::from_id(agent_id) else {
             continue;
         };
-
-        // Read user-scoped (global) MCP servers for the same agent.
+        // An agent without project-local MCP config (e.g. Cline) only ever
+        // reads the user-scoped file, so there is nothing to conflict with.
+        if !agent_instance.capabilities().mcp_servers {
+            continue;
+        }
         let global_servers = agent_instance.discover_global_mcp_servers();
         if global_servers.is_empty() {
             continue;
         }
 
-        // Find server names in the project's list that also appear at user scope.
-        //
-        // Entries Automatic manages at global scope are deliberately excluded —
-        // they render byte-identical to the project entry (both come from the
-        // same registry config), so Claude Code's "user scope wins" precedence
-        // is behaviorally a no-op.  Warning on Automatic-managed conflicts would
-        // mean every server the user assigned via Providers > agent > MCP
-        // showed up in every project's problems list.  Foreign global entries
-        // (a `claude mcp add --scope user` the user ran themselves) still
-        // conflict and are still surfaced.
+        // Entries Automatic manages at global scope render identically to the
+        // project entry (both come from the same registry config), so the
+        // agent's "user scope wins" precedence changes nothing.  Only foreign
+        // global entries, such as a `claude mcp add --scope user` the user ran
+        // themselves, are real conflicts.
         let managed_global = crate::sync::global_mcp::managed_entries_for(agent_id);
-        let mut conflicts: Vec<String> = managed_server_names
+        let mut servers: Vec<String> = managed
             .iter()
-            .filter(|name| global_servers.contains_key(*name))
-            .filter(|name| !managed_global.iter().any(|m| m == *name))
-            .cloned()
+            .filter(|name| global_servers.contains_key(**name))
+            .filter(|name| !managed_global.iter().any(|m| m == **name))
+            .map(|name| name.to_string())
             .collect();
-        conflicts.sort();
-
-        if conflicts.is_empty() {
+        if servers.is_empty() {
             continue;
         }
-
-        let server_list = conflicts.join(", ");
-        problems.push(ProjectProblem {
-            kind: ProjectProblemKind::McpUserScopeConflict,
-            title: format!(
-                "MCP {} also configured at user scope",
-                if conflicts.len() == 1 {
-                    "server"
-                } else {
-                    "servers"
-                }
-            ),
-            description: format!(
-                "{agent_label} prioritises user-scoped MCP servers over project-local ones. \
-                 The following {} defined in both .mcp.json and the user-scoped config \
-                 (~/.claude.json) and will be overridden: {server_list}. \
-                 Remove the user-scoped entry or rename the project-local entry to avoid \
-                 unexpected behaviour.",
-                if conflicts.len() == 1 {
-                    "server is"
-                } else {
-                    "servers are"
-                },
-                agent_label = agent_instance.label(),
-            ),
-            reference_url: Some(
-                "https://docs.anthropic.com/en/docs/claude-code/mcp#project-scope".to_string(),
-            ),
-            agents: vec![agent_instance.label().to_string()],
-            resources: conflicts,
+        servers.sort();
+        conflicts.push(UserScopeConflict {
+            agent_id: agent_instance.id(),
+            agent_label: agent_instance.label(),
+            config_path: agent_instance.global_mcp_target().map(|t| t.path),
+            servers,
         });
     }
 
-    let has_problems = !problems.is_empty();
-    Ok(ProjectProblemsReport {
-        has_problems,
-        problems,
+    if conflicts.is_empty() {
+        return None;
+    }
+
+    let mut all_servers: Vec<String> = conflicts
+        .iter()
+        .flat_map(|c| c.servers.iter().cloned())
+        .collect();
+    all_servers.sort();
+    all_servers.dedup();
+    let agent_labels: Vec<String> = conflicts.iter().map(|c| c.agent_label.to_string()).collect();
+    let plural = all_servers.len() != 1;
+
+    let mut solution: Vec<String> = conflicts.iter().map(user_scope_fix_step).collect();
+    solution.push(format!(
+        "Or remove {} from this project's MCP list if you want the user-level {}.",
+        code_list(&all_servers),
+        if plural { "copies" } else { "copy" },
+    ));
+
+    Some(ProjectProblem {
+        kind: ProjectProblemKind::McpUserScopeConflict,
+        title: format!(
+            "MCP {} also configured at user scope",
+            if plural { "servers" } else { "server" }
+        ),
+        description: format!(
+            "{} {} set in this project and in your user-level config for {}. \
+             The user-level copy wins, so the project's version is ignored.",
+            code_list(&all_servers),
+            if plural { "are" } else { "is" },
+            join_words(&agent_labels),
+        ),
+        solution,
+        reference_url: Some(
+            "https://docs.anthropic.com/en/docs/claude-code/mcp#project-scope".to_string(),
+        ),
+        agents: agent_labels,
+        resources: all_servers,
     })
+}
+
+/// The fix step for one agent's user-scope conflicts.
+fn user_scope_fix_step(conflict: &UserScopeConflict) -> String {
+    let names = code_list(&conflict.servers);
+    let file = conflict
+        .config_path
+        .as_deref()
+        .map(|p| format!("`{}`", display_home_path(p)))
+        .unwrap_or_else(|| "its user-level MCP config".to_string());
+
+    // Claude Code ships a CLI command for this, which is safer than asking
+    // the user to hand-edit ~/.claude.json while a session may be writing it.
+    if conflict.agent_id == "claude" {
+        let commands: Vec<String> = conflict
+            .servers
+            .iter()
+            .map(|s| format!("`claude mcp remove {} --scope user`", s))
+            .collect();
+        return format!(
+            "{}: run {}, or delete {} from {}.",
+            conflict.agent_label,
+            commands.join(" and "),
+            names,
+            file
+        );
+    }
+    format!("{}: delete {} from {}.", conflict.agent_label, names, file)
+}
+
+/// Build the Silent-mode stale root MCP problem, or `None` if there is none.
+///
+/// Silent mode writes every file under `.automatic/silent/` and never touches
+/// the project root.  Agents still read the root, so a server left in a root
+/// MCP config keeps loading even after it is removed from the project.  The
+/// user has to delete it by hand.
+fn silent_stale_root_mcp_problem(project: &Project, dir: &std::path::Path) -> Option<ProjectProblem> {
+    let managed: HashSet<&str> = project.mcp_servers.iter().map(String::as_str).collect();
+
+    let mut steps: Vec<String> = Vec::new();
+    let mut agent_labels: Vec<String> = Vec::new();
+    let mut all_servers: Vec<String> = Vec::new();
+
+    for agent_id in &project.agents {
+        let Some(agent_instance) = agent::from_id(agent_id) else {
+            continue;
+        };
+        if !agent_instance.capabilities().mcp_servers {
+            continue;
+        }
+        let mut stale: Vec<String> = agent_instance
+            .discover_mcp_servers(dir)
+            .keys()
+            .filter(|name| name.as_str() != "automatic" && !managed.contains(name.as_str()))
+            .cloned()
+            .collect();
+        if stale.is_empty() {
+            continue;
+        }
+        stale.sort();
+
+        let file = root_mcp_file(agent_instance, dir)
+            .map(|p| format!("`{}`", p))
+            .unwrap_or_else(|| "its MCP config in the project folder".to_string());
+        steps.push(format!(
+            "{}: delete {} from {}.",
+            agent_instance.label(),
+            code_list(&stale),
+            file
+        ));
+        agent_labels.push(agent_instance.label().to_string());
+        all_servers.extend(stale);
+    }
+
+    if steps.is_empty() {
+        return None;
+    }
+    all_servers.sort();
+    all_servers.dedup();
+    let plural = all_servers.len() != 1;
+
+    steps.push(format!(
+        "Or add {} to this project's MCP list if you want to keep {}.",
+        code_list(&all_servers),
+        if plural { "them" } else { "it" },
+    ));
+
+    Some(ProjectProblem {
+        kind: ProjectProblemKind::SilentModeStaleRootMcp,
+        title: format!(
+            "Unmanaged MCP {} in the project folder",
+            if plural { "servers" } else { "server" }
+        ),
+        description: format!(
+            "{} {} not in this project's MCP list, but {} still load{} {} from the project folder. \
+             Silent mode never edits files there, so Automatic cannot remove {}.",
+            code_list(&all_servers),
+            if plural { "are" } else { "is" },
+            join_words(&agent_labels),
+            if agent_labels.len() == 1 { "s" } else { "" },
+            if plural { "them" } else { "it" },
+            if plural { "them" } else { "it" },
+        ),
+        solution: steps,
+        reference_url: None,
+        agents: agent_labels,
+        resources: all_servers,
+    })
+}
+
+/// The first existing root MCP config file for `agent`, relative to `dir`.
+fn root_mcp_file(agent: &dyn agent::Agent, dir: &std::path::Path) -> Option<String> {
+    agent
+        .mcp_merge_inputs(dir)
+        .into_iter()
+        .chain(agent.owned_config_paths(dir))
+        .find(|p| p.is_file())
+        .map(|p| {
+            p.strip_prefix(dir)
+                .map(|rel| rel.to_string_lossy().to_string())
+                .unwrap_or_else(|_| p.to_string_lossy().to_string())
+        })
+}
+
+/// `path` with the home directory shown as `~`.
+fn display_home_path(path: &std::path::Path) -> String {
+    match agent::home_dir().and_then(|home| path.strip_prefix(&home).ok().map(|r| r.to_path_buf())) {
+        Some(rel) => format!("~/{}", rel.to_string_lossy()),
+        None => path.to_string_lossy().to_string(),
+    }
+}
+
+/// Server names as backtick-wrapped code, joined for a sentence.
+fn code_list(names: &[String]) -> String {
+    let wrapped: Vec<String> = names.iter().map(|n| format!("`{}`", n)).collect();
+    join_words(&wrapped)
+}
+
+/// `a`, `a and b`, or `a, b and c`.
+fn join_words(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} and {}", init.join(", "), last),
+    }
 }
 
 // ── Drift types ───────────────────────────────────────────────────────────────
@@ -2517,6 +2684,112 @@ mod tests {
         assert!(report.has_problems, "expected a user-scope conflict for github");
         assert_eq!(report.problems.len(), 1);
         assert_eq!(report.problems[0].resources, vec!["github".to_string()]);
+    }
+
+    /// The same server at user scope for several agents is one problem, not
+    /// one per agent, and the fix steps name each agent's own file.  Agents
+    /// with no project-local MCP config (Cline) cannot conflict and are
+    /// skipped even when their global file has the server.
+    #[test]
+    fn check_project_problems_merges_user_scope_conflicts_across_agents() {
+        use crate::core::{with_test_home, Project};
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+        let github = serde_json::json!({
+            "mcpServers": { "github": { "command": "docker", "args": ["run", "x"] } }
+        });
+        let body = serde_json::to_string_pretty(&github).unwrap();
+        fs::write(home.path().join(".claude.json"), &body).unwrap();
+        fs::create_dir_all(home.path().join(".cursor")).unwrap();
+        fs::write(home.path().join(".cursor").join("mcp.json"), &body).unwrap();
+        let cline_settings = home.path().join(".cline").join("data").join("settings");
+        fs::create_dir_all(&cline_settings).unwrap();
+        fs::write(cline_settings.join("cline_mcp_settings.json"), &body).unwrap();
+
+        let project = Project {
+            name: "test-a".to_string(),
+            directory: project_dir.path().to_string_lossy().to_string(),
+            agents: vec!["claude".to_string(), "cursor".to_string(), "cline".to_string()],
+            mcp_servers: vec!["automatic".to_string(), "github".to_string()],
+            ..Default::default()
+        };
+
+        let report = with_test_home(home.path().to_path_buf(), || {
+            check_project_problems(&project).expect("problems check should succeed")
+        });
+
+        assert_eq!(report.problems.len(), 1, "conflicts must merge into one problem");
+        let problem = &report.problems[0];
+        assert_eq!(problem.kind, ProjectProblemKind::McpUserScopeConflict);
+        assert_eq!(problem.resources, vec!["github".to_string()]);
+        assert_eq!(problem.agents, vec!["Claude Code".to_string(), "Cursor".to_string()]);
+        assert!(
+            problem.solution[0].contains("`claude mcp remove github --scope user`"),
+            "Claude Code step should give the CLI command, got: {}",
+            problem.solution[0]
+        );
+        assert!(
+            problem.solution[1].contains("`~/.cursor/mcp.json`"),
+            "Cursor step should name its own file, got: {}",
+            problem.solution[1]
+        );
+        assert!(
+            problem.solution.iter().all(|step| !step.contains("Cline")),
+            "Cline has no project MCP config and must not appear: {:?}",
+            problem.solution
+        );
+    }
+
+    /// In Silent mode a root `.mcp.json` entry the project no longer manages
+    /// keeps loading in the agent.  The check names the server and the file.
+    #[test]
+    fn check_project_problems_flags_stale_root_mcp_in_silent_mode() {
+        use crate::core::{with_test_home, Project, ProjectMode};
+
+        let home = tempdir().expect("home tempdir");
+        let project_dir = tempdir().expect("project tempdir");
+        let root_mcp = serde_json::json!({
+            "mcpServers": {
+                "automatic": { "command": "/tmp/automatic", "args": ["mcp-serve"] },
+                "github": { "command": "docker", "args": ["run", "x"] }
+            }
+        });
+        fs::write(
+            project_dir.path().join(".mcp.json"),
+            serde_json::to_string_pretty(&root_mcp).unwrap(),
+        )
+        .unwrap();
+
+        let mut project = Project {
+            name: "test-a".to_string(),
+            directory: project_dir.path().to_string_lossy().to_string(),
+            agents: vec!["claude".to_string()],
+            mcp_servers: vec!["automatic".to_string()],
+            mode: ProjectMode::Silent,
+            ..Default::default()
+        };
+
+        let report = with_test_home(home.path().to_path_buf(), || {
+            check_project_problems(&project).expect("problems check should succeed")
+        });
+        assert_eq!(report.problems.len(), 1);
+        let problem = &report.problems[0];
+        assert_eq!(problem.kind, ProjectProblemKind::SilentModeStaleRootMcp);
+        assert_eq!(problem.resources, vec!["github".to_string()]);
+        assert!(
+            problem.solution[0].contains("`.mcp.json`"),
+            "fix step should name the root file, got: {}",
+            problem.solution[0]
+        );
+
+        // Normal mode owns the root file and the next sync removes the entry,
+        // so it is drift, not a problem.
+        project.mode = ProjectMode::Normal;
+        let report = with_test_home(home.path().to_path_buf(), || {
+            check_project_problems(&project).expect("problems check should succeed")
+        });
+        assert!(!report.has_problems);
     }
 
     fn identity_project() -> Project {
