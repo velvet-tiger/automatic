@@ -199,26 +199,73 @@ impl Agent for CodexCli {
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
-    /// Codex CLI merges into `.codex/config.toml` which may contain model or
-    /// history settings set by the user.  Strip only the `[mcp_servers.*]`
-    /// sections rather than deleting the whole file.
-    fn cleanup_mcp_config(&self, dir: &Path, _managed_names: &[String]) -> Vec<String> {
+    /// Codex CLI merges into `.codex/config.toml`, which also holds
+    /// `[mcp_servers.*]` sections the user hand-added alongside their model
+    /// and history settings.  Strip only the sections named in
+    /// `managed_names`; every other `[mcp_servers.*]` block and every
+    /// non-`mcp_servers` section survives.  Delete the file only when the
+    /// strip empties it whole.
+    fn cleanup_mcp_config(&self, dir: &Path, managed_names: &[String]) -> Vec<String> {
         let path = dir.join(".codex").join("config.toml");
         if !path.exists() {
             return vec![];
         }
         let existing = read_existing_toml(&path);
-        // Pass an empty mcp section to strip all [mcp_servers.*] blocks
-        let stripped = merge_toml_mcp_section(&existing, "");
-        let trimmed = stripped.trim();
-        if trimmed.is_empty() {
+        if existing.is_empty() {
+            return vec![];
+        }
+
+        // Enumerate the `[mcp_servers.*]` entries actually in the file.
+        let existing_names: HashSet<String> = toml::from_str::<toml::Value>(&existing)
+            .ok()
+            .and_then(|doc| {
+                doc.get("mcp_servers")
+                    .and_then(|v| v.as_table())
+                    .map(|t| t.keys().cloned().collect())
+            })
+            .unwrap_or_default();
+
+        // Only strip names that are both managed by Automatic and present.
+        let to_remove: HashSet<&str> = managed_names
+            .iter()
+            .map(|s| s.as_str())
+            .filter(|n| existing_names.contains(*n))
+            .collect();
+        if to_remove.is_empty() {
+            return vec![];
+        }
+
+        // Line-scan and skip only the matching `[mcp_servers.<name>]` blocks
+        // (and their sub-tables such as `[mcp_servers.<name>.env]`).
+        let mut retained = String::new();
+        let mut skip_block = false;
+        for line in existing.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                skip_block = parse_mcp_server_header(trimmed)
+                    .map(|name| to_remove.contains(name))
+                    .unwrap_or(false);
+            }
+            if !skip_block {
+                retained.push_str(line);
+                retained.push('\n');
+            }
+        }
+
+        let final_trimmed = retained.trim_end();
+        if final_trimmed.is_empty() {
             if fs::remove_file(&path).is_ok() {
                 return vec![path.display().to_string()];
             }
-        } else {
-            if fs::write(&path, format!("{}\n", trimmed)).is_ok() {
-                return vec![path.display().to_string()];
-            }
+            return vec![];
+        }
+
+        let final_content = format!("{}\n", final_trimmed);
+        if final_content.as_bytes() == existing.as_bytes() {
+            return vec![];
+        }
+        if fs::write(&path, final_content).is_ok() {
+            return vec![path.display().to_string()];
         }
         vec![]
     }

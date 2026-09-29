@@ -175,10 +175,12 @@ impl Agent for Zed {
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
-    /// Zed merges into `.zed/settings.json` which may contain user agent,
-    /// font, and theme settings.  Strip only the `context_servers` key
-    /// rather than deleting the whole file.
-    fn cleanup_mcp_config(&self, dir: &Path, _managed_names: &[String]) -> Vec<String> {
+    /// Zed merges into `.zed/settings.json`, which also holds context
+    /// servers the user added in Zed themselves alongside their agent, font,
+    /// and theme settings.  Strip only the entries Automatic manages
+    /// (`managed_names`); every other key and every foreign server survives.
+    /// Delete the file only when nothing is left.
+    fn cleanup_mcp_config(&self, dir: &Path, managed_names: &[String]) -> Vec<String> {
         let path = dir.join(".zed").join("settings.json");
         if !path.exists() {
             return vec![];
@@ -191,9 +193,26 @@ impl Agent for Zed {
             Ok(Value::Object(m)) => m,
             _ => return vec![],
         };
-        if root.remove("context_servers").is_none() {
+
+        let mut changed = false;
+        let servers_removed_empty = match root.get_mut("context_servers") {
+            Some(Value::Object(servers)) => {
+                for name in managed_names {
+                    if servers.remove(name).is_some() {
+                        changed = true;
+                    }
+                }
+                servers.is_empty()
+            }
+            _ => false,
+        };
+        if servers_removed_empty {
+            root.remove("context_servers");
+        }
+        if !changed {
             return vec![];
         }
+
         if root.is_empty() {
             if fs::remove_file(&path).is_ok() {
                 return vec![path.display().to_string()];
@@ -410,7 +429,7 @@ mod tests {
         )
         .unwrap();
 
-        let removed = Zed.cleanup_mcp_config(dir.path(), &[]);
+        let removed = Zed.cleanup_mcp_config(dir.path(), &["auto".to_string()]);
         assert_eq!(removed.len(), 1);
 
         let content = fs::read_to_string(zed_dir.join("settings.json")).unwrap();
@@ -434,7 +453,7 @@ mod tests {
         )
         .unwrap();
 
-        let removed = Zed.cleanup_mcp_config(dir.path(), &[]);
+        let removed = Zed.cleanup_mcp_config(dir.path(), &["auto".to_string()]);
         assert_eq!(removed.len(), 1);
         assert!(!zed_dir.join("settings.json").exists());
     }

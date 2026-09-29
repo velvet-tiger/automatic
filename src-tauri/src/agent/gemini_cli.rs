@@ -186,10 +186,12 @@ impl Agent for GeminiCli {
 
     // ── Cleanup ─────────────────────────────────────────────────────────
 
-    /// Gemini CLI merges into `.gemini/settings.json` which may contain user
-    /// auth or model settings.  Strip only the `mcpServers` key rather than
-    /// deleting the whole file.
-    fn cleanup_mcp_config(&self, dir: &Path, _managed_names: &[String]) -> Vec<String> {
+    /// Gemini CLI merges into `.gemini/settings.json`, which also holds MCP
+    /// servers the user added in Gemini themselves alongside their auth and
+    /// model settings.  Strip only the entries Automatic manages
+    /// (`managed_names`); every other key and every foreign server survives.
+    /// Delete the file only when nothing is left.
+    fn cleanup_mcp_config(&self, dir: &Path, managed_names: &[String]) -> Vec<String> {
         let path = dir.join(".gemini").join("settings.json");
         if !path.exists() {
             return vec![];
@@ -202,12 +204,27 @@ impl Agent for GeminiCli {
             Ok(Value::Object(m)) => m,
             _ => return vec![],
         };
-        if root.remove("mcpServers").is_none() {
-            // Nothing to remove
+
+        let mut changed = false;
+        let servers_removed_empty = match root.get_mut("mcpServers") {
+            Some(Value::Object(servers)) => {
+                for name in managed_names {
+                    if servers.remove(name).is_some() {
+                        changed = true;
+                    }
+                }
+                servers.is_empty()
+            }
+            _ => false,
+        };
+        if servers_removed_empty {
+            root.remove("mcpServers");
+        }
+        if !changed {
             return vec![];
         }
+
         if root.is_empty() {
-            // File would become `{}` — delete it entirely
             if fs::remove_file(&path).is_ok() {
                 return vec![path.display().to_string()];
             }

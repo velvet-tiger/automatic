@@ -3,7 +3,9 @@
 //! path changed as described, and nothing outside the plan changed.
 
 use super::*;
-use crate::agent::{all, Antigravity, ClaudeCode, CodexCli, Cursor, GitHubCopilot, Junie};
+use crate::agent::{
+    all, Antigravity, ClaudeCode, CodexCli, Cursor, GeminiCli, GitHubCopilot, Junie, Zed,
+};
 use std::collections::BTreeMap;
 use tempfile::tempdir;
 
@@ -375,6 +377,230 @@ fn copilot_remove_deletes_file_when_no_user_entries_remain() {
     assert_eq!(result, vec![entry(".vscode/mcp.json", Strip)]);
     assert!(
         !root.join(".vscode/mcp.json").exists(),
+        "file with nothing left must be deleted"
+    );
+}
+
+// Cleanup-strip tests for Codex CLI, Gemini CLI, and Zed.  Each of these
+// three agents owns its entire `.codex` / `.gemini` / `.zed` directory,
+// so the removal flow deletes the whole folder and never reaches
+// `cleanup_mcp_config`.  These tests therefore call `cleanup_mcp_config`
+// directly to validate the function's contract: when the file is shared
+// with a user-editable one, strip only the entries `managed_names` lists.
+
+/// Codex mirror of `copilot_remove_keeps_user_added_servers_in_vscode_mcp`.
+/// `.codex/config.toml` may hold `[mcp_servers.*]` blocks the user added by
+/// hand alongside their own model/history settings.  Cleanup must strip
+/// only the blocks Automatic manages, leaving user blocks and every other
+/// top-level key intact.
+#[test]
+fn codex_remove_keeps_user_added_servers_in_codex_config_toml() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".codex/config.toml"),
+        "model = \"gpt-5\"\n\
+         \n\
+         [mcp_servers.automatic]\n\
+         command = \"automatic\"\n\
+         \n\
+         [mcp_servers.user-server]\n\
+         command = \"user\"\n",
+    );
+
+    let removed = CodexCli.cleanup_mcp_config(root, &["automatic".to_string()]);
+    assert_eq!(removed.len(), 1, "expected the config file to be reported");
+
+    let raw = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert!(
+        !raw.contains("[mcp_servers.automatic]"),
+        "Automatic's own block must be stripped: {raw}"
+    );
+    assert!(
+        raw.contains("[mcp_servers.user-server]"),
+        "user-added block must survive Codex removal: {raw}"
+    );
+    assert!(
+        raw.contains("command = \"user\""),
+        "user block body must survive: {raw}"
+    );
+    assert!(
+        raw.contains("model = \"gpt-5\""),
+        "other top-level keys survive: {raw}"
+    );
+}
+
+/// When `.codex/config.toml` holds only user-added servers, Cleanup must
+/// report no change, and the file must be untouched on disk.
+#[test]
+fn codex_remove_reports_no_strip_when_only_user_servers_exist() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let before = "[mcp_servers.user-only]\ncommand = \"u\"\n";
+    write(&root.join(".codex/config.toml"), before);
+
+    let removed = CodexCli.cleanup_mcp_config(root, &["automatic".to_string()]);
+    assert!(removed.is_empty(), "{removed:?}");
+
+    let raw = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert_eq!(raw, before, "user-only file must not change: {raw}");
+}
+
+/// When every `[mcp_servers.*]` in `.codex/config.toml` is managed and no
+/// other content remains, Cleanup deletes the file whole.
+#[test]
+fn codex_remove_deletes_file_when_no_user_entries_remain() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".codex/config.toml"),
+        "[mcp_servers.automatic]\ncommand = \"a\"\n",
+    );
+
+    let removed = CodexCli.cleanup_mcp_config(root, &["automatic".to_string()]);
+    assert_eq!(removed.len(), 1);
+    assert!(
+        !root.join(".codex/config.toml").exists(),
+        "file with nothing left must be deleted"
+    );
+}
+
+/// Gemini mirror of `copilot_remove_keeps_user_added_servers_in_vscode_mcp`.
+/// `.gemini/settings.json` may hold user-added servers under `mcpServers`
+/// alongside their auth/model settings.  Cleanup must strip only entries
+/// Automatic manages, leaving user servers and other top-level keys intact.
+#[test]
+fn gemini_remove_keeps_user_added_servers_in_gemini_settings() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".gemini/settings.json"),
+        "{\"mcpServers\":{\"automatic\":{\"command\":\"automatic\"},\
+         \"user-server\":{\"command\":\"user\"}},\
+         \"theme\":\"dark\"}",
+    );
+
+    let removed = GeminiCli.cleanup_mcp_config(root, &["automatic".to_string()]);
+    assert_eq!(removed.len(), 1);
+
+    let raw = fs::read_to_string(root.join(".gemini/settings.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(
+        parsed["mcpServers"]["user-server"]["command"].is_string(),
+        "user-added server must survive Gemini removal: {parsed}"
+    );
+    assert!(
+        parsed["mcpServers"]["automatic"].is_null(),
+        "Automatic's own entry must be stripped: {parsed}"
+    );
+    assert_eq!(
+        parsed["theme"].as_str().unwrap(),
+        "dark",
+        "other keys survive: {parsed}"
+    );
+}
+
+/// When `.gemini/settings.json` holds only user-added servers, Cleanup
+/// must report no change, and the file must be untouched on disk.
+#[test]
+fn gemini_remove_reports_no_strip_when_only_user_servers_exist() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let before = "{\"mcpServers\":{\"user-only\":{\"command\":\"u\"}}}";
+    write(&root.join(".gemini/settings.json"), before);
+
+    let removed = GeminiCli.cleanup_mcp_config(root, &["automatic".to_string()]);
+    assert!(removed.is_empty(), "{removed:?}");
+
+    let raw = fs::read_to_string(root.join(".gemini/settings.json")).unwrap();
+    assert_eq!(raw, before, "user-only file must not change: {raw}");
+}
+
+/// When every entry under `mcpServers` is managed and nothing else remains,
+/// Cleanup deletes `.gemini/settings.json` whole.
+#[test]
+fn gemini_remove_deletes_file_when_no_user_entries_remain() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".gemini/settings.json"),
+        "{\"mcpServers\":{\"automatic\":{\"command\":\"a\"}}}",
+    );
+
+    let removed = GeminiCli.cleanup_mcp_config(root, &["automatic".to_string()]);
+    assert_eq!(removed.len(), 1);
+    assert!(
+        !root.join(".gemini/settings.json").exists(),
+        "file with nothing left must be deleted"
+    );
+}
+
+/// Zed mirror of `copilot_remove_keeps_user_added_servers_in_vscode_mcp`.
+/// `.zed/settings.json` may hold user-added servers under `context_servers`
+/// alongside their agent/font/theme settings.  Cleanup must strip only
+/// entries Automatic manages.
+#[test]
+fn zed_remove_keeps_user_added_servers_in_zed_settings() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".zed/settings.json"),
+        "{\"context_servers\":{\"automatic\":{\"command\":\"automatic\"},\
+         \"user-server\":{\"command\":\"user\"}},\
+         \"ui_font_size\":16}",
+    );
+
+    let removed = Zed.cleanup_mcp_config(root, &["automatic".to_string()]);
+    assert_eq!(removed.len(), 1);
+
+    let raw = fs::read_to_string(root.join(".zed/settings.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(
+        parsed["context_servers"]["user-server"]["command"].is_string(),
+        "user-added server must survive Zed removal: {parsed}"
+    );
+    assert!(
+        parsed["context_servers"]["automatic"].is_null(),
+        "Automatic's own entry must be stripped: {parsed}"
+    );
+    assert_eq!(
+        parsed["ui_font_size"].as_u64().unwrap(),
+        16,
+        "other keys survive: {parsed}"
+    );
+}
+
+/// When `.zed/settings.json` holds only user-added servers, Cleanup must
+/// report no change, and the file must be untouched on disk.
+#[test]
+fn zed_remove_reports_no_strip_when_only_user_servers_exist() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    let before = "{\"context_servers\":{\"user-only\":{\"command\":\"u\"}}}";
+    write(&root.join(".zed/settings.json"), before);
+
+    let removed = Zed.cleanup_mcp_config(root, &["automatic".to_string()]);
+    assert!(removed.is_empty(), "{removed:?}");
+
+    let raw = fs::read_to_string(root.join(".zed/settings.json")).unwrap();
+    assert_eq!(raw, before, "user-only file must not change: {raw}");
+}
+
+/// When every entry under `context_servers` is managed and nothing else
+/// remains, Cleanup deletes `.zed/settings.json` whole.
+#[test]
+fn zed_remove_deletes_file_when_no_user_entries_remain() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write(
+        &root.join(".zed/settings.json"),
+        "{\"context_servers\":{\"automatic\":{\"command\":\"a\"}}}",
+    );
+
+    let removed = Zed.cleanup_mcp_config(root, &["automatic".to_string()]);
+    assert_eq!(removed.len(), 1);
+    assert!(
+        !root.join(".zed/settings.json").exists(),
         "file with nothing left must be deleted"
     );
 }
