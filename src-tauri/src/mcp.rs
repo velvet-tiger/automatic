@@ -290,18 +290,31 @@ pub struct ReadProfileParams {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct AttachProfileParams {
-    /// The project to act on. Omit it to use the current project, the one
-    /// this agent is working in. Accepts a local_key, an id or a name.
+    /// Project to attach to: a local_key, an id or a name. Give `project`
+    /// or `group`, not both. Give neither to use the current project, the
+    /// one this agent is working in.
+    #[serde(default)]
     pub project: Option<String>,
+    /// Project group name to attach to. Every member project receives the
+    /// profile. Give `project` or `group`, not both.
+    #[serde(default)]
+    pub group: Option<String>,
     /// The profile name. Must already exist in the library.
     pub profile: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct DetachProfileParams {
-    /// The project to act on. Omit it to use the current project, the one
-    /// this agent is working in. Accepts a local_key, an id or a name.
+    /// Project to detach from: a local_key, an id or a name. Give `project`
+    /// or `group`, not both. Give neither to use the current project, the
+    /// one this agent is working in.
+    #[serde(default)]
     pub project: Option<String>,
+    /// Project group name to detach from. Member projects lose the profile
+    /// unless another of their groups provides it. Give `project` or
+    /// `group`, not both.
+    #[serde(default)]
+    pub group: Option<String>,
     /// The profile name.
     pub profile: String,
 }
@@ -580,6 +593,80 @@ fn load_project(checkout: &crate::core::ProjectSummary) -> Result<crate::core::P
         .map_err(|e| format!("Failed to read project '{}': {}", checkout.name, e))?;
     serde_json::from_str(&raw)
         .map_err(|e| format!("Failed to parse project '{}': {}", checkout.name, e))
+}
+
+/// Fail with a tool-ready message when no project group has this name.
+fn require_known_group(group: &str) -> Result<(), String> {
+    if crate::core::list_groups()?.iter().any(|g| g == group) {
+        return Ok(());
+    }
+    Err(format!(
+        "Unknown group '{}'. Call automatic_get_related_projects or ask the \
+         user for the group name.",
+        group
+    ))
+}
+
+/// The `group` of a profile attach or detach call, checked. `None` means the
+/// call targets a project. Giving both `project` and `group` is an error.
+fn profile_group_target<'a>(
+    project: &Option<String>,
+    group: &'a Option<String>,
+) -> Result<Option<&'a str>, String> {
+    match (project, group) {
+        (Some(_), Some(_)) => Err("Give `project` or `group`, not both.".to_string()),
+        (None, Some(group)) => {
+            require_known_group(group)?;
+            Ok(Some(group))
+        }
+        (_, None) => Ok(None),
+    }
+}
+
+/// Attach a profile to a known group and report it as a tool result. Member
+/// projects are reconciled and synced by the command-layer sweep.
+fn attach_profile_to_group_result(group: &str, profile: &str) -> CallToolResult {
+    if crate::core::read_project_profile_parsed(profile).is_err() {
+        return tool_error(format!(
+            "Profile '{}' does not exist in the library. Call \
+             automatic_list_profiles to see available profiles.",
+            profile
+        ));
+    }
+    match crate::commands::attach_group_profile(group, profile) {
+        Ok(true) => CallToolResult::success(vec![Content::text(format!(
+            "Attached profile '{}' to group '{}'. Every member project received it \
+             and was synced.",
+            profile, group
+        ))]),
+        Ok(false) => CallToolResult::success(vec![Content::text(format!(
+            "Profile '{}' was already attached to group '{}'.",
+            profile, group
+        ))]),
+        Err(e) => tool_error(format!(
+            "Failed to attach profile '{}' to group '{}': {}",
+            profile, group, e
+        )),
+    }
+}
+
+/// Detach a profile from a known group and report it as a tool result.
+fn detach_profile_from_group_result(group: &str, profile: &str) -> CallToolResult {
+    match crate::commands::detach_group_profile(group, profile) {
+        Ok(true) => CallToolResult::success(vec![Content::text(format!(
+            "Detached profile '{}' from group '{}'. Member projects that no other \
+             group provides it to lost it and were synced.",
+            profile, group
+        ))]),
+        Ok(false) => CallToolResult::success(vec![Content::text(format!(
+            "Profile '{}' was not attached to group '{}'.",
+            profile, group
+        ))]),
+        Err(e) => tool_error(format!(
+            "Failed to detach profile '{}' from group '{}': {}",
+            profile, group, e
+        )),
+    }
 }
 
 /// Serialise and save one checkout's project, with error text ready for a
@@ -931,13 +1018,7 @@ impl AutomaticMcpServer {
         match (&params.project, &params.group) {
             (Some(_), Some(_)) => Err("Give `project` or `group`, not both.".to_string()),
             (None, Some(group)) => {
-                if !crate::core::list_groups()?.iter().any(|g| g == group) {
-                    return Err(format!(
-                        "Unknown group '{}'. Call automatic_get_related_projects or ask the \
-                         user for the group name.",
-                        group
-                    ));
-                }
+                require_known_group(group)?;
                 Ok((
                     crate::core::ContextTarget::Group(group.clone()),
                     format!("group '{}'", group),
@@ -1127,7 +1208,9 @@ impl AutomaticMcpServer {
                        those entries are owned by the profile and are re-attached on the \
                        next save if removed directly. `contexts` lists attached context \
                        slugs and `group_context_contributions` records which of them each \
-                       project group provides."
+                       project group provides. `group_profile_contributions` records which \
+                       entries in `profiles` each project group provides; those can only be \
+                       detached from the group."
     )]
     async fn read_project(
         &self,
@@ -2028,15 +2111,25 @@ impl AutomaticMcpServer {
                        profile lists is recorded as the profile's contribution, \
                        so later edits to the profile keep the project in step. \
                        Missing entries are added; entries the project already \
-                       had are adopted by the profile. Idempotent. Does not \
-                       trigger a sync — call automatic_sync_project to write \
-                       the change to disk."
+                       had are adopted by the profile. Idempotent. Give \
+                       `project`, `group`, or neither for the current project. \
+                       Attaching to a project does not trigger a sync — call \
+                       automatic_sync_project to write the change to disk. \
+                       Attaching to a group gives the profile to every member \
+                       project and syncs each one that changed; only the \
+                       group can remove it again."
     )]
     async fn attach_profile(
         &self,
         params: Parameters<AttachProfileParams>,
     ) -> Result<CallToolResult, McpError> {
         let profile_name = &params.0.profile;
+
+        match profile_group_target(&params.0.project, &params.0.group) {
+            Ok(Some(group)) => return Ok(attach_profile_to_group_result(group, profile_name)),
+            Ok(None) => {}
+            Err(e) => return Ok(tool_error(e)),
+        }
 
         let checkout = match self.project_checkout(params.0.project.as_deref()) {
             Ok(checkout) => checkout,
@@ -2062,7 +2155,14 @@ impl AutomaticMcpServer {
                 profile_name, project_name
             ))]));
         }
-        project.profiles.push(profile_name.to_string());
+        // Group profiles first: they decide which profiles are attached.
+        crate::core::reconcile_group_profiles(
+            &mut project,
+            &crate::core::groups_for_project(crate::core::checkout_ident(&checkout)),
+        );
+        if !project.profiles.iter().any(|p| p == profile_name) {
+            project.profiles.push(profile_name.to_string());
+        }
         crate::core::reconcile_project_profiles(&mut project);
 
         match persist_project(&checkout, &project) {
@@ -2080,14 +2180,27 @@ impl AutomaticMcpServer {
         description = "Detach a profile from a project. Removes every entry \
                        the profile provides, including entries the project had \
                        before it was attached; entries no attached profile \
-                       lists stay. Idempotent. Does not trigger a sync — call \
-                       automatic_sync_project to write the change to disk."
+                       lists stay. Idempotent. Give `project`, `group`, or \
+                       neither for the current project. A profile a group \
+                       provides cannot be detached from a member project; \
+                       detach it from the group instead. Detaching from a \
+                       project does not trigger a sync — call \
+                       automatic_sync_project to write the change to disk. \
+                       Detaching from a group removes the profile from every \
+                       member project no other group provides it to, and \
+                       syncs each one that changed."
     )]
     async fn detach_profile(
         &self,
         params: Parameters<DetachProfileParams>,
     ) -> Result<CallToolResult, McpError> {
         let profile_name = &params.0.profile;
+
+        match profile_group_target(&params.0.project, &params.0.group) {
+            Ok(Some(group)) => return Ok(detach_profile_from_group_result(group, profile_name)),
+            Ok(None) => {}
+            Err(e) => return Ok(tool_error(e)),
+        }
 
         let checkout = match self.project_checkout(params.0.project.as_deref()) {
             Ok(checkout) => checkout,
@@ -2100,10 +2213,24 @@ impl AutomaticMcpServer {
             Err(e) => return Ok(CallToolResult::error(vec![Content::text(e)])),
         };
 
+        // Reconcile against the groups on disk first, so a stale record
+        // cannot refuse a detach the group no longer stands behind.
+        let groups_changed = crate::core::reconcile_group_profiles(
+            &mut project,
+            &crate::core::groups_for_project(crate::core::checkout_ident(&checkout)),
+        );
+        if let Some(group) = crate::core::group_providing_profile(&project, profile_name) {
+            return Ok(tool_error(format!(
+                "Profile '{}' is provided by group '{}'. Detach it from the group instead: \
+                 call automatic_detach_profile with `group`.",
+                profile_name, group
+            )));
+        }
+
         let before = project.profiles.len();
         project.profiles.retain(|p| p != profile_name);
         let recorded = project.profile_contributions.contains_key(profile_name);
-        if project.profiles.len() == before && !recorded {
+        if project.profiles.len() == before && !recorded && !groups_changed {
             return Ok(CallToolResult::success(vec![Content::text(format!(
                 "Profile '{}' was not attached to project '{}'.",
                 profile_name, project_name
@@ -3301,6 +3428,74 @@ mod tests {
                     .is_empty(),
                 "nothing is stored under the name"
             );
+        });
+    }
+
+    #[test]
+    fn profile_tools_take_a_group_and_lock_group_profiles() {
+        let home = tempfile::tempdir().expect("tempdir");
+        with_test_home(home.path().to_path_buf(), || {
+            let project = crate::core::Project { name: "site".into(), ..Default::default() };
+            crate::core::save_project("site", &serde_json::to_string(&project).unwrap())
+                .expect("save");
+            let profile = serde_json::json!({"name": "base", "skills": ["react"]});
+            crate::core::save_project_profile("base", &profile.to_string()).expect("profile");
+            let group = serde_json::json!({"name": "team", "projects": ["site"]});
+            crate::core::save_group("team", &group.to_string()).expect("save group");
+
+            let server = AutomaticMcpServer::new();
+            let attach = |project: Option<&str>, group: Option<&str>| {
+                let result = tauri::async_runtime::block_on(server.attach_profile(Parameters(
+                    AttachProfileParams {
+                        project: project.map(str::to_string),
+                        group: group.map(str::to_string),
+                        profile: "base".into(),
+                    },
+                )))
+                .expect("tool call");
+                (result.is_error == Some(true), format!("{:?}", result.content))
+            };
+            let detach = |project: Option<&str>, group: Option<&str>| {
+                let result = tauri::async_runtime::block_on(server.detach_profile(Parameters(
+                    DetachProfileParams {
+                        project: project.map(str::to_string),
+                        group: group.map(str::to_string),
+                        profile: "base".into(),
+                    },
+                )))
+                .expect("tool call");
+                (result.is_error == Some(true), format!("{:?}", result.content))
+            };
+            let read = || -> crate::core::Project {
+                serde_json::from_str(&crate::core::read_project("site").unwrap()).unwrap()
+            };
+
+            let (failed, text) = attach(Some("site"), Some("team"));
+            assert!(failed && text.contains("not both"), "{text}");
+            let (failed, text) = attach(None, Some("nope"));
+            assert!(failed && text.contains("Unknown group"), "{text}");
+
+            let (failed, text) = attach(None, Some("team"));
+            assert!(!failed, "{text}");
+            let site = read();
+            assert_eq!(site.profiles, vec!["base"]);
+            assert_eq!(site.skills, vec!["react"]);
+            assert_eq!(site.group_profile_contributions["team"], vec!["base"]);
+            let (failed, text) = attach(None, Some("team"));
+            assert!(!failed && text.contains("already attached"), "{text}");
+
+            let (failed, text) = detach(Some("site"), None);
+            assert!(failed && text.contains("provided by group 'team'"), "{text}");
+            assert_eq!(read().profiles, vec!["base"]);
+
+            let (failed, text) = detach(None, Some("team"));
+            assert!(!failed, "{text}");
+            let site = read();
+            assert!(site.profiles.is_empty());
+            assert!(site.skills.is_empty());
+            assert!(site.group_profile_contributions.is_empty());
+            let (failed, text) = detach(None, Some("team"));
+            assert!(!failed && text.contains("was not attached"), "{text}");
         });
     }
 

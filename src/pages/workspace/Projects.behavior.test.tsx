@@ -35,6 +35,7 @@ function emptyProject(name: string) {
     hooks: [],
     profiles: [],
     profile_contributions: {},
+    group_profile_contributions: {},
     custom_skills: [],
     mode: "normal",
     directory_missing: false,
@@ -80,6 +81,7 @@ function baselineRoutes(overrides: Record<string, unknown> = {}) {
     get_plugin_locked_resources: { skills: [], rules: [] },
     get_project_profiles: [],
     get_projects_referencing_profile: [],
+    get_groups_referencing_profile: [],
     // Profile (no auth)
     read_profile: null,
     // Editor secondary loads (defaults: empty)

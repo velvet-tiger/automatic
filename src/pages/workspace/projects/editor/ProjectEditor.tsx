@@ -1835,6 +1835,7 @@ export function ProjectEditor({
         profile_contributions: stored.profile_contributions || {},
         contexts: stored.contexts || [],
         group_context_contributions: stored.group_context_contributions || {},
+        group_profile_contributions: stored.group_profile_contributions || {},
         custom_skills: [...storedCustomSkills, ...newCustomSkills],
         mode: stored.mode === 'silent' ? 'silent' : 'normal',
         manage_gitignore: stored.manage_gitignore === true,
@@ -1917,6 +1918,7 @@ export function ProjectEditor({
         profile_contributions: parsed.profile_contributions || {},
         contexts: parsed.contexts || [],
         group_context_contributions: parsed.group_context_contributions || {},
+        group_profile_contributions: parsed.group_profile_contributions || {},
         custom_skills: parsed.custom_skills || [],
         tools: parsed.tools || [],
         instructions_index_mode: parsed.instructions_index_mode || false,
@@ -4195,6 +4197,7 @@ export function ProjectEditor({
                     selectedKey={selectedKey}
                     availableProfiles={availableProfiles}
                     reloadProject={reloadProject}
+                    onNavigateToGroup={onNavigateToGroup}
                   />
                 )}
 

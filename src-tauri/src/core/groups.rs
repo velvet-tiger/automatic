@@ -213,6 +213,113 @@ pub fn scrub_orphan_project_references() -> Result<Vec<String>, String> {
     scrub_orphan_project_references_in_dir(&groups_dir, &|member| index.is_known_key(member))
 }
 
+// ── Group-provided lists ─────────────────────────────────────────────────────
+
+/// Bring one project list in step with what its groups provide.
+///
+/// `list` is the project's own list (contexts or profiles), `contributions`
+/// records which entries each group provides, and `provided` picks the
+/// matching list off a group. `member_groups` must be exactly the groups
+/// that list the project. The rules:
+/// - A recorded group that is no longer in `member_groups` releases every
+///   entry it provided.
+/// - A member group releases entries it no longer lists, and records every
+///   entry it lists: added when missing, adopted when the project already
+///   had it.
+/// - An entry another member group already records stays with that group.
+///   A released entry that another member group still lists is kept, and
+///   its record moves to that group.
+///
+/// Only touches the values passed in. Returns `true` when anything changed.
+pub(crate) fn reconcile_group_provided(
+    list: &mut Vec<String>,
+    contributions: &mut std::collections::BTreeMap<String, Vec<String>>,
+    member_groups: &[ProjectGroup],
+    provided: fn(&ProjectGroup) -> &[String],
+) -> bool {
+    let mut changed = false;
+
+    let departed: Vec<String> = contributions
+        .keys()
+        .filter(|name| !member_groups.iter().any(|g| &g.name == *name))
+        .cloned()
+        .collect();
+    for name in departed {
+        let Some(entries) = contributions.remove(&name) else {
+            continue;
+        };
+        for entry in entries {
+            release_group_provided(list, contributions, member_groups, provided, &entry, &name);
+        }
+        changed = true;
+    }
+
+    for group in member_groups {
+        let wanted = provided(group);
+        let prev = contributions.get(&group.name).cloned().unwrap_or_default();
+        let mut next: Vec<String> = Vec::new();
+
+        for entry in &prev {
+            if !wanted.contains(entry) {
+                release_group_provided(list, contributions, member_groups, provided, entry, &group.name);
+                changed = true;
+            }
+        }
+
+        for entry in wanted {
+            if next.contains(entry) {
+                continue;
+            }
+            if !list.contains(entry) {
+                list.push(entry.clone());
+                next.push(entry.clone());
+                changed = true;
+                continue;
+            }
+            let owned_elsewhere = contributions
+                .iter()
+                .any(|(name, entries)| name != &group.name && entries.contains(entry));
+            if !owned_elsewhere {
+                next.push(entry.clone());
+            }
+        }
+
+        if next != prev {
+            changed = true;
+        }
+        if next.is_empty() {
+            contributions.remove(&group.name);
+        } else {
+            contributions.insert(group.name.clone(), next);
+        }
+    }
+
+    changed
+}
+
+/// Drop `entry` from `list` because group `from` no longer provides it.
+/// When another member group still lists it, it stays and the record moves.
+fn release_group_provided(
+    list: &mut Vec<String>,
+    contributions: &mut std::collections::BTreeMap<String, Vec<String>>,
+    member_groups: &[ProjectGroup],
+    provided: fn(&ProjectGroup) -> &[String],
+    entry: &str,
+    from: &str,
+) {
+    let other = member_groups
+        .iter()
+        .find(|g| g.name != from && provided(g).iter().any(|e| e == entry));
+    if let Some(other) = other {
+        let record = contributions.entry(other.name.clone()).or_default();
+        if !record.iter().any(|e| e == entry) {
+            record.push(entry.to_string());
+        }
+        return;
+    }
+    list.retain(|e| e != entry);
+}
+
 // ── Path-injectable internals (used by the public API and tests) ──────────────
 
 fn read_group_from_dir(groups_dir: &PathBuf, name: &str) -> Result<ProjectGroup, String> {
@@ -371,6 +478,7 @@ mod tests {
             description: String::new(),
             projects: projects.iter().map(|p| p.to_string()).collect(),
             contexts: Vec::new(),
+            profiles: Vec::new(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         };

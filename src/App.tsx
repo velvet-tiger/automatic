@@ -787,7 +787,7 @@ function App() {
           )}
           {activeTab === "profiles" && (
             <div className="flex-1 h-full">
-              <Profiles onNavigateToProject={navigateToProject} />
+              <Profiles onNavigateToProject={navigateToProject} onNavigateToGroup={navigateToGroup} />
             </div>
           )}
           {activeTab === "contexts" && (

@@ -561,9 +561,10 @@ pub(crate) fn rename_contribution(
     changed
 }
 
-/// Rename a profile inside a project's `profiles` list and contribution map.
+/// Rename a profile inside a project's `profiles` list, its contribution
+/// map, and the record of which group provides it.
 pub(crate) fn rename_profile_in_project(project: &mut Project, old: &str, new: &str) -> bool {
-    let mut changed = false;
+    let mut changed = rename_group_profile_contribution(project, old, new);
     for entry in project.profiles.iter_mut() {
         if entry == old {
             *entry = new.to_string();

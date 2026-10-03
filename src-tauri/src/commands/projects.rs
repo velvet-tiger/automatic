@@ -147,10 +147,17 @@ pub fn save_project(name: &str, data: &str, creating: Option<bool>) -> Result<St
     // before anything is persisted or synced. This one hook covers the
     // editor, the create wizard, and attach/detach done by editing
     // `profiles`. See `core::reconcile_project_profiles`.
+    //
+    // Group profiles go first: they decide which profiles are attached, and
+    // the profile reconcile then turns that into entries. Membership lives
+    // in the group files, so a stale editor copy cannot drop a profile a
+    // group provides.
+    let member_groups = core::groups_for_project(name);
+    core::reconcile_group_profiles(&mut incoming, &member_groups);
     core::reconcile_project_profiles(&mut incoming);
     // Groups: same idea for contexts. Membership lives in the group files,
     // so a stale editor copy cannot drop or duplicate a group's contexts.
-    core::reconcile_group_contexts(&mut incoming, &core::groups_for_project(name));
+    core::reconcile_group_contexts(&mut incoming, &member_groups);
 
     let reconciled = serde_json::to_string_pretty(&incoming).map_err(|e| e.to_string())?;
     let data: &str = &reconciled;
@@ -1296,14 +1303,52 @@ pub(crate) fn reconcile_projects_referencing_profile(profile_name: &str) {
     });
 }
 
-/// Detach `profile_name` from every project, dropping every item the profile
-/// provides, then re-sync. Used before a profile is deleted.
+/// Bring the profiles of each named project in step with its groups, then
+/// with the profiles themselves, and re-sync the ones that changed. Call
+/// after a group is saved or deleted, with its members from before and
+/// after the change (`core::group_member_idents`).
+///
+/// Per-project failures are logged and skipped so one unreadable project
+/// does not leave the rest out of step.
+pub(crate) fn reconcile_group_profiles_for_projects(project_idents: &[String]) {
+    let mut seen = std::collections::HashSet::new();
+    for ident in project_idents {
+        if !seen.insert(ident.as_str()) {
+            continue;
+        }
+        let parsed = core::read_project(ident).and_then(|raw| {
+            serde_json::from_str::<core::Project>(&raw).map_err(|e| e.to_string())
+        });
+        let mut project = match parsed {
+            Ok(project) => project,
+            Err(e) => {
+                eprintln!("group profiles reconcile: skipping project '{}': {}", ident, e);
+                continue;
+            }
+        };
+        // Group profiles first: they decide which profiles are attached.
+        let groups_changed =
+            core::reconcile_group_profiles(&mut project, &core::groups_for_project(ident));
+        let report = core::reconcile_project_profiles(&mut project);
+        if !groups_changed && !report.changed {
+            continue;
+        }
+        persist_swept_project(ident, &mut project, "group profile reconcile");
+        sync_project_if_configured(ident, &mut project);
+    }
+}
+
+/// Detach `profile_name` from every group and every project, dropping every
+/// item the profile provides, then re-sync. Used before a profile is deleted.
+/// Groups are cleared too, or a group would put the missing profile back.
 pub(crate) fn detach_profile_from_projects(profile_name: &str) {
+    core::prune_profile_from_groups(profile_name);
     with_each_project_mut(|project_name, project| {
         let before = project.profiles.len();
         project.profiles.retain(|p| p != profile_name);
         let recorded = project.profile_contributions.contains_key(profile_name);
-        if project.profiles.len() == before && !recorded {
+        let group_recorded = core::strip_group_profile_contribution(project, profile_name);
+        if project.profiles.len() == before && !recorded && !group_recorded {
             return;
         }
         core::reconcile_project_profiles(project);
@@ -1313,11 +1358,13 @@ pub(crate) fn detach_profile_from_projects(profile_name: &str) {
 }
 
 /// Rewrite `profiles` entries and contribution keys from `old_name` to
-/// `new_name` in every project. Content is unchanged, so no sync is needed.
+/// `new_name` in every group and every project. Content is unchanged, so no
+/// sync is needed.
 pub(crate) fn rename_profile_in_projects(old_name: &str, new_name: &str) {
     if old_name == new_name {
         return;
     }
+    core::rename_profile_in_groups(old_name, new_name);
     with_each_project_mut(|project_name, project| {
         if core::rename_profile_in_project(project, old_name, new_name) {
             persist_swept_project(project_name, project, "profile rename");
@@ -1763,6 +1810,200 @@ fn detach_profile_from_projects_removes_provided_entries() {
                 a.profile_contributions["baseline"].rules,
                 vec!["profile-rule"]
             );
+        });
+    }
+
+    fn save_group_command(name: &str, projects: &[&str], profiles: &[&str]) {
+        let group = core::ProjectGroup {
+            name: name.to_string(),
+            projects: projects.iter().map(|p| p.to_string()).collect(),
+            profiles: profiles.iter().map(|p| p.to_string()).collect(),
+            ..Default::default()
+        };
+        let data = serde_json::to_string(&group).expect("group json");
+        super::super::groups::save_group(name, &data).expect("save group");
+    }
+
+    fn read_group_back(name: &str) -> core::ProjectGroup {
+        serde_json::from_str(&core::read_group(name).expect("read group")).expect("parse group")
+    }
+
+    /// Saving a group gives its profiles to every member, materialises the
+    /// profile's entries there, and syncs. A project that leaves the group,
+    /// or whose group is deleted, loses both.
+    #[test]
+    fn save_group_command_gives_and_takes_group_profiles() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep_a, dir_a) = make_project("project-a", |_| {});
+            let (_keep_b, dir_b) = make_project("project-b", |_| {});
+            let (_keep_c, dir_c) = make_project("project-c", |_| {});
+
+            save_group_command("team", &["project-a", "project-b"], &["baseline"]);
+
+            for name in ["project-a", "project-b"] {
+                let p = read_back(name);
+                assert_eq!(p.profiles, vec!["baseline"], "{name}");
+                assert_eq!(p.group_profile_contributions["team"], vec!["baseline"]);
+                assert_eq!(p.file_rules["_project"], vec!["profile-rule"]);
+                assert_eq!(p.profile_contributions["baseline"].rules, vec!["profile-rule"]);
+            }
+            assert!(dir_a.join(".claude").exists(), "member synced");
+            assert!(dir_b.join(".claude").exists(), "member synced");
+            let c = read_back("project-c");
+            assert!(c.profiles.is_empty());
+            assert!(!dir_c.join(".claude").exists(), "non-member untouched");
+
+            // project-a leaves the group.
+            save_group_command("team", &["project-b"], &["baseline"]);
+            let a = read_back("project-a");
+            assert!(a.profiles.is_empty());
+            assert!(a.group_profile_contributions.is_empty());
+            assert!(a.profile_contributions.is_empty());
+            assert!(a.file_rules.is_empty());
+            assert_eq!(read_back("project-b").profiles, vec!["baseline"]);
+
+            super::super::groups::delete_group("team").expect("delete group");
+            let b = read_back("project-b");
+            assert!(b.profiles.is_empty());
+            assert!(b.group_profile_contributions.is_empty());
+            assert!(b.file_rules.is_empty());
+        });
+    }
+
+    /// The group attach and detach commands edit the group file and reach
+    /// the members. A member cannot detach a profile its group provides.
+    #[test]
+    fn group_profile_commands_reach_members_and_lock_the_profile() {
+        use super::super::groups::{
+            attach_profile_to_group, detach_profile_from_group, get_groups_referencing_profile,
+        };
+        use super::super::project_profiles::{
+            attach_profile_to_project, detach_profile_from_project,
+        };
+
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, dir) = make_project("project-a", |_| {});
+            save_group_command("team", &["project-a"], &[]);
+            assert!(!dir.join(".claude").exists(), "nothing to sync yet");
+
+            assert!(attach_profile_to_group("team", "ghost").is_err(), "unknown profile");
+            assert!(attach_profile_to_group("nope", "baseline").is_err(), "unknown group");
+            assert!(detach_profile_from_group("nope", "baseline").is_err(), "unknown group");
+
+            attach_profile_to_group("team", "baseline").expect("attach");
+            attach_profile_to_group("team", "baseline").expect("attach is idempotent");
+            assert_eq!(read_group_back("team").profiles, vec!["baseline"]);
+            assert_eq!(get_groups_referencing_profile("baseline").unwrap(), vec!["team"]);
+            let a = read_back("project-a");
+            assert_eq!(a.profiles, vec!["baseline"]);
+            assert_eq!(a.file_rules["_project"], vec!["profile-rule"]);
+            assert!(dir.join(".claude").exists(), "member synced");
+
+            let err = detach_profile_from_project("project-a", "baseline").unwrap_err();
+            assert_eq!(
+                err,
+                "Profile 'baseline' is provided by group 'team'. Detach it from the group instead."
+            );
+            assert_eq!(read_back("project-a").profiles, vec!["baseline"]);
+
+            // Attaching it to the project again changes nothing: the group
+            // still owns it.
+            attach_profile_to_project("project-a", "baseline").expect("attach to project");
+            let a = read_back("project-a");
+            assert_eq!(a.profiles, vec!["baseline"]);
+            assert_eq!(a.group_profile_contributions["team"], vec!["baseline"]);
+
+            detach_profile_from_group("team", "baseline").expect("detach");
+            detach_profile_from_group("team", "baseline").expect("detach is idempotent");
+            assert!(read_group_back("team").profiles.is_empty());
+            assert!(get_groups_referencing_profile("baseline").unwrap().is_empty());
+            let a = read_back("project-a");
+            assert!(a.profiles.is_empty());
+            assert!(a.group_profile_contributions.is_empty());
+            assert!(a.file_rules.is_empty());
+
+            // With the group out of the way the project owns its profile.
+            attach_profile_to_project("project-a", "baseline").expect("attach to project");
+            detach_profile_from_project("project-a", "baseline").expect("detach from project");
+            assert!(read_back("project-a").profiles.is_empty());
+        });
+    }
+
+    /// A stale group record must not block a detach: the reconcile against
+    /// the groups on disk clears it first.
+    #[test]
+    fn stale_group_record_does_not_block_a_project_detach() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("project-a", |p| {
+                p.profiles = vec!["baseline".to_string(), "other".to_string()];
+                p.group_profile_contributions
+                    .insert("gone".to_string(), vec!["other".to_string()]);
+            });
+
+            super::super::project_profiles::detach_profile_from_project("project-a", "baseline")
+                .expect("detach");
+
+            let a = read_back("project-a");
+            assert!(a.profiles.is_empty(), "the departed group's profile went too");
+            assert!(a.group_profile_contributions.is_empty());
+        });
+    }
+
+    /// The `save_project` command puts back a group profile a stale editor
+    /// copy dropped, and materialises it in the same save.
+    #[test]
+    fn save_project_command_keeps_group_profiles() {
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("project-a", |_| {});
+            save_group_command("team", &["project-a"], &["baseline"]);
+
+            let mut stale = read_back("project-a");
+            stale.profiles.clear();
+            stale.group_profile_contributions.clear();
+            let json = serde_json::to_string(&stale).expect("json");
+            save_project("project-a", &json, None).expect("save");
+
+            let a = read_back("project-a");
+            assert_eq!(a.profiles, vec!["baseline"]);
+            assert_eq!(a.group_profile_contributions["team"], vec!["baseline"]);
+            assert_eq!(a.file_rules["_project"], vec!["profile-rule"]);
+        });
+    }
+
+    /// Deleting a profile clears it from groups as well as projects, so no
+    /// group puts the missing profile back. Renaming follows it everywhere.
+    #[test]
+    fn profile_delete_and_rename_cascade_into_groups() {
+        use super::super::project_profiles::{delete_project_profile, rename_project_profile};
+
+        with_temp_home(|_| {
+            save_profile_with_rule("baseline", "profile-rule");
+            let (_keep, _dir) = make_project("project-a", |_| {});
+            save_group_command("team", &["project-a"], &["baseline"]);
+
+            rename_project_profile("baseline", "base").expect("rename");
+            assert_eq!(read_group_back("team").profiles, vec!["base"]);
+            let a = read_back("project-a");
+            assert_eq!(a.profiles, vec!["base"]);
+            assert_eq!(a.group_profile_contributions["team"], vec!["base"]);
+            assert_eq!(a.profile_contributions["base"].rules, vec!["profile-rule"]);
+            assert_eq!(a.file_rules["_project"], vec!["profile-rule"]);
+
+            delete_project_profile("base").expect("delete");
+            assert!(read_group_back("team").profiles.is_empty());
+            let a = read_back("project-a");
+            assert!(a.profiles.is_empty());
+            assert!(a.group_profile_contributions.is_empty());
+            assert!(a.profile_contributions.is_empty());
+            assert!(a.file_rules.is_empty());
+
+            // Saving the group again must not bring the profile back.
+            save_group_command("team", &["project-a"], &[]);
+            assert!(read_back("project-a").profiles.is_empty());
         });
     }
 

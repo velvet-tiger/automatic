@@ -80,7 +80,7 @@ List every project registered in Automatic. Each entry has `name`, `local_key` (
 
 ### `automatic_read_project`
 
-Read the full configuration for a project: description, directory path, assigned skills, MCP servers, providers, configured agent tools, attached `profiles`, `profile_contributions` (which entries each profile provides, including entries the project had before it was attached), `contexts` (attached context slugs), and `group_context_contributions` (which of those contexts each project group provides).
+Read the full configuration for a project: description, directory path, assigned skills, MCP servers, providers, configured agent tools, attached `profiles`, `profile_contributions` (which entries each profile provides, including entries the project had before it was attached), `contexts` (attached context slugs), `group_context_contributions` (which of those contexts each project group provides), and `group_profile_contributions` (which of the attached profiles each project group provides).
 
 ```
 name?: string  — defaults to the current project
@@ -110,14 +110,17 @@ name: string  — the profile name
 
 ### `automatic_attach_profile` / `automatic_detach_profile`
 
-Attach a profile to a project, or detach it. Attaching records every entry the profile lists as the profile's contribution: missing entries are added to the project and entries the project already had are adopted. Detaching removes every entry the profile provides, including entries the project had before it was attached.
+Attach a profile to a project or to a project group, or detach it. Attaching records every entry the profile lists as the profile's contribution: missing entries are added to the project and entries the project already had are adopted. Detaching removes every entry the profile provides, including entries the project had before it was attached.
 
 ```
 project?: string  — defaults to the current project
+group?: string    — a project group name; give `project` or `group`, not both
 profile: string   — the profile name
 ```
 
-**When to use:** After the user asks for a project to follow a profile. Neither call syncs to disk — call `automatic_sync_project` afterwards. Do not remove a profile-owned rule or hook with `automatic_detach_rule` / `automatic_detach_hook`; it is re-attached on the next save.
+With `group`, every member project receives the profile, and the call syncs the members that changed. A profile a group provides cannot be detached from a member project. Detach it from the group.
+
+**When to use:** After the user asks for a project or a group to follow a profile. On a project, neither call syncs to disk — call `automatic_sync_project` afterwards. Do not remove a profile-owned rule or hook with `automatic_detach_rule` / `automatic_detach_hook`; it is re-attached on the next save.
 
 ---
 

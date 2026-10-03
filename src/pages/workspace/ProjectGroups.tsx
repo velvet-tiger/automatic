@@ -14,6 +14,7 @@ import type { ProjectSummary } from "./projects/types";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Plus, X, Edit2, Check, Layers, FolderOpen } from "lucide-react";
 import { GroupContextsSection } from "./contexts/GroupContextsSection";
+import { GroupProfilesSection } from "./projects/GroupProfilesSection";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -23,24 +24,42 @@ interface ProjectGroup {
   projects: string[];
   /** Context slugs attached to the group. Changed only through attach/detach_context. */
   contexts?: string[];
+  /** Profile names attached to the group. Changed only through attach/detach_profile_to/from_group. */
+  profiles?: string[];
   created_at: string;
   updated_at: string;
 }
 
 /**
- * Contexts change through `attach_context` / `detach_context`, possibly from
- * an agent over MCP while this page is open. Take them from disk so a save of
- * another field never writes back an old list.
+ * Contexts and profiles change through their own attach and detach commands,
+ * possibly from an agent over MCP while this page is open. Take both from
+ * disk so a save of another field never writes back an old list.
  */
-async function withLatestContexts(updated: ProjectGroup): Promise<ProjectGroup> {
+async function withLatestGroupSettings(updated: ProjectGroup): Promise<ProjectGroup> {
   try {
     const raw: string = await invoke("read_group", { name: updated.name });
     const latest: ProjectGroup = JSON.parse(raw);
-    return { ...updated, contexts: latest.contexts ?? [] };
+    return { ...updated, contexts: latest.contexts ?? [], profiles: latest.profiles ?? [] };
   } catch {
     // A new group has no file yet, so there is nothing to preserve.
     return updated;
   }
+}
+
+/** What deleting a group does, including the profiles its projects lose. */
+function deleteGroupWarning(profiles: string[]): string {
+  const base = "This will not delete the projects themselves.";
+  if (profiles.length === 0) return base;
+  const one = profiles.length === 1;
+  return `${base}\n\nIts projects will lose the ${one ? "profile" : "profiles"} this group provides (${profiles.join(", ")}) and everything ${one ? "that profile" : "those profiles"} added.`;
+}
+
+/**
+ * A group profile change rewrites member projects. The project editor reloads
+ * its open project on `profiles-updated`, so reuse that event.
+ */
+function notifyProjectProfilesChanged() {
+  window.dispatchEvent(new CustomEvent("profiles-updated"));
 }
 
 interface ProjectGroupsProps {
@@ -139,7 +158,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
     if (!group) return;
     setIsSaving(true);
     try {
-      const updated: ProjectGroup = await withLatestContexts({
+      const updated: ProjectGroup = await withLatestGroupSettings({
         ...group,
         description: editDescription,
         updated_at: new Date().toISOString(),
@@ -204,7 +223,18 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
   // ── Delete group ──────────────────────────────────────────────────────────
 
   const handleDeleteGroup = async (name: string) => {
-    const confirmed = await ask(`Delete group "${name}"? This will not delete the projects themselves.`, {
+    // Profiles can change while this page is open, so prefer the copy on disk.
+    // The list only words the warning. An unreadable group must still be
+    // deletable, so fall back to the copy on screen.
+    let groupProfiles: string[] = group?.name === name ? group.profiles ?? [] : [];
+    try {
+      const raw: string = await invoke("read_group", { name });
+      const latest: ProjectGroup = JSON.parse(raw);
+      groupProfiles = latest.profiles ?? [];
+    } catch (err) {
+      console.warn(`Could not re-read group '${name}' before delete:`, err);
+    }
+    const confirmed = await ask(`Delete group "${name}"? ${deleteGroupWarning(groupProfiles)}`, {
       title: "Delete Group",
       kind: "warning",
     });
@@ -215,6 +245,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
       setGroup(null);
       await loadGroups();
       window.dispatchEvent(new CustomEvent("groups-updated"));
+      if (groupProfiles.length > 0) notifyProjectProfilesChanged();
     } catch (err: any) {
       setError(`Failed to delete group: ${err}`);
     }
@@ -253,7 +284,7 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
    *  are updated immediately without requiring a manual sync. */
   const persistGroup = async (changed: ProjectGroup, syncProjects: string[] = []) => {
     try {
-      const updated = await withLatestContexts(changed);
+      const updated = await withLatestGroupSettings(changed);
       await invoke("save_group", {
         name: updated.name,
         data: JSON.stringify(updated),
@@ -522,12 +553,32 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
               )}
             </div>
 
-            <GroupContextsSection
-              groupName={group.name}
-              contexts={group.contexts ?? []}
-              // The groups-updated listener reloads this group from disk.
-              onChanged={() => window.dispatchEvent(new CustomEvent("groups-updated"))}
-            />
+            {/* Group configuration */}
+            <div className="pt-5 border-t border-border-strong/40 space-y-5">
+              <div>
+                <h3 className="text-[14px] font-semibold text-text-base">Group configuration</h3>
+                <p className="text-[12px] text-text-muted mt-0.5">
+                  Settings here apply to every project in the group.
+                </p>
+              </div>
+
+              <GroupProfilesSection
+                groupName={group.name}
+                profiles={group.profiles ?? []}
+                // The groups-updated listener reloads this group from disk.
+                onChanged={() => {
+                  window.dispatchEvent(new CustomEvent("groups-updated"));
+                  notifyProjectProfilesChanged();
+                }}
+              />
+
+              <GroupContextsSection
+                groupName={group.name}
+                contexts={group.contexts ?? []}
+                // The groups-updated listener reloads this group from disk.
+                onChanged={() => window.dispatchEvent(new CustomEvent("groups-updated"))}
+              />
+            </div>
 
             {/* Info callout */}
             <div className="rounded-md bg-bg-input border border-border-strong/30 px-3 py-2.5 text-[12px] text-text-muted space-y-1">
@@ -536,6 +587,9 @@ export default function ProjectGroups({ onNavigateToProject, initialGroup, onIni
                 When a project in this group is synced, Automatic injects a context block into its
                 agent instruction files. The block lists all related projects — with their
                 descriptions and relative paths — so your agent can recognise and navigate between them.
+              </p>
+              <p>
+                Profiles and contexts under Group configuration reach every project in the group, and are removed here.
               </p>
             </div>
           </div>

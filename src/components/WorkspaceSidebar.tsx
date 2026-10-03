@@ -22,6 +22,9 @@ interface ProjectGroup {
   name: string;
   description: string;
   projects: string[];
+  /** Carried through read-then-save untouched. Changed only on the group page. */
+  contexts?: string[];
+  profiles?: string[];
   created_at: string;
   updated_at: string;
 }

@@ -1252,91 +1252,16 @@ pub fn delete_group_reconciling_contexts(name: &str) -> Result<Vec<String>, Stri
 ///
 /// Only touches the in-memory project. Returns `true` when anything changed.
 pub fn reconcile_group_contexts(project: &mut Project, member_groups: &[ProjectGroup]) -> bool {
-    let mut changed = false;
-    let member_names: Vec<&str> = member_groups.iter().map(|g| g.name.as_str()).collect();
-
-    let departed: Vec<String> = project
-        .group_context_contributions
-        .keys()
-        .filter(|name| !member_names.contains(&name.as_str()))
-        .cloned()
-        .collect();
-    for name in departed {
-        let Some(slugs) = project.group_context_contributions.remove(&name) else {
-            continue;
-        };
-        for slug in slugs {
-            release_group_context(project, member_groups, &slug, &name);
-        }
-        changed = true;
-    }
-
-    for group in member_groups {
-        let prev = project
-            .group_context_contributions
-            .get(&group.name)
-            .cloned()
-            .unwrap_or_default();
-        let mut next: Vec<String> = Vec::new();
-
-        for slug in &prev {
-            if !group.contexts.contains(slug) {
-                release_group_context(project, member_groups, slug, &group.name);
-                changed = true;
-            }
-        }
-
-        for slug in &group.contexts {
-            if next.contains(slug) {
-                continue;
-            }
-            if !project.contexts.contains(slug) {
-                project.contexts.push(slug.clone());
-                next.push(slug.clone());
-                changed = true;
-                continue;
-            }
-            let owned_elsewhere = project
-                .group_context_contributions
-                .iter()
-                .any(|(name, slugs)| name != &group.name && slugs.contains(slug));
-            if !owned_elsewhere {
-                next.push(slug.clone());
-            }
-        }
-
-        if next != prev {
-            changed = true;
-        }
-        if next.is_empty() {
-            project.group_context_contributions.remove(&group.name);
-        } else {
-            project
-                .group_context_contributions
-                .insert(group.name.clone(), next);
-        }
-    }
-
-    changed
+    reconcile_group_provided(
+        &mut project.contexts,
+        &mut project.group_context_contributions,
+        member_groups,
+        group_contexts,
+    )
 }
 
-/// Drop `slug` from the project because group `from` no longer provides it.
-/// When another member group still lists it, it stays and the record moves.
-fn release_group_context(project: &mut Project, member_groups: &[ProjectGroup], slug: &str, from: &str) {
-    let other = member_groups
-        .iter()
-        .find(|g| g.name != from && g.contexts.iter().any(|c| c == slug));
-    if let Some(other) = other {
-        let entry = project
-            .group_context_contributions
-            .entry(other.name.clone())
-            .or_default();
-        if !entry.iter().any(|c| c == slug) {
-            entry.push(slug.to_string());
-        }
-        return;
-    }
-    project.contexts.retain(|c| c != slug);
+fn group_contexts(group: &ProjectGroup) -> &[String] {
+    &group.contexts
 }
 
 /// Re-read each named project, reconcile its group contexts against the

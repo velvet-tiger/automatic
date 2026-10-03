@@ -92,6 +92,11 @@ export interface Project {
    * name. Those are managed from the group; the rest are the project's own.
    */
   group_context_contributions?: Record<string, string[]>;
+  /**
+   * Which entries in `profiles` each project group provides, keyed by group
+   * name. Those are detached at the group; the rest are the project's own.
+   */
+  group_profile_contributions?: Record<string, string[]>;
   /** Inline custom skills stored directly in this project. Written to skill directories on sync. */
   custom_skills?: CustomSkill[];
   /** When true, rules are written to .automatic/instructions/ and the instruction file becomes an index. */

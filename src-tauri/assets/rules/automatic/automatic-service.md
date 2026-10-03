@@ -47,7 +47,8 @@ Profiles are live bundles of library references (skills, MCP servers, providers,
 - `automatic_list_profiles` — list every profile in the library (name, description).
 - `automatic_read_profile` — read a profile's full contents by name.
 - `automatic_attach_profile` / `automatic_detach_profile` — attach or detach a profile. Detaching removes every entry the profile provides, including entries the project had before it was attached. Neither call syncs to disk on its own — call `automatic_sync_project` afterwards.
-- `automatic_read_project` reports `profiles` and `profile_contributions`. An entry listed under `profile_contributions` belongs to that profile: detaching it with `automatic_detach_rule` or `automatic_detach_hook` is undone on the project's next save. Edit or detach the profile instead.
+- Pass `group` instead of `project` to attach or detach a profile for a whole project group. Every member project receives the profile, and those calls sync the members themselves. A profile a group provides cannot be detached from a member project. Detach it from the group.
+- `automatic_read_project` reports `profiles`, `profile_contributions` and `group_profile_contributions` (which profiles each group provides). An entry listed under `profile_contributions` belongs to that profile: detaching it with `automatic_detach_rule` or `automatic_detach_hook` is undone on the project's next save. Edit or detach the profile instead.
 
 ## Contexts
 

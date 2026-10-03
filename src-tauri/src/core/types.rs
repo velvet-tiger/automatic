@@ -395,6 +395,12 @@ pub struct Project {
     /// later reconcile remove exactly what a group no longer provides.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub group_context_contributions: BTreeMap<String, Vec<String>>,
+    /// Which entries in `profiles` each project group provides, keyed by
+    /// group name. Entries no group records are the project's own. A
+    /// group-provided profile can only be removed at the group (see
+    /// `core::reconcile_group_profiles`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub group_profile_contributions: BTreeMap<String, Vec<String>>,
     /// Inline custom sub-agents stored directly in the project configuration.
     /// These are written to each agent's sub-agent directory (e.g.
     /// `.claude/agents/`) during sync. Unlike workspace user_agents, custom
@@ -531,6 +537,12 @@ pub struct ProjectGroup {
     /// `core::reconcile_group_contexts`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contexts: Vec<String>,
+    /// Profile names attached to the group. Each member project receives
+    /// them in its own `profiles` list, recorded under
+    /// `Project::group_profile_contributions` (see
+    /// `core::reconcile_group_profiles`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<String>,
     #[serde(default)]
     pub created_at: String,
     #[serde(default)]

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangle, Layers, Plus, Search, X } from "lucide-react";
 import type { ProfileContribution, Project } from "../../types";
 import { PROFILE_RESOURCE_KINDS } from "../../types";
+import { providingGroup } from "../../../contexts/types";
 
 interface ProfilesPanelProps {
   project: Project;
@@ -14,6 +15,7 @@ interface ProfilesPanelProps {
   selectedKey: string | null;
   availableProfiles: string[];
   reloadProject: (projectKey: string) => Promise<void>;
+  onNavigateToGroup?: (groupName: string) => void;
 }
 
 const KIND_LABELS: Record<(typeof PROFILE_RESOURCE_KINDS)[number], [string, string]> = {
@@ -42,10 +44,11 @@ function summariseContribution(contribution: ProfileContribution | undefined): s
 /**
  * Attach and detach profiles for one project. A profile keeps its entries
  * in step across every attached project; the entries it added here carry a
- * "Profile: name" badge in the other tabs.
+ * "Profile: name" badge in the other tabs. Profiles a project group provides
+ * show which group, and are detached at the group, not here.
  */
 export function ProfilesPanel({
-  project, setProject, setDirty, isCreating, selectedKey, availableProfiles, reloadProject,
+  project, setProject, setDirty, isCreating, selectedKey, availableProfiles, reloadProject, onNavigateToGroup,
 }: ProfilesPanelProps) {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
@@ -54,6 +57,7 @@ export function ProfilesPanel({
 
   const attached = project.profiles ?? [];
   const contributions = project.profile_contributions ?? {};
+  const groupContributions = project.group_profile_contributions ?? {};
   const unattached = availableProfiles.filter((name) => !attached.includes(name));
   const filtered = search.trim()
     ? unattached.filter((name) => name.toLowerCase().includes(search.toLowerCase()))
@@ -190,6 +194,7 @@ export function ProfilesPanel({
           <div className="space-y-2">
             {attached.map((name) => {
               const missing = availableProfiles.length > 0 && !availableProfiles.includes(name);
+              const group = providingGroup(groupContributions, name);
               return (
                 <div
                   key={name}
@@ -209,14 +214,25 @@ export function ProfilesPanel({
                       {persisted ? summariseContribution(contributions[name]) : "Applied when the project is saved"}
                     </div>
                   </div>
-                  <button
-                    onClick={() => detach(name)}
-                    disabled={busy !== null}
-                    className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100 disabled:opacity-50"
-                    title="Detach profile"
-                  >
-                    <X size={12} />
-                  </button>
+                  {group ? (
+                    <button
+                      onClick={() => onNavigateToGroup?.(group)}
+                      className="flex items-center gap-1 text-[11px] text-text-muted bg-bg-sidebar border border-border-strong/30 rounded px-1.5 py-0.5 hover:text-brand transition-colors flex-shrink-0"
+                      title="This group provides it. Detach it from the group to take it off this project."
+                    >
+                      <Layers size={10} /> From group: {group}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => detach(name)}
+                      disabled={busy !== null}
+                      className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100 disabled:opacity-50"
+                      title="Detach profile"
+                      aria-label={`Detach ${name}`}
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -231,6 +247,9 @@ export function ProfilesPanel({
             <p className="leading-relaxed mt-1">
               Save a profile and every attached project is updated and re-synced.
               Detaching removes every entry the profile provides, including any this project had before attaching it. Entries no profile lists stay.
+            </p>
+            <p className="leading-relaxed mt-1">
+              A project group can provide profiles too. Those show the group and are detached from the group.
             </p>
           </div>
         </div>

@@ -48,6 +48,9 @@ const STATE_FIELDS: &[&str] = &[
     // were committed, a machine without the group would treat it as departed
     // on its next reconcile and strip the group's contexts from the config.
     "group_context_contributions",
+    // Same reason: without the group, the next reconcile would detach the
+    // group's profiles and strip their entries from the config.
+    "group_profile_contributions",
     // Snapshots of this machine's registries. Nothing reads them yet. They
     // hold machine-specific command paths and full rule bodies, which would
     // churn a committed file on every library edit.
@@ -375,6 +378,11 @@ mod tests {
                 vec!["ctx".into()],
             )]),
             contexts: vec!["ctx".into()],
+            group_profile_contributions: BTreeMap::from([(
+                "Group".into(),
+                vec!["baseline".into()],
+            )]),
+            profiles: vec!["baseline".into()],
             ..Default::default()
         }
     }
@@ -391,7 +399,15 @@ mod tests {
         let config = read_object(&tmp.path().join(CONFIG_FILE_NAME));
         let state = read_object(&tmp.path().join(".automatic").join("project.json"));
 
-        for key in ["name", "description", "skills", "agents", "file_rules", "contexts"] {
+        for key in [
+            "name",
+            "description",
+            "skills",
+            "agents",
+            "file_rules",
+            "contexts",
+            "profiles",
+        ] {
             assert!(config.contains_key(key), "config is missing {key}");
             assert!(!state.contains_key(key), "state must not hold {key}");
         }
@@ -403,6 +419,7 @@ mod tests {
             "created_by",
             "instruction_file_hashes",
             "group_context_contributions",
+            "group_profile_contributions",
         ] {
             assert!(state.contains_key(key), "state is missing {key}");
             assert!(!config.contains_key(key), "config must not hold {key}");
@@ -479,6 +496,8 @@ mod tests {
         assert_eq!(loaded.instruction_file_hashes, original.instruction_file_hashes);
         assert_eq!(loaded.last_activity, original.last_activity);
         assert_eq!(loaded.group_context_contributions, original.group_context_contributions);
+        assert_eq!(loaded.profiles, original.profiles);
+        assert_eq!(loaded.group_profile_contributions, original.group_profile_contributions);
     }
 
     #[test]

@@ -105,6 +105,7 @@ export function emptyProject(name: string): Project {
     profile_contributions: {},
     contexts: [],
     group_context_contributions: {},
+    group_profile_contributions: {},
   };
 }
 

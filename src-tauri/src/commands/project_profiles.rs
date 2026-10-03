@@ -73,6 +73,7 @@ pub fn attach_profile_to_project(project_name: &str, profile_name: &str) -> Resu
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
 
+    core::reconcile_group_profiles(&mut project, &core::groups_for_project(project_name));
     if !project.profiles.iter().any(|p| p == profile_name) {
         project.profiles.push(profile_name.to_string());
     }
@@ -93,10 +94,21 @@ pub fn detach_profile_from_project(project_name: &str, profile_name: &str) -> Re
     let mut project: core::Project =
         serde_json::from_str(&raw).map_err(|e| format!("Invalid project data: {}", e))?;
 
+    // Reconcile against the groups on disk first, so a stale record cannot
+    // refuse a detach the group no longer stands behind.
+    let groups_changed =
+        core::reconcile_group_profiles(&mut project, &core::groups_for_project(project_name));
+    if let Some(group) = core::group_providing_profile(&project, profile_name) {
+        return Err(format!(
+            "Profile '{}' is provided by group '{}'. Detach it from the group instead.",
+            profile_name, group
+        ));
+    }
+
     let before = project.profiles.len();
     project.profiles.retain(|p| p != profile_name);
     let recorded = project.profile_contributions.contains_key(profile_name);
-    if project.profiles.len() == before && !recorded {
+    if project.profiles.len() == before && !recorded && !groups_changed {
         return Ok(()); // already detached, nothing to do
     }
 

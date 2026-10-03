@@ -33,6 +33,40 @@ A profile whose file is missing is reported and otherwise ignored, so nothing di
 - Deleting a library asset prunes it from every profile as well as every project. Renaming an MCP server or command renames it in profiles too.
 - Per-project disabling of a profile-provided MCP server is not available. The editor hides the toggle on inherited servers.
 
+## Group profiles
+
+A project group can list profiles. Every member project receives them. A group may list several.
+
+Two fields carry the link:
+
+- `ProjectGroup.profiles`: profile names attached to the group, stored in `~/.automatic/groups/{name}.json`.
+- `Project.group_profile_contributions`: per group, the entries in the project's `profiles` list that the group provides.
+
+The group writes profile names into the project's own `profiles` list. There is no overlay at resolve time. From there the profile behaves like one attached by hand.
+
+`core::reconcile_group_profiles` brings `profiles` in step with the project's groups. It always runs before `core::reconcile_project_profiles`. The first decides which profiles are attached. The second turns them into entries.
+
+1. A group the project no longer belongs to releases every profile it recorded.
+2. A member group releases profiles it no longer lists and records every profile it lists. A missing profile is added. A profile the project already had is adopted.
+3. A profile another member group already records stays with that group. A released profile another member group still lists is kept, and its record moves to that group.
+
+A released profile leaves `profiles` only. The profile reconcile that follows removes its entries.
+
+Ownership:
+
+- A group owns every profile it lists on a member, including one the project attached itself before. Removing it from the group removes it from the project.
+- A group-provided profile cannot be detached on the project. `detach_profile_from_project` and `automatic_detach_profile` refuse and name the group.
+- `group_profile_contributions` is machine-local state. Groups exist only on this machine, so the record lives in `.automatic/project.json`, not in `.automatic.json`. The profile name itself stays in the committed `profiles` list.
+
+When it runs:
+
+- `save_project` reconciles group profiles on every save.
+- `save_group` and `delete_group` reconcile every project that was a member before or is a member after, and re-sync the ones that changed. Group edits did not sync projects before.
+- Deleting a profile removes it from every group. Renaming a profile renames it in every group and in every record.
+- Deleting or renaming a project needs no sweep. Group membership follows the project `id`.
+
+Tauri commands: `attach_profile_to_group(group_name, profile_name)`, `detach_profile_from_group(group_name, profile_name)`, `get_groups_referencing_profile(profile_name)`. Attach fails when the profile or the group does not exist. Attach and detach are idempotent and re-sync the members that changed.
+
 ## In the app
 
 - Library, Profiles: create and edit profiles, see which projects use one, attach one to a project.
@@ -41,10 +75,13 @@ A profile whose file is missing is reported and otherwise ignored, so nothing di
 
 ## MCP tools
 
-`automatic_list_profiles`, `automatic_read_profile`, `automatic_attach_profile`, `automatic_detach_profile`. Attach and detach do not sync; call `automatic_sync_project` afterwards. `automatic_read_project` returns `profiles` and `profile_contributions`.
+`automatic_list_profiles`, `automatic_read_profile`, `automatic_attach_profile`, `automatic_detach_profile`. `automatic_read_project` returns `profiles`, `profile_contributions` and `group_profile_contributions`.
+
+Attach and detach take `project`, `group`, or neither for the current project. On a project they do not sync; call `automatic_sync_project` afterwards. On a group they reconcile every member and sync the ones that changed. Detaching a group-provided profile from a project is refused.
 
 ## Not yet covered
 
 - Cloud library sync does not carry profiles. The sync contract spans the webapp and needs a change on both sides.
 - The `automatic-cli` engine on `2.0-dev` has not received this work yet.
+- Cloud library sync does not carry a group's `profiles` either.
 - The rule migrations in `core/rules.rs` do not walk profile files.

@@ -91,9 +91,11 @@ function summarise(p: ProjectProfile | undefined): string {
 
 export default function Profiles({
   onNavigateToProject,
+  onNavigateToGroup,
 }: {
   /** Opens a project by local_key (or by name for a row without one). */
   onNavigateToProject?: (projectKey: string) => void;
+  onNavigateToGroup?: (groupName: string) => void;
 }) {
   const [profiles, setProfiles] = useState<string[]>([]);
   const [recentRefresh, setRecentRefresh] = useState(0);
@@ -121,6 +123,8 @@ export default function Profiles({
   const [availableRules, setAvailableRules] = useState<{ id: string; name: string }[]>([]);
 
   const [referencingProjects, setReferencingProjects] = useState<ProjectRef[]>([]);
+  /** Names of the project groups that provide this profile to their projects. */
+  const [referencingGroups, setReferencingGroups] = useState<string[]>([]);
   const [allProjects, setAllProjects] = useState<ProjectSummary[]>([]);
   const labels = useMemo(() => projectLabels(allProjects), [allProjects]);
   const [showAttachPicker, setShowAttachPicker] = useState(false);
@@ -209,6 +213,12 @@ export default function Profiles({
       setReferencingProjects(refs);
     } catch {
       setReferencingProjects([]);
+    }
+    try {
+      const groups: string[] = await invoke("get_groups_referencing_profile", { profileName: name });
+      setReferencingGroups(groups);
+    } catch {
+      setReferencingGroups([]);
     }
   };
 
@@ -410,6 +420,7 @@ export default function Profiles({
     setProfile(emptyProfile(""));
     setSavedProfile(null);
     setReferencingProjects([]);
+    setReferencingGroups([]);
     setDirty(true);
     setIsCreating(true);
     setNewName("");
@@ -869,6 +880,30 @@ export default function Profiles({
             </div>
 
             {/* Used by projects, pinned at the bottom */}
+            {!isCreating && referencingGroups.length > 0 && (
+              <div className="flex-shrink-0 border-t border-border-strong/40 px-6 py-4 bg-bg-input/30">
+                <div className="flex items-center gap-2 mb-3">
+                  <Layers size={13} className="text-text-muted" />
+                  <span className="text-[11px] font-semibold text-text-muted tracking-wider uppercase">
+                    Used in {referencingGroups.length} {referencingGroups.length === 1 ? "group" : "groups"}
+                  </span>
+                </div>
+                <ul className="space-y-1.5 max-h-[72px] overflow-y-auto custom-scrollbar">
+                  {referencingGroups.map((groupName) => (
+                    <li key={groupName} className="flex items-center justify-between gap-3 py-1">
+                      <button
+                        onClick={() => onNavigateToGroup?.(groupName)}
+                        className="flex items-center gap-2 min-w-0 text-left hover:text-brand transition-colors"
+                        title="Every project in this group receives the profile."
+                      >
+                        <Layers size={12} className="text-text-muted flex-shrink-0" />
+                        <span className="text-[13px] text-text-base truncate">{groupName}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {!isCreating && referencingProjects.length > 0 && (
               <div className="flex-shrink-0 border-t border-border-strong/40 px-6 py-4 bg-bg-input/30">
                 <div className="flex items-center gap-2 mb-3">
