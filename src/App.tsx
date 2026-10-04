@@ -489,7 +489,7 @@ function App() {
         className="h-11 flex-shrink-0 flex items-center border-b border-border-strong/40 bg-bg-base select-none relative"
       >
         {/* Left: sidebar toggle (after traffic-light clearance) */}
-        <div className="pl-20 relative z-10">
+        <div className="pl-24 relative z-10">
           {activeTab !== "settings" && activeTab !== "sync" && (
             <button
               onClick={() => setSidebarCollapsed((c) => !c)}
